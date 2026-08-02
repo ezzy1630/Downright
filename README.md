@@ -126,6 +126,32 @@ For the release-path performance checks:
 swift run -c release drbench
 ```
 
+## Performance and resource bounds
+
+The app keeps the interactive path small and lets background work converge
+later. Parsing is latest-wins and coalesced, decoration is incremental, and
+derived navigation metrics are computed once per refresh. External file
+changes are coalesced through directory FSEvents, while sibling content hashes
+are cached by path, size, and modification date.
+
+Memory-heavy surfaces are bounded: rendered images, math, and Mermaid output
+use cost-aware LRU caches; image files are downsampled to the viewport; Quick
+Look releases prior render graphs and falls back to plain text when it crosses
+its memory ceiling. Workspace indexing streams files through a small worker
+pool with 10 MB per-file and 100 MB total-byte limits.
+
+Latest local release benchmark (`drbench`, arm64 macOS):
+
+| Metric | p95 | Budget |
+|---|---:|---:|
+| Typing response | 0.15 ms | 8 ms |
+| Incremental decoration | 0.106 ms | 8 ms |
+| Semantic convergence | 47.54 ms | 100 ms |
+| 100 KB cold parse | 16.56 ms | 250 ms |
+
+Run the complete validation suite with `Scripts/check.sh`. The current suite
+covers 443 tests in 54 suites and fails if the test runner executes nothing.
+
 ## CLI
 
 `down` opens Markdown in the installed app. `md` is installed as an alias.
