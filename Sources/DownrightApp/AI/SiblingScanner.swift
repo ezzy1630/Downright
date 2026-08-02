@@ -37,6 +37,14 @@ final class SiblingScanner {
     /// A directory full of agent output can be large; a hard cap keeps the
     /// sidebar a glance rather than a file browser.
     private let limit = 200
+    private struct ContentFingerprint: Hashable {
+        let path: String
+        let modified: Date
+        let byteCount: Int
+    }
+    private var contentHashCache: [ContentFingerprint: String] = [:]
+    private var contentHashOrder: [ContentFingerprint] = []
+    private let contentHashCacheLimit = 256
 
     init(documentURL: URL, extraDirectories: [String]) {
         self.documentURL = documentURL.resolvingSymlinksInPath()
@@ -91,8 +99,10 @@ final class SiblingScanner {
             let unseen: Bool
             if state.lastSeenHash.isEmpty {
                 unseen = false
+            } else if let hash = contentHash(for: url, modified: modified, byteCount: values.fileSize ?? 0) {
+                unseen = hash != state.lastSeenHash
             } else {
-                unseen = modified > state.lastOpened
+                unseen = false
             }
 
             return Sibling(
@@ -100,11 +110,38 @@ final class SiblingScanner {
                 displayName: url.deletingPathExtension().lastPathComponent,
                 modified: modified,
                 byteCount: values.fileSize ?? 0,
-                hasUnseenChanges: unseen && url != documentURL,
+                hasUnseenChanges: unseen && url.resolvingSymlinksInPath() != documentURL,
                 group: group,
                 isCurrent: url.resolvingSymlinksInPath() == documentURL
             )
         }
+    }
+
+    private func contentHash(for url: URL, modified: Date, byteCount: Int) -> String? {
+        let key = ContentFingerprint(
+            path: url.standardizedFileURL.path,
+            modified: modified,
+            byteCount: byteCount
+        )
+        if let cached = contentHashCache[key] {
+            touchContentHash(key)
+            return cached
+        }
+
+        guard let data = try? Data(contentsOf: url),
+              String(data: data, encoding: .utf8) != nil else { return nil }
+        let hash = SnapshotStore.hash(data)
+        contentHashCache[key] = hash
+        touchContentHash(key)
+        while contentHashOrder.count > contentHashCacheLimit {
+            contentHashCache.removeValue(forKey: contentHashOrder.removeFirst())
+        }
+        return hash
+    }
+
+    private func touchContentHash(_ key: ContentFingerprint) {
+        contentHashOrder.removeAll { $0 == key }
+        contentHashOrder.append(key)
     }
 
     // MARK: - Watching
@@ -113,7 +150,7 @@ final class SiblingScanner {
     /// sibling appears without a rescan timer — which is the case that matters,
     /// since the sixth file usually arrives after you have opened the first.
     private func startWatching() {
-        watcher = FileWatcher(url: documentURL) { [weak self] _ in
+        watcher = FileWatcher(url: documentURL.deletingLastPathComponent(), watchesDirectory: true) { [weak self] _ in
             self?.scan()
         }
     }

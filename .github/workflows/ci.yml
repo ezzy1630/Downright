@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        env:
+          SCRATCH: .build-ci-main
+          TEST_SCRATCH: .build-ci-test
+        run: ./Scripts/check.sh
+      - name: Check release benchmark target
+        run: swift build -c release --scratch-path .build-ci-release --product drbench

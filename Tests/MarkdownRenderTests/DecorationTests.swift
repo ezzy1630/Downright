@@ -104,7 +104,7 @@ Trailing paragraph mentioning `src/auth/session.ts:42` and $a^2$ inline.
     #expect(configuration.codeCollapseThreshold == 10_000)
 }
 
-@Test func hardWrappedParagraphsKeepPhysicalBreaksWithoutUnsafeReflow() {
+@Test func hardWrappedParagraphsReflowWithoutChangingSource() {
     let source = "A physical line\ncontinues here without a blank paragraph.\n"
     let document = MarkdownParser.parse(source)
     let storage = NSTextStorage(string: source)
@@ -120,6 +120,112 @@ Trailing paragraph mentioning `src/auth/session.ts:42` and $a^2$ inline.
     }
     #expect(style.lineBreakMode == .byWordWrapping)
     #expect(style.paragraphSpacing == 0)
+
+    let index = ParagraphIndex(text: source as NSString)
+    let hidden = engine(.live).hiddenRanges(document: document, caret: nil, selections: [])
+    let plan = HardWrapReflow.plan(
+        document: document,
+        text: source as NSString,
+        hiddenRanges: hidden,
+        enabled: true
+    )
+    #expect(plan.ranges.count == 1)
+    guard let grouped = plan.ranges.first else {
+        Issue.record("the parser did not expose the hard-wrapped paragraph")
+        return
+    }
+    let ordinaryHidden = hidden.filter { hiddenRange in
+        hiddenRange.location < grouped.location || hiddenRange.upperBound > grouped.upperBound
+    }
+    let map = DisplayMap(
+        paragraphs: index,
+        substitutions: ordinaryHidden.map(DisplaySubstitution.hide) + plan.substitutions
+    )
+    let displayed = map.displayString(
+        forSourceRange: grouped,
+        in: NSAttributedString(string: source)
+    )
+    #expect(displayed?.length == grouped.length)
+    #expect(displayed?.string == "A physical line continues here without a blank paragraph.\n")
+    #expect(map.hiddenRanges == hidden)
+    #expect(storage.string == source)
+}
+
+@Test func explicitMarkdownBreaksStayBreaksWhenSoftWrapReflowIsOn() {
+    for source in ["one  \ntwo\n", "one\\\ntwo\n"] {
+        let document = MarkdownParser.parse(source)
+        let plan = HardWrapReflow.plan(
+            document: document,
+            text: source as NSString,
+            hiddenRanges: [],
+            enabled: true
+        )
+
+        #expect(plan.ranges.isEmpty)
+        #expect(plan.substitutions.isEmpty)
+    }
+}
+
+@Test func hardWrapReflowPreservesEverySupportedLineEndingLength() {
+    for ending in ["\n", "\r\n", "\r", "\u{0085}", "\u{2028}", "\u{2029}"] {
+        let source = "first" + ending + "second" + ending
+        let document = MarkdownParser.parse(source)
+        let plan = HardWrapReflow.plan(
+            document: document,
+            text: source as NSString,
+            hiddenRanges: [],
+            enabled: true
+        )
+        guard let grouped = plan.ranges.first else {
+            Issue.record("a supported line ending did not produce a reflowable paragraph")
+            continue
+        }
+        let map = DisplayMap(paragraphs: ParagraphIndex(text: source as NSString),
+                             substitutions: plan.substitutions)
+        let displayed = map.displayString(
+            forSourceRange: grouped,
+            in: NSAttributedString(string: source)
+        )
+        #expect(displayed?.length == grouped.length)
+        #expect(map.textKitOffset(forSource: grouped.upperBound) == grouped.upperBound)
+    }
+}
+
+@Test func hardWrapReflowLeavesLiteralInlineNewlinesOnPhysicalPath() {
+    let source = "before `code\ninside` after\n"
+    let plan = HardWrapReflow.plan(
+        document: MarkdownParser.parse(source),
+        text: source as NSString,
+        hiddenRanges: [],
+        enabled: true
+    )
+
+    #expect(plan.ranges.isEmpty)
+    #expect(plan.substitutions.isEmpty)
+}
+
+@Test @MainActor func physicalTextKitFallbackStillHidesOrdinaryMarkers() {
+    let source = "**bold** tail\n"
+    let storage = NSTextStorage(string: source)
+    let index = ParagraphIndex(text: source as NSString)
+    let provider = ParagraphSubstitution()
+    provider.displayMap = DisplayMap(paragraphs: index, hidden: [
+        NSRange(location: 0, length: 2), NSRange(location: 6, length: 2),
+    ])
+
+    let contentStorage = NSTextContentStorage()
+    contentStorage.textStorage = storage
+    contentStorage.delegate = provider
+    guard let paragraph = provider.textContentStorage(
+        contentStorage,
+        textParagraphWith: index.range(at: 0)
+    ) else {
+        Issue.record("the physical fallback leaked or rejected an ordinary hidden-marker paragraph")
+        return
+    }
+
+    #expect(paragraph.attributedString.string == "bold tail\n")
+    #expect(storage.string == source)
 }
 
 @Test func decorationAppliesRealAttributes() {
@@ -662,17 +768,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     }
 
     samples.sort()
-    let p50 = samples[samples.count / 2]
     let p95 = samples[min(samples.count - 1, Int(Double(samples.count) * 0.95))]
-    let worst = samples[samples.count - 1]
-    print("""
-    [§12 keystroke budget] \(lines.count) lines, \((text as NSString).length) UTF-16 units, \
-    100 single-character edits
-      decorate p50 = \(String(format: "%.3f", p50)) ms
-      decorate p95 = \(String(format: "%.3f", p95)) ms   (budget 8.000 ms)
-      decorate max = \(String(format: "%.3f", worst)) ms
-    """)
-
     #expect(p95 < 8.0, "p95 keystroke decoration was \(p95) ms, over the 8ms budget in §12")
     #expect(storage.length == (text as NSString).length + 100)
 }
@@ -720,12 +816,6 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
 
     samples.sort()
     let p95 = samples[min(samples.count - 1, Int(Double(samples.count) * 0.95))]
-    print("""
-    [§12 caret move] \(collapsed.count) hidden ranges over \(lines.count) lines
-      reveal + map override p50 = \(String(format: "%.3f", samples[samples.count / 2])) ms
-      reveal + map override p95 = \(String(format: "%.3f", p95)) ms   (budget 8.000 ms)
-      paragraph index rebuild   = \(String(format: "%.3f", indexRebuild)) ms  (once per text edit)
-    """)
     #expect(p95 < 8.0, "caret-move map rebuild was \(p95) ms, over the 8ms budget in §12")
     #expect(indexRebuild < 8.0, "paragraph index rebuild was \(indexRebuild) ms, over the 8ms budget in §12")
 }
@@ -790,10 +880,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     let document = MarkdownParser.parse(text)
     let engine = engine(.read)
 
-    let started = CFAbsoluteTimeGetCurrent()
-    let result = engine.decorate(storage, document: document, dirty: .wholesale)
-    let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1000
-    print("[§3.2 mode switch] wholesale decoration of \(lines.count) lines = \(String(format: "%.1f", elapsed)) ms, \(result.attributeRanges) attribute ranges")
+    _ = engine.decorate(storage, document: document, dirty: .wholesale)
     #expect(storage.string == text)
 }
 

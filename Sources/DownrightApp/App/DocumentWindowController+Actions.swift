@@ -13,6 +13,7 @@ extension DocumentWindowController {
         markdownDocument.close()
         do {
             try open(url, mode: mode)
+            resetWorkspaceState(for: url)
         } catch {
             NSSound.beep()
         }

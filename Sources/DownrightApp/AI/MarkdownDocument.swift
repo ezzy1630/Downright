@@ -348,6 +348,7 @@ final class MarkdownDocument: NSObject {
     private func cancelParseWork() {
         reparseScheduled = false
         revision = revision.advanced()
+        enqueueParseControl { await $0.discardPending() }
     }
 
     private func invalidateParseWorkForEdit() {

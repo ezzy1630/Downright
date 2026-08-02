@@ -75,7 +75,7 @@ final class ImageFragment: DownrightFragment {
             return CGSize(width: contentWidth, height: 64)
         }
         let natural = image.size
-        let viewportCap = max(120, (context?.textView?.enclosingScrollView?.contentSize.height ?? 800) * 0.70)
+        let viewportCap = viewportHeightCap
         let widthScale = min(1, contentWidth / natural.width)
         let heightScale = min(1, viewportCap / natural.height)
         let scale = min(widthScale, heightScale)
@@ -83,19 +83,24 @@ final class ImageFragment: DownrightFragment {
     }
 
     private func loadedImage() -> NSImage? {
-        if let cached = payload.cachedImage, payload.cachedThemeToken == imageToken { return cached }
         guard let url = resolvedURL() else { return nil }
-        let image = NSImage(contentsOf: url)
-        payload.cachedImage = image
-        payload.cachedThemeToken = imageToken
-        payload.cachedSize = image?.size ?? .zero
-        return image
+        return MarkdownFragmentImageCaches.images.image(
+            for: url, maxPixelDimension: targetPixelDimension)
     }
 
-    /// Images do not depend on the theme, so the cache token is a constant —
-    /// but it still has to differ from a real revision so a theme change never
-    /// looks like a cache hit for something that was never loaded.
-    private var imageToken: Int { Int.min + 1 }
+    private var viewportHeightCap: CGFloat {
+        max(120, (context?.textView?.enclosingScrollView?.contentSize.height ?? 800) * 0.70)
+    }
+
+    private var targetPixelDimension: Int {
+        let scale = context?.textView?.window?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2
+        // A hard per-image ceiling prevents one pathological asset from
+        // defeating the cache's total budget before it can be evicted.
+        let points = max(contentWidth, viewportHeightCap)
+        return min(2048, max(1, Int(ceil(points * scale))))
+    }
 
     private func resolvedURL() -> URL? {
         let raw = payload.detail

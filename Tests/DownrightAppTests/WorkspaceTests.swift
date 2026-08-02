@@ -68,6 +68,52 @@ struct WorkspaceTests {
     }
 
     @Test
+    func indexEnforcesTotalByteBudget() async throws {
+        let root = URL(fileURLWithPath: "/workspace")
+        let first = root.appendingPathComponent("first.md")
+        let second = root.appendingPathComponent("second.md")
+        let index = WorkspaceIndex(
+            policy: WorkspaceIndexPolicy(maximumTotalBytes: 10, readConcurrency: 2),
+            enumerator: { _, _ in [first, second] },
+            reader: { url in (url.lastPathComponent, 6) }
+        )
+        let signal = WorkspaceSignal()
+        index.onUpdate = { _ in signal.signal() }
+        index.start(rootURL: root)
+        await signal.wait()
+
+        #expect(index.snapshot.entries.count == 1)
+        #expect(index.snapshot.entries.reduce(0) { $0 + $1.byteCount } <= 10)
+        #expect(index.snapshot.skippedFiles == 1)
+    }
+
+    @Test
+    func siblingUnseenStateUsesContentHash() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-sibling-hash-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let current = root.appendingPathComponent("CURRENT.md")
+        let sibling = root.appendingPathComponent("SIBLING.md")
+        let original = "# Same\n"
+        try Data(original.utf8).write(to: current)
+        try Data(original.utf8).write(to: sibling)
+
+        var state = DocumentStateStore.shared.state(for: sibling)
+        state.lastSeenHash = SnapshotStore.hash(original)
+        DocumentStateStore.shared.save(state, for: sibling)
+
+        let scanner = SiblingScanner(documentURL: current, extraDirectories: [])
+        #expect(scanner.siblings.count == 2)
+        #expect(scanner.siblings.first(where: { $0.url.lastPathComponent == sibling.lastPathComponent })?.hasUnseenChanges == false)
+
+        try Data("# Changed\n".utf8).write(to: sibling)
+        scanner.scan()
+        #expect(scanner.siblings.first(where: { $0.url.lastPathComponent == sibling.lastPathComponent })?.hasUnseenChanges == true)
+    }
+
+    @Test
     func searchReturnsExactFileRangeAndContext() throws {
         let entry = WorkspaceIndexEntry(
             url: URL(fileURLWithPath: "/workspace/readme.md"), relativePath: "readme.md",

@@ -6,9 +6,9 @@ import MarkdownCore
 /// look (§11.2).
 ///
 /// Rendered lazily — the first time the fragment is actually asked to draw,
-/// which is the first time it enters the viewport — and cached on the payload
-/// until `styleSheet.revision` moves.  §10's memory discipline depends on this
-/// laziness holding in the Quick Look extension too.
+/// which is the first time it enters the viewport — and held in a shared,
+/// cost-bounded cache.  §10's memory discipline depends on this laziness and
+/// bounded retention holding in the Quick Look extension too.
 final class MermaidFragment: DownrightFragment {
 
     override var suppressesText: Bool { true }
@@ -51,11 +51,11 @@ final class MermaidFragment: DownrightFragment {
 
     private func renderedImage() -> NSImage? {
         guard let style = styleSheet else { return nil }
-        if let cached = payload.cachedImage, payload.cachedThemeToken == styleToken { return cached }
-        let image = MermaidRendererBridge.image(source: payload.detail, styleSheet: style)
-        payload.cachedImage = image
-        payload.cachedThemeToken = styleToken
-        payload.cachedSize = image?.size ?? .zero
-        return image
+        let key = MermaidFragmentCacheKey(
+            source: payload.detail.trimmingCharacters(in: .whitespacesAndNewlines),
+            styleToken: styleToken)
+        return MarkdownFragmentImageCaches.mermaid.image(for: key, keyCost: key.source.utf8.count) {
+            MermaidRendererBridge.image(source: key.source, styleSheet: style)
+        }
     }
 }

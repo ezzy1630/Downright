@@ -99,6 +99,8 @@ final class DocumentStateStore {
 
     private let fm = FileManager.default
     private var cache: [String: DocumentState] = [:]
+    private var cacheOrder: [String] = []
+    private let maximumCachedStates = 256
     private let lock = NSLock()
 
     private init() { AppPaths.ensure(AppPaths.stateDirectory) }
@@ -108,7 +110,11 @@ final class DocumentStateStore {
     func state(for url: URL) -> DocumentState {
         let key = SnapshotStore.documentKey(for: url)
         lock.lock()
-        if let cached = cache[key] { lock.unlock(); return cached }
+        if let cached = cache[key] {
+            touchCacheKey(key)
+            lock.unlock()
+            return cached
+        }
         lock.unlock()
 
         let fileURL = AppPaths.stateDirectory.appendingPathComponent(key + ".json")
@@ -121,13 +127,17 @@ final class DocumentStateStore {
         }
         state.path = url.path
 
-        lock.lock(); cache[key] = state; lock.unlock()
+        lock.lock()
+        storeInCache(state, forKey: key)
+        lock.unlock()
         return state
     }
 
     func save(_ state: DocumentState, for url: URL) {
         let key = SnapshotStore.documentKey(for: url)
-        lock.lock(); cache[key] = state; lock.unlock()
+        lock.lock()
+        storeInCache(state, forKey: key)
+        lock.unlock()
 
         guard let data = try? JSONEncoder.snapshotEncoder.encode(state) else { return }
         let fileURL = AppPaths.stateDirectory.appendingPathComponent(key + ".json")
@@ -165,6 +175,20 @@ final class DocumentStateStore {
 
     func clearRecents() {
         try? fm.removeItem(at: recentsURL)
+    }
+
+    private func storeInCache(_ state: DocumentState, forKey key: String) {
+        cache[key] = state
+        touchCacheKey(key)
+        while cacheOrder.count > maximumCachedStates {
+            let evicted = cacheOrder.removeFirst()
+            cache.removeValue(forKey: evicted)
+        }
+    }
+
+    private func touchCacheKey(_ key: String) {
+        cacheOrder.removeAll { $0 == key }
+        cacheOrder.append(key)
     }
 }
 

@@ -8,8 +8,9 @@ import MarkdownCore
 /// large next to their prose, and it is one of the differences you notice
 /// immediately.
 ///
-/// The typeset image is cached on the `FragmentPayload` and invalidated on
-/// `styleSheet.revision`, so a theme change re-renders and nothing else does.
+/// The typeset image is held in a shared, cost-bounded cache keyed by source
+/// and resolved style.  Fragments do not retain one image per payload, which
+/// keeps long documents from turning relayout into permanent image memory.
 final class MathFragment: DownrightFragment {
 
     override var suppressesText: Bool { true }
@@ -47,13 +48,14 @@ final class MathFragment: DownrightFragment {
 
     private func renderedImage() -> NSImage? {
         guard let style = styleSheet else { return nil }
-        if let cached = payload.cachedImage, payload.cachedThemeToken == styleToken { return cached }
-        let image = MathRenderer.image(latex: payload.detail, display: true,
-                                       pointSize: style.mathPointSize * 1.25, color: style.text)
-        payload.cachedImage = image
-        payload.cachedThemeToken = styleToken
-        payload.cachedSize = image?.size ?? .zero
-        return image
+        let pointSize = style.mathPointSize * 1.25
+        let key = MathFragmentCacheKey(
+            source: payload.detail.trimmingCharacters(in: .whitespacesAndNewlines),
+            styleToken: styleToken, pointSize: pointSize)
+        return MarkdownFragmentImageCaches.math.image(for: key, keyCost: key.source.utf8.count) {
+            MathRenderer.image(latex: key.source, display: true,
+                               pointSize: pointSize, color: style.text)
+        }
     }
 }
 

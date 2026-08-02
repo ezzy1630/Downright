@@ -64,6 +64,13 @@ actor MarkdownParseCoordinator {
         wake = nil
     }
 
+    /// Drops a snapshot that has not started running.  A synchronous reparse
+    /// has already produced a newer tree, so keeping this request would only
+    /// spend parse time on a result that the document revision gate rejects.
+    func discardPending() {
+        pending = nil
+    }
+
     func suspend() {
         isSuspended = true
         pending = nil

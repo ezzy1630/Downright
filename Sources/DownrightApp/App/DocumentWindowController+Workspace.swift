@@ -95,6 +95,18 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         index.start(rootURL: index.snapshot.rootURL)
     }
 
+    func resetWorkspaceState(for documentURL: URL) {
+        workspaceSearch?.cancel()
+        workspaceGraph = .empty
+        guard let index = workspaceIndex else { return }
+
+        workspaceSidebar?.entries = []
+        workspaceSidebar?.searchResults = []
+        workspaceSidebar?.backlinks = []
+        workspaceSidebar?.selectedFileID = documentURL.standardizedFileURL.path
+        index.reroot(to: documentURL.deletingLastPathComponent())
+    }
+
     func workspaceSidebar(_ view: WorkspaceSidebarView, didSearch query: WorkspaceSearchQuery) {
         guard let index = workspaceIndex else { return }
         view.selectedTab = .search

@@ -91,12 +91,16 @@ public final class MarkdownTextView: NSTextView {
 
     public var configuration = MarkdownRenderConfiguration() {
         didSet {
+            let anchor = topVisibleOffset
+            let selection = sourceSelectedRanges
             engine.policy = effectivePolicy
             engine.codeCollapseLineCount = configuration.codeCollapseThreshold
             applyTypographicSubstitution()
             rebuildEverything()
             applyInvisibles()
-            requestContentResize(.viewport)
+            requestContentResize(.viewport, anchor: anchor)
+            setSourceSelectedRanges(selection)
+            scroll(toOffset: anchor, position: .top, animated: false)
         }
     }
 
@@ -537,6 +541,7 @@ public final class MarkdownTextView: NSTextView {
         if let focus = sourceFocus.range {
             hidden.removeAll { NSIntersectionRange($0, focus).length > 0 }
         }
+
         baseHiddenRanges = hidden
         baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
     }
@@ -677,7 +682,10 @@ public final class MarkdownTextView: NSTextView {
             // source spaces coincide there and AppKit's marked-text
             // bookkeeping is exactly right.
             hidden = hidden.filter { $0.upperBound <= composing.location || $0.location >= composing.upperBound }
-            displayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: [])
+            let entries = baseDisplayMap.substitutions(inParagraphContaining: composing.location).filter { entry in
+                !baseHiddenRanges.contains { hiddenRange in hiddenRange == entry.sourceRange }
+            }
+            displayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: entries)
             requiresFullHiddenRefresh = caret == nil
         } else if effectivePolicy.revealsAtCaret {
             let revealed = MarkerPolicy.revealedMarkerRanges(
@@ -712,7 +720,10 @@ public final class MarkdownTextView: NSTextView {
                 }
             } else if !revealed.isEmpty {
                 hidden = subtract(revealed, from: hidden)
-                displayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
+                let revealedMapEntries = baseDisplayMap.substitutions.filter { entry in
+                    !revealed.contains { $0 == entry.sourceRange }
+                }
+                displayMap = DisplayMap(paragraphs: paragraphIndex, substitutions: revealedMapEntries)
                 // A selection can span any number of paragraphs. The map was
                 // rebuilt for the whole document, so its mirrored attributes
                 // must use the same scope. This path is gesture-driven and is

@@ -32,6 +32,7 @@ final class FileWatcher {
     }
 
     private(set) var url: URL
+    private let watchesDirectory: Bool
     private let handler: (Event) -> Void
     private let queue = DispatchQueue(label: "com.ezzyrappeport.downright.filewatcher", qos: .utility)
 
@@ -49,8 +50,9 @@ final class FileWatcher {
     private let coalesceInterval: TimeInterval = 0.12
     private let pollInterval: TimeInterval = 1.5
 
-    init(url: URL, handler: @escaping (Event) -> Void) {
+    init(url: URL, watchesDirectory: Bool = false, handler: @escaping (Event) -> Void) {
         self.url = url.resolvingSymlinksInPath()
+        self.watchesDirectory = watchesDirectory
         self.handler = handler
         self.lastSnapshot = FileWatcher.snapshot(of: self.url)
         start()
@@ -80,11 +82,7 @@ final class FileWatcher {
     /// Point the watcher at a different file (Save As, or following a rename).
     func retarget(to newURL: URL) {
         let resolved = newURL.resolvingSymlinksInPath()
-        guard resolved.deletingLastPathComponent() != url.deletingLastPathComponent() else {
-            url = resolved
-            lastSnapshot = FileWatcher.snapshot(of: resolved)
-            return
-        }
+        guard resolved != url else { return }
         stop()
         url = resolved
         lastSnapshot = FileWatcher.snapshot(of: resolved)
@@ -112,7 +110,7 @@ final class FileWatcher {
     // MARK: - FSEvents
 
     private func startStream() {
-        let directory = url.deletingLastPathComponent().path
+        let directory = (watchesDirectory ? url : url.deletingLastPathComponent()).path
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(self).toOpaque(),
@@ -154,17 +152,31 @@ final class FileWatcher {
     }
 
     private func handleStreamEvents(paths: [String]) {
+        if watchesDirectory {
+            let root = url.path.hasSuffix("/") ? url.path : url.path + "/"
+            guard paths.contains(where: { $0 == url.path || $0.hasPrefix(root) }) else { return }
+            scheduleDirectoryChange()
+            return
+        }
+
         // Match on filename, not on identity: after an atomic write the path
         // is the same file to the user and a different inode to the kernel.
-        let target = url.lastPathComponent
+        let target = url.standardizedFileURL.path
         let matches = paths.contains { path in
-            let name = (path as NSString).lastPathComponent
-            // A temp file the writer is about to rename into place counts too —
-            // the rename itself sometimes arrives coalesced with the create.
-            return name == target || name.hasPrefix(target) || target.hasPrefix(name)
+            URL(fileURLWithPath: path).standardizedFileURL.path == target
         }
         guard matches else { return }
         scheduleCheck()
+    }
+
+    private func scheduleDirectoryChange() {
+        coalesceWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            DispatchQueue.main.async { [handler] in handler(.changed) }
+        }
+        coalesceWorkItem = item
+        queue.asyncAfter(deadline: .now() + coalesceInterval, execute: item)
     }
 
     // MARK: - Polling safety net

@@ -36,12 +36,16 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? text.utf8.count
 
         await MainActor.run {
+            resetPreview()
             if case .prefix = QuickLookPolicy.presentation(forByteCount: byteCount) {
                 presentTruncated(text, url: url)
             } else {
                 present(text, url: url)
             }
             startMemoryWatch()
+            if PreviewViewController.residentBytes() > memoryCeiling {
+                fallBackToPlainText()
+            }
         }
     }
 
@@ -92,6 +96,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         memoryTimer = nil
         container?.removeFromSuperview()
         container = nil
+        view.subviews.filter { $0 !== fallbackTextView }.forEach { $0.removeFromSuperview() }
 
         let textView = NSTextView()
         textView.string = storage.string
@@ -104,6 +109,22 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         scroll.hasVerticalScroller = true
         install(scroll)
         fallbackTextView = textView
+    }
+
+    /// Quick Look reuses one controller for multiple files.  Release every
+    /// prior surface and its backing render graph before installing the next
+    /// document; replacing the text storage alone leaves old views, timers,
+    /// constraints, and layout fragments reachable.
+    @MainActor
+    private func resetPreview() {
+        memoryTimer?.invalidate()
+        memoryTimer = nil
+        view.subviews.forEach { $0.removeFromSuperview() }
+        container = nil
+        fallbackTextView = nil
+        if storage.length > 0 {
+            storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: "")
+        }
     }
 
     @MainActor
@@ -161,9 +182,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     // MARK: - Memory discipline (§10, non-negotiable)
 
     private func startMemoryWatch() {
+        memoryTimer?.invalidate()
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let self else { return }
-            guard QuickLookPolicy.shouldFallBack(residentBytes: PreviewViewController.residentBytes()) else { return }
+            guard PreviewViewController.residentBytes() > self.memoryCeiling else { return }
             MainActor.assumeIsolated { self.fallBackToPlainText() }
         }
         RunLoop.main.add(timer, forMode: .common)

@@ -63,6 +63,8 @@ final class SnapshotStore {
     /// The lock owns this cache.  A hash is reserved before the disk write is
     /// queued, so a second record call cannot race the first index update.
     private var stateByDocument: [String: DocumentState] = [:]
+    private var stateOrder: [String] = []
+    private let maximumCachedDocuments = 512
     private var lastPrune: Date = .distantPast
 
     private init() {
@@ -92,11 +94,11 @@ final class SnapshotStore {
             state.isLoaded = true
         }
         guard state.newestHash != hash else {
-            stateByDocument[documentKey] = state
+            storeState(state, forKey: documentKey)
             return nil
         }
         state.newestHash = hash
-        stateByDocument[documentKey] = state
+        storeState(state, forKey: documentKey)
 
         let data = Data(text.utf8)
         let record = VersionRecord(hash: hash, date: Date(), byteCount: data.count, kind: kind)
@@ -158,14 +160,27 @@ final class SnapshotStore {
         defer { pendingLock.unlock() }
         // Keep a loaded empty state until the queued deletion runs.  A new
         // record immediately after forget must not read the old index again.
-        stateByDocument[documentKey] = DocumentState(isLoaded: true)
+        storeState(DocumentState(isLoaded: true), forKey: documentKey)
         queue.async { [self] in
             try? fm.removeItem(at: indexURL(for: url))
             pendingLock.lock()
             defer { pendingLock.unlock() }
             if stateByDocument[documentKey]?.newestHash == nil {
                 stateByDocument.removeValue(forKey: documentKey)
+                stateOrder.removeAll { $0 == documentKey }
             }
+        }
+    }
+
+    /// This cache only coalesces writes. Evicting an old entry is safe because
+    /// the next write reloads its compact index from disk.
+    private func storeState(_ state: DocumentState, forKey key: String) {
+        stateByDocument[key] = state
+        stateOrder.removeAll { $0 == key }
+        stateOrder.append(key)
+        while stateOrder.count > maximumCachedDocuments {
+            let evicted = stateOrder.removeFirst()
+            stateByDocument.removeValue(forKey: evicted)
         }
     }
 
@@ -283,7 +298,11 @@ final class SnapshotStore {
     // MARK: - Hashing
 
     static func hash(_ text: String) -> String {
-        let digest = SHA256.hash(data: Data(text.utf8))
+        hash(Data(text.utf8))
+    }
+
+    static func hash(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 

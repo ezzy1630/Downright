@@ -1,5 +1,5 @@
 {
-  "originHash" : "2575f98be733320b042f96f9a7b43c9714f57b9e1ab7d9895aaa2b4a49a0d5e0",
+  "originHash" : "3664f9f0d6a6d2b14bd196941230ab1d48841e38daaaacd5225d6e51432b6f14",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -33,7 +33,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-markdown.git",
       "state" : {
-        "branch" : "main",
         "revision" : "27b7fc1a19068bcea3d2072db0ce86360d1400ed"
       }
     },

@@ -13,7 +13,6 @@ import AppKit
 final class ParagraphSubstitution: NSObject, NSTextContentStorageDelegate {
     /// Replaced wholesale whenever the caret moves or the mode changes.
     var displayMap: DisplayMap = .identity
-
     func textContentStorage(
         _ textContentStorage: NSTextContentStorage,
         textParagraphWith range: NSRange

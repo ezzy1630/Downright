@@ -254,29 +254,76 @@ public enum RangeSet {
 
 /// One source range replaced in the display string.
 ///
-/// `displayLength == 0` is a hidden marker (§6.1).  A positive length is an
-/// inline object — today only inline math, which becomes a single attachment
-/// character carrying the typeset image (§11.3).  Both are the same operation
-/// on the same map, which is why they cannot disagree about caret arithmetic.
+/// A zero display length is the ordinary hidden-marker representation (§6.1).
+/// A positive length is an inline object — today inline math, which becomes a
+/// single attachment character carrying the typeset image (§11.3), or a
+/// same-length hard-wrap/hidden replacement used by grouped TextKit elements.
+/// All are the same operation on the same map, which is why they cannot
+/// disagree about caret arithmetic.
 public struct DisplaySubstitution {
     public var sourceRange: NSRange
     public var displayLength: Int
     /// Attributed replacement; `nil` means "omit", and its length must equal
     /// `displayLength`.
     public var replacement: NSAttributedString?
+    /// True when the source is semantically hidden, even if a grouped TextKit
+    /// element has to carry a same-length replacement for coordinate safety.
+    public var isHidden: Bool
+    /// True only for a soft Markdown break replaced inside a grouped element.
+    /// Physical paragraph fallback must retain that element's separator.
+    public var isHardWrapReflow: Bool
+    /// True when every display position in the replacement has the same
+    /// source position. This is required for same-length zero-width content;
+    /// inline objects still intentionally collapse to their leading edge.
+    public var preservesSourceOffsets: Bool
 
-    public init(sourceRange: NSRange, displayLength: Int, replacement: NSAttributedString? = nil) {
+    public init(
+        sourceRange: NSRange,
+        displayLength: Int,
+        replacement: NSAttributedString? = nil,
+        isHidden: Bool = false,
+        isHardWrapReflow: Bool = false,
+        preservesSourceOffsets: Bool = false
+    ) {
         self.sourceRange = sourceRange
         self.displayLength = displayLength
         self.replacement = replacement
+        self.isHidden = isHidden
+        self.isHardWrapReflow = isHardWrapReflow
+        self.preservesSourceOffsets = preservesSourceOffsets
     }
 
     public static func hide(_ range: NSRange) -> DisplaySubstitution {
-        DisplaySubstitution(sourceRange: range, displayLength: 0, replacement: nil)
+        DisplaySubstitution(sourceRange: range, displayLength: 0, replacement: nil, isHidden: true)
     }
 
     public static func replace(_ range: NSRange, with string: NSAttributedString) -> DisplaySubstitution {
         DisplaySubstitution(sourceRange: range, displayLength: string.length, replacement: string)
+    }
+
+    /// Same-length hidden content used by grouped hard-wrap elements. It
+    /// keeps the backing range and the attributed string in lockstep while
+    /// retaining the semantic hidden-range bookkeeping used by editing and
+    /// accessibility.
+    public static func replaceHidden(_ range: NSRange, with string: NSAttributedString) -> DisplaySubstitution {
+        DisplaySubstitution(
+            sourceRange: range,
+            displayLength: string.length,
+            replacement: string,
+            isHidden: true,
+            preservesSourceOffsets: true
+        )
+    }
+
+    /// Same-length display-only space used for an intra-block soft break.
+    public static func replaceHardWrap(_ range: NSRange, with string: NSAttributedString) -> DisplaySubstitution {
+        DisplaySubstitution(
+            sourceRange: range,
+            displayLength: string.length,
+            replacement: string,
+            isHardWrapReflow: true,
+            preservesSourceOffsets: true
+        )
     }
 }
 
@@ -324,7 +371,11 @@ public struct DisplayMap {
 
         for sub in ordered {
             let range = sub.sourceRange
-            guard range.length > 0, range.location >= lastEnd, range.upperBound <= paragraphs.length else { continue }
+            guard range.length > 0,
+                  range.location >= lastEnd,
+                  range.upperBound <= paragraphs.length,
+                  sub.displayLength >= 0,
+                  (sub.replacement?.length ?? 0) == sub.displayLength else { continue }
             while paragraph + 1 < paragraphs.starts.count, paragraphs.starts[paragraph + 1] <= range.location {
                 paragraph += 1
             }
@@ -409,8 +460,35 @@ public struct DisplayMap {
     public func hiddenRanges(inParagraphContaining offset: Int) -> [NSRange] {
         let p = paragraphs.index(containing: Swift.max(0, Swift.min(offset, paragraphs.length)))
         return entries(inParagraphAt: p)
-            .filter { $0.displayLength == 0 }
+            .filter(\.isHidden)
             .map(\.sourceRange)
+    }
+
+    /// All substitutions in one physical paragraph. Used when a transient
+    /// composition/reveal must alter hidden markers without dropping the
+    /// same-length hard-wrap replacements that keep a grouped element safe.
+    public func substitutions(inParagraphContaining offset: Int) -> [DisplaySubstitution] {
+        let p = paragraphs.index(containing: Swift.max(0, Swift.min(offset, paragraphs.length)))
+        return Array(entries(inParagraphAt: p))
+    }
+
+    /// Substitutions intersecting a source range, preserving map order. This
+    /// is used by grouped TextKit elements, which can span several physical
+    /// source paragraphs while still speaking source coordinates.
+    public func substitutions(in sourceRange: NSRange) -> [DisplaySubstitution] {
+        let lower = Swift.max(0, Swift.min(sourceRange.location, paragraphs.length))
+        let upper = Swift.max(lower, Swift.min(sourceRange.upperBound, paragraphs.length))
+        guard upper > lower, !base.isEmpty || !overrideEntries.isEmpty else { return [] }
+
+        let first = paragraphs.index(containing: lower)
+        let last = paragraphs.index(containing: Swift.max(lower, upper - 1))
+        var result: [DisplaySubstitution] = []
+        for paragraph in first...last {
+            result.append(contentsOf: entries(inParagraphAt: paragraph).filter {
+                $0.sourceRange.location < upper && $0.sourceRange.upperBound > lower
+            })
+        }
+        return result
     }
 
     /// Ascending by location.  Already-ordered input — which is what every
@@ -444,7 +522,7 @@ public struct DisplayMap {
 
     /// Ranges omitted entirely — what `drHidden` marks.
     public var hiddenRanges: [NSRange] {
-        substitutions.filter { $0.displayLength == 0 }.map(\.sourceRange)
+        substitutions.filter(\.isHidden).map(\.sourceRange)
     }
 
     /// The entries in force for a paragraph: its override if it has one, its
@@ -474,6 +552,9 @@ public struct DisplayMap {
                 display += sub.displayLength
                 cursor = sub.sourceRange.upperBound
             } else {
+                if sub.preservesSourceOffsets {
+                    return paragraphs.starts[p] + display + (s - sub.sourceRange.location)
+                }
                 return paragraphs.starts[p] + display
             }
         }
@@ -520,7 +601,11 @@ public struct DisplayMap {
             let visible = sub.sourceRange.location - cursor
             if remaining < visible { return cursor + remaining }
             remaining -= visible
-            if remaining < sub.displayLength { return sub.sourceRange.location }
+            if remaining < sub.displayLength {
+                return sub.preservesSourceOffsets
+                    ? sub.sourceRange.location + remaining
+                    : sub.sourceRange.location
+            }
             remaining -= sub.displayLength
             cursor = sub.sourceRange.upperBound
         }
@@ -553,7 +638,11 @@ public struct DisplayMap {
             // `<=` rather than `<`: stop *before* the run instead of after it.
             if remaining <= visible { return cursor + remaining }
             remaining -= visible
-            if remaining <= sub.displayLength { return sub.sourceRange.upperBound }
+            if remaining <= sub.displayLength {
+                return sub.preservesSourceOffsets
+                    ? sub.sourceRange.location + remaining
+                    : sub.sourceRange.upperBound
+            }
             remaining -= sub.displayLength
             cursor = sub.sourceRange.upperBound
         }
@@ -621,10 +710,13 @@ public struct DisplayMap {
     /// paragraph is untouched and TextKit should use the storage as-is.
     public func displayString(
         forParagraphAt paragraphRange: NSRange,
-        in storage: NSAttributedString
+        in storage: NSAttributedString,
+        includingHardWrapReflow: Bool = true
     ) -> NSAttributedString? {
         let p = paragraphs.index(containing: paragraphRange.location)
-        let local = entries(inParagraphAt: p)
+        let local = entries(inParagraphAt: p).filter {
+            includingHardWrapReflow || !$0.isHardWrapReflow
+        }
         guard !local.isEmpty else { return nil }
 
         let out = NSMutableAttributedString()
@@ -642,6 +734,41 @@ public struct DisplayMap {
         if cursor < paragraphRange.upperBound {
             out.append(storage.attributedSubstring(
                 from: NSRange(location: cursor, length: paragraphRange.upperBound - cursor)))
+        }
+        return out
+    }
+
+    /// The grouped-element counterpart to `displayString(forParagraphAt:)`.
+    /// Unlike the paragraph-local API, this can span multiple source newline
+    /// runs without changing the source/display coordinate contract.
+    public func displayString(
+        forSourceRange sourceRange: NSRange,
+        in storage: NSAttributedString
+    ) -> NSAttributedString? {
+        let local = substitutions(in: sourceRange)
+        guard !local.isEmpty else { return nil }
+
+        let out = NSMutableAttributedString()
+        var cursor = sourceRange.location
+        for substitution in local {
+            guard substitution.sourceRange.location >= cursor,
+                  substitution.sourceRange.upperBound <= sourceRange.upperBound else { continue }
+            if substitution.sourceRange.location > cursor {
+                out.append(storage.attributedSubstring(from: NSRange(
+                    location: cursor,
+                    length: substitution.sourceRange.location - cursor
+                )))
+            }
+            if let replacement = substitution.replacement {
+                out.append(replacement)
+            }
+            cursor = substitution.sourceRange.upperBound
+        }
+        if cursor < sourceRange.upperBound {
+            out.append(storage.attributedSubstring(from: NSRange(
+                location: cursor,
+                length: sourceRange.upperBound - cursor
+            )))
         }
         return out
     }

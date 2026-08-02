@@ -63,7 +63,12 @@ let package = Package(
         .executable(name: "drbench", targets: ["drbench"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-markdown.git", branch: "main"),
+        // Keep dependency resolution reproducible. Update this revision
+        // deliberately alongside Package.resolved after compatibility checks.
+        .package(
+            url: "https://github.com/apple/swift-markdown.git",
+            revision: "27b7fc1a19068bcea3d2072db0ce86360d1400ed"
+        ),
         .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.0"),
         .package(url: "https://github.com/lukilabs/beautiful-mermaid-swift.git", from: "1.0.0"),
     ],

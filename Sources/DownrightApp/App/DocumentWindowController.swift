@@ -486,17 +486,17 @@ final class DocumentWindowController: NSWindowController {
     func refreshDerivedUI() {
         let parsed = markdownDocument.parsed
         let source = containerTextView
-        outlinePanel?.headings = parsed.headings
-        outlinePanel?.sectionMetrics = Metrics.sectionMetrics(parsed)
-        outlinePanel?.foldedIndices = Set(parsed.headings.indices.filter {
+        let sectionMetrics = Metrics.sectionMetrics(parsed)
+        let foldedIndices = Set(parsed.headings.indices.filter {
             source.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
         })
+        outlinePanel?.headings = parsed.headings
+        outlinePanel?.sectionMetrics = sectionMetrics
+        outlinePanel?.foldedIndices = foldedIndices
         outlinePanel?.reload()
         navigationPanel?.headings = parsed.headings
-        navigationPanel?.sectionMetrics = Metrics.sectionMetrics(parsed)
-        navigationPanel?.foldedIndices = Set(parsed.headings.indices.filter {
-            source.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
-        })
+        navigationPanel?.sectionMetrics = sectionMetrics
+        navigationPanel?.foldedIndices = foldedIndices
         navigationPanel?.reload()
 
         taskPanel?.tasks = parsed.tasks
@@ -508,10 +508,10 @@ final class DocumentWindowController: NSWindowController {
         refreshDiagnosticsPanels()
         refreshVisualDebuggerIfVisible()
         refreshReviewPanelIfVisible()
-        progressRing.progress = (
-            done: parsed.tasks.filter(\.isChecked).count,
-            total: parsed.tasks.count
-        )
+        let completedTasks = parsed.tasks.reduce(into: 0) { count, task in
+            if task.isChecked { count += 1 }
+        }
+        progressRing.progress = (done: completedTasks, total: parsed.tasks.count)
         refreshToolbarSelectionState()
 
         pathResolver?.invalidate()
