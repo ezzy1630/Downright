@@ -606,6 +606,9 @@ final class DocumentWindowController: NSWindowController {
         panel.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
             primaryContainer.textView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
         })
+        panel.currentHeadingIndex = markdownDocument.parsed.headings.lastIndex {
+            $0.range.location <= containerTextView.topVisibleOffset
+        }
         navigationPanel = panel
         let child = NavigationPanelWindow(
             contentRect: .zero,
@@ -620,7 +623,7 @@ final class DocumentWindowController: NSWindowController {
         child.hidesOnDeactivate = false
         child.onEscape = { [weak self] in self?.closeNavigationOverlay() }
         navigationWindow = child
-        let targetFrame = navigationOverlayFrame(in: window, width: panel.preferredWidth)
+        let targetFrame = navigationOverlayFrame(in: window)
         let startFrame = activeStyleSheet.reduceMotion ? targetFrame : targetFrame.offsetBy(dx: -6, dy: 0)
         child.setFrame(startFrame, display: false)
         child.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
@@ -684,26 +687,19 @@ final class DocumentWindowController: NSWindowController {
         markdownDocument.state.sidebarVisible = false
     }
 
-    private func navigationOverlayFrame(in window: NSWindow, width: CGFloat) -> NSRect {
+    private func navigationOverlayFrame(in window: NSWindow) -> NSRect {
         let local = window.contentView?.convert(window.contentView?.bounds ?? .zero, to: nil) ?? .zero
         let screenFrame = window.convertToScreen(local)
-        let height = min(560, max(220, screenFrame.height * 0.7))
-        var frame = NSRect(
-            x: screenFrame.minX + 12,
-            y: screenFrame.maxY - height - 12,
-            width: width,
-            height: height
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? screenFrame
+        return NavigationPanelGeometry.frame(
+            contentScreenFrame: screenFrame,
+            visibleScreenFrame: visible
         )
-        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
-            frame.origin.x = min(max(visible.minX + 8, frame.minX), visible.maxX - frame.width - 8)
-            frame.origin.y = min(max(visible.minY + 8, frame.minY), visible.maxY - frame.height - 8)
-        }
-        return frame
     }
 
     private func repositionNavigationOverlay() {
-        guard let window, let child = navigationWindow, let panel = navigationPanel else { return }
-        child.setFrame(navigationOverlayFrame(in: window, width: panel.preferredWidth), display: true)
+        guard let window, let child = navigationWindow, navigationPanel != nil else { return }
+        child.setFrame(navigationOverlayFrame(in: window), display: true)
     }
 
     func installTrailing(_ view: NSView) {
@@ -924,6 +920,14 @@ extension DocumentWindowController: NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        repositionNavigationOverlay()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        repositionNavigationOverlay()
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
         repositionNavigationOverlay()
     }
 

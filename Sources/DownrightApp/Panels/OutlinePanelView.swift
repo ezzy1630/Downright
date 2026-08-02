@@ -76,6 +76,7 @@ final class OutlinePanelView: NSView, PanelSurface {
     /// Heading indices currently listed — a folded section hides its
     /// descendants here exactly as it hides them in the document.
     private var visibleRows: [Int] = []
+    var visibleRowCountForTesting: Int { visibleRows.count }
 
     // MARK: - Init
 
@@ -290,12 +291,12 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
 
     private func draggedHeading(from info: NSDraggingInfo) -> Int? {
         guard let raw = info.draggingPasteboard.string(forType: .downrightHeading),
-              let index = Int(raw), index < headings.count else { return nil }
+              let index = Int(raw), headings.indices.contains(index) else { return nil }
         return index
     }
 
     private func headingIndex(forDropRow row: Int) -> Int {
-        row < visibleRows.count ? visibleRows[row] : headings.count
+        visibleRows.indices.contains(row) ? visibleRows[row] : headings.count
     }
 
     /// A section cannot be moved into itself, and moving it back where it
@@ -303,7 +304,7 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
     /// cursor says no before the drop rather than the document silently not
     /// changing after it.
     private func isLegalMove(source: Int, target: Int) -> Bool {
-        guard source < headings.count else { return false }
+        guard headings.indices.contains(source) else { return false }
         if target == source { return false }
         return !(target > source && target <= sectionEnd(of: source))
     }

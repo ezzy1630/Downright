@@ -45,6 +45,7 @@ final class SiblingSidebarView: NSView, PanelSurface {
     }
 
     private var rows: [Row] = []
+    var visibleFileCountForTesting: Int { ordered.count }
     /// `siblings` regrouped and re-sorted for display.
     private var ordered: [SiblingScanner.Sibling] = []
 
@@ -119,9 +120,6 @@ final class SiblingSidebarView: NSView, PanelSurface {
             let key = group ?? ownDirectoryKey
             guard var items = buckets[key] else { continue }
             items.sort { $0.modified > $1.modified }
-            if groupOrder.count > 1 || group != nil {
-                rows.append(.group(group ?? "This folder"))
-            }
             let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
                 .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             if !query.isEmpty {
@@ -132,6 +130,9 @@ final class SiblingSidebarView: NSView, PanelSurface {
                 }
             }
             guard !items.isEmpty else { continue }
+            if groupOrder.count > 1 || group != nil {
+                rows.append(.group(group ?? "This folder"))
+            }
             for item in items {
                 rows.append(.sibling(ordered.count))
                 ordered.append(item)

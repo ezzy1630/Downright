@@ -128,6 +128,7 @@ struct WorkspaceTests {
         navigator.headings = MarkdownParser.parse("# Intro\n\n## Details\n").headings
         navigator.filterText = "details"
         #expect(navigator.headings.count == 2, "source headings stay intact while the Contents view filters")
+        #expect(navigator.visibleHeadingCountForTesting == 1)
 
         let file = SiblingScanner.Sibling(
             url: URL(fileURLWithPath: "/workspace/notes.md"),
@@ -136,6 +137,23 @@ struct WorkspaceTests {
         navigator.siblings = [file]
         navigator.filterText = "missing"
         #expect(navigator.siblings.count == 1, "source files stay intact while the Files view filters")
+        #expect(navigator.visibleFileCountForTesting == 0)
+    }
+
+    @Test
+    func navigatorGeometryStaysInsetAndOnScreen() {
+        let content = NSRect(x: 980, y: 120, width: 500, height: 700)
+        let visible = NSRect(x: 1000, y: 100, width: 420, height: 760)
+        let frame = NavigationPanelGeometry.frame(
+            contentScreenFrame: content,
+            visibleScreenFrame: visible
+        )
+        #expect(frame.width == 312)
+        #expect(frame.height <= 560)
+        #expect(frame.minX >= visible.minX + 12)
+        #expect(frame.maxX <= visible.maxX - 12)
+        #expect(frame.minY >= visible.minY + 12)
+        #expect(frame.maxY <= visible.maxY - 12)
     }
 }
 

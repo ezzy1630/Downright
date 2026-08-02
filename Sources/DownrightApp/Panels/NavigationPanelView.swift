@@ -27,7 +27,7 @@ final class NavigationPanelView: NSView, PanelSurface {
         }
     }
 
-    var preferredWidth: CGFloat { 312 }
+    var preferredWidth: CGFloat { NavigationPanelGeometry.width }
     var headings: [HeadingNode] { get { contents.headings } set { contents.headings = newValue } }
     var sectionMetrics: [ReadingMetrics] { get { contents.sectionMetrics } set { contents.sectionMetrics = newValue } }
     var foldedIndices: Set<Int> { get { contents.foldedIndices } set { contents.foldedIndices = newValue } }
@@ -41,6 +41,8 @@ final class NavigationPanelView: NSView, PanelSurface {
             if searchField.stringValue != newValue { searchField.stringValue = newValue }
         }
     }
+    var visibleHeadingCountForTesting: Int { contents.visibleRowCountForTesting }
+    var visibleFileCountForTesting: Int { files.visibleFileCountForTesting }
 
     private let backdrop: PanelBackdrop
     private let searchField = NSSearchField()
@@ -209,5 +211,39 @@ final class NavigationPanelWindow: NSPanel {
             return
         }
         super.keyDown(with: event)
+    }
+}
+
+enum NavigationPanelGeometry {
+    static let width: CGFloat = 312
+    static let edgeInset: CGFloat = 12
+    static let maximumHeight: CGFloat = 560
+
+    static func frame(contentScreenFrame: NSRect, visibleScreenFrame: NSRect) -> NSRect {
+        let availableWidth = max(0, visibleScreenFrame.width - edgeInset * 2)
+        let panelWidth = min(width, availableWidth)
+        let availableHeight = max(
+            0,
+            min(contentScreenFrame.height, visibleScreenFrame.height) - edgeInset * 2
+        )
+        let panelHeight = min(
+            maximumHeight,
+            max(0, min(contentScreenFrame.height * 0.7, availableHeight))
+        )
+        var frame = NSRect(
+            x: contentScreenFrame.minX + edgeInset,
+            y: contentScreenFrame.maxY - panelHeight - edgeInset,
+            width: panelWidth,
+            height: panelHeight
+        )
+        frame.origin.x = min(
+            max(visibleScreenFrame.minX + edgeInset, frame.minX),
+            visibleScreenFrame.maxX - frame.width - edgeInset
+        )
+        frame.origin.y = min(
+            max(visibleScreenFrame.minY + edgeInset, frame.minY),
+            visibleScreenFrame.maxY - frame.height - edgeInset
+        )
+        return frame
     }
 }
