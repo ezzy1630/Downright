@@ -96,6 +96,7 @@ enum MainMenu {
         case .edit:
             return [
                 [.copyAsMarkdown, .copyAsRichText, .copyAsPlainText, .copySection, .copySectionLink],
+                [.speakDocument, .stopSpeaking],
                 [.find, .findNext, .findPrevious, .useSelectionForFind, .findReplace, .findInSiblings],
                 [.addCursorAbove, .addCursorBelow, .selectNextOccurrence, .splitSelectionIntoLines],
             ]
@@ -111,6 +112,9 @@ enum MainMenu {
                 [.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5],
                 [.increaseTextSize, .decreaseTextSize, .resetTextSize],
                 [.outlinePanel, .taskPanel, .toggleSidebar, .versionTimeline],
+                [.commandPalette, .documentLens, .readerProfiles],
+                [.documentHealth, .renderTargets, .visualDebugger, .reviewPanel],
+                [.workspace, .localAI],
                 [.focusMode, .typewriterScrolling, .reloadTheme],
             ]
         case .navigate:

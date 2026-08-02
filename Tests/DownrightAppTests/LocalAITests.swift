@@ -29,11 +29,15 @@ struct LocalAITests {
         #expect(LocalAIEditValidator.edit(for: preview, in: "new text") == nil)
     }
 
-    @Test func appleAdapterFailsClosedWithoutNetwork() async {
+    @Test func appleAdapterAvailabilityFailsClosed() async {
         let provider = AppleOnDeviceAIProvider()
+        guard provider.availability != .available else {
+            #expect(provider.availability == .available)
+            return
+        }
         do {
             _ = try await provider.run(LocalAIRequest(task: .summarize, source: "Text"))
-            Issue.record("Apple adapter must not claim a result without a local model")
+            Issue.record("Unavailable Apple adapter must fail closed")
         } catch let error as LocalAIError {
             guard case .unavailable = error else {
                 Issue.record("expected unavailable local adapter")

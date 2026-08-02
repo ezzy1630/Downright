@@ -45,6 +45,8 @@ extension DocumentWindowController: CommandResponder {
         case .renderTargets: toggleRenderTargetsPanel()
         case .visualDebugger: toggleVisualDebuggerPanel()
         case .reviewPanel: showReviewPanel()
+        case .workspace: toggleWorkspaceSidebar()
+        case .localAI: showLocalAIPanel()
 
         // MARK: Navigation
         case .nextHeading: jumpHeading(forward: true)
@@ -136,6 +138,8 @@ extension DocumentWindowController: CommandResponder {
         case .increaseTextSize: adjustTextSize(by: 1)
         case .decreaseTextSize: adjustTextSize(by: -1)
         case .resetTextSize: Preferences.shared.update { $0.textSizeAdjustment = 0 }
+        case .speakDocument: speakSelectionOrDocument()
+        case .stopSpeaking: stopSpeaking()
 
         // MARK: Application-level
         case .newDocument, .open, .preferences, .showKeybindings, .reloadTheme,

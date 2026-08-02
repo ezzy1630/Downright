@@ -441,8 +441,24 @@ extension MarkdownTextView {
     static let privateAttributeKeys: [NSAttributedString.Key] = [
         .drHidden, .drMarker, .drFragment, .drBlock, .drHeading, .drLink, .drPathToken,
         .drPathExists, .drCheckbox, .drChange, .drReference, .drElided, .drGutterMarker,
-        .drSearchHit, .drCurrentSearchHit,
+        .drSearchHit, .drCurrentSearchHit, .drSpeechHighlight,
     ]
+
+    /// Text spoken by the native speech service. It uses the same substitutions
+    /// as rich-text copy, so hidden Markdown markers are not read aloud.
+    public func renderedStringForSpeech(sourceRange: NSRange) -> String {
+        attributedStringForRichTextCopy(range: sourceRange).string
+    }
+
+    /// Convert a range reported by `NSSpeechSynthesizer` back to source space.
+    public func sourceRangeForSpeechRange(_ renderedRange: NSRange, within sourceRange: NSRange) -> NSRange? {
+        guard renderedRange.location >= 0, renderedRange.length >= 0 else { return nil }
+        let start = currentDisplayMap.textKitOffset(forSource: sourceRange.location)
+        let textKitRange = NSRange(location: start + renderedRange.location, length: renderedRange.length)
+        let mapped = currentDisplayMap.sourceRange(forTextKit: textKitRange)
+        guard mapped.location >= sourceRange.location, mapped.upperBound <= sourceRange.upperBound else { return nil }
+        return mapped
+    }
 
     /// §9.5: export the selection as an image, for pasting a rendered table or
     /// diagram into a message.  Captures what is actually on screen, so what

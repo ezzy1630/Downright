@@ -68,6 +68,19 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>NSHumanReadableCopyright</key><string>MIT licensed.</string>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict><key>default</key><string>Open Markdown in Downright</string></dict>
+            <key>NSMessage</key><string>openMarkdownInDownright</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>public.file-url</string>
+                <string>public.utf8-plain-text</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

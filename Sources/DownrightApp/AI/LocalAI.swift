@@ -23,7 +23,6 @@ enum LocalAIAvailability: Equatable, Sendable {
     case available
     case frameworkUnavailable
     case systemUnavailable
-    case notConfigured
 }
 
 enum LocalAIError: Error, Equatable {
@@ -68,7 +67,12 @@ protocol LocalAIProvider: AnyObject {
 final class AppleOnDeviceAIProvider: LocalAIProvider {
     var availability: LocalAIAvailability {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) { return .notConfigured }
+        if #available(macOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available: return .available
+            case .unavailable: return .systemUnavailable
+            }
+        }
         return .systemUnavailable
         #else
         return .frameworkUnavailable
@@ -76,12 +80,64 @@ final class AppleOnDeviceAIProvider: LocalAIProvider {
     }
 
     func run(_ request: LocalAIRequest) async throws -> LocalAIResult {
-        guard !request.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let input = try Self.input(for: request)
+        guard availability == .available else { throw LocalAIError.unavailable(availability) }
+        try Task.checkCancellation()
+
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            let session = LanguageModelSession(
+                model: .default,
+                instructions: "You edit Markdown text. Follow the task exactly. Return only the requested text. Do not add commentary or code fences. Preserve Markdown syntax when you rewrite text."
+            )
+            let response = try await session.respond(to: Self.prompt(task: request.task, input: input))
+            try Task.checkCancellation()
+            return Self.result(for: request, input: input, output: response.content)
+        }
+        #endif
+
+        throw LocalAIError.unavailable(.frameworkUnavailable)
+    }
+
+    private static func input(for request: LocalAIRequest) throws -> String {
+        let source = request.source as NSString
+        let input: String
+        if let range = request.selection {
+            guard range.location >= 0, range.upperBound <= source.length else {
+                throw LocalAIError.emptyInput
+            }
+            input = source.substring(with: range)
+        } else {
+            input = request.source
+        }
+        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LocalAIError.emptyInput
         }
-        // Keep this adapter explicit until the host SDK exposes a stable model
-        // contract.  This path is local-only and fails closed when unavailable.
-        throw LocalAIError.unavailable(availability)
+        return input
+    }
+
+    private static func prompt(task: LocalAITask, input: String) -> String {
+        switch task {
+        case .summarize:
+            return "Summarize this Markdown in at most five short sentences:\n\n\(input)"
+        case .suggestTitle:
+            return "Write one clear title of at most ten words for this Markdown. Return the title only:\n\n\(input)"
+        case .improveClarity:
+            return "Rewrite this text for clarity and brevity. Preserve its meaning and Markdown structure. Return the complete replacement text only:\n\n\(input)"
+        }
+    }
+
+    private static func result(for request: LocalAIRequest, input: String, output: String) -> LocalAIResult {
+        let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard request.task == .improveClarity else {
+            return LocalAIResult(task: request.task, text: text, preview: nil)
+        }
+        let range = request.selection ?? NSRange(location: 0, length: (request.source as NSString).length)
+        return LocalAIResult(
+            task: request.task,
+            text: text,
+            preview: LocalAIPreview(range: range, originalSource: input, proposedSource: text)
+        )
     }
 }
 

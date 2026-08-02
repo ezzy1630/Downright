@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [DocumentWindowController] = []
     private var preferencesWindow: NSWindowController?
     private var startWindow: StartWindowController?
+    private let servicesProvider = DownrightServicesProvider()
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
 
@@ -17,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         parseLaunchArguments()
         NSApp.mainMenu = MainMenu.build()
         ThemeStore.shared.select(named: Preferences.shared.themeName(for: NSApp.effectiveAppearance))
+        IntegrationRegistry.shared.openHandler = { [weak self] url in
+            _ = self?.open(url)
+        }
+        NSRegisterServicesProvider(servicesProvider, "Downright")
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -63,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NSUnregisterServicesProvider("Downright")
         saveSession()
         for controller in windowControllers { controller.documentWillClose() }
     }

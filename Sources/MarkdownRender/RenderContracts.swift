@@ -110,6 +110,8 @@ extension NSAttributedString.Key {
     /// Search-hit marking, kept distinct from selection.
     public static let drSearchHit = NSAttributedString.Key("drSearchHit")
     public static let drCurrentSearchHit = NSAttributedString.Key("drCurrentSearchHit")
+    /// Current word spoken by the system speech synthesizer.
+    public static let drSpeechHighlight = NSAttributedString.Key("drSpeechHighlight")
 }
 
 // MARK: - Fragments

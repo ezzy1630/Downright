@@ -104,7 +104,6 @@ final class LocalAIPanelView: NSView, PanelSurface {
             case .available: statusLabel.stringValue = "On-device only. Nothing is sent to a server."
             case .frameworkUnavailable: statusLabel.stringValue = "Apple on-device AI is not installed."
             case .systemUnavailable: statusLabel.stringValue = "This Mac does not provide Apple on-device AI."
-            case .notConfigured: statusLabel.stringValue = "Apple on-device AI is available but not configured for this build."
             }
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)

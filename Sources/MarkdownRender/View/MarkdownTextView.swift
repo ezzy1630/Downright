@@ -133,6 +133,14 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// Source range for the word that Voice speech is reading now.
+    public var speechHighlight: NSRange? {
+        didSet {
+            guard speechHighlight != oldValue else { return }
+            reapplyOverlays(invalidating: [oldValue, speechHighlight].compactMap { $0 })
+        }
+    }
+
     /// Change marks from §8.1.
     public var changeMarks: [(kind: ChangeKind, range: NSRange, words: [NSRange])] = [] {
         didSet {
@@ -652,7 +660,7 @@ public final class MarkdownTextView: NSTextView {
 
     private func applyOverlays() {
         guard let storage = textStorage, storage.length > 0 else { return }
-        guard !searchHits.isEmpty || currentSearchHit != nil || !changeMarks.isEmpty else {
+        guard !searchHits.isEmpty || currentSearchHit != nil || !changeMarks.isEmpty || speechHighlight != nil else {
             overlayRanges = []
             return
         }
@@ -670,6 +678,12 @@ public final class MarkdownTextView: NSTextView {
                 .backgroundColor: styleSheet.searchHitCurrent,
             ], range: range)
         }
+        if let spoken = speechHighlight, let range = clampToStorage(spoken) {
+            storage.addAttributes([
+                .drSpeechHighlight: true,
+                .backgroundColor: styleSheet.searchHitCurrent,
+            ], range: range)
+        }
         for mark in changeMarks {
             guard let range = clampToStorage(mark.range) else { continue }
             storage.addAttribute(.drChange, value: mark.kind.rawValue, range: range)
@@ -683,7 +697,7 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         storage.endEditing()
-        overlayRanges = searchHits + changeMarks.map(\.range)
+        overlayRanges = searchHits + changeMarks.map(\.range) + [speechHighlight].compactMap { $0 }
     }
 
     /// §8.4's trust instrument: a path the agent claims it touched that is not

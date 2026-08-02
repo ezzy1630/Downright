@@ -13,7 +13,7 @@ enum Command: String, CaseIterable, Codable {
     case toggleSidebar, outlineQuickOpen, outlinePanel, taskPanel, versionTimeline, compareFiles
     case frontMatterEditor, tableEditor, assetDoctor
     case commandPalette, documentLens, readerProfiles
-    case documentHealth, renderTargets, visualDebugger, reviewPanel
+    case documentHealth, renderTargets, visualDebugger, reviewPanel, workspace, localAI
 
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
@@ -43,6 +43,7 @@ enum Command: String, CaseIterable, Codable {
     case copyAsMarkdown, copyAsRichText, copyAsPlainText, copySection, copySectionLink
     case printDocument, exportHTML, exportPDF, exportSelectionAsImage
     case increaseTextSize, decreaseTextSize, resetTextSize
+    case speakDocument, stopSpeaking
 
     // App
     case preferences, reloadTheme, showKeybindings, toggleVimKeys
@@ -71,6 +72,8 @@ enum Command: String, CaseIterable, Codable {
         case .renderTargets: return "Render Targets"
         case .visualDebugger: return "Visual Debugger"
         case .reviewPanel: return "Review"
+        case .workspace: return "Workspace"
+        case .localAI: return "On-Device AI"
         case .nextHeading: return "Next Heading"
         case .previousHeading: return "Previous Heading"
         case .nextChange: return "Next Change"
@@ -146,6 +149,8 @@ enum Command: String, CaseIterable, Codable {
         case .increaseTextSize: return "Bigger Text"
         case .decreaseTextSize: return "Smaller Text"
         case .resetTextSize: return "Actual Size"
+        case .speakDocument: return "Speak Selection or Document"
+        case .stopSpeaking: return "Stop Speaking"
         case .preferences: return "Settings…"
         case .reloadTheme: return "Reload Themes"
         case .showKeybindings: return "Keyboard Shortcuts…"
@@ -167,7 +172,8 @@ enum Command: String, CaseIterable, Codable {
             return .file
         case .copyAsMarkdown, .copyAsRichText, .copyAsPlainText, .copySection, .copySectionLink,
              .find, .findNext, .findPrevious, .findReplace, .findInSiblings, .useSelectionForFind,
-             .addCursorBelow, .addCursorAbove, .selectNextOccurrence, .splitSelectionIntoLines:
+             .addCursorBelow, .addCursorAbove, .selectNextOccurrence, .splitSelectionIntoLines,
+             .speakDocument, .stopSpeaking:
             return .edit
         case .toggleBold, .toggleItalic, .insertLink, .toggleStrikethrough, .toggleInlineCode,
              .convertToParagraph, .convertToBulletList, .convertToNumberedList, .convertToTaskList,
@@ -178,7 +184,7 @@ enum Command: String, CaseIterable, Codable {
              .focusMode, .typewriterScrolling, .toggleSidebar, .outlinePanel, .taskPanel,
              .versionTimeline, .reloadTheme, .commandPalette, .documentLens,
              .readerProfiles, .documentHealth, .renderTargets, .visualDebugger,
-             .reviewPanel:
+             .reviewPanel, .workspace, .localAI:
             return .view
         case .nextHeading, .previousHeading, .nextChange, .previousChange, .scrollDown, .scrollUp,
              .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward,
