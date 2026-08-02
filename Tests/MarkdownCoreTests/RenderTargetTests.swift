@@ -44,9 +44,12 @@ import Testing
         ```
         """
         let document = MarkdownParser.parse(source)
-        let report = MarkdownCompatibility.diagnose(document, for: .commonMark)
+        let report = MarkdownCompatibility.diagnose(
+            document,
+            for: .custom(name: "No extensions", capabilities: [])
+        )
         let found = Set(report.diagnostics.map(\.capability))
-        let expected = MarkdownCapabilities.all.subtracting(.rawHTML).capabilities
+        let expected = MarkdownCapabilities.all.capabilities
         #expect(expected.allSatisfy(found.contains))
         #expect(report.diagnostics.allSatisfy { !$0.explanation.isEmpty })
     }
