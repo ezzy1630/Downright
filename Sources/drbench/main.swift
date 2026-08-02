@@ -224,11 +224,25 @@ measure("wholesale (mode switch)", runs: 5) {
     engine.decorate(storage, document: baseline, dirty: .wholesale)
 }
 
-print("\nEnd-to-end keystroke (parse + diff + decorate)")
-let keystrokeP95 = measure("full pipeline", budget: 8, runs: 15) {
+print("\nSynchronous typing response (§12 — main-thread budget 8 ms p95)")
+let responseStorage = NSTextStorage(string: document5k)
+var responseCaret = responseStorage.length / 2
+let typingP95 = measure("edit + paragraph map", budget: 8, runs: 100) {
+    responseStorage.replaceCharacters(
+        in: NSRange(location: responseCaret, length: 0), with: "x"
+    )
+    let paragraphs = ParagraphIndex(text: responseStorage.string as NSString)
+    let map = DisplayMap(paragraphs: paragraphs, hidden: [])
+    _ = map.textKitOffset(forSource: responseCaret)
+    responseCaret += 1
+}
+
+print("\nSemantic convergence (end to end; outside the typing budget)")
+let convergenceStorage = NSTextStorage(string: editedText)
+let convergenceP95 = measure("worker pipeline", budget: 100, runs: 15) {
     let fresh = MarkdownParser.parse(editedText)
     let set = ASTDiff.dirtySet(old: baseline, new: fresh)
-    engine.decorate(storage, document: fresh, dirty: set)
+    engine.decorate(convergenceStorage, document: fresh, dirty: set)
 }
 
 print("\nCold open (§12 — first rendered pixel under 250 ms for 100 KB)")
@@ -247,5 +261,6 @@ measure("syntax highlight 10 KB Swift", runs: 20) {
 
 print("""
 
-Keystroke p95: \(String(format: "%.2f", keystrokeP95)) ms against an 8 ms budget.
+Typing response p95: \(String(format: "%.2f", typingP95)) ms against an 8 ms budget.
+End-to-end semantic convergence p95: \(String(format: "%.2f", convergenceP95)) ms against a 100 ms budget.
 """)

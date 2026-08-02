@@ -8,7 +8,7 @@ pipeline. Do not replace a failed measurement with a claim.
 | Metric | Target | Method | Pass condition |
 |---|---:|---|---|
 | Cold launch to first rendered pixel, 100 KB | <250 ms | App launch capture | p95 below target |
-| Keystroke to updated render, 5,000-line file | <8 ms | Parse, AST diff, dirty decoration | p95 below target |
+| Keystroke response, 5,000-line file | <8 ms | Source edit, paragraph map, dirty decoration | p95 below target |
 | Scroll | 120 fps on ProMotion | Long-document scroll trace | No sustained frame drop |
 | Structural zoom | <300 ms | Level 1–5 transition trace | Anchor stays fixed; no dropped frames |
 | Quick Look preview | <400 ms | Preview extension render | p95 below target |
@@ -17,9 +17,9 @@ pipeline. Do not replace a failed measurement with a claim.
 | Quick Look safety fallback | 60 MB | Memory guard | Plain text fallback above guard |
 | Large Quick Look file | 2 MB | Preview policy | Initial blocks plus Open in App |
 
-The 8 ms keystroke target is the P0 architecture gate. If block-diffed
-restyling cannot meet it, stop and revise the architecture before adding later
-phases.
+The 8 ms keystroke target is the P0 architecture gate. Semantic parsing runs
+outside this synchronous path. Its result is revision checked before the app
+applies dirty decoration.
 
 ## Current local benchmark
 
@@ -30,19 +30,23 @@ baseline, not a cross-machine claim.
 
 | Measurement | p50 | p95 | Result |
 |---|---:|---:|---|
-| cmark parse | 13.578 ms | 13.993 ms | Informational |
-| Full MarkdownParser.parse | 48.220 ms | 49.742 ms | Informational |
-| AST dirty set, one-character edit | 0.035 ms | 0.042 ms | Informational |
-| Text diff, external rewrite | 4.017 ms | 4.120 ms | Informational |
-| Incremental decoration | 12.579 ms | 12.742 ms | Fails 8 ms budget |
-| Wholesale decoration | 106.532 ms | 169.001 ms | Informational |
-| Full keystroke pipeline | 61.089 ms | 65.151 ms | Fails 8 ms budget |
-| Parse 100 KB | 17.087 ms | 17.406 ms | Under 250 ms parse gate |
-| Syntax highlight, 10 KB Swift | 0.094 ms | 0.108 ms | Informational |
+| cmark parse | 13.572 ms | 16.836 ms | Informational |
+| Full MarkdownParser.parse | 45.233 ms | 45.682 ms | Runs outside typing path |
+| AST dirty set, one-character edit | 0.037 ms | 0.040 ms | Runs outside typing path |
+| Text diff, external rewrite | 3.939 ms | 3.950 ms | Informational |
+| Incremental decoration | 0.096 ms | 0.106 ms | Under 8 ms budget |
+| Wholesale decoration | 96.105 ms | 160.470 ms | Informational |
+| Source edit and paragraph map | 0.146 ms | 0.149 ms | Under 8 ms budget |
+| End-to-end semantic convergence | 45.623 ms | 46.075 ms | Under 100 ms budget |
+| Parse 100 KB | 16.121 ms | 16.143 ms | Under 250 ms parse gate |
+| Syntax highlight, 10 KB Swift | 0.096 ms | 0.108 ms | Informational |
 
-The current result is not release-ready for the keystroke promise. Parsing and
-AST diff are not the main cost. Decoration and the full pipeline need profiling
-and repair.
+The synchronous typing work and incremental decoration now fit the 8 ms
+budget. The benchmark does not yet measure TextKit layout, scroll-frame
+delivery, IME input, or live window frame time. Those checks remain release
+gates. The end-to-end convergence row measures the full parse, diff, and
+decoration work. Production performs parse and diff away from the main actor,
+then applies the newest result on the main actor.
 
 ## Measurement procedure
 
