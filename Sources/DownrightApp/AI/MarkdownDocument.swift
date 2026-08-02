@@ -253,7 +253,7 @@ final class MarkdownDocument: NSObject {
         guard !reparseScheduled, !suppressReparse else { return }
         reparseScheduled = true
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
-            self?.flushScheduledReparse()
+            MainActor.assumeIsolated { self?.flushScheduledReparse() }
         }
     }
 
@@ -301,9 +301,7 @@ final class MarkdownDocument: NSObject {
         parseTask = Task.detached(priority: .userInitiated) { [weak self, coordinator] in
             while let result = await coordinator.nextResult() {
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.applyAsyncParse(result)
-                }
+                await self?.applyAsyncParse(result)
             }
         }
     }
