@@ -13,6 +13,11 @@ Downright opens instantly, renders anything, edits in place without ever
 touching your bytes, and shows you what the agent changed while you were
 reading.
 
+It opens `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`, `.mdc`, `.qmd`, and
+`.rmd` files. CommonMark/GFM parsing, math, Mermaid, callouts, wikilinks,
+front matter, tables, tasks, images, and code highlighting are handled in the
+native render path.
+
 ---
 
 ## What makes it different
@@ -26,6 +31,8 @@ reading.
 | **Density gutter** | Replaces the scrollbar with the shape of the whole document: headings by level, code, tables, math, tasks, search hits, and changed regions. |
 | **Task panel** | `⌘T` lists every checkbox grouped by heading. Toggling writes to the file immediately. A plan document becomes something you work through. |
 | **Sibling sidebar** | Agents write six files into a folder, not one. `⌘0` shows the others, newest first, with dots for changed-since-you-last-looked. No index, no vault, no "open folder" ceremony. |
+| **Read / Live / Source** | Read rendered Markdown, edit it in place, or switch to exact source text. All three modes share one document surface, so selection, scroll position, and source ranges stay aligned. |
+| **Document inspectors** | Outline, tasks, search, history, workspace, health, render-target checks, assets, and document-lens views keep review work beside the document instead of in modal dialogs. |
 
 And the things it deliberately **is not**: no vault, no sync, no collaboration,
 no plugin system, no rich-text document model, no code execution, and — load
@@ -38,15 +45,16 @@ Five decisions determine everything else:
 
 1. **Raw text is the only source of truth.** The `NSTextStorage` holds the
    file's exact bytes, always. Rendering is a decoration layer — attributes and
-   layout, never character mutation. So round-trips are byte-identical, `⌘C`
-   always yields markdown, and undo is plain text undo. Every WYSIWYG markdown
+   layout, never character mutation. So round-trips are byte-identical, Copy
+   can expose visible text without losing Markdown internally, and undo is
+   plain text undo. Every WYSIWYG markdown
    editor that builds a document model and re-serialises will eventually
    normalise something and corrupt somebody's file. This one structurally
    cannot.
-2. **One editable document surface.** Document mode reads like a finished page
-   and edits in place. Markdown markers appear only near the caret. Source mode
-   shows the full syntax. Both use one `NSTextView` on TextKit 2, so switching
-   is instant and preserves scroll and selection.
+2. **One adaptive document surface.** It reads like a finished page and edits
+   in place. Markdown markers appear only near a caret, selection stays
+   rendered, and explicit actions reveal scoped or full source. Every state
+   uses one `NSTextView` on TextKit 2, preserving scroll and selection.
 3. **No WebView. Anywhere.** Math via SwiftMath, diagrams via
    beautiful-mermaid-swift, code via a native lexer, everything else through
    Core Text. This is what lets the Quick Look extension fit under its hard
@@ -112,6 +120,39 @@ Scripts/check.sh
 The script supplies the Swift Testing framework path when the active toolchain
 needs it. It also fails if Swift runs zero tests.
 
+For the release-path performance checks:
+
+```bash
+swift run -c release drbench
+```
+
+## CLI
+
+`down` opens Markdown in the installed app. `md` is installed as an alias.
+With no subcommand, `down` preserves the familiar open-file behavior; piped
+input becomes a temporary Markdown document.
+
+```bash
+down README.md
+printf '# Draft\n' | down
+md --edit PLAN.md
+```
+
+The same executable also provides source and review commands that do not launch
+the app:
+
+```bash
+down read README.md
+down read --json README.md
+down outline --json README.md
+down export --format html -o README.html README.md
+down check --target github Docs/sample.md
+```
+
+`check` exits with status 1 when it finds diagnostics. Built-in compatibility
+targets include Downright, CommonMark, GitHub, Obsidian, Pandoc, MultiMarkdown,
+Jekyll, Hugo, and Quarto. Use `down --help` for the complete command list.
+
 ## Keyboard
 
 Document mode is always editable. Every binding is remappable in Settings →
@@ -119,14 +160,14 @@ Keys, which is generated from the same command table as the menus.
 
 | | | | |
 |---|---|---|---|
-| `⌘E` | Document mode | `⌥↓` / `⌥↑` | Next / previous change |
-| `⌘⇧E` | Toggle Source mode | `⌘⇧O` | Jump to heading |
+| `⌘E` | Use selection for Find | `⌥↓` / `⌥↑` | Next / previous change |
+| `⌘⇧E` | Toggle full Source Focus | `⌘⇧O` | Jump to heading |
 | `⌘0` | Sibling sidebar | `[` / `]` | Previous / next change |
 | `⌘⌥1` | Outline panel | `1`–`5` | Structural zoom in the outline |
 | `⌘T` | Task panel | `⌘F` | Find |
-| `⌘⇧V` | Version timeline | `⌥↑` / `⌥↓` | Previous / next change |
+| `⌘⇧V` | Version timeline | `⌘G` / `⌘⇧G` | Next / previous match |
 | `⌘\` | Split view | `⌘⇧F` | Search sibling files |
-| `⌘C` / `⌘⇧C` | Copy markdown / rich text | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |
+| `⌘C` / `⌘⇧C` | Copy visible text / Markdown | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |
 
 The vim-style `j`/`k`/`g`/`G` layer is off by default; turn it on in
 Settings → Keys.
@@ -137,8 +178,9 @@ The repository contains native preview and thumbnail providers. They can give
 `.md` files full previews and Finder icons that show the first heading.
 
 The default SwiftPM app bundle does not include the required `.appex` bundles.
-Run `Scripts/bundle-xcode-app.sh` to generate the Xcode project, build the host
-app, and embed the preview and thumbnail extensions. See
+With Xcode and `xcodegen` installed, run `Scripts/bundle-xcode-app.sh` to
+generate the Xcode project, build the host app, and embed the preview and
+thumbnail extensions. See
 [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for details. After those bundles are
 installed, launch the host app once. You may then need to enable Downright
 under **System Settings → General → Login Items & Extensions → Quick Look**.
