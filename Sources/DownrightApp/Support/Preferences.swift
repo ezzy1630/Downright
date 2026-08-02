@@ -25,8 +25,8 @@ final class Preferences {
 
         /// Auto-collapse code blocks longer than this in Read mode (§5.1).
         var codeBlockCollapseThreshold: Int = 20
-        /// Read mode is where the app opens (§5).
-        var defaultMode: RenderMode = .read
+        /// The rendered document stays editable; Source is an explicit choice.
+        var defaultMode: RenderMode = .live
         var restoreSession: Bool = true
 
         var externalEditor: ExternalEditor = .systemDefault
@@ -62,7 +62,7 @@ final class Preferences {
             typewriterScrolling = get(.typewriterScrolling, false)
             focusMode = get(.focusMode, false)
             codeBlockCollapseThreshold = get(.codeBlockCollapseThreshold, 20)
-            defaultMode = get(.defaultMode, RenderMode.read)
+            defaultMode = get(.defaultMode, RenderMode.live).normalizedForEditing
             restoreSession = get(.restoreSession, true)
             externalEditor = get(.externalEditor, ExternalEditor.systemDefault)
             resolvePathTokens = get(.resolvePathTokens, true)

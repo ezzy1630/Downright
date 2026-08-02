@@ -11,15 +11,15 @@ struct CommandPaletteEntry: Identifiable, Equatable {
     var id: Command { command }
 
     var scopeLabel: String {
-        scopes.map { $0.paletteTitle }.joined(separator: " / ")
+        var seen = Set<String>()
+        return scopes.map(\.paletteTitle).filter { seen.insert($0).inserted }.joined(separator: " / ")
     }
 }
 
 extension CommandScope {
     var paletteTitle: String {
         switch self {
-        case .read: return "Read"
-        case .live: return "Live"
+        case .read, .live: return "Document"
         case .source: return "Source"
         }
     }

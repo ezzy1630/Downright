@@ -59,6 +59,10 @@ enum MainMenu {
         let submenu = NSMenu(title: menu.title)
         submenu.autoenablesItems = true
 
+        if menu == .edit {
+            for standardItem in standardEditItems() { submenu.addItem(standardItem) }
+        }
+
         for group in groups(in: menu) {
             if !submenu.items.isEmpty { submenu.addItem(.separator()) }
             for command in group {
@@ -80,6 +84,16 @@ enum MainMenu {
 
         item.submenu = submenu
         return item
+    }
+
+    private static func standardEditItems() -> [NSMenuItem] {
+        let undo = NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        let cut = NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        let paste = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let selectAll = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        return [undo, redo, .separator(), cut, paste, selectAll]
     }
 
     /// Grouping inside each menu.  Kept explicit rather than derived from the

@@ -93,6 +93,26 @@ struct SmartPasteIntegrationTests {
         #expect(undoManager?.canUndo == false)
     }
 
+    @Test("document mode stays editable across repeated typing and deletion")
+    func repeatedDocumentEditing() {
+        let view = view(for: "# Title\n\nBody with **bold** text.\n")
+        #expect(view.isEditable)
+
+        let bodyEnd = (view.textStorage!.string as NSString).range(of: "Body").upperBound
+        view.setSourceSelectedRanges([NSRange(location: bodyEnd, length: 0)])
+        for character in " grows" {
+            #expect(view.performSourceEdit(
+                range: view.sourceSelectedRange,
+                replacement: String(character)))
+        }
+        #expect(view.textStorage?.string == "# Title\n\nBody grows with **bold** text.\n")
+        #expect(view.sourceSelectedRange == NSRange(location: bodyEnd + 6, length: 0))
+
+        view.deleteBackward(nil)
+        #expect(view.textStorage?.string == "# Title\n\nBody grow with **bold** text.\n")
+        #expect(view.sourceSelectedRange == NSRange(location: bodyEnd + 5, length: 0))
+    }
+
     @Test("code, math, and front matter keep clipboard text literal")
     func literalContextsBypassTransforms() {
         let html = MarkdownPastePayload.html(

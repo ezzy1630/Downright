@@ -41,7 +41,7 @@ private struct SettingsRootView: View {
             Form {
                 Toggle("Restore previous documents", isOn: binding(\.restoreSession))
                 Picker("Default mode", selection: binding(\.defaultMode)) {
-                    ForEach(RenderMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(RenderMode.userFacingModes, id: \.self) { Text($0.title).tag($0) }
                 }
                 Toggle("Follow system appearance", isOn: binding(\.followsSystemAppearance))
             }
@@ -300,10 +300,10 @@ enum PreferencesForms {
     static func general() -> [PreferenceRow] {
         [
             .section("On open"),
-            .choice("Default mode", help: "Read is where the app opens (§5).",
-                    options: RenderMode.allCases.map(\.title),
-                    get: { RenderMode.allCases.firstIndex(of: Preferences.shared.values.defaultMode) ?? 0 },
-                    set: { index in Preferences.shared.update { $0.defaultMode = RenderMode.allCases[index] } }),
+            .choice("Default mode", help: "Document mode is rendered and always editable.",
+                    options: RenderMode.userFacingModes.map(\.title),
+                    get: { RenderMode.userFacingModes.firstIndex(of: Preferences.shared.values.defaultMode) ?? 0 },
+                    set: { index in Preferences.shared.update { $0.defaultMode = RenderMode.userFacingModes[index] } }),
             .toggle("Restore windows from the last session", help: nil,
                     get: { Preferences.shared.values.restoreSession },
                     set: { value in Preferences.shared.update { $0.restoreSession = value } }),

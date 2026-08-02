@@ -10,10 +10,18 @@ import MarkdownCore
 public enum RenderMode: String, Codable, Sendable, CaseIterable {
     case read, live, source
 
+    /// Modes exposed by the app. `read` remains decodable so old document
+    /// state keeps working, but it now migrates to the editable document view.
+    public static let userFacingModes: [RenderMode] = [.live, .source]
+
+    public var normalizedForEditing: RenderMode {
+        self == .read ? .live : self
+    }
+
     public var title: String {
         switch self {
         case .read: return "Read"
-        case .live: return "Live"
+        case .live: return "Document"
         case .source: return "Source"
         }
     }

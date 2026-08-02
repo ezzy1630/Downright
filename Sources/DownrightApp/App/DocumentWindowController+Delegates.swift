@@ -307,6 +307,62 @@ extension DocumentWindowController: SiblingSidebarDelegate {
     }
 }
 
+extension DocumentWindowController: NavigationPanelViewDelegate {
+    func navigationPanelDidRequestClose(_ panel: NavigationPanelView) {
+        if navigationPinned {
+            closePinnedNavigation()
+            return
+        }
+        closeNavigationOverlay()
+    }
+
+    func navigationPanelDidRequestPin(_ panel: NavigationPanelView) {
+        pinNavigationPanel()
+    }
+
+    func navigationPanel(_ panel: NavigationPanelView, didSelectHeadingAt index: Int) {
+        guard index < markdownDocument.parsed.headings.count else { return }
+        let heading = markdownDocument.parsed.headings[index]
+        jump(to: heading.range.location, label: heading.title)
+        closeNavigationOverlayIfTransient()
+    }
+
+    func navigationPanel(_ panel: NavigationPanelView, didMoveHeadingAt index: Int, before targetIndex: Int) {
+        markdownDocument.ensureParsedCurrent()
+        let edits = Restructure.moveSection(markdownDocument.parsed, headingIndex: index, before: targetIndex)
+        markdownDocument.apply(edits, actionName: "Move Section")
+    }
+
+    func navigationPanel(_ panel: NavigationPanelView, didToggleFoldAt index: Int) {
+        markdownDocument.ensureParsedCurrent()
+        guard index < markdownDocument.parsed.headings.count else { return }
+        let slug = markdownDocument.parsed.headings[index].slug
+        if containerTextView.foldedHeadingSlugs.contains(slug) {
+            containerTextView.foldedHeadingSlugs.remove(slug)
+        } else {
+            containerTextView.foldedHeadingSlugs.insert(slug)
+        }
+        markdownDocument.state.foldedHeadings = containerTextView.foldedHeadingSlugs
+        panel.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
+            containerTextView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
+        })
+    }
+
+    func navigationPanel(_ panel: NavigationPanelView, didSelectFile url: URL, inNewWindow: Bool) {
+        if inNewWindow {
+            (NSApp.delegate as? AppDelegate)?.open(url)
+        } else {
+            openInPlace(url)
+        }
+        closeNavigationOverlayIfTransient()
+    }
+
+    private func closeNavigationOverlayIfTransient() {
+        guard !navigationPinned else { return }
+        closeNavigationOverlay()
+    }
+}
+
 extension DocumentWindowController: DensityGutterDelegate {
     func densityGutter(_ gutter: DensityGutterView, didRequestScrollToFraction fraction: CGFloat) {
         let offset = Int(fraction * CGFloat(markdownDocument.parsed.length))

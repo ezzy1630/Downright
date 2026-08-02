@@ -72,7 +72,7 @@ struct CommandPaletteTests {
         let model = CommandPaletteModel(entries: entries)
         let find = model.entries.first { $0.command == .find }
         #expect(find?.binding == "⌘F")
-        #expect(find?.scopeLabel == "Read / Live / Source")
+        #expect(find?.scopeLabel == "Document / Source")
         #expect(model.entries.first { $0.command == .frontMatterEditor }?.binding == nil)
     }
 

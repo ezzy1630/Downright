@@ -34,7 +34,7 @@ enum ContentResizePolicy {
     }
 }
 
-/// One text surface, three modes (§3.2).
+/// One text surface with an editable document view and explicit source view.
 ///
 /// Not a viewer with an edit button and not an editor with a preview pane: a
 /// single `NSTextView` on TextKit 2 over a single `NSTextStorage`, with three
@@ -65,7 +65,7 @@ public final class MarkdownTextView: NSTextView {
     public private(set) var parsedDocument: ParsedDocument = .empty
 
     /// Instant, and preserves scroll position and selection (§3.2).
-    public var mode: RenderMode = .read {
+    public var mode: RenderMode = .live {
         didSet {
             guard mode != oldValue else { return }
             let anchor = topVisibleOffset
@@ -976,7 +976,7 @@ public final class MarkdownTextView: NSTextView {
         maxSize = NSSize(width: styleSheet.measureWidth + RenderMetrics.revealSlack * 2,
                          height: CGFloat.greatestFiniteMagnitude)
         backgroundColor = styleSheet.background
-        insertionPointColor = mode == .read ? styleSheet.text : styleSheet.accent
+        insertionPointColor = styleSheet.accent
         selectedTextAttributes = [.backgroundColor: styleSheet.selection]
     }
 
@@ -994,10 +994,9 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func applyModeChrome() {
-        // Read mode: no insertion caret, everything else live (§3.2, §5).
         isEditable = mode.policy.showsInsertionPoint
         isSelectable = true
-        insertionPointColor = mode == .read ? styleSheet.text : styleSheet.accent
+        insertionPointColor = styleSheet.accent
         typingAttributes = [
             .font: styleSheet.bodyFont(),
             .foregroundColor: styleSheet.text,

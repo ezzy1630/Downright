@@ -18,7 +18,7 @@ extension NSPasteboard.PasteboardType {
     static let downrightHeading = NSPasteboard.PasteboardType("com.unrulyagency.downright.heading")
 }
 
-/// The outline panel (§5.2 header slider, §7.1 drag-reorder, §9.6 read time).
+/// The document contents panel (§7.1 drag-reorder).
 ///
 /// The headline interaction is the drag: agent output is frequently in a poor
 /// order, and dragging a heading here moves the heading and its entire subtree
@@ -42,8 +42,11 @@ final class OutlinePanelView: NSView, PanelSurface {
     }
 
     var headings: [HeadingNode] = [] { didSet { reload() } }
+    var filterText: String = "" { didSet { guard filterText != oldValue else { return }; reload() } }
     /// Parallel to `headings`; may be short or empty, in which case the
     /// heading's own word count stands in.
+    /// Kept for callers that already compute section metrics.  Navigation does
+    /// not render read-time or density indicators; those belong to the reader.
     var sectionMetrics: [ReadingMetrics] = [] { didSet { reload() } }
     var foldedIndices: Set<Int> = [] { didSet { reload() } }
 
@@ -58,25 +61,21 @@ final class OutlinePanelView: NSView, PanelSurface {
     var zoomLevel: ZoomLevel = .everything {
         didSet {
             guard zoomLevel != oldValue else { return }
-            syncZoomControl()
         }
     }
 
-    var preferredWidth: CGFloat { PanelMetrics.listWidth }
+    var preferredWidth: CGFloat { 320 }
 
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Outline")
-    private let zoomNameLabel = NSTextField(labelWithString: "")
-    private let zoomSlider = NSSlider()
+    private let titleLabel = NSTextField(labelWithString: "Contents")
     private let table = PanelList.makeTableView(identifier: "outline")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
 
     /// Heading indices currently listed — a folded section hides its
     /// descendants here exactly as it hides them in the document.
     private var visibleRows: [Int] = []
-    private var largestSectionWords = 1
 
     // MARK: - Init
 
@@ -96,7 +95,6 @@ final class OutlinePanelView: NSView, PanelSurface {
         buildHeader()
         buildTable()
         applyStyle()
-        syncZoomControl()
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Outline")
@@ -109,34 +107,9 @@ final class OutlinePanelView: NSView, PanelSurface {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
-        zoomNameLabel.font = PanelFont.secondary
-        zoomNameLabel.alignment = .right
-        zoomNameLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(zoomNameLabel)
-
-        // §5.2: "a slider in the outline panel header".  Tick-only values keep
-        // it honest — there is no zoom level 2.5.
-        zoomSlider.minValue = Double(ZoomLevel.h1.rawValue)
-        zoomSlider.maxValue = Double(ZoomLevel.everything.rawValue)
-        zoomSlider.numberOfTickMarks = ZoomLevel.allCases.count
-        zoomSlider.allowsTickMarkValuesOnly = true
-        zoomSlider.tickMarkPosition = .below
-        zoomSlider.controlSize = .small
-        zoomSlider.target = self
-        zoomSlider.action = #selector(zoomSliderChanged(_:))
-        zoomSlider.setAccessibilityLabel("Structural zoom level")
-        zoomSlider.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(zoomSlider)
-
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            zoomNameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            zoomNameLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
-            zoomNameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
-            zoomSlider.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            zoomSlider.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            zoomSlider.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
         ])
     }
 
@@ -169,7 +142,7 @@ final class OutlinePanelView: NSView, PanelSurface {
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: zoomSlider.bottomAnchor, constant: 6),
+            scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
@@ -178,7 +151,6 @@ final class OutlinePanelView: NSView, PanelSurface {
 
     func reload() {
         rebuildVisibleRows()
-        largestSectionWords = max(1, (0..<headings.count).map { words(forHeading: $0) }.max() ?? 1)
         table.reloadData()
         revealCurrentHeading()
     }
@@ -192,6 +164,14 @@ final class OutlinePanelView: NSView, PanelSurface {
                 index = sectionEnd(of: index)
             } else {
                 index += 1
+            }
+        }
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        if !query.isEmpty {
+            visibleRows = visibleRows.filter { index in
+                headings[index].title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                    .contains(query)
             }
         }
     }
@@ -211,17 +191,6 @@ final class OutlinePanelView: NSView, PanelSurface {
         return end
     }
 
-    private func words(forHeading index: Int) -> Int {
-        if index < sectionMetrics.count { return sectionMetrics[index].words }
-        return index < headings.count ? headings[index].wordCount : 0
-    }
-
-    private func readMinutes(forHeading index: Int) -> Double {
-        if index < sectionMetrics.count { return sectionMetrics[index].readMinutes }
-        // 238 wpm, the same median silent-reading rate `ReadingMetrics` uses.
-        return Double(words(forHeading: index)) / 238
-    }
-
     private func revealCurrentHeading() {
         guard let current = currentHeadingIndex,
               let row = visibleRows.firstIndex(of: current) else { return }
@@ -233,21 +202,8 @@ final class OutlinePanelView: NSView, PanelSurface {
 
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
-        zoomNameLabel.textColor = styleSheet.textFaint
         table.reloadData()
         needsDisplay = true
-    }
-
-    private func syncZoomControl() {
-        zoomSlider.doubleValue = Double(zoomLevel.rawValue)
-        zoomNameLabel.stringValue = zoomLevel.title
-        zoomSlider.setAccessibilityValueDescription(zoomLevel.title)
-    }
-
-    @objc private func zoomSliderChanged(_ sender: NSSlider) {
-        guard let level = ZoomLevel(rawValue: Int(sender.doubleValue.rounded())), level != zoomLevel else { return }
-        zoomLevel = level
-        delegate?.outlinePanel(self, didChangeZoomLevel: level)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -256,7 +212,7 @@ final class OutlinePanelView: NSView, PanelSurface {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Hairline under the header so the slider reads as chrome, not content.
+        // Hairline under the header so the section label reads as chrome.
         styleSheet.rule.setFill()
         let y = scroll.frame.maxY
         NSRect(x: 0, y: y, width: bounds.width, height: PanelMetrics.hairline).fill()
@@ -283,8 +239,6 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
             heading: headings[index],
             index: index,
             styleSheet: styleSheet,
-            readMinutes: readMinutes(forHeading: index),
-            density: CGFloat(words(forHeading: index)) / CGFloat(largestSectionWords),
             isFolded: foldedIndices.contains(index),
             isCurrent: index == currentHeadingIndex
         )
@@ -357,15 +311,12 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
 
 // MARK: - Row
 
-/// One heading.  Draws its own density bar because §9.6's point is comparative
-/// — "where the bulk of a document actually is, which is not usually where
-/// you'd guess" — and a bar per row answers that in a glance where a column of
-/// minute counts does not.
+/// One heading.  Fold and reorder affordances stay quiet until the row is
+/// current or hovered, so Contents reads as a clean list at rest.
 private final class OutlineRowView: NSView {
     var onToggleFold: ((Int) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
-    private let timeLabel = NSTextField(labelWithString: "")
     private let foldButton = NSButton()
     private var foldAction: ButtonAction?
     private var titleLeading: NSLayoutConstraint!
@@ -373,8 +324,8 @@ private final class OutlineRowView: NSView {
 
     private var styleSheet: StyleSheet?
     private var headingIndex = 0
-    private var density: CGFloat = 0
     private var isCurrent = false
+    private var isHovered = false
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -392,12 +343,6 @@ private final class OutlineRowView: NSView {
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(titleLabel)
 
-        timeLabel.font = PanelFont.secondary
-        timeLabel.alignment = .right
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        addSubview(timeLabel)
-
         foldLeading = foldButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset)
         titleLeading = titleLabel.leadingAnchor.constraint(equalTo: foldButton.trailingAnchor, constant: 4)
         NSLayoutConstraint.activate([
@@ -405,11 +350,10 @@ private final class OutlineRowView: NSView {
             foldButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             foldButton.widthAnchor.constraint(equalToConstant: 14),
             titleLeading,
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            timeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
-            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            timeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -418,14 +362,11 @@ private final class OutlineRowView: NSView {
         heading: HeadingNode,
         index: Int,
         styleSheet: StyleSheet,
-        readMinutes: Double,
-        density: CGFloat,
         isFolded: Bool,
         isCurrent: Bool
     ) {
         self.styleSheet = styleSheet
         self.headingIndex = index
-        self.density = min(1, max(0, density))
         self.isCurrent = isCurrent
 
         let indent = PanelMetrics.inset + CGFloat(min(heading.level, 6) - 1) * 11
@@ -434,9 +375,6 @@ private final class OutlineRowView: NSView {
         titleLabel.stringValue = heading.title.isEmpty ? "Untitled" : heading.title
         titleLabel.textColor = styleSheet.headingColor(level: heading.level)
         titleLabel.font = isCurrent ? PanelFont.rowEmphasised : PanelFont.row
-
-        timeLabel.stringValue = Self.readTimeText(readMinutes)
-        timeLabel.textColor = styleSheet.textFaint
 
         let symbol = isFolded ? "chevron.right" : "chevron.down"
         let description = isFolded ? "Unfold section" : "Fold section"
@@ -453,32 +391,33 @@ private final class OutlineRowView: NSView {
         foldAction = action
         foldButton.target = action
         foldButton.action = #selector(ButtonAction.fire(_:))
+        foldButton.isHidden = !(isCurrent || isHovered)
 
         setAccessibilityLabel("\(heading.title), heading level \(heading.level)")
         needsDisplay = true
     }
 
-    private static func readTimeText(_ minutes: Double) -> String {
-        // Under half a minute a section has no meaningful read time, and the
-        // density bar already says "this one is small".
-        guard minutes >= 0.5 else { return "" }
-        return "\(Int(minutes.rounded())) min"
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        foldButton.isHidden = false
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        foldButton.isHidden = !isCurrent
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let styleSheet else { return }
 
-        if density > 0 {
-            let width = max(2, density * bounds.width)
-            styleSheet.accent
-                .panelAlpha(0.08, increaseContrast: styleSheet.increaseContrast)
-                .setFill()
-            NSRect(x: 0, y: 1, width: width, height: bounds.height - 2).fill()
-        }
-
-        if isCurrent {
-            styleSheet.accent.setFill()
-            NSRect(x: 0, y: 2, width: 3, height: bounds.height - 4).fill()
-        }
+        guard isCurrent else { return }
+        styleSheet.text
+            .panelAlpha(0.08, increaseContrast: styleSheet.increaseContrast)
+            .setFill()
+        NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 4, dy: 2),
+            xRadius: PanelMetrics.cornerRadius,
+            yRadius: PanelMetrics.cornerRadius
+        ).fill()
     }
 }

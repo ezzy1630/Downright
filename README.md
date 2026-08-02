@@ -43,10 +43,10 @@ Five decisions determine everything else:
    editor that builds a document model and re-serialises will eventually
    normalise something and corrupt somebody's file. This one structurally
    cannot.
-2. **One text surface, three modes.** Read, Live, and Source are one
-   `NSTextView` on TextKit 2 with three decoration policies — not three
-   renderers that can disagree. Switching is instant and holds scroll and
-   selection.
+2. **One editable document surface.** Document mode reads like a finished page
+   and edits in place. Markdown markers appear only near the caret. Source mode
+   shows the full syntax. Both use one `NSTextView` on TextKit 2, so switching
+   is instant and preserves scroll and selection.
 3. **No WebView. Anywhere.** Math via SwiftMath, diagrams via
    beautiful-mermaid-swift, code via a native lexer, everything else through
    Core Text. This is what lets the Quick Look extension fit under its hard
@@ -114,17 +114,16 @@ needs it. It also fails if Swift runs zero tests.
 
 ## Keyboard
 
-Read mode has no insertion caret, so the letter keys are free. Every binding is
-remappable in Settings → Keys, which is generated from the same command table
-the menus are.
+Document mode is always editable. Every binding is remappable in Settings →
+Keys, which is generated from the same command table as the menus.
 
 | | | | |
 |---|---|---|---|
-| `⌘E` | Read ⇄ Live | `space` / `⇧space` | Page down / up |
-| `⌘⇧E` | Source mode | `n` / `p` | Next / previous heading |
+| `⌘E` | Document mode | `⌥↓` / `⌥↑` | Next / previous change |
+| `⌘⇧E` | Toggle Source mode | `⌘⇧O` | Jump to heading |
 | `⌘0` | Sibling sidebar | `[` / `]` | Previous / next change |
-| `⌘⇧O` | Jump to heading | `1`–`5` | Structural zoom level |
-| `⌘T` | Task panel | `o` `t` `f` `e` | Outline, tasks, find, edit |
+| `⌘⌥1` | Outline panel | `1`–`5` | Structural zoom in the outline |
+| `⌘T` | Task panel | `⌘F` | Find |
 | `⌘⇧V` | Version timeline | `⌥↑` / `⌥↓` | Previous / next change |
 | `⌘\` | Split view | `⌘⇧F` | Search sibling files |
 | `⌘C` / `⌘⇧C` | Copy markdown / rich text | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |

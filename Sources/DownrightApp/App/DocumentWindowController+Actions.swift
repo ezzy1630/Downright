@@ -20,11 +20,11 @@ extension DocumentWindowController {
     func updateBreadcrumbAndGutter() {
         refreshBreadcrumb()
         showTransientBreadcrumb()
-        if let current = markdownDocument.parsed.headings.lastIndex(where: {
+        let current = markdownDocument.parsed.headings.lastIndex(where: {
             $0.range.location <= containerTextView.topVisibleOffset
-        }) {
-            outlinePanel?.currentHeadingIndex = current
-        }
+        })
+        outlinePanel?.currentHeadingIndex = current
+        navigationPanel?.currentHeadingIndex = current
         let length = max(1, markdownDocument.parsed.length)
         let top = CGFloat(containerTextView.topVisibleOffset) / CGFloat(length)
         let visibleHeight = primaryContainer.scrollView.contentView.bounds.height
@@ -32,9 +32,6 @@ extension DocumentWindowController {
         let span = min(1, visibleHeight / documentHeight)
         densityGutterView.visibleRange = top...min(1, top + span)
         densityGutterView.readProgress = max(densityGutterView.readProgress, min(1, top + span))
-        let current = markdownDocument.parsed.headings.lastIndex {
-            $0.range.location <= containerTextView.topVisibleOffset
-        }
         densityGutterView.outlineEntries = densityGutterView.outlineEntries.enumerated().map { index, entry in
             var updated = entry
             updated.isCurrent = index == current
@@ -210,6 +207,7 @@ enum CodeFileExtensions {
 // the toolbar itself just carries the controls that stay useful in every mode.
 
 extension DocumentWindowController: NSToolbarDelegate {
+    private static let contentsItem = NSToolbarItem.Identifier("contents")
     private static let modeItem = NSToolbarItem.Identifier("mode")
     private static let zoomItem = NSToolbarItem.Identifier("zoom")
     private static let outlineItem = NSToolbarItem.Identifier("outline")
@@ -227,7 +225,7 @@ extension DocumentWindowController: NSToolbarDelegate {
         // panel's slider (§5.2); it does not need to sit on screen permanently,
         // so it stays available for customisation rather than shown by default.
         [
-            .toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace,
+            Self.contentsItem, .flexibleSpace,
             Self.modeItem, .flexibleSpace,
             Self.findItem, Self.tasksItem, Self.timelineItem, Self.overflowItem,
         ]
@@ -242,13 +240,21 @@ extension DocumentWindowController: NSToolbarDelegate {
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         switch identifier {
+        case Self.contentsItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.image = NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "Contents")
+            item.label = "Contents"
+            item.toolTip = "Contents (⌘⇧O)"
+            item.target = self
+            item.action = #selector(toolbarContents(_:))
+            return item
         case Self.modeItem:
             let control = NSSegmentedControl(
-                labels: RenderMode.allCases.map(\.title),
+                labels: RenderMode.userFacingModes.map(\.title),
                 trackingMode: .selectOne, target: self, action: #selector(modeSegmentChanged(_:))
             )
-            control.selectedSegment = RenderMode.allCases.firstIndex(of: mode) ?? 0
-            let symbols = ["book.pages", "pencil.and.outline", "chevron.left.forwardslash.chevron.right"]
+            control.selectedSegment = RenderMode.userFacingModes.firstIndex(of: mode) ?? 0
+            let symbols = ["doc.richtext", "chevron.left.forwardslash.chevron.right"]
             for index in 0..<min(control.segmentCount, symbols.count) {
                 control.setImage(NSImage(systemSymbolName: symbols[index], accessibilityDescription: nil), forSegment: index)
             }
@@ -321,8 +327,15 @@ extension DocumentWindowController: NSToolbarDelegate {
     }
 
     @objc private func modeSegmentChanged(_ sender: NSSegmentedControl) {
-        guard sender.selectedSegment < RenderMode.allCases.count else { return }
-        applyMode(RenderMode.allCases[sender.selectedSegment])
+        guard sender.selectedSegment < RenderMode.userFacingModes.count else { return }
+        applyMode(RenderMode.userFacingModes[sender.selectedSegment])
+    }
+
+    func refreshModeControlSelection() {
+        guard let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.modeItem }),
+              let control = item.view as? NSSegmentedControl
+        else { return }
+        control.selectedSegment = RenderMode.userFacingModes.firstIndex(of: mode) ?? 0
     }
 
     @objc private func zoomSegmentChanged(_ sender: NSSegmentedControl) {
@@ -333,6 +346,7 @@ extension DocumentWindowController: NSToolbarDelegate {
     }
 
     @objc private func toolbarOutline(_ sender: Any?) { toggleOutlinePanel() }
+    @objc private func toolbarContents(_ sender: Any?) { openNavigationOverlay(focusSearch: false) }
     @objc private func toolbarTasks(_ sender: Any?) { toggleTaskPanel() }
     @objc private func toolbarSiblings(_ sender: Any?) { toggleSiblingSidebar() }
     @objc private func toolbarFind(_ sender: Any?) { showFindBar(replace: false) }

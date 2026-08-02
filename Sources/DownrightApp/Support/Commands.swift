@@ -50,14 +50,14 @@ enum Command: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .toggleReadLive: return "Toggle Read / Live"
+        case .toggleReadLive: return "Document Mode"
         case .sourceMode: return "Source Mode"
         case .splitView: return "Split View"
         case .pinWindow: return "Pin Window"
         case .focusMode: return "Focus Mode"
         case .typewriterScrolling: return "Typewriter Scrolling"
-        case .toggleSidebar: return "Sibling Sidebar"
-        case .outlineQuickOpen: return "Jump to Heading…"
+        case .toggleSidebar: return "Contents"
+        case .outlineQuickOpen: return "Search Contents…"
         case .outlinePanel: return "Outline"
         case .taskPanel: return "Tasks"
         case .versionTimeline: return "Version Timeline"

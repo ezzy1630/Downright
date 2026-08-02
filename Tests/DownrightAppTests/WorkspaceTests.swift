@@ -118,6 +118,25 @@ struct WorkspaceTests {
         #expect(delegate.queries.first?.text == "readme")
         #expect(view.accessibilityLabel() == "Workspace")
     }
+
+    @Test
+    func navigatorIsTransientWidthAndSearchesBothSections() throws {
+        let navigator = NavigationPanelView()
+        #expect(navigator.preferredWidth >= 300 && navigator.preferredWidth <= 320)
+        #expect(navigator.accessibilityLabel() == "Contents and Files")
+
+        navigator.headings = MarkdownParser.parse("# Intro\n\n## Details\n").headings
+        navigator.filterText = "details"
+        #expect(navigator.headings.count == 2, "source headings stay intact while the Contents view filters")
+
+        let file = SiblingScanner.Sibling(
+            url: URL(fileURLWithPath: "/workspace/notes.md"),
+            displayName: "notes.md", modified: Date(), byteCount: 0, hasUnseenChanges: false, group: nil, isCurrent: false
+        )
+        navigator.siblings = [file]
+        navigator.filterText = "missing"
+        #expect(navigator.siblings.count == 1, "source files stay intact while the Files view filters")
+    }
 }
 
 private extension String {

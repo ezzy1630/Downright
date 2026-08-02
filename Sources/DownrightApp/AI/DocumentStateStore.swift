@@ -43,7 +43,7 @@ struct DocumentState: Codable, Equatable {
         self.path = path
         self.lastSeenHash = ""
         self.anchor = .top
-        self.mode = .read
+        self.mode = .live
         self.zoomLevel = .everything
         self.foldedHeadings = []
         self.expandedCodeBlocks = []
@@ -62,7 +62,7 @@ struct DocumentState: Codable, Equatable {
         path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
         lastSeenHash = try c.decodeIfPresent(String.self, forKey: .lastSeenHash) ?? ""
         anchor = try c.decodeIfPresent(ScrollAnchor.self, forKey: .anchor) ?? .top
-        mode = try c.decodeIfPresent(RenderMode.self, forKey: .mode) ?? .read
+        mode = (try c.decodeIfPresent(RenderMode.self, forKey: .mode) ?? .live).normalizedForEditing
         zoomLevel = try c.decodeIfPresent(ZoomLevel.self, forKey: .zoomLevel) ?? .everything
         foldedHeadings = try c.decodeIfPresent(Set<String>.self, forKey: .foldedHeadings) ?? []
         expandedCodeBlocks = try c.decodeIfPresent(Set<Int>.self, forKey: .expandedCodeBlocks) ?? []

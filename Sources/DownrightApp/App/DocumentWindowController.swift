@@ -11,7 +11,7 @@ import MarkdownRender
 @MainActor
 final class DocumentWindowController: NSWindowController {
     let markdownDocument = MarkdownDocument()
-    private(set) var mode: RenderMode = .read
+    private(set) var mode: RenderMode = .live
 
     var onClose: (() -> Void)?
 
@@ -29,6 +29,8 @@ final class DocumentWindowController: NSWindowController {
     var outlinePanel: OutlinePanelView?
     var taskPanel: TaskPanelView?
     var siblingSidebar: SiblingSidebarView?
+    var navigationPanel: NavigationPanelView?
+    private var navigationWindow: NavigationPanelWindow?
     var navigationSidebar: NSStackView?
     var findBar: FindBarView?
     var conflictBar: ConflictBarView?
@@ -47,7 +49,7 @@ final class DocumentWindowController: NSWindowController {
     private var trailingPane: NSView!
     var barStack: NSStackView!
     private var windowSplitController: NSSplitViewController!
-    private var sidebarItem: NSSplitViewItem!
+    var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
 
     // State
@@ -59,6 +61,7 @@ final class DocumentWindowController: NSWindowController {
     private var themeObservation: ThemeObservation?
     let progressRing = TaskProgressRing()
     private var isPinned = false
+    var navigationPinned = false
     private var isFocusMode = false
     var pendingConflict: MarkdownDocument.Conflict?
     var breadcrumbHideWorkItem: DispatchWorkItem?
@@ -87,7 +90,8 @@ final class DocumentWindowController: NSWindowController {
 
     func open(_ url: URL, mode: RenderMode) throws {
         try markdownDocument.open(url)
-        self.mode = markdownDocument.state.mode == .read ? mode : markdownDocument.state.mode
+        let restoredMode = markdownDocument.state.mode.normalizedForEditing
+        self.mode = restoredMode == .live ? mode.normalizedForEditing : restoredMode
 
         scanner = SiblingScanner(
             documentURL: url,
@@ -117,7 +121,10 @@ final class DocumentWindowController: NSWindowController {
         )
 
         refreshDerivedUI()
-        if markdownDocument.state.sidebarVisible { toggleSiblingSidebar() }
+        if markdownDocument.state.sidebarVisible {
+            openNavigationOverlay(focusSearch: false)
+            pinNavigationPanel()
+        }
         if markdownDocument.state.splitViewEnabled { toggleSplitView() }
 
         // Restore reading position, then offer to jump to the first thing that
@@ -206,7 +213,7 @@ final class DocumentWindowController: NSWindowController {
     func adopt(text: String, title: String) {
         markdownDocument.adopt(text: text, displayURL: nil)
         window?.title = title
-        applyMode(.read)
+        applyMode(.live)
         primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
         refreshDerivedUI()
     }
@@ -218,7 +225,7 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.markdownDelegate = self
         primaryContainer.textView.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
-        primaryContainer.trailingAccessory = densityGutterView
+        // The density rail is available on demand, not a permanent right rail.
 
         breadcrumbView.delegate = self
         breadcrumbView.styleSheet = activeStyleSheet
@@ -283,11 +290,14 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func buildToolbar() {
-        let toolbar = NSToolbar(identifier: "DownrightToolbar")
+        // Keep the core controls stable. Older builds saved toolbar layouts
+        // that could omit the mode control and reopen as a blank title bar.
+        let toolbar = NSToolbar(identifier: "DownrightToolbar.v2")
         toolbar.delegate = self
         toolbar.displayMode = .iconAndLabel
-        toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = true
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.isVisible = true
         window?.toolbar = toolbar
         window?.toolbarStyle = .unified
     }
@@ -336,6 +346,7 @@ final class DocumentWindowController: NSWindowController {
         densityGutterView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
         outlinePanel?.styleSheet = activeStyleSheet
+        navigationPanel?.styleSheet = activeStyleSheet
         taskPanel?.styleSheet = activeStyleSheet
         siblingSidebar?.styleSheet = activeStyleSheet
         findBar?.styleSheet = activeStyleSheet
@@ -349,6 +360,7 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Modes (§3.2)
 
     func applyMode(_ newMode: RenderMode) {
+        let newMode = newMode.normalizedForEditing
         mode = newMode
         // Switching is instant and preserves scroll and selection because it is
         // the same layout manager over the same storage — the text view only
@@ -365,6 +377,7 @@ final class DocumentWindowController: NSWindowController {
             }
         }
         markdownDocument.state.mode = newMode
+        refreshModeControlSelection()
         window?.toolbar?.validateVisibleItems()
     }
 
@@ -378,6 +391,12 @@ final class DocumentWindowController: NSWindowController {
             primaryContainer.textView.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
         })
         outlinePanel?.reload()
+        navigationPanel?.headings = parsed.headings
+        navigationPanel?.sectionMetrics = Metrics.sectionMetrics(parsed)
+        navigationPanel?.foldedIndices = Set(parsed.headings.indices.filter {
+            primaryContainer.textView.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
+        })
+        navigationPanel?.reload()
 
         taskPanel?.tasks = parsed.tasks
         taskPanel?.headings = parsed.headings
@@ -448,6 +467,8 @@ final class DocumentWindowController: NSWindowController {
         guard let scanner else { return }
         siblingSidebar?.siblings = scanner.siblings
         siblingSidebar?.reload()
+        navigationPanel?.siblings = scanner.siblings
+        navigationPanel?.reload()
     }
 
     // MARK: - External changes (§8.1)
@@ -517,28 +538,13 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Panels
 
     func toggleOutlinePanel() {
-        if navigationSidebar != nil {
-            dismissSiblingSidebar()
-            markdownDocument.state.sidebarVisible = false
-            return
+        if navigationPinned {
+            closePinnedNavigation()
+        } else if navigationPanel != nil || navigationWindow != nil {
+            closeNavigationOverlay()
+        } else {
+            openNavigationOverlay(focusSearch: false)
         }
-        if let panel = outlinePanel {
-            panel.removeFromSuperview()
-            outlinePanel = nil
-            sidebarItem.isCollapsed = true
-            return
-        }
-        dismissSiblingSidebar()
-        let panel = OutlinePanelView()
-        panel.delegate = self
-        panel.styleSheet = activeStyleSheet
-        panel.headings = markdownDocument.parsed.headings
-        panel.sectionMetrics = Metrics.sectionMetrics(markdownDocument.parsed)
-        panel.zoomLevel = primaryContainer.textView.zoomLevel
-        install(panel, in: leadingPane)
-        outlinePanel = panel
-        sidebarItem.isCollapsed = false
-        panel.reload()
     }
 
     func toggleTaskPanel() {
@@ -561,37 +567,13 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func toggleSiblingSidebar() {
-        if navigationSidebar != nil || siblingSidebar != nil {
-            dismissSiblingSidebar()
-            markdownDocument.state.sidebarVisible = false
-            return
+        if navigationPinned {
+            closePinnedNavigation()
+        } else if navigationPanel != nil || navigationWindow != nil {
+            closeNavigationOverlay()
+        } else {
+            openNavigationOverlay(focusSearch: false)
         }
-        if outlinePanel != nil { toggleOutlinePanel() }
-        let sidebar = SiblingSidebarView()
-        sidebar.delegate = self
-        sidebar.styleSheet = activeStyleSheet
-        sidebar.siblings = scanner?.siblings ?? []
-        let outline = OutlinePanelView()
-        outline.delegate = self
-        outline.styleSheet = activeStyleSheet
-        outline.headings = markdownDocument.parsed.headings
-        outline.sectionMetrics = Metrics.sectionMetrics(markdownDocument.parsed)
-        outline.zoomLevel = primaryContainer.textView.zoomLevel
-        outline.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
-            primaryContainer.textView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
-        })
-        let stack = NSStackView(views: [sidebar, outline])
-        stack.orientation = .vertical
-        stack.distribution = .fillEqually
-        stack.spacing = 1
-        install(stack, in: leadingPane)
-        siblingSidebar = sidebar
-        outlinePanel = outline
-        navigationSidebar = stack
-        sidebarItem.isCollapsed = false
-        markdownDocument.state.sidebarVisible = true
-        sidebar.reload()
-        outline.reload()
     }
 
     private func dismissSiblingSidebar() {
@@ -601,6 +583,127 @@ final class DocumentWindowController: NSWindowController {
         siblingSidebar = nil
         outlinePanel = nil
         sidebarItem.isCollapsed = true
+    }
+
+    func openNavigationOverlay(focusSearch: Bool) {
+        guard let window else { return }
+        if navigationPinned {
+            if focusSearch { navigationPanel?.focusSearch() }
+            return
+        }
+        if navigationWindow != nil {
+            if focusSearch {
+                navigationWindow?.makeKey()
+                navigationPanel?.focusSearch()
+            }
+            return
+        }
+        let panel = NavigationPanelView(styleSheet: activeStyleSheet)
+        panel.delegate = self
+        panel.headings = markdownDocument.parsed.headings
+        panel.sectionMetrics = Metrics.sectionMetrics(markdownDocument.parsed)
+        panel.siblings = scanner?.siblings ?? []
+        panel.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
+            primaryContainer.textView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
+        })
+        navigationPanel = panel
+        let child = NavigationPanelWindow(
+            contentRect: .zero,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        child.contentView = panel
+        child.isOpaque = false
+        child.backgroundColor = .clear
+        child.hasShadow = true
+        child.hidesOnDeactivate = false
+        child.onEscape = { [weak self] in self?.closeNavigationOverlay() }
+        navigationWindow = child
+        let targetFrame = navigationOverlayFrame(in: window, width: panel.preferredWidth)
+        let startFrame = activeStyleSheet.reduceMotion ? targetFrame : targetFrame.offsetBy(dx: -6, dy: 0)
+        child.setFrame(startFrame, display: false)
+        child.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
+        window.addChildWindow(child, ordered: .above)
+        child.orderFront(nil)
+        PanelAnimation.run(reduceMotion: activeStyleSheet.reduceMotion, duration: 0.16) { _ in
+            child.alphaValue = 1
+            child.setFrame(targetFrame, display: true)
+        }
+        markdownDocument.state.sidebarVisible = false
+        if focusSearch {
+            child.makeKey()
+            panel.focusSearch()
+        }
+    }
+
+    func closeNavigationOverlay() {
+        guard let child = navigationWindow else { return }
+        let finish = { [weak self, weak child] in
+            guard let self, let child else { return }
+            child.parent?.removeChildWindow(child)
+            child.orderOut(nil)
+            if self.navigationWindow === child { self.navigationWindow = nil; self.navigationPanel = nil }
+        }
+        guard !activeStyleSheet.reduceMotion else { finish(); return }
+        let endFrame = child.frame.offsetBy(dx: -6, dy: 0)
+        PanelAnimation.run(
+            reduceMotion: false,
+            duration: 0.16,
+            { _ in
+                child.alphaValue = 0
+                child.setFrame(endFrame, display: true)
+            },
+            completion: finish
+        )
+    }
+
+    func pinNavigationPanel() {
+        guard let panel = navigationPanel else { return }
+        if let child = navigationWindow {
+            child.parent?.removeChildWindow(child)
+            child.orderOut(nil)
+            child.contentView = nil
+            navigationWindow = nil
+        }
+        dismissSiblingSidebar()
+        panel.setPinned(true)
+        install(panel, in: leadingPane)
+        navigationPanel = panel
+        sidebarItem.isCollapsed = false
+        navigationPinned = true
+        markdownDocument.state.sidebarVisible = true
+    }
+
+    func closePinnedNavigation() {
+        guard navigationPinned else { return }
+        navigationPanel?.removeFromSuperview()
+        navigationPanel = nil
+        navigationPinned = false
+        sidebarItem.isCollapsed = true
+        markdownDocument.state.sidebarVisible = false
+    }
+
+    private func navigationOverlayFrame(in window: NSWindow, width: CGFloat) -> NSRect {
+        let local = window.contentView?.convert(window.contentView?.bounds ?? .zero, to: nil) ?? .zero
+        let screenFrame = window.convertToScreen(local)
+        let height = min(560, max(220, screenFrame.height * 0.7))
+        var frame = NSRect(
+            x: screenFrame.minX + 12,
+            y: screenFrame.maxY - height - 12,
+            width: width,
+            height: height
+        )
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = min(max(visible.minX + 8, frame.minX), visible.maxX - frame.width - 8)
+            frame.origin.y = min(max(visible.minY + 8, frame.minY), visible.maxY - frame.height - 8)
+        }
+        return frame
+    }
+
+    private func repositionNavigationOverlay() {
+        guard let window, let child = navigationWindow, let panel = navigationPanel else { return }
+        child.setFrame(navigationOverlayFrame(in: window, width: panel.preferredWidth), display: true)
     }
 
     func installTrailing(_ view: NSView) {
@@ -778,6 +881,9 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Window lifecycle
 
     func documentWillClose() {
+        closeNavigationOverlay()
+        navigationPanel?.removeFromSuperview()
+        navigationPanel = nil
         let selection = primaryContainer.textView.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
         markdownDocument.state.selectionLength = selection.length
@@ -801,6 +907,7 @@ final class DocumentWindowController: NSWindowController {
         densityGutterView.isHidden = isFocusMode
         breadcrumbView.isHidden = isFocusMode
         if isFocusMode {
+            closeNavigationOverlay()
             sidebarItem.isCollapsed = true
             inspectorItem.isCollapsed = true
         } else if markdownDocument.state.sidebarVisible {
@@ -812,6 +919,19 @@ final class DocumentWindowController: NSWindowController {
 // MARK: - Window delegate
 
 extension DocumentWindowController: NSWindowDelegate {
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        markdownDocument.undoManager
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        repositionNavigationOverlay()
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        guard !isFocusMode else { return }
+        window?.toolbar?.isVisible = true
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard markdownDocument.isDirty, markdownDocument.url != nil else { return true }
         let alert = NSAlert()

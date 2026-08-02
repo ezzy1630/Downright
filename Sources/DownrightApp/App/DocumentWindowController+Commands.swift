@@ -17,9 +17,9 @@ extension DocumentWindowController: CommandResponder {
 
         // MARK: Modes
         case .toggleReadLive:
-            applyMode(mode == .live ? .read : .live)
+            applyMode(.live)
         case .sourceMode:
-            applyMode(mode == .source ? .read : .source)
+            applyMode(mode == .source ? .live : .source)
         case .splitView:
             toggleSplitView()
         case .pinWindow:
@@ -185,7 +185,7 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func showOutlineQuickOpen() {
-        densityGutterView.presentOutlineForKeyboard()
+        openNavigationOverlay(focusSearch: true)
     }
 
     private func showVersionTimeline() {

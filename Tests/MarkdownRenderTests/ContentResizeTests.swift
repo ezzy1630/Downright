@@ -70,7 +70,7 @@ struct ContentResizeTests {
             frame: NSRect(x: 0, y: 0, width: 640, height: 400), storage: storage)
         view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
 
-        view.mode = .live
+        view.mode = .source
 
         #expect(view.pendingResizeRequestForTesting == .viewport)
     }

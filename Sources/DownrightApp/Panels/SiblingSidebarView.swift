@@ -7,7 +7,7 @@ protocol SiblingSidebarDelegate: AnyObject {
     func siblingSidebar(_ sidebar: SiblingSidebarView, didSelect url: URL, inNewWindow: Bool)
 }
 
-/// Sibling sidebar (§8.7).
+/// Files section of the document navigator (§8.7).
 ///
 /// "Agents don't write one file, they write six into the same folder."  Newest
 /// first, because the file the agent just finished is the one you came for;
@@ -27,13 +27,14 @@ final class SiblingSidebarView: NSView, PanelSurface {
     }
 
     var siblings: [SiblingScanner.Sibling] = [] { didSet { reload() } }
+    var filterText: String = "" { didSet { guard filterText != oldValue else { return }; reload() } }
 
-    var preferredWidth: CGFloat { PanelMetrics.listWidth }
+    var preferredWidth: CGFloat { 320 }
 
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Nearby")
+    private let titleLabel = NSTextField(labelWithString: "Files")
     private let table = PanelList.makeTableView(identifier: "siblings")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
 
@@ -121,6 +122,16 @@ final class SiblingSidebarView: NSView, PanelSurface {
             if groupOrder.count > 1 || group != nil {
                 rows.append(.group(group ?? "This folder"))
             }
+            let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            if !query.isEmpty {
+                items = items.filter { sibling in
+                    let haystack = "\(sibling.displayName) \(sibling.url.path)"
+                        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                    return haystack.contains(query)
+                }
+            }
+            guard !items.isEmpty else { continue }
             for item in items {
                 rows.append(.sibling(ordered.count))
                 ordered.append(item)
@@ -203,7 +214,6 @@ extension SiblingSidebarView: NSTableViewDataSource, NSTableViewDelegate {
 
 private final class SiblingRowView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
-    private let timeLabel = NSTextField(labelWithString: "")
     private var styleSheet: StyleSheet?
     private var hasUnseenChanges = false
     private var isCurrent = false
@@ -220,18 +230,10 @@ private final class SiblingRowView: NSView {
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(nameLabel)
 
-        timeLabel.font = PanelFont.secondary
-        timeLabel.alignment = .right
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        addSubview(timeLabel)
-
         NSLayoutConstraint.activate([
             nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset + 8),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            timeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: 6),
-            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            timeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
@@ -246,10 +248,7 @@ private final class SiblingRowView: NSView {
         nameLabel.font = sibling.isCurrent ? PanelFont.rowEmphasised : PanelFont.row
         nameLabel.textColor = sibling.isCurrent ? styleSheet.text : styleSheet.textSecondary
 
-        timeLabel.stringValue = RelativeTime.short(sibling.modified)
-        timeLabel.textColor = styleSheet.textFaint
-
-        var description = "\(sibling.displayName), modified \(RelativeTime.long(sibling.modified))"
+        var description = sibling.displayName
         if sibling.isCurrent { description += ", current document" }
         if sibling.hasUnseenChanges { description += ", changed since you last looked" }
         setAccessibilityLabel(description)
