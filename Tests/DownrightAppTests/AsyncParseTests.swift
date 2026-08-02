@@ -45,16 +45,20 @@ struct AsyncParseTests {
     }
 
     @Test @MainActor
-    func latestRevisionWinsWithoutWaitingForOlderWorker() async {
+    func latestRevisionWinsWithOneInFlightWorker() async {
         let gate = ParseGate()
+        let concurrency = WorkerConcurrencyCounter()
         let committed = ParseSignal()
         let worker = MarkdownParseWorker { text, previous, revision in
+            concurrency.enter()
             let parsed = MarkdownParser.parse(text)
             let result = MarkdownParseResult(
                 revision: revision, text: text, document: parsed,
                 dirty: ASTDiff.dirtySet(old: previous, new: parsed)
             )
-            return await gate.hold(result)
+            let held = await gate.hold(result)
+            concurrency.leave()
+            return held
         }
         let document = MarkdownDocument(parseWorker: worker)
         document.adopt(text: "one\n", displayURL: nil)
@@ -67,12 +71,57 @@ struct AsyncParseTests {
 
         document.replace(NSRange(location: 0, length: document.storage.length), with: "three\n", actionName: nil)
         document.flushScheduledReparse()
-        await gate.waitForRequestCount(2)
+        // The second snapshot waits in the coordinator's one-item pending
+        // slot.  It must not start while the first cmark parse is held.
+        for _ in 0..<4 { await Task.yield() }
+        #expect(await gate.requestCount == 1)
+        #expect(concurrency.maximum == 1)
 
         await gate.releaseNext()
+        await gate.waitForRequestCount(2)
         await gate.releaseNext()
         await committed.wait()
         #expect(document.parsed.text == "three\n")
+        #expect(concurrency.maximum == 1)
+    }
+
+    @Test @MainActor
+    func burstKeepsOnlyLatestPendingSnapshot() async {
+        let gate = ParseGate()
+        let worker = MarkdownParseWorker { text, previous, revision in
+            let parsed = MarkdownParser.parse(text)
+            return await gate.hold(MarkdownParseResult(
+                revision: revision, text: text, document: parsed,
+                dirty: ASTDiff.dirtySet(old: previous, new: parsed)
+            ))
+        }
+        let document = MarkdownDocument(parseWorker: worker)
+        document.adopt(text: "zero\n", displayURL: nil)
+
+        document.replace(
+            NSRange(location: 0, length: document.storage.length),
+            with: "one\n",
+            actionName: nil
+        )
+        document.flushScheduledReparse()
+        await gate.waitForRequestCount(1)
+
+        for text in ["two\n", "three\n", "four\n"] {
+            document.replace(
+                NSRange(location: 0, length: document.storage.length),
+                with: text,
+                actionName: nil
+            )
+            document.flushScheduledReparse()
+        }
+
+        for _ in 0..<4 { await Task.yield() }
+        #expect(await gate.requestCount == 1)
+        await gate.releaseNext()
+        await gate.waitForRequestCount(2)
+        await gate.releaseNext()
+        for _ in 0..<6 { await Task.yield() }
+        #expect(document.parsed.text == "four\n")
     }
 
     @Test @MainActor
@@ -114,6 +163,28 @@ struct AsyncParseTests {
         await gate.releaseNext()
         for _ in 0..<4 { await Task.yield() }
         #expect(document.parsed.text == "one\n")
+    }
+
+    @Test @MainActor
+    func reopenAfterCloseAcceptsTheNewestSnapshot() async {
+        let committed = ParseSignal()
+        let document = MarkdownDocument()
+        document.adopt(text: "one\n", displayURL: nil)
+        document.close()
+        document.adopt(text: "two\n", displayURL: nil)
+        document.onReparse = { parsed, _ in
+            if parsed.text == "three\n" { Task { await committed.signal() } }
+        }
+
+        document.replace(
+            NSRange(location: 0, length: document.storage.length),
+            with: "three\n",
+            actionName: nil
+        )
+        document.flushScheduledReparse()
+        await committed.wait()
+
+        #expect(document.parsed.text == "three\n")
     }
 
     @Test @MainActor
@@ -202,5 +273,24 @@ private final class WorkerCallCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return count
+    }
+}
+
+private final class WorkerConcurrencyCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentCount = 0
+    private(set) var maximum = 0
+
+    func enter() {
+        lock.lock()
+        currentCount += 1
+        maximum = max(maximum, currentCount)
+        lock.unlock()
+    }
+
+    func leave() {
+        lock.lock()
+        currentCount -= 1
+        lock.unlock()
     }
 }

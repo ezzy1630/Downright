@@ -57,9 +57,11 @@ final class MarkdownDocument: NSObject {
     private var reparseScheduled = false
     private var isApplyingExternalChange = false
     private var suppressReparse = false
-    private let parseWorker: MarkdownParseWorker
+    private let parseCoordinator: MarkdownParseCoordinator
     private var parseTask: Task<Void, Never>?
+    private var parseControlTask: Task<Void, Never>?
     private(set) var revision = MarkdownParseRevision.zero
+    private var isClosed = false
 
     // MARK: - Init
 
@@ -68,11 +70,17 @@ final class MarkdownDocument: NSObject {
     }
 
     init(parseWorker: MarkdownParseWorker) {
-        self.parseWorker = parseWorker
+        self.parseCoordinator = MarkdownParseCoordinator(worker: parseWorker)
         self.state = DocumentState(path: "")
         super.init()
         storage.delegate = self
         undoManager.groupsByEvent = false
+    }
+
+    deinit {
+        parseTask?.cancel()
+        let coordinator = parseCoordinator
+        Task { await coordinator.shutdown() }
     }
 
     var text: String { storage.string }
@@ -83,6 +91,8 @@ final class MarkdownDocument: NSObject {
     // MARK: - Opening and saving
 
     func open(_ fileURL: URL) throws {
+        isClosed = false
+        enqueueParseControl { await $0.resume() }
         cancelParseWork()
         let (text, fidelity) = try DocumentIO.read(contentsOf: fileURL)
         self.url = fileURL
@@ -116,6 +126,8 @@ final class MarkdownDocument: NSObject {
     /// Adopts text with no backing file — used by `Compare` windows and by the
     /// version timeline's preview pane.
     func adopt(text: String, displayURL: URL?) {
+        isClosed = false
+        enqueueParseControl { await $0.resume() }
         cancelParseWork()
         self.url = displayURL
         suppressReparse = true
@@ -146,7 +158,9 @@ final class MarkdownDocument: NSObject {
     }
 
     func close() {
+        isClosed = true
         cancelParseWork()
+        enqueueParseControl { await $0.suspend() }
         persistState()
         watcher?.stop()
         watcher = nil
@@ -274,43 +288,57 @@ final class MarkdownDocument: NSObject {
     }
 
     private func startAsyncReparse() {
-        guard !suppressReparse else { return }
+        guard !suppressReparse, !isClosed else { return }
         let text = storage.string
         let previous = parsed
         let parseRevision = revision
-        let worker = parseWorker
+        let coordinator = parseCoordinator
+        enqueueParseControl { await $0.submit(MarkdownParseRequest(
+            text: text, previous: previous, revision: parseRevision
+        )) }
 
-        parseTask?.cancel()
-        parseTask = Task.detached(priority: .userInitiated) { [weak self, worker, text, previous, parseRevision] in
-            let result = await worker.run(text: text, previous: previous, revision: parseRevision)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                self.applyAsyncParse(result)
+        guard parseTask == nil else { return }
+        parseTask = Task.detached(priority: .userInitiated) { [weak self, coordinator] in
+            while let result = await coordinator.nextResult() {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.applyAsyncParse(result)
+                }
             }
         }
     }
 
     private func applyAsyncParse(_ result: MarkdownParseResult) {
-        guard result.revision == revision,
+        guard !isClosed,
+              result.revision == revision,
               result.text == storage.string,
               result.document.text == result.text else { return }
-        parseTask = nil
         parsed = result.document
         onReparse?(result.document, result.dirty)
     }
 
     private func cancelParseWork() {
-        parseTask?.cancel()
-        parseTask = nil
         reparseScheduled = false
         revision = revision.advanced()
     }
 
     private func invalidateParseWorkForEdit() {
-        parseTask?.cancel()
-        parseTask = nil
         revision = revision.advanced()
+    }
+
+    /// Serializes lifecycle and submit messages sent from the main actor.
+    /// Separate unstructured tasks have no ordering contract; this chain makes
+    /// close → reopen → submit explicit and prevents a valid snapshot from
+    /// reaching a coordinator that is still suspended.
+    private func enqueueParseControl(
+        _ operation: @escaping @Sendable (MarkdownParseCoordinator) async -> Void
+    ) {
+        let previous = parseControlTask
+        let coordinator = parseCoordinator
+        parseControlTask = Task {
+            _ = await previous?.value
+            await operation(coordinator)
+        }
     }
 
     // MARK: - External changes (§8.1)
