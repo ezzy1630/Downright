@@ -49,6 +49,20 @@ final class SnapshotStore {
 
     private let queue = DispatchQueue(label: "com.unrulyagency.downright.history", qos: .utility)
     private let fm = FileManager.default
+    private let pendingLock = NSLock()
+    private struct DocumentState {
+        var newestHash: String?
+        var isLoaded: Bool
+
+        init(newestHash: String? = nil, isLoaded: Bool = false) {
+            self.newestHash = newestHash
+            self.isLoaded = isLoaded
+        }
+    }
+
+    /// The lock owns this cache.  A hash is reserved before the disk write is
+    /// queued, so a second record call cannot race the first index update.
+    private var stateByDocument: [String: DocumentState] = [:]
     private var lastPrune: Date = .distantPast
 
     private init() {
@@ -68,8 +82,21 @@ final class SnapshotStore {
     @discardableResult
     func record(_ text: String, for url: URL, kind: SnapshotKind) -> VersionRecord? {
         let hash = Self.hash(text)
-        var index = loadIndex(for: url)
-        if index.versions.last?.hash == hash { return nil }
+        let documentKey = Self.documentKey(for: url)
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+
+        var state = stateByDocument[documentKey] ?? DocumentState()
+        if !state.isLoaded {
+            state.newestHash = loadIndex(for: url).versions.last?.hash
+            state.isLoaded = true
+        }
+        guard state.newestHash != hash else {
+            stateByDocument[documentKey] = state
+            return nil
+        }
+        state.newestHash = hash
+        stateByDocument[documentKey] = state
 
         let data = Data(text.utf8)
         let record = VersionRecord(hash: hash, date: Date(), byteCount: data.count, kind: kind)
@@ -82,7 +109,6 @@ final class SnapshotStore {
             saveIndex(idx, for: url)
             pruneIfDue()
         }
-        index.versions.append(record)
         return record
     }
 
@@ -106,6 +132,16 @@ final class SnapshotStore {
         return String(data: raw, encoding: .utf8)
     }
 
+    /// Waits for all writes queued before this call.  Used by tests and
+    /// lifecycle code that needs a durable handoff without a timing guess.
+    func waitForPendingWrites() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                continuation.resume()
+            }
+        }
+    }
+
     /// Total bytes held by the store, for the preferences pane.
     func totalBytes() -> Int {
         guard let e = fm.enumerator(at: objectsDirectory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
@@ -117,8 +153,19 @@ final class SnapshotStore {
     }
 
     func forget(_ url: URL) {
+        let documentKey = Self.documentKey(for: url)
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        // Keep a loaded empty state until the queued deletion runs.  A new
+        // record immediately after forget must not read the old index again.
+        stateByDocument[documentKey] = DocumentState(isLoaded: true)
         queue.async { [self] in
             try? fm.removeItem(at: indexURL(for: url))
+            pendingLock.lock()
+            defer { pendingLock.unlock() }
+            if stateByDocument[documentKey]?.newestHash == nil {
+                stateByDocument.removeValue(forKey: documentKey)
+            }
         }
     }
 
@@ -169,6 +216,7 @@ final class SnapshotStore {
     func prune() {
         let cutoff = Date().addingTimeInterval(-maximumAge)
         var referenced = Set<String>()
+        var newestHashes = Set<String>()
 
         let indexes = (try? fm.contentsOfDirectory(at: indexDirectory, includingPropertiesForKeys: nil)) ?? []
         for indexFile in indexes where indexFile.pathExtension == "json" {
@@ -187,6 +235,9 @@ final class SnapshotStore {
                 try? encoded.write(to: indexFile, options: .atomic)
             }
             referenced.formUnion(index.versions.map(\.hash))
+            if let newest = index.versions.last?.hash {
+                newestHashes.insert(newest)
+            }
         }
 
         // Size cap: drop the oldest unreferenced-after-trim objects first.
@@ -209,7 +260,9 @@ final class SnapshotStore {
 
         live.sort { $0.date < $1.date }
         var dropped = Set<String>()
-        for object in live where total > maximumBytes {
+        // Keep every document's newest version.  The in-memory reservation
+        // cache relies on the index's newest hash remaining durable.
+        for object in live where total > maximumBytes && !newestHashes.contains(object.hash) {
             try? fm.removeItem(at: object.url)
             dropped.insert(object.hash)
             total -= object.size

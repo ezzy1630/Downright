@@ -136,8 +136,9 @@ struct AppLayerTests {
         #expect(store.record(first, for: url, kind: .external) == nil, "identical content must not create a version")
         #expect(store.record(second, for: url, kind: .external) != nil)
 
-        // Recording is asynchronous; give the queue a moment to land.
-        try await Task.sleep(nanoseconds: 800_000_000)
+        // The duplicate assertion above runs before the first async index
+        // write can be relied on.  Drain the queue explicitly before reading.
+        await store.waitForPendingWrites()
 
         let versions = store.versions(for: url)
         #expect(versions.count == 2)
