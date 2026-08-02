@@ -1,6 +1,39 @@
 import AppKit
 import MarkdownCore
 
+/// A height update request. Structural updates keep the document height
+/// correct, but semantic parse results wait for an idle gap so typing never
+/// forces a full TextKit layout on the main actor.
+enum ContentResizeRequest: Equatable, Hashable {
+    case semantic
+    case lineCount
+    case scrollRepair
+    case viewport
+    case immediate
+}
+
+enum ContentResizePolicy {
+    static let semanticIdleDelay: TimeInterval = 0.080
+    static let lineCountIdleDelay: TimeInterval = 0.040
+
+    static func merge(_ current: ContentResizeRequest?, with next: ContentResizeRequest)
+        -> ContentResizeRequest {
+        guard let current else { return next }
+        let rank: [ContentResizeRequest: Int] = [
+            .semantic: 0, .scrollRepair: 1, .lineCount: 2, .viewport: 3, .immediate: 4,
+        ]
+        return rank[next, default: 0] >= rank[current, default: 0] ? next : current
+    }
+
+    static func idleDelay(for request: ContentResizeRequest) -> TimeInterval {
+        switch request {
+        case .semantic: return semanticIdleDelay
+        case .lineCount, .scrollRepair: return lineCountIdleDelay
+        case .viewport, .immediate: return 0
+        }
+    }
+}
+
 /// One text surface, three modes (§3.2).
 ///
 /// Not a viewer with an edit button and not an editor with a preview pane: a
@@ -41,6 +74,7 @@ public final class MarkdownTextView: NSTextView {
             fragmentContext.mode = mode
             applyModeChrome()
             rebuildEverything()
+            requestContentResize(.viewport, anchor: anchor)
             setSourceSelectedRanges(selection)
             scroll(toOffset: anchor, position: .top, animated: false)
         }
@@ -48,12 +82,14 @@ public final class MarkdownTextView: NSTextView {
 
     public var styleSheet: StyleSheet {
         didSet {
+            let anchor = topVisibleOffset
             engine.styleSheet = styleSheet
             fragmentContext.styleSheet = styleSheet
             fragmentContext.invalidateDerivedLayout()
             applyMeasure()
             applyModeChrome()
             rebuildEverything()
+            requestContentResize(.viewport, anchor: anchor)
         }
     }
 
@@ -150,6 +186,15 @@ public final class MarkdownTextView: NSTextView {
     private var codeCollapseOverrides: [Int: Bool] = [:]
     private var hoverTracking: NSTrackingArea?
     private var scrollObserver: NSObjectProtocol?
+    private var pendingResizeRequest: ContentResizeRequest?
+    private var resizeWorkItem: DispatchWorkItem?
+    private var resizeGeneration: UInt = 0
+    private var pendingResizeAnchor: Int?
+    private var resizeNeedsRepair = false
+
+    // Test seam for the scheduler. It does not expose the view's layout
+    // internals to the app target.
+    var pendingResizeRequestForTesting: ContentResizeRequest? { pendingResizeRequest }
     /// Heading under the pointer, for the gutter's anchor glyph (§7.1).
     var hoveredHeadingIndex: Int?
     /// Set while an input method is composing.  Substitutions are suspended in
@@ -224,6 +269,7 @@ public final class MarkdownTextView: NSTextView {
 
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        resizeWorkItem?.cancel()
     }
 
     /// Used only by the convenience initialiser, so a text view can always be
@@ -240,6 +286,8 @@ public final class MarkdownTextView: NSTextView {
         let selection = sourceSelectedRanges
         let anchor = topVisibleOffset
         let currentMode = mode
+        let isInitialUpdate = updateGeneration == 0
+        let oldParagraphCount = paragraphIndex.starts.count
         parsedDocument = document
         updateGeneration &+= 1
         pathExistence.removeAll(keepingCapacity: true)
@@ -257,7 +305,15 @@ public final class MarkdownTextView: NSTextView {
         applyPathExistence()
         invalidateAllFragments()
         gutterRail?.reload()
-        resizeToFitContent()
+        let resizeRequest: ContentResizeRequest
+        if isInitialUpdate || dirty.isWholesale {
+            resizeRequest = .immediate
+        } else if paragraphIndex.starts.count != oldParagraphCount {
+            resizeRequest = .lineCount
+        } else {
+            resizeRequest = .semantic
+        }
+        requestContentResize(resizeRequest, anchor: resizeRequest == .immediate ? nil : anchor)
 
         // Async parses replace only the tree and decorations. Keep the same
         // source coordinates, scroll anchor, and render mode across commit;
@@ -296,6 +352,51 @@ public final class MarkdownTextView: NSTextView {
         let height = max(used.maxY + textContainerInset.height + viewportHeight * 0.40, viewportHeight)
         guard abs(frame.height - height) > 0.5 else { return }
         setFrameSize(NSSize(width: frame.width, height: height))
+    }
+
+    /// Schedules a height pass. Structural updates run now. Semantic parse
+    /// results wait for an idle gap and coalesce, so typing does not force a
+    /// document-wide TextKit layout on the main actor for every result.
+    private func requestContentResize(_ request: ContentResizeRequest, anchor: Int? = nil) {
+        if let anchor { pendingResizeAnchor = anchor }
+        pendingResizeRequest = ContentResizePolicy.merge(pendingResizeRequest, with: request)
+        guard let pending = pendingResizeRequest else { return }
+
+        resizeGeneration &+= 1
+        let generation = resizeGeneration
+        resizeWorkItem?.cancel()
+        resizeWorkItem = nil
+
+        if pending == .immediate {
+            pendingResizeRequest = nil
+            pendingResizeAnchor = nil
+            resizeNeedsRepair = false
+            resizeToFitContent()
+            return
+        }
+        resizeNeedsRepair = true
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.resizeGeneration == generation else { return }
+            self.resizeWorkItem = nil
+            guard self.pendingResizeRequest != nil else { return }
+            self.pendingResizeRequest = nil
+            let anchor = self.pendingResizeAnchor
+            self.pendingResizeAnchor = nil
+            self.resizeNeedsRepair = false
+            self.resizeToFitContent()
+            if let anchor {
+                self.scroll(toOffset: min(max(0, anchor), self.parsedDocument.length),
+                            position: .top, animated: false)
+            }
+        }
+        resizeWorkItem = workItem
+        let delay = ContentResizePolicy.idleDelay(for: pending)
+        if delay == 0 {
+            DispatchQueue.main.async(execute: workItem)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
     }
 
     private func rebuildEverything() {
@@ -814,11 +915,15 @@ public final class MarkdownTextView: NSTextView {
 
     func applyResponsiveMeasure(_ width: CGFloat) {
         guard width > 100 else { return }
+        let previousWidth = textContainer?.size.width ?? 0
         textContainer?.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         fragmentContext.contentWidth = width
         minSize = NSSize(width: width, height: 0)
         maxSize = NSSize(width: width + RenderMetrics.revealSlack * 2,
                          height: CGFloat.greatestFiniteMagnitude)
+        if abs(previousWidth - width) > 0.5 {
+            requestContentResize(.viewport)
+        }
     }
 
     private func applyModeChrome() {
@@ -864,16 +969,27 @@ public final class MarkdownTextView: NSTextView {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         installHoverTracking()
+        if let scrollObserver {
+            NotificationCenter.default.removeObserver(scrollObserver)
+            self.scrollObserver = nil
+        }
         if let scrollView = enclosingScrollView {
             scrollView.contentView.postsBoundsChangedNotifications = true
-            if scrollObserver == nil {
-                scrollObserver = NotificationCenter.default.addObserver(
-                    forName: NSView.boundsDidChangeNotification,
-                    object: scrollView.contentView, queue: .main
-                ) { [weak self] _ in
+            scrollObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
                     guard let self else { return }
                     self.gutterRail?.needsDisplay = true
                     self.markdownDelegate?.markdownTextViewDidScroll(self)
+                    guard self.resizeNeedsRepair,
+                          let scrollView = self.enclosingScrollView else { return }
+                    let viewportHeight = scrollView.contentView.bounds.height
+                    let visibleMaxY = scrollView.documentVisibleRect.maxY
+                    let repairSlack = max(24, viewportHeight * 0.15)
+                    guard visibleMaxY >= self.frame.height - repairSlack else { return }
+                    self.requestContentResize(.scrollRepair)
                 }
             }
         }
