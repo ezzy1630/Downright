@@ -44,7 +44,7 @@ grep -aE "Test run|✘|Suite .* (passed|failed)|error:|failed after" "$TEST_LOG"
 
 echo
 echo "==> Sanity: the runner must actually have run something"
-COUNT=$(grep -acE "^✔ Test |^✘ Test " "$TEST_LOG")
+COUNT=$(awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { print count + 0 }' "$TEST_LOG")
 echo "    $COUNT tests executed"
 [ "$COUNT" -gt 0 ] || { echo "    NO TESTS RAN — see the note at the top of this script"; exit 1; }
 [ "$TEST_STATUS" -eq 0 ] || { echo "    TESTS FAILED — see $TEST_LOG"; exit "$TEST_STATUS"; }
