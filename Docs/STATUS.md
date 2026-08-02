@@ -25,11 +25,12 @@ asserts a non-zero test count, so the silent no-op fails loudly instead.
 Scripts/check.sh
 ```
 
-### The Quick Look extension code is complete but not bundled
+### Quick Look needs the Xcode release path
 
-An `.appex` requires an Xcode app-extension target. `Sources/DownrightQL/` and
-`Sources/DownrightThumb/` compile as libraries in CI and carry the full memory
-discipline §10 demands. [QUICKLOOK.md](QUICKLOOK.md) has the exact Xcode steps.
+`Scripts/bundle-xcode-app.sh` builds and embeds the preview and thumbnail
+`.appex` bundles. The simpler `Scripts/bundle-app.sh` SwiftPM path does not.
+`Sources/DownrightQL/` and `Sources/DownrightThumb/` also compile as libraries
+in CI and carry the full memory discipline §10 demands.
 
 To make this real rather than aspirational, `DensityGutterView` was moved out of
 the app and into `MarkdownRender`, so the extension draws **the same rail** the
@@ -77,9 +78,9 @@ tags (`<Foo` still colours as a type); Ruby and shell heredocs are not tracked.
 
 `swift-markdown` (cmark-gfm) for parsing, `SwiftMath` for math,
 `beautiful-mermaid-swift` for diagrams, `NLTokenizer` for sentence segmentation,
-and FSEvents (directory-level) for watching. No WebView is used. The current
-SwiftPM app bundle does not include a Quick Look `.appex`, a metadata importer,
-a Share extension, or Sparkle.
+and FSEvents (directory-level) for watching. No WebView is used. The Xcode
+release path includes Quick Look. It does not include a metadata importer, a
+Share extension, or Sparkle.
 
 ## Open questions from §15, decided
 
@@ -182,7 +183,6 @@ Approximate:
 ## Known gaps
 
 - **Sparkle updates** and **notarised distribution** — see above.
-- **Quick Look `.appex` bundling** — see above.
 - **Spotlight coverage for files that have not been opened.** Downright adds
   each opened document to Core Spotlight. The metadata extractor for a full
   importer exists, but the signed importer bundle does not.

@@ -13,7 +13,7 @@ SwiftPM build products with no Xcode project involved. What it cannot do:
 
 | Needs Xcode | Why |
 |---|---|
-| Quick Look `.appex` bundles | App-extension targets, `NSExtension` plists, and nested signed bundles are Xcode-only build products. See [QUICKLOOK.md](QUICKLOOK.md). |
+| Quick Look `.appex` bundles | Use `Scripts/bundle-xcode-app.sh`. It generates the Xcode project and embeds both signed extension targets. See [QUICKLOOK.md](QUICKLOOK.md). |
 | Sparkle framework embedding | Sparkle ships as an embedded framework with its own XPC helpers, which need a Copy Files phase and per-bundle signing. |
 | Developer ID signing and notarisation | Requires a certificate in the login keychain and an App Store Connect API key. |
 
@@ -82,13 +82,13 @@ update checks of its own, so wiring `SPUStandardUpdaterController` is additive.
 ## Release checklist
 
 1. `Scripts/check.sh` — all suites run and pass.
-2. `Scripts/bundle-app.sh` and launch the bundle; open `Docs/sample.md` and
+2. `Scripts/bundle-xcode-app.sh` and launch the bundle; open `Docs/sample.md` and
    check every renderer path.
 3. Verify the performance budget (spec §12) on a 5k-line document: cold launch
    under 250ms to first pixel, p95 keystroke under 8ms.
-4. Rebuild the Quick Look extensions in the Xcode wrapper and verify previews
+4. Verify the embedded Quick Look extensions, previews,
    *and* Finder thumbnails on a folder of agent output.
-5. Bump `CFBundleShortVersionString` in `Scripts/bundle-app.sh` and the `down`
+5. Bump the version in `project.yml`, `Scripts/bundle-app.sh`, and the `down`
    CLI's `toolVersion`.
 6. Sign, notarise, staple, verify with `spctl -a -vvv Downright.app`.
 7. Sign the update with Sparkle and publish the appcast.
