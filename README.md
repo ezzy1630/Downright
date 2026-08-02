@@ -134,15 +134,14 @@ Settings → Keys.
 
 ## Quick Look
 
-`.md` files get real previews **and real Finder icons showing the document's
-first heading** — which, on a folder full of `plan.md` and `output.md`, is
-transformative.
+The repository contains native preview and thumbnail providers. They can give
+`.md` files full previews and Finder icons that show the first heading.
 
-Quick Look extensions only register after the host app has been launched once,
-and you may need to enable Downright under **System Settings → General → Login
-Items & Extensions → Quick Look**. See [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md)
-— including the Xcode steps needed to build the `.appex` bundles, which is the
-one part of this project SwiftPM cannot produce.
+The default SwiftPM app bundle does not include the required `.appex` bundles.
+See [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for the Xcode packaging steps. After
+those bundles are installed, launch the host app once. You may then need to
+enable Downright under **System Settings → General → Login Items & Extensions
+→ Quick Look**.
 
 ## Themes
 

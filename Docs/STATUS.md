@@ -25,7 +25,7 @@ asserts a non-zero test count, so the silent no-op fails loudly instead.
 Scripts/check.sh
 ```
 
-### The Quick Look extensions are source-complete but unbundled
+### The Quick Look extension code is complete but not bundled
 
 An `.appex` requires an Xcode app-extension target. `Sources/DownrightQL/` and
 `Sources/DownrightThumb/` compile as libraries in CI and carry the full memory
@@ -73,11 +73,13 @@ typescript, xml, yaml`, plus the usual aliases (`ts`, `sh`, `py`, `rs`, `yml`,
 Known lexer simplifications: JSX/TSX markup lexes as expressions rather than
 tags (`<Foo` still colours as a type); Ruby and shell heredocs are not tracked.
 
-### Everything else in §12 is as specified
+### Main dependency choices from §12
 
 `swift-markdown` (cmark-gfm) for parsing, `SwiftMath` for math,
 `beautiful-mermaid-swift` for diagrams, `NLTokenizer` for sentence segmentation,
-FSEvents (directory-level) for watching. No WebView anywhere.
+and FSEvents (directory-level) for watching. No WebView is used. The current
+SwiftPM app bundle does not include a Quick Look `.appex`, a metadata importer,
+a Share extension, or Sparkle.
 
 ## Open questions from §15, decided
 
@@ -181,14 +183,19 @@ Approximate:
 
 - **Sparkle updates** and **notarised distribution** — see above.
 - **Quick Look `.appex` bundling** — see above.
+- **Spotlight coverage for files that have not been opened.** Downright adds
+  each opened document to Core Spotlight. The metadata extractor for a full
+  importer exists, but the signed importer bundle does not.
+- **A dedicated Share extension.** The app provides a macOS Service and an App
+  Intent. Finder's Share menu does not yet contain a Downright extension.
+- **System document versions.** Downright has undo, atomic saves, external
+  change detection, and local snapshots. It does not yet use `NSDocument` or
+  show the standard macOS Versions interface.
+- **Rich link previews.** Links and footnotes have local tooltips, and a
+  footnote reference can jump to its definition. Remote link previews are not
+  fetched in the background.
 - **Reverse editor integration** (§15 Q5) — deliberately deferred.
 - **A plugin system** — explicitly out of scope for 1.0 (§2).
-- **`ConformanceIsolation` warnings.** `@MainActor` window controllers conform
-  to non-isolated view delegate protocols. This is a warning under Swift 5 mode
-  and would be an error under Swift 6 mode; the package builds in Swift 5 mode
-  today. Fixing it properly means deciding main-actor isolation for the whole
-  delegate surface at once, which is a package-wide call rather than a local
-  patch.
 - **`LightboxWindow` uses literal black and white** for its scrim and caption
   rather than theme colours: a tinted scrim discolours the image you opened it
   to look at. It goes opaque under Reduce Transparency.
@@ -202,16 +209,24 @@ asserted. `Sources/drbench/` is that measurement, runnable:
 swift run -c release drbench
 ```
 
-It prints p50/p95 for parse, AST diff, text diff, decoration, the full
-keystroke pipeline, and cold open, marking each against its budget.
+It prints p50/p95 for parse, AST diff, text diff, synchronous typing response,
+incremental decoration, end-to-end semantic convergence, and cold open. Parse
+and diff run outside the synchronous typing path.
+
+Latest release run: typing response p95 **0.148 ms**, semantic convergence p95
+**45.719 ms**, and cold parse p95 **16.049 ms**. All are inside the product
+budget.
 
 See [PERFORMANCE.md](PERFORMANCE.md) for the measured numbers on this build and
 what they mean for §13's P0 kill criterion.
 
 ## Test suites
 
+The full check currently runs **406 tests in 51 suites**.
+
 | Suite | Covers |
 |---|---|
-| `MarkdownCoreTests` (169 tests) | Byte-identical round trips over a tricky corpus, source-range invariants, every extension pass including the negative math cases (`echo $PATH` must not be math), AST diff locality, text diff, tidy idempotence, restructuring, zoom plans. |
-| `MarkdownRenderTests` (60 tests) | Theme decoding and colour resolution, type scale and measure cap, VS Code theme import, the lexer per language, decoration byte-identity across all three modes, the source↔display index map round-tripping every offset, and the keystroke benchmark. |
-| `DownrightAppTests` (28 tests) | Scroll anchoring across an agent's insertion, change-mark shifting and navigation, snapshot dedup and restore, find/regex/replace, path resolution present-vs-missing, key binding round trips and conflicts, jump history, HTML export self-containment, sibling scanning, and an end-to-end offscreen render of `Docs/sample.md` in all three modes. |
+| `MarkdownCoreTests` | Byte-identical round trips over a tricky corpus, source-range invariants, every extension pass including the negative math cases (`echo $PATH` must not be math), AST diff locality, text diff, tidy idempotence, restructuring, and zoom plans. |
+| `MarkdownRenderTests` | Theme decoding and colour resolution, type scale and measure cap, VS Code theme import, the lexer per language, decoration byte-identity across all three modes, the source↔display index map round-tripping every offset, and the keystroke benchmark. |
+| `DownrightAppTests` | Scroll anchoring, change-mark shifting and navigation, snapshot restore, selection and split-view restore, find/regex/replace, path resolution, key bindings, jump history, export, sibling scanning, native integrations, local AI, speech, and offscreen rendering in all three modes. |
+| `MarkdownCLITests` | Command parsing, health checks, render-target checks, outline output, JSON output, and error policy. |

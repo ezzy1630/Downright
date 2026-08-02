@@ -1,7 +1,8 @@
 # Quick Look
 
-Downright ships two Quick Look extensions: a **preview** (`DownrightQL`) and a
-**thumbnail generator** (`DownrightThumb`). Both import the same
+Downright contains code for two Quick Look extensions: a **preview**
+(`DownrightQL`) and a **thumbnail generator** (`DownrightThumb`). The default
+SwiftPM app bundle does not include their `.appex` bundles. Both import the same
 `MarkdownRender` package the app draws with, so neither can drift from the app's
 rendering — that is the whole reason the renderer is native rather than a
 WebView (spec §3.3).
@@ -10,6 +11,8 @@ WebView (spec §3.3).
 
 **This is the number one support question for every app in this category**, so
 it is documented up front rather than in a FAQ:
+
+First build and embed the extension bundles with the steps below. Then:
 
 1. **Launch Downright once.** Quick Look extensions only register with the
    system after the host app has been run at least once. A freshly copied
