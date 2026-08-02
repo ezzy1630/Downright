@@ -16,6 +16,8 @@ enum KeybindingDefaults {
         .outlineQuickOpen:    [KeyBinding("o", [.command, .shift])],
         .taskPanel:           [KeyBinding("t", .command)],
         .versionTimeline:     [KeyBinding("v", [.command, .shift])],
+        .commandPalette:      [KeyBinding("k", [.command, .shift])],
+        .documentLens:        [KeyBinding("2", [.command, .option])],
         .nextChange:          [KeyBinding("down", .option)],
         .previousChange:      [KeyBinding("up", .option)],
         .find:                [KeyBinding("f", .command)],

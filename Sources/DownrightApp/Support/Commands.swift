@@ -12,6 +12,7 @@ enum Command: String, CaseIterable, Codable {
     case toggleReadLive, sourceMode, splitView, pinWindow, focusMode, typewriterScrolling
     case toggleSidebar, outlineQuickOpen, outlinePanel, taskPanel, versionTimeline, compareFiles
     case frontMatterEditor, tableEditor, assetDoctor
+    case commandPalette, documentLens, readerProfiles
 
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
@@ -62,6 +63,9 @@ enum Command: String, CaseIterable, Codable {
         case .frontMatterEditor: return "Front Matter…"
         case .tableEditor: return "Edit Table…"
         case .assetDoctor: return "Asset Doctor"
+        case .commandPalette: return "Command Palette…"
+        case .documentLens: return "Document Lens"
+        case .readerProfiles: return "Reader Profiles…"
         case .nextHeading: return "Next Heading"
         case .previousHeading: return "Previous Heading"
         case .nextChange: return "Next Change"
@@ -167,7 +171,8 @@ enum Command: String, CaseIterable, Codable {
         case .toggleReadLive, .sourceMode, .zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4,
              .zoomLevel5, .zoomIn, .zoomOut, .increaseTextSize, .decreaseTextSize, .resetTextSize,
              .focusMode, .typewriterScrolling, .toggleSidebar, .outlinePanel, .taskPanel,
-             .versionTimeline, .reloadTheme:
+             .versionTimeline, .reloadTheme, .commandPalette, .documentLens,
+             .readerProfiles:
             return .view
         case .nextHeading, .previousHeading, .nextChange, .previousChange, .scrollDown, .scrollUp,
              .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward,

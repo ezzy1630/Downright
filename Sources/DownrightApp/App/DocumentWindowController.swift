@@ -320,7 +320,7 @@ final class DocumentWindowController: NSWindowController {
         applyStyleSheet()
     }
 
-    private func applyStyleSheet() {
+    func applyStyleSheet() {
         primaryContainer.textView.styleSheet = activeStyleSheet
         splitContainer?.textView.styleSheet = activeStyleSheet
         breadcrumbView.styleSheet = activeStyleSheet
@@ -375,6 +375,7 @@ final class DocumentWindowController: NSWindowController {
         taskPanel?.reload()
         frontMatterEditor?.document = parsed
         if let assetDoctorPanel { configureAssetDoctor(assetDoctorPanel) }
+        refreshDocumentLensIfVisible()
         progressRing.progress = (
             done: parsed.tasks.filter(\.isChecked).count,
             total: parsed.tasks.count

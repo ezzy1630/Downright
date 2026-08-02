@@ -38,6 +38,9 @@ extension DocumentWindowController: CommandResponder {
         case .frontMatterEditor: showFrontMatterEditor()
         case .tableEditor: presentTableEditor()
         case .assetDoctor: toggleAssetDoctorPanel()
+        case .commandPalette: showCommandPalette()
+        case .documentLens: toggleDocumentLensPanel()
+        case .readerProfiles: showReaderProfiles()
 
         // MARK: Navigation
         case .nextHeading: jumpHeading(forward: true)

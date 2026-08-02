@@ -77,12 +77,17 @@ public struct StyleSheet {
 
     // MARK: - Construction
 
-    public init(theme: Theme, appearance: NSAppearance) {
+    public init(
+        theme: Theme,
+        appearance: NSAppearance,
+        reduceMotionOverride: Bool? = nil
+    ) {
         self.theme = theme
         self.revision = ThemeStore.shared.revision
 
         let workspace = NSWorkspace.shared
         reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
+            || reduceMotionOverride == true
         increaseContrast = workspace.accessibilityDisplayShouldIncreaseContrast
         reduceTransparency = workspace.accessibilityDisplayShouldReduceTransparency
 

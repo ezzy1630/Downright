@@ -7,6 +7,15 @@ import Testing
 @Suite("Theming, typography and colour (§11.1, §11.2)")
 final class ThemeTests {
 
+    @Test func readerProfileCanOnlyAddReducedMotion() {
+        let sheet = StyleSheet(
+            theme: .fallback,
+            appearance: NSAppearance(named: .aqua)!,
+            reduceMotionOverride: true
+        )
+        #expect(sheet.reduceMotion)
+    }
+
     private static let bundledNames = [
         "High Contrast", "Nord", "Paper Light", "Solarized Light", "System", "Warm Dark",
     ]

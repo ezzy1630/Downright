@@ -96,7 +96,7 @@ extension DocumentWindowController: AssetDoctorViewDelegate {
         return target
     }
 
-    private func localAssetProbe() -> AssetProbe {
+    func localAssetProbe() -> AssetProbe {
         AssetProbe { url in
             let values: URLResourceValues
             do {
