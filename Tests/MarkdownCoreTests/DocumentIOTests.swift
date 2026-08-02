@@ -1,0 +1,112 @@
+import Foundation
+import Testing
+@testable import MarkdownCore
+
+// §3.1 is the app's central guarantee, so it is tested against real files on
+// disk rather than against an in-memory shortcut: read → parse → write must
+// return the identical bytes.
+
+@Suite struct DocumentIOTests {
+
+    private func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MarkdownCoreTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The complete pipeline: bytes → read → parse → write → bytes.
+    private func assertRoundTrip(_ data: Data, _ label: String) throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+        try data.write(to: url)
+
+        let (text, fidelity) = try DocumentIO.read(contentsOf: url)
+        let parsed = MarkdownParser.parse(text)
+        #expect(parsed.text == text, "\(label): parse must not touch the text")
+
+        let output = directory.appendingPathComponent("out.md")
+        try DocumentIO.write(parsed.text, to: output, fidelity: fidelity)
+        let written = try Data(contentsOf: output)
+        #expect(written == data, "\(label): round trip changed \(data.count) bytes into \(written.count)")
+    }
+
+    @Test func roundTripsEveryCorpusDocument() throws {
+        for entry in Corpus.all {
+            try assertRoundTrip(Data(entry.text.utf8), entry.name)
+        }
+    }
+
+    @Test func roundTripsCRLFAndCRFiles() throws {
+        try assertRoundTrip(Data("# A\r\n\r\nB\r\n".utf8), "crlf")
+        try assertRoundTrip(Data("# A\rB\r".utf8), "cr")
+        // Mixed endings are left alone on purpose — there is no `.mixed` case,
+        // so the parser must not normalise what it cannot faithfully restore.
+        try assertRoundTrip(Data("a\nb\r\nc\rd\n".utf8), "mixed")
+    }
+
+    @Test func roundTripsWithoutTrailingNewline() throws {
+        try assertRoundTrip(Data(Corpus.noTrailingNewline.utf8), "noTrailingNewline")
+        try assertRoundTrip(Data("x".utf8), "single character")
+    }
+
+    @Test func roundTripsBOMAndUTF16() throws {
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        try assertRoundTrip(bom + Data("# Title\n\nBody.\n".utf8), "utf8 BOM")
+
+        var utf16 = Data([0xFF, 0xFE])
+        utf16 += "# Title\n\nBody with ü.\n".data(using: .utf16LittleEndian)!
+        try assertRoundTrip(utf16, "utf16 LE BOM")
+    }
+
+    @Test func roundTripsTabsAndTrailingSpaces() throws {
+        try assertRoundTrip(Data("\t\tdeep\n  \n trailing   \n\n\n".utf8), "whitespace")
+    }
+
+    @Test func fidelityRecordsWhatItSaw() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+        try Data("a\r\nb\r\n".utf8).write(to: url)
+
+        let (text, fidelity) = try DocumentIO.read(contentsOf: url)
+        #expect(text == "a\nb\n")
+        #expect(fidelity.lineEnding == .crlf)
+        #expect(fidelity.hasTrailingNewline)
+        #expect(!fidelity.hasBOM)
+        #expect(fidelity.encoding == .utf8)
+    }
+
+    @Test func mixedEndingsAreNotNormalised() throws {
+        #expect(DocumentIO.dominantLineEnding("a\nb\r\n") == .lf)
+        #expect(DocumentIO.dominantLineEnding("a\r\nb\r\n") == .crlf)
+        #expect(DocumentIO.dominantLineEnding("a\rb\r") == .cr)
+        #expect(DocumentIO.dominantLineEnding("no breaks") == .lf)
+    }
+
+    @Test func latin1FallsBackWhenUTF8Fails() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+        // 0xE9 is `é` in Latin-1 and an invalid lone byte in UTF-8.
+        let data = Data([0x63, 0x61, 0x66, 0xE9, 0x0A])
+        try data.write(to: url)
+
+        let (text, fidelity) = try DocumentIO.read(contentsOf: url)
+        #expect(fidelity.encoding == .latin1)
+        #expect(text == "café\n")
+        try assertRoundTrip(data, "latin1")
+    }
+
+    @Test func contentHashIsStableAndSensitive() {
+        let a = DocumentIO.contentHash("hello")
+        #expect(a == DocumentIO.contentHash("hello"))
+        #expect(a != DocumentIO.contentHash("hello "))
+        #expect(a.count == 64)
+        #expect(a.allSatisfy { $0.isHexDigit })
+        // Known SHA-256 of "hello", so a change of algorithm is caught rather
+        // than merely a change of output.
+        #expect(a == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+    }
+}

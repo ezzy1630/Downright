@@ -1,0 +1,256 @@
+import Foundation
+import Testing
+@testable import MarkdownCore
+
+@Suite struct RestructureTests {
+
+    private func apply(_ text: String, _ edits: [TextEdit]) -> String { edits.applied(to: text) }
+
+    // MARK: Promote / demote
+
+    @Test func promoteMovesTheWholeSubtree() {
+        let text = "# Top\n\n## Section\n\n### Sub\n\n#### Deep\n\n## Other\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.promoteHeading(doc, headingIndex: 1))
+        #expect(out == "# Top\n\n# Section\n\n## Sub\n\n### Deep\n\n## Other\n")
+    }
+
+    @Test func demoteMovesTheWholeSubtree() {
+        let text = "# Top\n\n## Section\n\n### Sub\n\n## Other\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.demoteHeading(doc, headingIndex: 1))
+        #expect(out == "# Top\n\n### Section\n\n#### Sub\n\n## Other\n")
+    }
+
+    @Test func promoteDemoteRoundTrips() {
+        let text = "# Top\n\n## Section\n\n### Sub\n\n## Other\n"
+        let doc = MarkdownParser.parse(text)
+        let demoted = apply(text, Restructure.demoteHeading(doc, headingIndex: 1))
+        let back = apply(demoted, Restructure.promoteHeading(MarkdownParser.parse(demoted), headingIndex: 1))
+        #expect(back == text)
+    }
+
+    @Test func clampsAtTheEnds() {
+        let top = MarkdownParser.parse("# A\n\n## B\n")
+        #expect(Restructure.promoteHeading(top, headingIndex: 0).isEmpty)
+
+        let deep = MarkdownParser.parse("###### A\n")
+        #expect(Restructure.demoteHeading(deep, headingIndex: 0).isEmpty)
+
+        // A subtree that would push a descendant past H6 is refused whole,
+        // rather than flattened.
+        let nested = MarkdownParser.parse("##### A\n\n###### B\n")
+        let out = apply("##### A\n\n###### B\n", Restructure.demoteHeading(nested, headingIndex: 0))
+        #expect(out == "###### A\n\n###### B\n")
+    }
+
+    // MARK: Move section — §14 calls this out as harder than it looks
+
+    @Test func moveSectionPreservesBlankLineStructure() {
+        let text = "# Doc\n\n## A\n\nAlpha body.\n\n## B\n\nBeta body.\n\n## C\n\nGamma body.\n"
+        let doc = MarkdownParser.parse(text)
+        // Move C before A.
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 3, before: 1))
+        #expect(out == "# Doc\n\n## C\n\nGamma body.\n\n## A\n\nAlpha body.\n\n## B\n\nBeta body.\n")
+    }
+
+    @Test func moveSectionCarriesTheWholeSubtree() {
+        let text = "## A\n\nbody a\n\n### A1\n\nbody a1\n\n## B\n\nbody b\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 0, before: 3))
+        #expect(out == "## B\n\nbody b\n\n## A\n\nbody a\n\n### A1\n\nbody a1\n")
+    }
+
+    @Test func moveSectionToTheEndKeepsTheFinalNewline() {
+        let text = "## A\n\nbody a\n\n## B\n\nbody b\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 0, before: doc.headings.count))
+        #expect(out == "## B\n\nbody b\n\n## A\n\nbody a\n")
+    }
+
+    /// The awkward case: the last section has no trailing newline to carry, so
+    /// it borrows the one before it and the document's final-newline state is
+    /// preserved either way (§3.1).
+    @Test func moveSectionHandlesAMissingFinalNewline() {
+        let text = "## A\n\nbody a\n\n## B\n\nbody b"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 1, before: 0))
+        #expect(out == "## B\n\nbody b\n\n## A\n\nbody a")
+        #expect(!out.hasSuffix("\n"))
+    }
+
+    @Test func moveSectionIsANoOpWhenTheTargetIsInsideIt() {
+        let text = "## A\n\nbody\n\n### A1\n\nsub\n\n## B\n\nb\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(Restructure.moveSection(doc, headingIndex: 0, before: 1).isEmpty)
+        #expect(Restructure.moveSection(doc, headingIndex: 0, before: 0).isEmpty)
+    }
+
+    @Test func moveSectionSurvivesAnArbitraryPermutation() {
+        var text = "# Doc\n\n## A\n\na\n\n## B\n\nb\n\n## C\n\nc\n\n## D\n\nd\n"
+        for (from, to) in [(4, 1), (1, 4), (2, 1), (3, 2)] {
+            let doc = MarkdownParser.parse(text)
+            guard doc.headings.indices.contains(from) else { continue }
+            text = apply(text, Restructure.moveSection(doc, headingIndex: from, before: to))
+            let reparsed = MarkdownParser.parse(text)
+            // No section ever loses or gains a blank line separator.
+            #expect(!text.contains("\n\n\n"), "grew a blank line: \(text.debugDescription)")
+            #expect(reparsed.headings.count == 5)
+            #expect(Set(reparsed.headings.map(\.title)) == ["Doc", "A", "B", "C", "D"])
+        }
+    }
+
+    // MARK: Move block
+
+    @Test func moveBlockSwapsSiblingsAndKeepsTheGap() {
+        let text = "First para.\n\nSecond para.\n\nThird para.\n"
+        let doc = MarkdownParser.parse(text)
+        let down = apply(text, Restructure.moveBlock(doc, containing: 2, .down))
+        #expect(down == "Second para.\n\nFirst para.\n\nThird para.\n")
+
+        let up = apply(text, Restructure.moveBlock(doc, containing: 16, .up))
+        #expect(up == "Second para.\n\nFirst para.\n\nThird para.\n")
+    }
+
+    @Test func moveBlockActsOnTheListItemNotTheParagraphInsideIt() {
+        let text = "- one\n- two\n- three\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveBlock(doc, containing: 8, .up))
+        #expect(out == "- two\n- one\n- three\n")
+    }
+
+    @Test func moveBlockAtTheBoundaryIsANoOp() {
+        let text = "a\n\nb\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(Restructure.moveBlock(doc, containing: 0, .up).isEmpty)
+        #expect(Restructure.moveBlock(doc, containing: 3, .down).isEmpty)
+    }
+
+    // MARK: Conversion
+
+    @Test func convertsBetweenEveryForm() {
+        let text = "alpha\nbeta\n"
+        let doc = MarkdownParser.parse(text)
+        let all = NSRange(location: 0, length: (text as NSString).length)
+        #expect(apply(text, Restructure.convert(doc, range: all, to: .bulletList)) == "- alpha\n- beta\n")
+        #expect(apply(text, Restructure.convert(doc, range: all, to: .numberedList)) == "1. alpha\n2. beta\n")
+        #expect(apply(text, Restructure.convert(doc, range: all, to: .taskList)) == "- [ ] alpha\n- [ ] beta\n")
+        #expect(apply(text, Restructure.convert(doc, range: all, to: .blockquote)) == "> alpha\n> beta\n")
+    }
+
+    @Test func conversionRoundTripsBackToParagraph() {
+        let text = "alpha\nbeta\n"
+        for form in [ListConversion.bulletList, .numberedList, .taskList, .blockquote] {
+            let doc = MarkdownParser.parse(text)
+            let all = NSRange(location: 0, length: (text as NSString).length)
+            let converted = apply(text, Restructure.convert(doc, range: all, to: form))
+            let convertedDoc = MarkdownParser.parse(converted)
+            let back = apply(converted, Restructure.convert(
+                convertedDoc,
+                range: NSRange(location: 0, length: (converted as NSString).length),
+                to: .paragraph
+            ))
+            #expect(back == text, "\(form.rawValue) did not round trip: \(converted.debugDescription)")
+        }
+    }
+
+    @Test func conversionKeepsIndentation() {
+        let text = "  alpha\n"
+        let doc = MarkdownParser.parse(text)
+        let all = NSRange(location: 0, length: (text as NSString).length)
+        #expect(apply(text, Restructure.convert(doc, range: all, to: .bulletList)) == "  - alpha\n")
+    }
+
+    // MARK: Sorting
+
+    @Test func sortsAlphabetically() {
+        let text = "- charlie\n- alpha\n- bravo\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(apply(text, Restructure.sortList(doc, containing: 2, order: .alphabetical))
+            == "- alpha\n- bravo\n- charlie\n")
+        #expect(apply(text, Restructure.sortList(doc, containing: 2, order: .reverseAlphabetical))
+            == "- charlie\n- bravo\n- alpha\n")
+    }
+
+    @Test func sortsByCheckboxState() {
+        let text = "- [x] done\n- [ ] todo\n- [x] also done\n- [ ] later\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.sortList(doc, containing: 2, order: .uncheckedFirst))
+        #expect(out == "- [ ] todo\n- [ ] later\n- [x] done\n- [x] also done\n")
+    }
+
+    @Test func sortingAnOrderedListRenumbers() {
+        let text = "1. charlie\n2. alpha\n3. bravo\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(apply(text, Restructure.sortList(doc, containing: 3, order: .alphabetical))
+            == "1. alpha\n2. bravo\n3. charlie\n")
+    }
+
+    // MARK: Table of contents
+
+    @Test func generatesAnIndentedTableOfContents() {
+        let doc = MarkdownParser.parse("# Doc\n\n## A\n\n### A1\n\n## B\n\n#### Deep\n")
+        #expect(Restructure.tableOfContents(doc, maxLevel: 3) == """
+        - [Doc](#doc)
+          - [A](#a)
+            - [A1](#a1)
+          - [B](#b)
+        """)
+        #expect(Restructure.tableOfContents(doc, maxLevel: 1) == "- [Doc](#doc)")
+    }
+
+    // MARK: Tasks
+
+    @Test func toggleTaskIsAOneCharacterEdit() {
+        let text = "- [ ] alpha\n- [x] beta\n"
+        let doc = MarkdownParser.parse(text)
+        let check = Restructure.toggleTask(doc, atMarkOffset: doc.tasks[0].markRange.location)
+        #expect(check?.range.length == 1)
+        #expect(check?.replacement == "x")
+        #expect(apply(text, [check!]) == "- [x] alpha\n- [x] beta\n")
+
+        let uncheck = Restructure.toggleTask(doc, atMarkOffset: doc.tasks[1].markRange.location)
+        #expect(uncheck?.replacement == " ")
+        #expect(apply(text, [uncheck!]) == "- [ ] alpha\n- [ ] beta\n")
+    }
+
+    @Test func toggleTaskOutsideATaskIsNil() {
+        let doc = MarkdownParser.parse("Just a paragraph.\n")
+        #expect(Restructure.toggleTask(doc, atMarkOffset: 3) == nil)
+    }
+
+    // MARK: Tables (§6.3)
+
+    private let table = "| a | bb |\n| --- | --- |\n| 1 | 2 |\n| 333 | 4 |\n"
+
+    @Test func realignsTableSource() {
+        let doc = MarkdownParser.parse(table)
+        let range = doc.root.children[0].range
+        let out = apply(table, Restructure.realignTable(doc, tableRange: range))
+        #expect(out == "| a   | bb  |\n| --- | --- |\n| 1   | 2   |\n| 333 | 4   |\n")
+    }
+
+    @Test func setsColumnAlignment() {
+        let doc = MarkdownParser.parse(table)
+        let range = doc.root.children[0].range
+        let out = apply(table, Restructure.setColumnAlignment(doc, tableRange: range, column: 1, alignment: .right))
+        // The alignment colon lives inside the column's existing width rather
+        // than widening it, so realigning twice is a fixed point.
+        #expect(out.contains("| --- | --: |"))
+        #expect(out.contains("| a   |  bb |"))
+    }
+
+    @Test func insertsAndDeletesRows() {
+        let doc = MarkdownParser.parse(table)
+        let range = doc.root.children[0].range
+
+        let inserted = apply(table, Restructure.insertRow(doc, tableRange: range, afterRow: 1))
+        #expect(inserted == "| a   | bb  |\n| --- | --- |\n| 1   | 2   |\n|     |     |\n| 333 | 4   |\n")
+
+        let deleted = apply(table, Restructure.deleteRow(doc, tableRange: range, row: 1))
+        #expect(deleted == "| a   | bb  |\n| --- | --- |\n| 333 | 4   |\n")
+
+        // A GFM table without a header is not a table.
+        #expect(Restructure.deleteRow(doc, tableRange: range, row: 0).isEmpty)
+    }
+}

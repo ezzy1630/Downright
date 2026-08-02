@@ -1,0 +1,180 @@
+import AppKit
+import MarkdownCore
+
+/// The gutter's hover/scrub tooltip (§8.6).
+///
+/// A borderless child window rather than an `NSPopover`: a popover animates,
+/// takes focus, and draws an anchor arrow, all of which are wrong for something
+/// that has to track a drag at 120fps.  It ignores mouse events entirely so it
+/// can never interrupt the scrub that summoned it.
+final class DensityGutterPreviewWindow: NSWindow {
+    var styleSheet: StyleSheet {
+        didSet { content.styleSheet = styleSheet }
+    }
+
+    private let content: PreviewContentView
+    private let maximumWidth: CGFloat = 300
+
+    init(styleSheet: StyleSheet) {
+        self.styleSheet = styleSheet
+        self.content = PreviewContentView(styleSheet: styleSheet)
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: maximumWidth, height: 40),
+            styleMask: [.borderless], backing: .buffered, defer: true
+        )
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        level = .floating
+        ignoresMouseEvents = true
+        isReleasedWhenClosed = false
+        animationBehavior = .none
+        contentView = content
+    }
+
+    /// `anchor` is the screen point at the gutter's leading edge, level with
+    /// the pointer.  An empty `snippet` gives the hover form — just the
+    /// heading; `footer` carries the §9.6 reading metrics.
+    func show(
+        title: String,
+        snippet: String,
+        footer: String,
+        leftOf anchor: NSPoint,
+        over parent: NSWindow,
+        reduceMotion: Bool
+    ) {
+        content.update(title: title, snippet: snippet, footer: footer)
+        let size = content.fittingSize(maxWidth: maximumWidth)
+
+        var origin = NSPoint(x: anchor.x - size.width - 8, y: anchor.y - size.height / 2)
+        if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
+            origin.x = min(max(visible.minX + 4, origin.x), visible.maxX - size.width - 4)
+            origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
+        }
+        setFrame(NSRect(origin: origin, size: size), display: true)
+
+        guard self.parent !== parent || !isVisible else {
+            content.needsDisplay = true
+            return
+        }
+        parent.addChildWindow(self, ordered: .above)
+        alphaValue = reduceMotion ? 1 : 0
+        orderFront(nil)
+        guard !reduceMotion else { return }
+        GutterChrome.animate(reduceMotion: false, duration: 0.10) { _ in
+            self.animator().alphaValue = 1
+        }
+    }
+
+    func hide() {
+        guard isVisible else { return }
+        parent?.removeChildWindow(self)
+        orderOut(nil)
+    }
+}
+
+// MARK: - Content
+
+private final class PreviewContentView: NSView {
+    var styleSheet: StyleSheet {
+        didSet {
+            cached = nil
+            needsDisplay = true
+        }
+    }
+
+    private var title = ""
+    private var snippet = ""
+    private var footer = ""
+    private var cached: NSAttributedString?
+    private let padding: CGFloat = 9
+    /// Enough to recognise the section, not enough to read it here.
+    private let snippetLimit = 220
+
+    init(styleSheet: StyleSheet) {
+        self.styleSheet = styleSheet
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var isFlipped: Bool { true }
+
+    func update(title: String, snippet: String, footer: String) {
+        guard title != self.title || snippet != self.snippet || footer != self.footer else { return }
+        self.title = title
+        self.snippet = snippet
+        self.footer = footer
+        cached = nil
+        needsDisplay = true
+    }
+
+    func fittingSize(maxWidth: CGFloat) -> NSSize {
+        let text = attributed()
+        let bounds = text.boundingRect(
+            with: NSSize(width: maxWidth - padding * 2, height: 400),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return NSSize(width: maxWidth, height: min(140, ceil(bounds.height) + padding * 2))
+    }
+
+    private func attributed() -> NSAttributedString {
+        if let cached { return cached }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.lineSpacing = 1
+
+        let result = NSMutableAttributedString(string: title, attributes: [
+            .font: GutterChrome.titleFont,
+            .foregroundColor: styleSheet.text,
+            .paragraphStyle: paragraph,
+        ])
+
+        if !snippet.isEmpty {
+            var body = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
+            if body.count > snippetLimit { body = String(body.prefix(snippetLimit)) + "…" }
+            // The snippet is document text, so it borrows the theme's body face
+            // at panel size rather than the system font (§11.1).
+            let face = NSFont(descriptor: styleSheet.bodyFont().fontDescriptor, size: 11)
+                ?? NSFont.systemFont(ofSize: 11)
+            result.append(NSAttributedString(string: "\n" + body, attributes: [
+                .font: face,
+                .foregroundColor: styleSheet.textSecondary,
+                .paragraphStyle: paragraph,
+            ]))
+        }
+
+        if !footer.isEmpty {
+            result.append(NSAttributedString(string: "\n" + footer, attributes: [
+                .font: GutterChrome.bodyFont,
+                .foregroundColor: styleSheet.textFaint,
+                .paragraphStyle: paragraph,
+            ]))
+        }
+
+        cached = result
+        return result
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let card = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: card, xRadius: 6, yRadius: 6)
+        styleSheet.background.setFill()
+        path.fill()
+        styleSheet.rule.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        attributed().draw(
+            with: bounds.insetBy(dx: padding, dy: padding),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        cached = nil
+        needsDisplay = true
+    }
+}

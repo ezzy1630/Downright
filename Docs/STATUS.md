@@ -1,0 +1,204 @@
+# Status
+
+An honest accounting of what this build does, what is approximate, and where it
+departs from `markdown-app-spec.md`. Read this before filing a bug.
+
+## Environment constraints this build was made under
+
+The whole project builds with the **Command Line Tools only** — no Xcode. That
+shaped three things:
+
+### Tests use swift-testing, and must be run through `Scripts/check.sh`
+
+XCTest ships with Xcode; the Command Line Tools do not include
+`XCTest.framework` at all, so `import XCTest` cannot compile here. swift-testing
+*does* ship with the CLT, but outside SwiftPM's default framework search path.
+
+This produces a genuinely dangerous failure mode worth stating plainly: SwiftPM
+wraps its generated test runner's swift-testing entry point in
+`#if canImport(Testing)`. Without the search path that condition is false, the
+branch compiles out, and **bare `swift test` exits 0 having run nothing** — a
+green result that tested zero code. `Scripts/check.sh` passes the flag and then
+asserts a non-zero test count, so the silent no-op fails loudly instead.
+
+```bash
+Scripts/check.sh
+```
+
+### The Quick Look extensions are source-complete but unbundled
+
+An `.appex` requires an Xcode app-extension target. `Sources/DownrightQL/` and
+`Sources/DownrightThumb/` compile as libraries in CI and carry the full memory
+discipline §10 demands. [QUICKLOOK.md](QUICKLOOK.md) has the exact Xcode steps.
+
+To make this real rather than aspirational, `DensityGutterView` was moved out of
+the app and into `MarkdownRender`, so the extension draws **the same rail** the
+app draws rather than a second implementation that could drift.
+
+### Sparkle is not embedded
+
+It ships as a framework with XPC helpers needing a Copy Files phase and
+per-bundle signing. `AppDelegate` performs no update checks of its own, so
+adding it is purely additive. [RELEASE.md](RELEASE.md) has the steps.
+
+## Deliberate deviations from the spec
+
+### Syntax highlighting is a native lexer, not tree-sitter
+
+§12 names **SwiftTreeSitter + Neon**. Those need a separate SPM package per
+language — eight-plus additional dependencies, each a large C target, each an
+independent source of version drift.
+
+So `MarkdownRender/Syntax/` implements a single-pass scanner over `[UInt16]`
+(so `NSRange` offsets come free and no per-token `String` is allocated),
+parameterised by per-language *data*: keyword tables, comment and string forms,
+raw-string shapes, sigils. It sits behind the `SyntaxHighlighter` protocol
+precisely so a tree-sitter backend can replace it later without the decoration
+engine noticing.
+
+Throughput: **≈250 MB/s** (1.7 ms for a 218 KB Swift block).
+
+24 canonical languages: `bash, c, cpp, css, diff, go, html, java, javascript,
+json, jsx, markdown, objc, plaintext, python, ruby, rust, sql, swift, toml, tsx,
+typescript, xml, yaml`, plus the usual aliases (`ts`, `sh`, `py`, `rs`, `yml`,
+`c++`, `objective-c`, …).
+
+Known lexer simplifications: JSX/TSX markup lexes as expressions rather than
+tags (`<Foo` still colours as a type); Ruby and shell heredocs are not tracked.
+
+### Everything else in §12 is as specified
+
+`swift-markdown` (cmark-gfm) for parsing, `SwiftMath` for math,
+`beautiful-mermaid-swift` for diagrams, `NLTokenizer` for sentence segmentation,
+FSEvents (directory-level) for watching. No WebView anywhere.
+
+## Open questions from §15, decided
+
+| Question | Decision |
+|---|---|
+| **1. Name** | Downright. Bundle ID `com.unrulyagency.downright`, CLI verb `down` (with `md` as an alias, per §3.4). |
+| **2. Licence** | MIT. `MarkdownRender`'s value compounds through adoption; a fork has to keep pace with the original, and a licence that discourages contribution costs more than the fork it prevents. |
+| **3. `.mdx` / `.qmd`** | Open them. Render the markdown, grey out the JSX and executable chunks, never evaluate them (§2). Refusing a file is worse than rendering the 90% of it that is plain markdown. |
+| **4. Very large files** | 5MB, as suggested, configurable in Settings → Editor. |
+| **5. Editor integration** | One direction for 1.0: `file.ts:42` opens in your editor. The reverse is not implemented — per-editor protocol work for a use case nobody has asked for yet. |
+| **6. Version timeline placement** | Separate window. Scrubbing a month of rewrites is a comparison activity, and the document you are comparing against has to stay visible. |
+| **7. Theme format** | Hand-rolled JSON plus a **VS Code / Shiki importer**. Adopting a foreign schema would force the semantic palette into an editor's vocabulary; importing means people reuse existing work without the app inheriting someone else's model. |
+
+## §6.1 — the hard part, precisely
+
+The three-part solution lands as follows.
+
+**(a) Block markers in the gutter — exact.** `#`, `>`, `-`, `1.`, `- [ ]` never
+appear inline under any policy. `BlockStyleFactory.lineHeight` is a grid-snapped
+function of block kind and nesting *only* — never of caret state. A reveal
+therefore **structurally cannot** change line height. The vertical axis is
+exact, unconditionally, and that is the part that actually hurts.
+
+**(b) Per-span inline reveal — exact.** Entering `**bold**` reveals only that
+span's markers. Multiple cursors reveal at the primary caret only, following
+§14's recommendation.
+
+**(c) Caret-anchored x-position pinning — partly exact, and here is the line.**
+
+Exact: horizontal pinning on the caret's own line. The shift is the measured
+typographic width of exactly the revealed marker runs preceding the caret,
+drawn with the same attributes, applied as a negative head indent against 44pt
+of reserved lead-in.
+
+Approximate:
+
+1. The shift is a paragraph-level indent, so on a **wrapped** paragraph the
+   non-caret lines shift with it — the caret is pinned, its neighbours on other
+   lines move.
+2. Markers are measured in isolation, so kerning at the seam can put the pin off
+   by a fraction of a point.
+3. If a reveal pushes a word across a wrap boundary, the caret's line changes
+   and its vertical position moves. No compensating re-wrap is attempted.
+4. The shift is clamped to 44pt.
+5. It is applied on caret changes, not continuously during a drag.
+
+### Other render-layer deviations
+
+- **Elision (zoom and folding) uses zero-height fragments, not display-string
+  substitution.** A substitution cannot remove a paragraph terminator without
+  desynchronising the text element from its content — the one failure that
+  silently corrupts every later coordinate conversion. Favourable consequence:
+  find still matches inside elided text, which keeps §14's four-way interaction
+  (zoom × folding × find × hidden markers) simple rather than special-cased.
+- **Fences, front-matter delimiters, table rows and `$$` lines are not hidden**
+  — the fragments absorb them as chrome. This keeps `⌘C` on a code block
+  yielding a complete fenced block.
+- **Inline math uses a positive-length substitution** (one attachment
+  character), generalising the index map beyond pure hiding.
+- **Secondary-caret "thin markers"** (§14's suggestion) are not drawn; reveal is
+  primary-only as recommended, and `drMarker` is present on every marker range
+  for whoever implements it.
+- **IME suspends hiding in the composing paragraph** so AppKit's marked-text
+  bookkeeping stays exact.
+
+## Core-layer semantics worth knowing
+
+- **Line endings are normalised only when the file is *consistently* CRLF or
+  CR.** Mixed-ending files are returned verbatim, so the round trip stays
+  byte-identical and there is no `.mixed` case to get wrong.
+- **`.disableSmartOpts` is passed to cmark unconditionally** — its smart
+  punctuation rewrites quotes and dashes in the AST, which §3.1 forbids.
+- **`ListEditing.indent` returns indentation edits only.** Correct ordered-list
+  renumbering after a nesting change can only be computed from the reparsed
+  result, so callers apply → reparse → `TidyDocument.plan(rules:
+  [.orderedListNumbers])` inside one undo group.
+- **`moveSection` treats blank lines as a property of the join**, not of either
+  section — the §14 warning about this being harder than it looks.
+- **Path token ranges include the `:42` suffix** (while `token.rawPath` excludes
+  it) so the underline and the click target cover the whole reference.
+- **Footnotes and link reference definitions are recovered by a source line
+  scan** — cmark has no footnote extension and eats reference definitions.
+- **Setext headings get no gutter marker** (there is nothing to put there), and
+  tidy and promote/demote skip them, since a setext heading cannot express a
+  level jump.
+- **Heading scale exponents are `[3, 2, 1, 0, −0.5, −1]`**, not a pure power
+  law. A pure law puts H6 at `body·ratio⁻²` — 10pt against a 16pt body. H1–H4
+  are whole steps; H5–H6 are half steps so all six stay strictly ordered without
+  becoming unreadable.
+- **`mathPointSize` is clamped to 0.90–1.10× body.** Matching Latin Modern
+  Math's x-height against SF Pro would give 1.19× — the same number that makes
+  KaTeX look too big everywhere else (§11.3).
+
+## Known gaps
+
+- **Sparkle updates** and **notarised distribution** — see above.
+- **Quick Look `.appex` bundling** — see above.
+- **Reverse editor integration** (§15 Q5) — deliberately deferred.
+- **A plugin system** — explicitly out of scope for 1.0 (§2).
+- **`ConformanceIsolation` warnings.** `@MainActor` window controllers conform
+  to non-isolated view delegate protocols. This is a warning under Swift 5 mode
+  and would be an error under Swift 6 mode; the package builds in Swift 5 mode
+  today. Fixing it properly means deciding main-actor isolation for the whole
+  delegate surface at once, which is a package-wide call rather than a local
+  patch.
+- **`LightboxWindow` uses literal black and white** for its scrim and caption
+  rather than theme colours: a tinted scrim discolours the image you opened it
+  to look at. It goes opaque under Reduce Transparency.
+
+## Performance
+
+The budget in §12 is the product promise, so it is measured rather than
+asserted. `Sources/drbench/` is that measurement, runnable:
+
+```bash
+swift run -c release drbench
+```
+
+It prints p50/p95 for parse, AST diff, text diff, decoration, the full
+keystroke pipeline, and cold open, marking each against its budget.
+
+See [PERFORMANCE.md](PERFORMANCE.md) for the measured numbers on this build and
+what they mean for §13's P0 kill criterion.
+
+## Test suites
+
+| Suite | Covers |
+|---|---|
+| `MarkdownCoreTests` (168 tests, 19 suites) | Byte-identical round trips over a tricky corpus, source-range invariants, every extension pass including the negative math cases (`echo $PATH` must not be math), AST diff locality, text diff, tidy idempotence, restructuring, zoom plans. |
+| `MarkdownRenderTests` (39 + decoration suites) | Theme decoding and colour resolution, type scale and measure cap, VS Code theme import, the lexer per language, decoration byte-identity across all three modes, the source↔display index map round-tripping every offset, and the keystroke benchmark. |
+| `DownrightAppTests` | Scroll anchoring across an agent's insertion, change-mark shifting and navigation, snapshot dedup and restore, find/regex/replace, path resolution present-vs-missing, key binding round trips and conflicts, jump history, HTML export self-containment, sibling scanning, and an end-to-end offscreen render of `Docs/sample.md` in all three modes. |

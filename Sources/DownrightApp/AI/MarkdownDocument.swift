@@ -1,0 +1,364 @@
+import AppKit
+import Foundation
+import MarkdownCore
+import MarkdownRender
+
+/// The document: raw text, the tree over it, and everything that watches it.
+///
+/// §3.1 is enforced here and nowhere else needs to worry about it — the
+/// `NSTextStorage` holds the file's exact characters at all times, and every
+/// mutation goes through `replace(_:with:actionName:)`, which is a plain text
+/// replacement with plain text undo.  There is no document model to
+/// re-serialise, so there is nothing that can normalise a file behind the
+/// user's back.
+@MainActor
+final class MarkdownDocument: NSObject {
+    /// What an external write did while the buffer was dirty (§8.1).
+    struct Conflict {
+        var incomingText: String
+        var hunks: [ChangeHunk]
+        var changedBlockCount: Int
+    }
+
+    enum ExternalEvent {
+        /// Applied in place; scroll position preserved by the delegate.
+        case applied(hunks: [ChangeHunk])
+        /// Buffer was dirty — never clobber.  Ask the user.
+        case conflict(Conflict)
+        case fileRemoved
+        case fileRestored
+    }
+
+    // MARK: - State
+
+    let storage = NSTextStorage()
+    private(set) var url: URL?
+    private(set) var fidelity: ByteFidelity = .default
+    private(set) var parsed: ParsedDocument = .empty
+    private(set) var isDirty = false
+    /// Hash of what is currently on disk, as far as we know.
+    private(set) var diskHash: String = ""
+
+    let changes = ChangeTracker()
+    var state: DocumentState
+    let undoManager = UndoManager()
+
+    /// Fires after every reparse with the set of blocks needing re-decoration.
+    var onReparse: ((ParsedDocument, DirtySet) -> Void)?
+    var onExternalEvent: ((ExternalEvent) -> Void)?
+    var onDirtyChanged: ((Bool) -> Void)?
+    /// Asked for the source offset at the top of the viewport, so an external
+    /// rewrite can restore the reader's place by heading anchor (§8.1).
+    var currentTopOffsetProvider: (() -> Int)?
+    /// Asked to scroll to a source offset after an external rewrite.
+    var restoreOffsetHandler: ((Int) -> Void)?
+
+    private var watcher: FileWatcher?
+    private var reparseScheduled = false
+    private var isApplyingExternalChange = false
+    private var suppressReparse = false
+
+    // MARK: - Init
+
+    override init() {
+        self.state = DocumentState(path: "")
+        super.init()
+        storage.delegate = self
+        undoManager.groupsByEvent = false
+    }
+
+    var text: String { storage.string }
+    var displayName: String {
+        url?.deletingPathExtension().lastPathComponent ?? "Untitled"
+    }
+
+    // MARK: - Opening and saving
+
+    func open(_ fileURL: URL) throws {
+        let (text, fidelity) = try DocumentIO.read(contentsOf: fileURL)
+        self.url = fileURL
+        self.fidelity = fidelity
+        self.state = DocumentStateStore.shared.state(for: fileURL)
+
+        suppressReparse = true
+        storage.beginEditing()
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
+        storage.endEditing()
+        suppressReparse = false
+
+        diskHash = SnapshotStore.hash(text)
+        reparse(notifying: true, wholesale: true)
+        isDirty = false
+
+        SnapshotStore.shared.record(text, for: fileURL, kind: .baseline)
+        DocumentStateStore.shared.noteOpened(fileURL, document: parsed)
+
+        // Unread-since-last-read (§8.2): if the bytes moved while the app was
+        // closed, mark up what changed and offer to jump to the first one.
+        if !state.lastSeenHash.isEmpty, state.lastSeenHash != diskHash,
+           let previous = SnapshotStore.shared.text(forHash: state.lastSeenHash) {
+            let hunks = TextDiff.hunks(old: previous, new: text)
+            if !hunks.isEmpty { changes.apply(hunks: hunks) }
+        }
+
+        startWatching(fileURL)
+    }
+
+    /// Adopts text with no backing file — used by `Compare` windows and by the
+    /// version timeline's preview pane.
+    func adopt(text: String, displayURL: URL?) {
+        self.url = displayURL
+        suppressReparse = true
+        storage.beginEditing()
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
+        storage.endEditing()
+        suppressReparse = false
+        reparse(notifying: true, wholesale: true)
+        isDirty = false
+    }
+
+    func save() throws {
+        guard let url else { throw CocoaError(.fileNoSuchFile) }
+        let text = storage.string
+        watcher?.suppressOwnWrite()
+        try DocumentIO.write(text, to: url, fidelity: fidelity)
+        watcher?.acknowledgeOwnWrite()
+
+        diskHash = SnapshotStore.hash(text)
+        SnapshotStore.shared.record(text, for: url, kind: .local)
+        setDirty(false)
+        persistState()
+    }
+
+    func saveIfNeeded() {
+        guard isDirty, url != nil else { return }
+        try? save()
+    }
+
+    func close() {
+        persistState()
+        watcher?.stop()
+        watcher = nil
+    }
+
+    private func persistState() {
+        guard let url else { return }
+        var state = self.state
+        state.lastSeenHash = diskHash
+        if let top = currentTopOffsetProvider?() {
+            state.anchor = ScrollAnchoring.anchor(for: top, in: parsed)
+        }
+        state.lastOpened = Date()
+        self.state = state
+        DocumentStateStore.shared.save(state, for: url)
+    }
+
+    /// Restores the reader's place from persisted state (§8.2).
+    func restoredOffset() -> Int {
+        ScrollAnchoring.offset(for: state.anchor, in: parsed)
+    }
+
+    // MARK: - Editing
+    //
+    // Every mutation funnels through here so undo, dirty tracking, and change
+    // mark adjustment are impossible to forget at a call site.
+
+    @discardableResult
+    func replace(_ range: NSRange, with replacement: String, actionName: String?) -> Bool {
+        guard range.location >= 0, range.upperBound <= storage.length else { return false }
+        let previous = (storage.string as NSString).substring(with: range)
+        guard previous != replacement else { return false }
+
+        let newRange = NSRange(location: range.location, length: (replacement as NSString).length)
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { doc in
+            MainActor.assumeIsolated {
+                doc.replace(newRange, with: previous, actionName: actionName)
+            }
+        }
+        if let actionName { undoManager.setActionName(actionName) }
+        undoManager.endUndoGrouping()
+
+        storage.beginEditing()
+        storage.replaceCharacters(in: range, with: replacement)
+        storage.endEditing()
+
+        let delta = (replacement as NSString).length - range.length
+        changes.adjust(forEditIn: range, delta: delta)
+        if !isApplyingExternalChange { setDirty(true) }
+        return true
+    }
+
+    func apply(_ edits: [TextEdit], actionName: String) {
+        guard !edits.isEmpty else { return }
+        // Back to front so earlier offsets stay valid, matching
+        // `[TextEdit].applied(to:)`.
+        let ordered = edits.sorted { $0.range.location > $1.range.location }
+        var lastStart = Int.max
+        undoManager.beginUndoGrouping()
+        for edit in ordered {
+            guard edit.range.upperBound <= lastStart else { continue }
+            replace(edit.range, with: edit.replacement, actionName: nil)
+            lastStart = edit.range.location
+        }
+        undoManager.setActionName(actionName)
+        undoManager.endUndoGrouping()
+    }
+
+    /// Toggling a checkbox writes the file immediately (§7.1, §8.5).
+    func toggleTask(atMarkOffset offset: Int) {
+        guard let edit = Restructure.toggleTask(parsed, atMarkOffset: offset) else { return }
+        apply([edit], actionName: "Toggle Task")
+        reparseNow()
+        if url != nil { try? save() }
+    }
+
+    private func setDirty(_ value: Bool) {
+        guard isDirty != value else { return }
+        isDirty = value
+        onDirtyChanged?(value)
+    }
+
+    // MARK: - Parsing (§3.5)
+
+    /// Coalesced to the end of the runloop turn: a burst of keystrokes or a
+    /// multi-edit command reparses once, not once per character.
+    private func scheduleReparse() {
+        guard !reparseScheduled, !suppressReparse else { return }
+        reparseScheduled = true
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            guard let self else { return }
+            self.reparseScheduled = false
+            self.reparse(notifying: true, wholesale: false)
+        }
+    }
+
+    func reparseNow() {
+        reparseScheduled = false
+        reparse(notifying: true, wholesale: false)
+    }
+
+    private func reparse(notifying: Bool, wholesale: Bool) {
+        let previous = parsed
+        let fresh = MarkdownParser.parse(storage.string)
+        parsed = fresh
+        guard notifying else { return }
+        let dirty = wholesale ? DirtySet.wholesale : ASTDiff.dirtySet(old: previous, new: fresh)
+        onReparse?(fresh, dirty)
+    }
+
+    // MARK: - External changes (§8.1)
+
+    private func startWatching(_ fileURL: URL) {
+        watcher?.stop()
+        watcher = FileWatcher(url: fileURL) { [weak self] event in
+            MainActor.assumeIsolated { self?.handleWatchEvent(event) }
+        }
+    }
+
+    private func handleWatchEvent(_ event: FileWatcher.Event) {
+        switch event {
+        case .removed:
+            onExternalEvent?(.fileRemoved)
+        case .restored:
+            onExternalEvent?(.fileRestored)
+            handleExternalWrite()
+        case .changed:
+            handleExternalWrite()
+        }
+    }
+
+    private func handleExternalWrite() {
+        guard let url, let (incoming, freshFidelity) = try? DocumentIO.read(contentsOf: url) else { return }
+        let incomingHash = SnapshotStore.hash(incoming)
+        let currentText = storage.string
+        guard incomingHash != SnapshotStore.hash(currentText) else {
+            diskHash = incomingHash
+            return
+        }
+
+        SnapshotStore.shared.record(incoming, for: url, kind: .external)
+        let hunks = TextDiff.hunks(old: currentText, new: incoming)
+        diskHash = incomingHash
+
+        if isDirty {
+            // Never clobber (§8.1).  The bar is non-modal; the buffer is
+            // untouched until the user picks.
+            onExternalEvent?(.conflict(Conflict(
+                incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+            )))
+            return
+        }
+
+        fidelity = freshFidelity
+        applyExternalText(incoming, hunks: hunks)
+        onExternalEvent?(.applied(hunks: hunks))
+    }
+
+    /// Replaces the buffer in place, holding the reader's position by anchoring
+    /// to the nearest unchanged heading rather than to a byte offset (§8.1).
+    func applyExternalText(_ incoming: String, hunks: [ChangeHunk]) {
+        let topOffset = currentTopOffsetProvider?() ?? 0
+        let anchor = ScrollAnchoring.anchor(for: topOffset, in: parsed)
+
+        isApplyingExternalChange = true
+        let whole = NSRange(location: 0, length: storage.length)
+        // Registered as undoable on purpose: ⌘Z reverts an agent's rewrite,
+        // which is the fastest possible answer to "no, put it back".
+        replace(whole, with: incoming, actionName: "External Change")
+        isApplyingExternalChange = false
+        setDirty(false)
+
+        reparseNow()
+        changes.apply(hunks: hunks)
+
+        let restored = ScrollAnchoring.offset(for: anchor, in: parsed)
+        restoreOffsetHandler?(restored)
+    }
+
+    /// Conflict resolution: take the version on disk, dropping local edits.
+    func resolveConflictTakingTheirs(_ conflict: Conflict) {
+        applyExternalText(conflict.incomingText, hunks: conflict.hunks)
+    }
+
+    /// Conflict resolution: keep the buffer and write it over the file.
+    func resolveConflictKeepingMine() {
+        try? save()
+        changes.clear()
+    }
+
+    // MARK: - Time travel (§8.3)
+
+    func versions() -> [SnapshotStore.VersionRecord] {
+        guard let url else { return [] }
+        return SnapshotStore.shared.versions(for: url)
+    }
+
+    /// Restores a historical version into the buffer as a normal, undoable edit.
+    func restore(version: SnapshotStore.VersionRecord) {
+        guard let text = SnapshotStore.shared.text(for: version) else { return }
+        let hunks = TextDiff.hunks(old: storage.string, new: text)
+        replace(NSRange(location: 0, length: storage.length), with: text, actionName: "Restore Version")
+        reparseNow()
+        changes.apply(hunks: hunks)
+    }
+}
+
+// MARK: - NSTextStorageDelegate
+
+extension MarkdownDocument: NSTextStorageDelegate {
+    nonisolated func textStorage(
+        _ textStorage: NSTextStorage,
+        didProcessEditing editedMask: NSTextStorageEditActions,
+        range editedRange: NSRange,
+        changeInLength delta: Int
+    ) {
+        guard editedMask.contains(.editedCharacters) else { return }
+        MainActor.assumeIsolated {
+            if !isApplyingExternalChange && !suppressReparse {
+                setDirty(true)
+            }
+            scheduleReparse()
+        }
+    }
+}
