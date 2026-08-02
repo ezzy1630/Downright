@@ -39,8 +39,10 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
 
         // Source mode never renders objects — that is the whole point of it.
         guard context.mode != .source else { return plain() }
-        // §6.2: in Live mode the caret entering an object swaps it to source.
-        let editing = context.mode == .live && context.isCaretInside(payload.sourceRange)
+        // §6.2: a caret inside an object or an explicit scoped source lens
+        // swaps only that object to source.  Surrounding blocks stay rendered.
+        let editing = context.mode == .live
+            && (context.isCaretInside(payload.sourceRange) || context.isSourceFocused(payload.sourceRange))
 
         switch payload.kind {
         case .codeBlock, .collapsedCodeBlock:

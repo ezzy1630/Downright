@@ -40,9 +40,6 @@ private struct SettingsRootView: View {
         TabView {
             Form {
                 Toggle("Restore previous documents", isOn: binding(\.restoreSession))
-                Picker("Default mode", selection: binding(\.defaultMode)) {
-                    ForEach(RenderMode.userFacingModes, id: \.self) { Text($0.title).tag($0) }
-                }
                 Toggle("Follow system appearance", isOn: binding(\.followsSystemAppearance))
             }
             .tabItem { Label("General", systemImage: "gearshape") }
@@ -300,10 +297,6 @@ enum PreferencesForms {
     static func general() -> [PreferenceRow] {
         [
             .section("On open"),
-            .choice("Default mode", help: "Document mode is rendered and always editable.",
-                    options: RenderMode.userFacingModes.map(\.title),
-                    get: { RenderMode.userFacingModes.firstIndex(of: Preferences.shared.values.defaultMode) ?? 0 },
-                    set: { index in Preferences.shared.update { $0.defaultMode = RenderMode.userFacingModes[index] } }),
             .toggle("Restore windows from the last session", help: nil,
                     get: { Preferences.shared.values.restoreSession },
                     set: { value in Preferences.shared.update { $0.restoreSession = value } }),
@@ -507,7 +500,7 @@ final class KeybindingsPane: NSViewController {
         hint.textColor = .tertiaryLabelColor
 
         let reset = NSButton(title: "Reset All", target: self, action: #selector(resetAll))
-        let vim = NSButton(checkboxWithTitle: "Vim-style keys in Read mode", target: self, action: #selector(toggleVim))
+        let vim = NSButton(checkboxWithTitle: "Vim-style navigation keys", target: self, action: #selector(toggleVim))
         vim.state = Preferences.shared.values.vimKeys ? .on : .off
 
         let footer = NSStackView(views: [vim, NSView(), reset])

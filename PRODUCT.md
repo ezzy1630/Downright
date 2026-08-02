@@ -33,8 +33,10 @@ source, strong navigation, and useful export.
 
 ## Default experience
 
-Downright opens in Read mode. The user can switch to Live mode to edit and to
-Source mode to inspect Markdown syntax. One text view holds all three modes.
+Downright opens in one adaptive Document surface. Idle content reads like a
+finished page. A caret reveals only the syntax needed for the current edit;
+selection stays rendered. Explicit Edit Markdown actions open a scoped source
+region, while Source Focus exposes the full document when needed.
 
 The app has no permanent chat panel. AI output is an input to review, not a
 reason to leave the document. File watching, rendered diff, snapshots, and
@@ -66,7 +68,8 @@ uses these qualities without copying their product models.
 
 - CommonMark and GFM Markdown with math, callouts, front matter, wikilinks,
   paths, Mermaid, tables, images, and footnotes.
-- Read, Live, and Source modes on one TextKit 2 surface.
+- One adaptive TextKit 2 surface with caret-local syntax, scoped Markdown
+  editing, and transient full-document Source Focus.
 - Structural zoom, folding, outline, task panel, density gutter, find, and
   sibling sidebar.
 - Safe external-write review with rendered diff, unread marks, and local

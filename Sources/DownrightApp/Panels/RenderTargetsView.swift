@@ -76,7 +76,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         applyButton = PanelButton.text("Apply safe fixes", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source mode", action: ButtonAction { })
+        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
         super.init(frame: .zero)
 
         backdrop.autoresizingMask = [.width, .height]
@@ -130,7 +130,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source mode")
+        sourceButton.setAccessibilityLabel("Open Source Focus")
         let actions = NSStackView(views: [applyButton, sourceButton])
         actions.orientation = .horizontal
         actions.alignment = .centerY

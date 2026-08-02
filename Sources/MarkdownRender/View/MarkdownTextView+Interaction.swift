@@ -128,6 +128,11 @@ extension MarkdownTextView {
         let point = convert(event.locationInWindow, from: nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
+        if sourceFocusDoneRect?.insetBy(dx: -4, dy: -4).contains(point) == true {
+            clearSourceFocus()
+            return
+        }
+
         if handleCodeBlockChrome(at: point) { return }
 
         // Clicking a checkbox toggles it and the file is written immediately —
@@ -167,7 +172,32 @@ extension MarkdownTextView {
             return
         }
 
+        // `super` owns the whole click/drag gesture.  Delay marker reveal until
+        // it resolves to a caret or a selection, so selection never causes a
+        // transient source flash or moves the glyphs under the pointer.
+        suppressesCaretReveal = true
         super.mouseDown(with: event)
+        suppressesCaretReveal = false
+
+        if case .scoped(let focus) = sourceFocus {
+            let selection = sourceSelectedRange
+            let remainsInside = selection.length == 0
+                ? focus.contains(offset: selection.location)
+                : NSIntersectionRange(focus, selection).length > 0
+            if !remainsInside {
+                clearSourceFocus()
+                return
+            }
+        }
+        handleSelectionChanged()
+    }
+
+    public override func cancelOperation(_ sender: Any?) {
+        guard sourceFocus != .none else {
+            super.cancelOperation(sender)
+            return
+        }
+        clearSourceFocus()
     }
 
     /// Copy button and collapsed-chip expansion, both hit-tested against the
@@ -289,6 +319,7 @@ extension MarkdownTextView {
 
         let inserted = (replacement as NSString).length
         rebuildParagraphIndex()
+        adjustScopedSourceFocus(forEdit: clamped, insertedLength: inserted)
         markdownDelegate?.markdownTextView(self, didEdit: clamped, delta: inserted - clamped.length)
         if updateGeneration == generation {
             // The host has not reparsed yet.  Keep the view coherent with an
@@ -298,6 +329,38 @@ extension MarkdownTextView {
         }
         setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
         return true
+    }
+
+    private func adjustScopedSourceFocus(forEdit edit: NSRange, insertedLength: Int) {
+        guard case .scoped(let focus) = sourceFocus else { return }
+        let delta = insertedLength - edit.length
+        let start: Int
+        if edit.upperBound <= focus.location {
+            start = focus.location + delta
+        } else if edit.location < focus.location {
+            start = edit.location
+        } else {
+            start = focus.location
+        }
+
+        let end: Int
+        if edit.location >= focus.upperBound {
+            end = focus.upperBound
+        } else if edit.upperBound <= focus.upperBound {
+            end = focus.upperBound + delta
+        } else {
+            end = edit.location + insertedLength
+        }
+
+        let storageLength = textStorage?.length ?? max(start, end)
+        let lower = max(0, min(start, storageLength))
+        let upper = max(lower, min(end, storageLength))
+        let first = paragraphIndex.paragraphRange(containing: lower)
+        let lastOffset = max(lower, upper - 1)
+        let last = paragraphIndex.paragraphRange(containing: lastOffset)
+        let adjusted = first.union(last)
+        sourceFocus = .scoped(adjusted)
+        fragmentContext.sourceFocusRange = adjusted
     }
 
     public override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -384,19 +447,7 @@ extension MarkdownTextView {
     /// ahead of HTML/string because browser URL copies commonly advertise all
     /// three and the URL is the user's explicit intent.
     private func markdownPastePayload(from pasteboard: NSPasteboard) -> MarkdownPastePayload? {
-        let orderedTypes: [NSPasteboard.PasteboardType] = [.URL, .html, .string]
-        for type in orderedTypes where pasteboard.types?.contains(type) == true {
-            if type == .URL {
-                if let url = pasteboard.string(forType: type), !url.isEmpty { return .url(url) }
-            } else if type == .html {
-                guard let html = pasteboard.string(forType: type) else { continue }
-                let fallback = pasteboard.string(forType: .string) ?? ""
-                return .html(html, fallback: fallback)
-            } else if let text = pasteboard.string(forType: type) {
-                return .text(text)
-            }
-        }
-        return nil
+        MarkdownSmartPaste.payload(from: pasteboard)
     }
 
     /// A hidden marker is deleted whole.  Deleting half of `**` would leave
@@ -417,28 +468,77 @@ extension MarkdownTextView {
 
     // MARK: - Copy and export (§9.5)
 
-    /// ⌘C always yields markdown (§3.1).  NSTextView would otherwise copy the
-    /// hybrid range straight out of the storage, which is not a range.
+    /// Standard Copy follows the visible surface.  Raw Markdown travels as a
+    /// private alternate flavour, so a round-trip within Downright keeps the
+    /// source while every other app receives exactly what the user selected.
     public override func copy(_ sender: Any?) {
         let range = sourceSelectedRange
         guard range.length > 0, let storage = textStorage else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(storage.attributedSubstring(from: range).string, forType: .string)
+        let visible = attributedStringForRichTextCopy(range: range)
+        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
+        let markdown = storage.attributedSubstring(from: markdownRange).string
+        pasteboard.declareTypes([.string, .rtf, .downrightMarkdown], owner: nil)
+        pasteboard.setString(visible.string, forType: .string)
+        pasteboard.setString(markdown, forType: .downrightMarkdown)
+        if let data = visible.rtf(
+            from: NSRange(location: 0, length: visible.length),
+            documentAttributes: [:]
+        ) {
+            pasteboard.setData(data, forType: .rtf)
+        }
+    }
+
+    public override func cut(_ sender: Any?) {
+        let range = sourceSelectedRange
+        guard range.length > 0 else { return }
+        copy(sender)
+        performSourceEdit(range: range, replacement: "")
     }
 
     public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         let range = sourceSelectedRange
         guard range.length > 0, let storage = textStorage else { return false }
-        pboard.declareTypes([.string, .rtf], owner: nil)
-        // §7.1: markdown is the default flavour when dragging a rendered
-        // selection out; rich text is offered as an alternate.
-        pboard.setString(storage.attributedSubstring(from: range).string, forType: .string)
+        pboard.declareTypes([.string, .rtf, .downrightMarkdown], owner: nil)
         let rich = attributedStringForRichTextCopy(range: range)
+        pboard.setString(rich.string, forType: .string)
+        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
+        pboard.setString(
+            storage.attributedSubstring(from: markdownRange).string,
+            forType: .downrightMarkdown
+        )
         if let data = rich.rtf(from: NSRange(location: 0, length: rich.length), documentAttributes: [:]) {
             pboard.setData(data, forType: .rtf)
         }
         return true
+    }
+
+    /// Hidden substitutions at both edges belong to a fully selected visible
+    /// span. Include them in Downright's private flavour without changing the
+    /// standard visible-text selection exported to other apps.
+    private func losslessMarkdownRange(forVisibleSourceRange range: NSRange) -> NSRange {
+        var result = range
+        var changed = true
+        while changed {
+            changed = false
+            if let leading = currentDisplayMap.substitutions.last(where: {
+                $0.replacement == nil && $0.sourceRange.upperBound == result.location
+            }) {
+                result = NSRange(
+                    location: leading.sourceRange.location,
+                    length: result.upperBound - leading.sourceRange.location
+                )
+                changed = true
+            }
+            if let trailing = currentDisplayMap.substitutions.first(where: {
+                $0.replacement == nil && $0.sourceRange.location == result.upperBound
+            }) {
+                result.length = trailing.sourceRange.upperBound - result.location
+                changed = true
+            }
+        }
+        return result
     }
 
     /// Rendered-selection copy: the display string for the range with
@@ -480,6 +580,7 @@ extension MarkdownTextView {
         .drHidden, .drMarker, .drFragment, .drBlock, .drHeading, .drLink, .drPathToken,
         .drPathExists, .drCheckbox, .drChange, .drReference, .drElided, .drGutterMarker,
         .drSearchHit, .drCurrentSearchHit, .drSpeechHighlight, .drInlineCode,
+        .drSourceFocus,
     ]
 
     /// Text spoken by the native speech service. It uses the same substitutions

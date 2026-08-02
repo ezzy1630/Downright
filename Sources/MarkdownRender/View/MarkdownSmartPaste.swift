@@ -24,9 +24,11 @@ enum MarkdownSmartPaste {
     /// an explicit URL wins over browser HTML, then plain text. The named
     /// pasteboard seam keeps tests and Quick Look callers off the global board.
     static func payload(from pasteboard: NSPasteboard) -> MarkdownPastePayload? {
-        let orderedTypes: [NSPasteboard.PasteboardType] = [.URL, .html, .string]
+        let orderedTypes: [NSPasteboard.PasteboardType] = [.downrightMarkdown, .URL, .html, .string]
         for type in orderedTypes where pasteboard.types?.contains(type) == true {
-            if type == .URL {
+            if type == .downrightMarkdown {
+                if let markdown = pasteboard.string(forType: type) { return .text(markdown) }
+            } else if type == .URL {
                 if let url = pasteboard.string(forType: type), !url.isEmpty { return .url(url) }
             } else if type == .html {
                 guard let html = pasteboard.string(forType: type) else { continue }
@@ -124,4 +126,11 @@ enum MarkdownSmartPaste {
         }
         return context
     }
+}
+
+public extension NSPasteboard.PasteboardType {
+    /// Lossless Markdown companion to the standard visible-text clipboard.
+    static let downrightMarkdown = NSPasteboard.PasteboardType(
+        "com.ezzyrappeport.downright.markdown"
+    )
 }

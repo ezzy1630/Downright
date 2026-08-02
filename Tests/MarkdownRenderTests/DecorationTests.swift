@@ -318,6 +318,26 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
             == "Some bold and italic text.\n")
 }
 
+@Test func selectionDoesNotRevealMarkers() {
+    let text = "Some **bold** and *italic* text.\n"
+    let ns = text as NSString
+    let document = MarkdownParser.parse(text)
+    let selection = ns.range(of: "bold")
+    let hidden = engine(.live).hiddenRanges(
+        document: document,
+        caret: nil,
+        selections: [selection]
+    )
+
+    #expect(displayText(text, hidden: hidden) == "Some bold and italic text.\n")
+    #expect(MarkerPolicy.revealedMarkerRanges(
+        document: document,
+        policy: RenderMode.live.policy,
+        caret: nil,
+        selections: [selection]
+    ).isEmpty)
+}
+
 @Test func revealedRangesAreExactlyWhatTheCaretAwareRunLeavesOut() {
     // The view derives the caret-aware set by subtracting `revealedMarkerRanges`
     // from the collapsed set, so the two must agree exactly (§12).

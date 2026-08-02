@@ -31,7 +31,7 @@ native render path.
 | **Density gutter** | Replaces the scrollbar with the shape of the whole document: headings by level, code, tables, math, tasks, search hits, and changed regions. |
 | **Task panel** | `⌘T` lists every checkbox grouped by heading. Toggling writes to the file immediately. A plan document becomes something you work through. |
 | **Sibling sidebar** | Agents write six files into a folder, not one. `⌘0` shows the others, newest first, with dots for changed-since-you-last-looked. No index, no vault, no "open folder" ceremony. |
-| **Read / Live / Source** | Read rendered Markdown, edit it in place, or switch to exact source text. All three modes share one document surface, so selection, scroll position, and source ranges stay aligned. |
+| **Adaptive document surface** | Read rendered Markdown and edit it in place without switching modes. Selection stays rendered; a caret reveals local syntax; scoped and full Source Focus expose exact Markdown on demand. |
 | **Document inspectors** | Outline, tasks, search, history, workspace, health, render-target checks, assets, and document-lens views keep review work beside the document instead of in modal dialogs. |
 
 And the things it deliberately **is not**: no vault, no sync, no collaboration,

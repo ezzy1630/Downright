@@ -226,8 +226,7 @@ struct CommandPaletteModel {
 
 private enum CommandPaletteSynonyms {
     static let values: [Command: [String]] = [
-        .toggleReadLive: ["reader", "preview", "live preview", "mode"],
-        .sourceMode: ["markdown", "raw", "editor", "edit source"],
+        .sourceMode: ["markdown", "raw", "editor", "edit source", "full source"],
         .outlineQuickOpen: ["headings", "jump", "go to", "contents"],
         .toggleSidebar: ["files", "documents", "siblings", "navigator"],
         .outlinePanel: ["headings", "contents", "navigation"],

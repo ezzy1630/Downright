@@ -48,6 +48,62 @@ struct SmartPasteIntegrationTests {
             == "[title](<https://example.com/a(b)>)")
     }
 
+    @Test("Downright Markdown flavour wins on an internal round trip")
+    func privateMarkdownPriority() {
+        let pasteboard = isolatedPasteboard()
+        pasteboard.clearContents()
+        pasteboard.setString("**lossless**", forType: .downrightMarkdown)
+        pasteboard.setString("https://example.com", forType: .URL)
+        pasteboard.setString("lossless", forType: .string)
+
+        #expect(MarkdownSmartPaste.payload(from: pasteboard) == .text("**lossless**"))
+    }
+
+    @Test("standard copy exposes visible text and keeps Markdown as an alternate")
+    func visibleCopyWithMarkdownAlternate() throws {
+        let source = "Before **bold** after"
+        let view = view(for: source)
+        let selection = (source as NSString).range(of: "**bold**")
+        view.setSourceSelectedRanges([selection])
+        let pasteboard = isolatedPasteboard()
+
+        #expect(view.writeSelection(to: pasteboard, types: []))
+        #expect(pasteboard.string(forType: .string) == "bold")
+        #expect(pasteboard.string(forType: .downrightMarkdown) == "**bold**")
+        #expect(pasteboard.data(forType: .rtf) != nil)
+    }
+
+    @Test("scoped and full Source Focus are explicit and reversible")
+    func sourceFocusLifecycle() {
+        let source = "First **line**.\nSecond line.\n"
+        let view = view(for: source)
+        let selection = (source as NSString).range(of: "line")
+
+        view.focusSource(in: selection)
+        let expected = (source as NSString).paragraphRange(for: selection)
+        #expect(view.sourceFocus == .scoped(expected))
+        #expect(view.sourceSelectedRange == selection)
+        #expect(view.textStorage?.attribute(.drSourceFocus, at: selection.location, effectiveRange: nil) != nil)
+        #expect(view.textStorage?.attribute(.drHidden, at: selection.location, effectiveRange: nil) == nil)
+        let sourceColor = view.textStorage?.attribute(
+            .foregroundColor,
+            at: selection.location,
+            effectiveRange: nil
+        ) as? NSColor
+        #expect((sourceColor?.alphaComponent ?? 0) > 0)
+
+        view.clearSourceFocus()
+        #expect(view.sourceFocus == .none)
+        #expect(view.mode == .live)
+
+        view.focusEntireSource()
+        #expect(view.sourceFocus == .document)
+        #expect(view.mode == .source)
+        view.clearSourceFocus()
+        #expect(view.sourceFocus == .none)
+        #expect(view.mode == .live)
+    }
+
     @Test("HTML-only clipboard converts without a plain fallback")
     func htmlOnlyClipboard() {
         let pasteboard = isolatedPasteboard()

@@ -42,14 +42,14 @@ public enum MarkerPolicy {
         var out: [NSRange] = []
         out.reserveCapacity(256)
 
-        // The primary caret is the reveal anchor.  An empty selection is a
-        // caret; a non-empty one reveals everything it touches, because you
-        // cannot sensibly edit a selection whose markers you cannot see.
+        // Selection is observation, not edit intent.  Dragging, double-click,
+        // Shift-arrow, Look Up, speech, and copy all create non-empty
+        // selections, so revealing syntax here would make the document move
+        // under an ordinary selection gesture.  Only a real insertion caret
+        // reveals inline markers.
         let revealAnchors: [NSRange]
-        if policy.revealsAtCaret {
-            if let caret { revealAnchors = [NSRange(location: caret, length: 0)] }
-            else if let first = selections.first { revealAnchors = [first] }
-            else { revealAnchors = [] }
+        if policy.revealsAtCaret, let caret {
+            revealAnchors = [NSRange(location: caret, length: 0)]
         } else {
             revealAnchors = []
         }
@@ -118,9 +118,9 @@ public enum MarkerPolicy {
         guard policy.hidesInlineMarkers, policy.revealsAtCaret else { return [] }
 
         // A lone insertion caret can identify its deepest block directly.
-        // The general walk below is still required for selections and for
-        // block-boundary carets, where two adjacent blocks may both touch the
-        // anchor and must retain the old inclusive-boundary behaviour.
+        // The general walk below remains for block-boundary carets, where two
+        // adjacent blocks may both touch the anchor and retain inclusive
+        // boundary behaviour.
         if let caret, selections.count <= 1,
            let block = document.root.block(at: caret),
            caret > block.range.location, caret < block.range.upperBound {
@@ -129,10 +129,8 @@ public enum MarkerPolicy {
             return RangeSet.normalized(out)
         }
 
-        let anchors: [NSRange]
-        if let caret { anchors = [NSRange(location: caret, length: 0)] }
-        else if let first = selections.first { anchors = [first] }
-        else { return [] }
+        guard let caret else { return [] }
+        let anchors = [NSRange(location: caret, length: 0)]
 
         var out: [NSRange] = []
         document.root.walkPruning { block in

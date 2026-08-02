@@ -117,7 +117,20 @@ public final class MarkdownContainerView: NSView {
         // The inset is measured to where the *text* starts, not to where the
         // text view starts: the view carries `revealSlack` of its own lead-in
         // so a caret-anchored reveal can shift a line left (§6.1c).
-        let responsiveCharacters: CGFloat = bounds.width < 900 ? 66 : (bounds.width > 1200 ? 74 : textView.styleSheet.theme.typography.measureCharacters)
+        let renderedTarget = min(
+            72,
+            max(68, textView.styleSheet.theme.typography.measureCharacters)
+        )
+        let responsiveCharacters: CGFloat
+        if textView.mode == .source {
+            responsiveCharacters = 90
+        } else if bounds.width < 900 {
+            responsiveCharacters = 68
+        } else if bounds.width > 1200 {
+            responsiveCharacters = 72
+        } else {
+            responsiveCharacters = renderedTarget
+        }
         let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
         let measure = min(preferredMeasure, max(240, scrollView.frame.width - RenderMetrics.revealSlack * 2))
         textView.applyResponsiveMeasure(measure)

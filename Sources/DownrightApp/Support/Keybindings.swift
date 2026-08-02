@@ -10,8 +10,8 @@ enum KeybindingDefaults {
     /// A command may carry more than one binding: `↓` and `j` both scroll.
     static let table: [Command: [KeyBinding]] = [
         // Global (§7.2)
-        .toggleReadLive:      [KeyBinding("e", .command)],
         .sourceMode:          [KeyBinding("e", [.command, .shift])],
+        .useSelectionForFind: [KeyBinding("e", .command)],
         .toggleSidebar:       [KeyBinding("0", .command)],
         .outlineQuickOpen:    [KeyBinding("o", [.command, .shift])],
         .taskPanel:           [KeyBinding("t", .command)],
@@ -30,8 +30,7 @@ enum KeybindingDefaults {
         .moveBlockUp:         [KeyBinding("up", [.command, .option])],
         .moveBlockDown:       [KeyBinding("down", [.command, .option])],
         .splitView:           [KeyBinding("backslash", .command)],
-        .copyAsMarkdown:      [KeyBinding("c", .command)],
-        .copyAsRichText:      [KeyBinding("c", [.command, .shift])],
+        .copyAsMarkdown:      [KeyBinding("c", [.command, .shift])],
         .copySection:         [KeyBinding("c", [.command, .option])],
         .printDocument:       [KeyBinding("p", .command)],
         .exportHTML:          [KeyBinding("p", [.command, .shift])],
@@ -82,7 +81,6 @@ enum KeybindingDefaults {
         .outlineQuickOpen: [KeyBinding("o")],
         .taskPanel:      [KeyBinding("t")],
         .find:           [KeyBinding("f")],
-        .toggleReadLive: [KeyBinding("e")],
     ]
 
     /// Off by default behind a toggle (§7.2).

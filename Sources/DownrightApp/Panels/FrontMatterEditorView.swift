@@ -53,7 +53,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         addButton = PanelButton.text("Add field", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source mode", action: ButtonAction { })
+        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
         super.init(frame: .zero)
 
         backdrop.autoresizingMask = [.width, .height]
@@ -143,7 +143,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source mode to edit front matter")
+        sourceButton.setAccessibilityLabel("Open Source Focus to edit front matter")
 
         let form = NSStackView(views: [addKeyField, addValueField, addTypePopup, addButton])
         form.orientation = .horizontal
@@ -177,7 +177,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
 
         guard let front = document.frontMatter else {
             detailLabel.stringValue = "No front matter block"
-            statusLabel.stringValue = "Add a YAML block in Source mode."
+            statusLabel.stringValue = "Add a YAML block in Source Focus."
             sourceButton.isHidden = false
             addButton.isEnabled = false
             return
@@ -218,12 +218,12 @@ final class FrontMatterEditorView: NSView, PanelSurface {
 
     private func message(for fallback: FrontMatterSourceFallback) -> String {
         switch fallback {
-        case .nestedYAML: return "Nested YAML needs Source mode."
-        case .commentsNotSupported: return "Comments need Source mode."
-        case .anchorsOrAliasesNotSupported: return "YAML anchors need Source mode."
-        case .blockScalarNotSupported: return "Block text needs Source mode."
-        case .ambiguousField: return "Duplicate fields need Source mode."
-        default: return "This block needs Source mode."
+        case .nestedYAML: return "Nested YAML needs Source Focus."
+        case .commentsNotSupported: return "Comments need Source Focus."
+        case .anchorsOrAliasesNotSupported: return "YAML anchors need Source Focus."
+        case .blockScalarNotSupported: return "Block text needs Source Focus."
+        case .ambiguousField: return "Duplicate fields need Source Focus."
+        default: return "This block needs Source Focus."
         }
     }
 

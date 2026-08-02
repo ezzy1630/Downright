@@ -45,10 +45,9 @@ extension DocumentWindowController: FrontMatterEditorDelegate {
     }
 
     func frontMatterEditorWantsSourceMode(_ editor: FrontMatterEditorView) {
-        applyMode(.source)
-        window?.makeFirstResponder(primaryContainer.textView)
         if let front = markdownDocument.parsed.frontMatter {
-            primaryContainer.textView.setSourceSelectedRanges([front.bodyRange])
+            primaryContainer.textView.focusSource(in: front.range)
+            window?.makeFirstResponder(primaryContainer.textView)
         }
     }
 }

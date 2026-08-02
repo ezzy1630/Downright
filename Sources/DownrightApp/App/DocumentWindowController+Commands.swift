@@ -17,9 +17,13 @@ extension DocumentWindowController: CommandResponder {
 
         // MARK: Modes
         case .toggleReadLive:
-            applyMode(.live)
+            containerTextView.clearSourceFocus()
         case .sourceMode:
-            applyMode(mode == .source ? .live : .source)
+            if containerTextView.sourceFocus == .none {
+                containerTextView.focusEntireSource()
+            } else {
+                containerTextView.clearSourceFocus()
+            }
         case .splitView:
             toggleSplitView()
         case .pinWindow:

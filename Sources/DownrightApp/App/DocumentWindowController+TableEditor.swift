@@ -40,8 +40,7 @@ extension DocumentWindowController: TableEditorDelegate {
 
     func tableEditor(_ editor: TableEditorView, didRequestSource range: NSRange) {
         closeTableEditor()
-        applyMode(.source)
-        containerTextView.setSourceSelectedRanges([range])
+        containerTextView.focusSource(in: range)
         window?.makeFirstResponder(containerTextView)
     }
 

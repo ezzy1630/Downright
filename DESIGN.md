@@ -15,23 +15,22 @@ not visual copies.
 
 ## Surface model
 
-Use one document surface with three decoration policies:
+Use one adaptive document surface. Idle content is rendered and writable. A
+caret reveals only the local markers needed to edit. A non-empty selection is
+observation, not edit intent, so selection never changes presentation. Context
+actions can reveal one flat, monospaced source region. Source Focus is a
+transient full-document state with line numbers and an explicit Done action.
 
-| Mode | Main use | Syntax markers |
-|---|---|---|
-| Read | Read and navigate | Hidden, except in the gutter |
-| Live | Edit rendered Markdown | Revealed near the caret |
-| Source | Inspect and debug source | Visible and highlighted |
-
-Mode changes keep scroll position and selection. Read mode has no insertion
-caret. Pointer actions remain live: select, follow links, tick tasks, fold
-sections, and drag the density gutter.
+All presentations share one source buffer and preserve scroll and selection.
+Pointer actions remain live: select, follow links, tick tasks, fold sections,
+and drag the density gutter.
 
 ## Layout
 
 - Keep a readable measure of about 68–72 characters.
 - Use a single document column with generous side space.
-- Keep the toolbar unified and quiet. Auto-hide it in Read mode.
+- Keep the toolbar unified and quiet. Show Source Focus chrome only while it
+  is active.
 - Use summonable panels for outline, tasks, find, history, and siblings.
 - Align breadcrumb, gutter, and document text to the same text column.
 - Use a folder workspace only when the user opens or asks for it. Do not show
@@ -60,7 +59,7 @@ Use spring motion for structural zoom and a short fade-up for first layout.
 Hover, copy, task, and change states need clear feedback. User scroll must
 interrupt animated scrolling. Reduce Motion disables non-essential movement.
 
-Do not move the caret when Live mode reveals syntax. Do not change line height
+Do not move the caret when local editing reveals syntax. Do not change line height
 because the caret entered a span. A stable layout is more important than a
 clever transition.
 
@@ -81,7 +80,9 @@ action.
 - Give every action a pointer path and a keyboard path where it saves time.
 - Make missing files, external writes, and unsaved edits visible without alarm.
 - Keep destructive actions reversible where possible.
-- Preserve exact source on copy, undo, save, and mode changes.
+- Preserve exact source on undo and save. Standard Copy exports visible text;
+  a private Markdown flavour preserves lossless internal paste, and Copy as
+  Markdown remains explicit.
 
 ## Jane Street house style
 

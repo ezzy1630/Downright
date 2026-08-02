@@ -49,6 +49,7 @@ public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView)
     func markdownTextViewDidScroll(_ view: MarkdownTextView)
+    func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus)
     /// Text was edited in Live mode.  The app owns the document and reparses.
     func markdownTextView(_ view: MarkdownTextView, didEdit range: NSRange, delta: Int)
 }
@@ -65,5 +66,6 @@ public extension MarkdownTextViewDelegate {
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool { true }
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {}
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {}
+    func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {}
     func markdownTextView(_ view: MarkdownTextView, didEdit range: NSRange, delta: Int) {}
 }

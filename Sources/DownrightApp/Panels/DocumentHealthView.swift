@@ -61,7 +61,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         applyButton = PanelButton.text("Apply safe fixes", action: ButtonAction { })
         ignoreButton = PanelButton.text("Ignore", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source mode", action: ButtonAction { })
+        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
         super.init(frame: .zero)
 
         backdrop.autoresizingMask = [.width, .height]
@@ -116,7 +116,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source mode")
+        sourceButton.setAccessibilityLabel("Open Source Focus")
 
         let actions = NSStackView(views: [applyButton, ignoreButton, sourceButton])
         actions.orientation = .horizontal

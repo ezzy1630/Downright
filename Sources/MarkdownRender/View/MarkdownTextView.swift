@@ -70,15 +70,27 @@ public final class MarkdownTextView: NSTextView {
             guard mode != oldValue else { return }
             let anchor = topVisibleOffset
             let selection = sourceSelectedRanges
+            if mode == .source {
+                sourceFocus = .document
+            } else if sourceFocus == .document {
+                sourceFocus = .none
+            }
             engine.policy = mode.policy
             fragmentContext.mode = mode
+            fragmentContext.sourceFocusRange = sourceFocus.range
             applyModeChrome()
+            applyMeasure()
             rebuildEverything()
             requestContentResize(.viewport, anchor: anchor)
             setSourceSelectedRanges(selection)
             scroll(toOffset: anchor, position: .top, animated: false)
+            markdownDelegate?.markdownTextView(self, didChangeSourceFocus: sourceFocus)
         }
     }
+
+    /// Transient raw-Markdown visibility.  Never persisted by the render
+    /// layer; hosts decide how its toolbar/menu affordance is presented.
+    public internal(set) var sourceFocus: SourceFocus = .none
 
     public var styleSheet: StyleSheet {
         didSet {
@@ -158,6 +170,48 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// Reveal raw Markdown for a logical selection or block without changing
+    /// the presentation of surrounding content.  Scope expands to paragraph
+    /// boundaries so TextKit never has one paragraph in two coordinate modes.
+    public func focusSource(in requestedRange: NSRange) {
+        guard mode != .source, parsedDocument.length > 0 else { return }
+        let lower = max(0, min(requestedRange.location, parsedDocument.length))
+        let upper = max(lower, min(requestedRange.upperBound, parsedDocument.length))
+        let first = paragraphIndex.paragraphRange(containing: lower)
+        let lastOffset = max(lower, upper - 1)
+        let last = paragraphIndex.paragraphRange(containing: lastOffset)
+        let expanded = first.union(last)
+        guard sourceFocus != .scoped(expanded) else { return }
+        sourceFocus = .scoped(expanded)
+        fragmentContext.sourceFocusRange = expanded
+        refreshSourceAccessibility()
+        rebuildEverything()
+        setSourceSelectedRanges([requestedRange])
+        NSAccessibility.post(element: self, notification: .announcementRequested,
+                             userInfo: [.announcement: "Markdown source editor"])
+        markdownDelegate?.markdownTextView(self, didChangeSourceFocus: sourceFocus)
+    }
+
+    public func focusEntireSource() {
+        guard mode != .source else { return }
+        mode = .source
+    }
+
+    public func clearSourceFocus() {
+        switch sourceFocus {
+        case .none:
+            return
+        case .document:
+            mode = .live
+        case .scoped:
+            sourceFocus = .none
+            fragmentContext.sourceFocusRange = nil
+            refreshSourceAccessibility()
+            rebuildEverything()
+            markdownDelegate?.markdownTextView(self, didChangeSourceFocus: sourceFocus)
+        }
+    }
+
     // MARK: - Internals
 
     let engine: DecorationEngine
@@ -174,12 +228,16 @@ public final class MarkdownTextView: NSTextView {
     /// the policy, or the parse changes.  Every caret move is an override on
     /// top of this rather than a rebuild of it (§12).
     private var baseDisplayMap: DisplayMap = .identity
-    private var paragraphIndex: ParagraphIndex = .empty
+    var paragraphIndex: ParagraphIndex = .empty
     private var displayMap: DisplayMap = .identity
     private var elision: ElisionPlan = .none
 
     private var isApplyingSelection = false
     private var isPerformingSourceEdit = false
+    /// True while AppKit is deciding whether a mouse-down becomes a caret or
+    /// a drag selection.  Marker reveal waits for mouse-up, preventing the
+    /// first character of a drag from flashing into source and moving.
+    var suppressesCaretReveal = false
     /// Paragraph currently carrying the §6.1c anchor shift, so it can be put
     /// back when the caret leaves.
     private var anchoredParagraph: NSRange?
@@ -306,8 +364,8 @@ public final class MarkdownTextView: NSTextView {
 
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: document, dirty: dirty)
-        baseHiddenRanges = engine.hiddenRanges(document: document, caret: nil, selections: [])
-        baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: baseHiddenRanges)
+        applySourcePresentation()
+        rebuildBaseDisplayMap(document: document)
         refreshElision(rebuildingMap: false)
         rebuildDisplayMap(fullRefresh: true)
         applyOverlays()
@@ -411,14 +469,75 @@ public final class MarkdownTextView: NSTextView {
     private func rebuildEverything() {
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
-        baseHiddenRanges = engine.hiddenRanges(document: parsedDocument, caret: nil, selections: [])
-        baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: baseHiddenRanges)
+        applySourcePresentation()
+        rebuildBaseDisplayMap(document: parsedDocument)
         refreshElision(rebuildingMap: false)
         rebuildDisplayMap(fullRefresh: true)
         applyOverlays()
         applyPathExistence()
         invalidateAllFragments()
         gutterRail?.reload()
+    }
+
+    private func rebuildBaseDisplayMap(document: ParsedDocument) {
+        var hidden = engine.hiddenRanges(document: document, caret: nil, selections: [])
+        if let focus = sourceFocus.range {
+            hidden.removeAll { NSIntersectionRange($0, focus).length > 0 }
+        }
+        baseHiddenRanges = hidden
+        baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
+    }
+
+    /// Source Focus changes typography and local material, never characters.
+    /// Decoration runs first so Markdown token colours remain intact; this
+    /// pass owns only font, line geometry, and the source-focus marker used by
+    /// background/chrome drawing.
+    private func applySourcePresentation() {
+        guard let storage = textStorage, storage.length > 0 else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        storage.removeAttribute(.drSourceFocus, range: whole)
+
+        let target: NSRange
+        let scoped: Bool
+        switch sourceFocus {
+        case .none:
+            return
+        case .document:
+            target = whole
+            scoped = false
+        case .scoped(let range):
+            let lower = max(0, min(range.location, storage.length))
+            let upper = max(lower, min(range.upperBound, storage.length))
+            guard upper > lower else { return }
+            target = NSRange(location: lower, length: upper - lower)
+            scoped = true
+        }
+
+        var attributes = styleSheet.monoFontAttributes()
+        attributes[.drSourceFocus] = true
+        storage.addAttributes(attributes, range: target)
+
+        let source = storage.string as NSString
+        var cursor = target.location
+        while cursor < target.upperBound {
+            let paragraph = source.paragraphRange(for: NSRange(location: cursor, length: 0))
+                .intersection(target) ?? NSRange(location: cursor, length: 0)
+            guard paragraph.length > 0 else { break }
+            let style = NSMutableParagraphStyle()
+            style.minimumLineHeight = styleSheet.lineHeight
+            style.maximumLineHeight = styleSheet.lineHeight
+            style.lineBreakMode = .byWordWrapping
+            style.paragraphSpacingBefore = scoped && cursor == target.location ? 28 : 0
+            style.paragraphSpacing = scoped && paragraph.upperBound >= target.upperBound ? 8 : 0
+            style.tabStops = stride(from: 4, through: 80, by: 4).map {
+                NSTextTab(textAlignment: .left,
+                          location: CGFloat($0) * styleSheet.averageCharacterWidth,
+                          options: [:])
+            }
+            style.defaultTabInterval = styleSheet.averageCharacterWidth * 4
+            storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
+            cursor = paragraph.upperBound
+        }
     }
 
     func rebuildParagraphIndex() {
@@ -470,7 +589,7 @@ public final class MarkdownTextView: NSTextView {
     /// the paragraphs whose substitutions actually changed — which is only ever
     /// the caret's paragraph and the one it just left.
     private func rebuildDisplayMap(fullRefresh: Bool = false) {
-        let caret = primarySourceCaret
+        let caret = suppressesCaretReveal ? nil : primarySourceCaret
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
         var requiresFullHiddenRefresh = false
@@ -777,9 +896,9 @@ public final class MarkdownTextView: NSTextView {
     /// selection in source terms *before* the map changes under it, rebuild,
     /// then put it back.  Getting this backwards is exactly the caret drift
     /// §6.1 warns about.
-    private func handleSelectionChanged() {
+    func handleSelectionChanged() {
         let sourceSelection = sourceSelectedRanges
-        fragmentContext.caret = primarySourceCaret
+        fragmentContext.caret = suppressesCaretReveal ? nil : primarySourceCaret
         let previousAnchor = anchoredParagraph
 
         rebuildDisplayMap()
@@ -812,7 +931,7 @@ public final class MarkdownTextView: NSTextView {
     /// markers are never revealed inline and line height is fixed per block
     /// kind (§6.1a).
     private func applyCaretAnchorShift() {
-        guard mode.policy.revealsAtCaret, let caret = primarySourceCaret,
+        guard !suppressesCaretReveal, mode.policy.revealsAtCaret, let caret = primarySourceCaret,
               let storage = textStorage, storage.length > 0 else { return }
         let paragraph = paragraphIndex.paragraphRange(containing: caret)
         let revealed = MarkerPolicy.revealedMarkerRanges(
@@ -918,6 +1037,8 @@ public final class MarkdownTextView: NSTextView {
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard let storage = textStorage, storage.length > 0 else { return }
+
+        drawScopedSourceBackground(in: rect)
         storage.enumerateAttribute(
             .drInlineCode,
             in: NSRange(location: 0, length: storage.length)
@@ -931,6 +1052,55 @@ public final class MarkdownTextView: NSTextView {
                 NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4).fill()
             }
         }
+    }
+
+    private func drawScopedSourceBackground(in dirtyRect: NSRect) {
+        guard case .scoped = sourceFocus, let band = sourceFocusBandRect,
+              band.intersects(dirtyRect) else { return }
+
+        styleSheet.surface.setFill()
+        NSBezierPath(roundedRect: band, xRadius: 6, yRadius: 6).fill()
+        styleSheet.rule.setStroke()
+        let rule = NSBezierPath()
+        rule.move(to: NSPoint(x: band.minX, y: band.minY + 24))
+        rule.line(to: NSPoint(x: band.maxX, y: band.minY + 24))
+        rule.lineWidth = 1
+        rule.stroke()
+
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: styleSheet.textSecondary,
+        ]
+        NSAttributedString(string: "Markdown", attributes: labelAttributes)
+            .draw(at: NSPoint(x: band.minX + 8, y: band.minY + 5))
+        let done = NSAttributedString(string: "Done", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: styleSheet.accent,
+        ])
+        let size = done.size()
+        done.draw(at: NSPoint(x: band.maxX - size.width - 8, y: band.minY + 5))
+    }
+
+    var sourceFocusBandRect: NSRect? {
+        guard let range = sourceFocus.range,
+              let start = rect(forOffset: range.location),
+              let end = rect(forOffset: max(range.location, range.upperBound - 1)) else { return nil }
+        let horizontalInset: CGFloat = 8
+        let x = max(0, textContainerOrigin.x - horizontalInset)
+        return NSRect(
+            x: x,
+            y: max(0, start.minY - 28),
+            width: min(
+                max(0, bounds.width - x),
+                styleSheet.measureWidth + horizontalInset * 2
+            ),
+            height: max(styleSheet.lineHeight + 36, end.maxY - start.minY + 40)
+        )
+    }
+
+    var sourceFocusDoneRect: NSRect? {
+        guard let band = sourceFocusBandRect else { return nil }
+        return NSRect(x: band.maxX - 56, y: band.minY, width: 56, height: 24)
     }
 
     private func inlineCodeBands(start: CGRect, end: CGRect) -> [CGRect] {
@@ -998,9 +1168,20 @@ public final class MarkdownTextView: NSTextView {
         isSelectable = true
         insertionPointColor = styleSheet.accent
         typingAttributes = [
-            .font: styleSheet.bodyFont(),
+            .font: mode == .source ? styleSheet.monoFont() : styleSheet.bodyFont(),
             .foregroundColor: styleSheet.text,
         ]
+        refreshSourceAccessibility()
+    }
+
+    private func refreshSourceAccessibility() {
+        if sourceFocus == .none {
+            setAccessibilityLabel("Document editor")
+            setAccessibilityHelp("Rendered Markdown document. Move the caret to edit in place.")
+        } else {
+            setAccessibilityLabel("Markdown source editor")
+            setAccessibilityHelp("Raw Markdown is visible. Press Escape or choose Done to return to the document.")
+        }
     }
 
     func invalidateAllFragments() {

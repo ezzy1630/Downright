@@ -91,9 +91,10 @@ enum MainMenu {
         let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         let cut = NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         let paste = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         let selectAll = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        return [undo, redo, .separator(), cut, paste, selectAll]
+        return [undo, redo, .separator(), cut, copy, paste, selectAll]
     }
 
     /// Grouping inside each menu.  Kept explicit rather than derived from the
@@ -122,7 +123,7 @@ enum MainMenu {
             ]
         case .view:
             return [
-                [.toggleReadLive, .sourceMode],
+                [.sourceMode],
                 [.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5],
                 [.increaseTextSize, .decreaseTextSize, .resetTextSize],
                 [.outlinePanel, .taskPanel, .toggleSidebar, .versionTimeline],

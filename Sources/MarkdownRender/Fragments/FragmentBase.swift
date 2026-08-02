@@ -49,6 +49,10 @@ public final class FragmentContext {
     /// Cache token for rendered images; see `StyleToken`.
     public private(set) var styleToken: Int
     public var mode: RenderMode = .read
+    /// Explicit block/selection source lens.  Full-document source continues
+    /// to use `mode == .source`; this range lets one object become writable
+    /// while surrounding content stays rendered.
+    public var sourceFocusRange: NSRange?
     /// Source range of the fragment under the pointer, for hover affordances
     /// (§7.1: copy button, zebra row).
     public var hoveredFragmentRange: NSRange?
@@ -90,6 +94,12 @@ public final class FragmentContext {
     func isCaretInside(_ range: NSRange) -> Bool {
         guard let caret else { return false }
         return range.touches(offset: caret)
+    }
+
+    func isSourceFocused(_ range: NSRange) -> Bool {
+        guard let sourceFocusRange else { return false }
+        return NSIntersectionRange(sourceFocusRange, range).length > 0
+            || sourceFocusRange.contains(offset: range.location)
     }
 }
 

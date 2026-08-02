@@ -157,11 +157,13 @@ struct AppLayerTests {
         state.selectionLocation = 42
         state.selectionLength = 7
         state.splitViewEnabled = true
+        state.mode = .source
         let data = try JSONEncoder().encode(state)
         let decoded = try JSONDecoder().decode(DocumentState.self, from: data)
         #expect(decoded.selectionLocation == 42)
         #expect(decoded.selectionLength == 7)
         #expect(decoded.splitViewEnabled)
+        #expect(decoded.mode == .live, "transient Source Focus must not restore")
     }
 
     // MARK: - Find (§9.4)
@@ -264,8 +266,10 @@ struct AppLayerTests {
 
     @Test func defaultBindingsMatchTheSpecTable() {
         let store = KeybindingStore.shared
-        #expect(store.primaryBinding(for: .toggleReadLive) == KeyBinding("e", .command))
+        #expect(store.primaryBinding(for: .toggleReadLive) == nil)
         #expect(store.primaryBinding(for: .sourceMode) == KeyBinding("e", [.command, .shift]))
+        #expect(store.primaryBinding(for: .useSelectionForFind) == KeyBinding("e", .command))
+        #expect(store.primaryBinding(for: .copyAsMarkdown) == KeyBinding("c", [.command, .shift]))
         #expect(store.primaryBinding(for: .toggleSidebar) == KeyBinding("0", .command))
         #expect(store.primaryBinding(for: .outlineQuickOpen) == KeyBinding("o", [.command, .shift]))
         #expect(store.primaryBinding(for: .versionTimeline) == KeyBinding("v", [.command, .shift]))

@@ -50,8 +50,8 @@ enum Command: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .toggleReadLive: return "Document Mode"
-        case .sourceMode: return "Source Mode"
+        case .toggleReadLive: return "Exit Source Focus"
+        case .sourceMode: return "Source Focus"
         case .splitView: return "Split View"
         case .pinWindow: return "Pin Window"
         case .focusMode: return "Focus Mode"
@@ -137,7 +137,7 @@ enum Command: String, CaseIterable, Codable {
         case .revealInFinder: return "Reveal in Finder"
         case .openInEditor: return "Open in Editor"
         case .close: return "Close"
-        case .copyAsMarkdown: return "Copy"
+        case .copyAsMarkdown: return "Copy as Markdown"
         case .copyAsRichText: return "Copy as Rich Text"
         case .copyAsPlainText: return "Copy as Plain Text"
         case .copySection: return "Copy Section"

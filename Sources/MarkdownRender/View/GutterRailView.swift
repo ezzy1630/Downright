@@ -18,6 +18,7 @@ public final class GutterRailView: NSView {
 
     private var markers: [(offset: Int, text: String, level: Int)] = []
     private var changeBars: [(kind: ChangeKind, range: NSRange)] = []
+    private var lineStarts: [Int] = [0]
 
     public override var isFlipped: Bool { true }
 
@@ -42,6 +43,15 @@ public final class GutterRailView: NSView {
         guard let textView else { return }
         markers = textView.engine.gutterMarkers(document: textView.parsedDocument)
         changeBars = textView.changeMarks.map { ($0.kind, $0.range) }
+        lineStarts = [0]
+        let source = textView.textStorage?.string as NSString? ?? "" as NSString
+        var cursor = 0
+        while cursor < source.length {
+            let range = source.lineRange(for: NSRange(location: cursor, length: 0))
+            guard range.upperBound > cursor else { break }
+            cursor = range.upperBound
+            if cursor < source.length { lineStarts.append(cursor) }
+        }
         needsDisplay = true
     }
 
@@ -55,6 +65,10 @@ public final class GutterRailView: NSView {
         let activeBlock = caret.flatMap { textView.parsedDocument.root.block(at: $0) }
         let visible = convert(textView.visibleRect, from: textView)
 
+        if textView.mode == .source {
+            drawLineNumbers(style: style, textView: textView, visible: visible)
+        }
+
         // §8.1: changed blocks get a coloured bar in the margin.
         for bar in changeBars {
             guard let rect = rowRect(for: bar.range, in: textView), rect.intersects(visible) else { continue }
@@ -67,6 +81,8 @@ public final class GutterRailView: NSView {
 
         let font = style.monoFont(size: max(9, style.bodyFont().pointSize * 0.62))
         for marker in markers {
+            if let focus = textView.sourceFocus.range,
+               focus.contains(offset: marker.offset) { continue }
             guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView),
                   rect.intersects(visible.insetBy(dx: 0, dy: -40)) else { continue }
             let isActive = activeBlock.map { $0.range.contains(offset: marker.offset) } ?? false
@@ -84,6 +100,30 @@ public final class GutterRailView: NSView {
         }
 
         drawHeadingAnchor(style: style, textView: textView)
+    }
+
+    private func drawLineNumbers(style: StyleSheet, textView: MarkdownTextView, visible: NSRect) {
+        let top = textView.topVisibleOffset
+        let first = max(0, (lineStarts.lastIndex { $0 <= top } ?? 0) - 2)
+        let font = style.monoFont(size: max(9, style.bodyFont().pointSize * 0.58))
+        let color = style.marker.withAlphaComponent(0.72)
+        for index in first..<lineStarts.count {
+            guard let rect = rowRect(
+                for: NSRange(location: lineStarts[index], length: 0),
+                in: textView
+            ) else { continue }
+            if rect.minY > visible.maxY + 40 { break }
+            guard rect.maxY >= visible.minY - 40 else { continue }
+            let label = NSAttributedString(string: String(index + 1), attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ])
+            let size = label.size()
+            label.draw(at: NSPoint(
+                x: max(2, bounds.width - 8 - size.width),
+                y: rect.minY + max(0, (style.lineHeight - size.height) / 2)
+            ))
+        }
     }
 
     /// §7.1: hovering a heading puts an anchor glyph in the gutter.  Click it

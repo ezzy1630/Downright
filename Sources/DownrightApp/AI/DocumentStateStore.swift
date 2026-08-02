@@ -62,7 +62,10 @@ struct DocumentState: Codable, Equatable {
         path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
         lastSeenHash = try c.decodeIfPresent(String.self, forKey: .lastSeenHash) ?? ""
         anchor = try c.decodeIfPresent(ScrollAnchor.self, forKey: .anchor) ?? .top
-        mode = (try c.decodeIfPresent(RenderMode.self, forKey: .mode) ?? .live).normalizedForEditing
+        // Mode used to persist Read/Source.  The adaptive Document surface is
+        // now the only restorable state; Source Focus is always transient.
+        _ = try c.decodeIfPresent(RenderMode.self, forKey: .mode)
+        mode = .live
         zoomLevel = try c.decodeIfPresent(ZoomLevel.self, forKey: .zoomLevel) ?? .everything
         foldedHeadings = try c.decodeIfPresent(Set<String>.self, forKey: .foldedHeadings) ?? []
         expandedCodeBlocks = try c.decodeIfPresent(Set<Int>.self, forKey: .expandedCodeBlocks) ?? []

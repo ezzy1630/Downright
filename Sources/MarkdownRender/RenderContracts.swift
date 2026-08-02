@@ -50,6 +50,23 @@ public enum RenderMode: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// Temporary source visibility inside the one editable document surface.
+///
+/// `RenderMode` remains the low-level decoration contract used by Quick Look,
+/// previews, and tests.  The app presents one Document surface and moves into
+/// these explicit, transient focus states only when the user asks to inspect
+/// or edit raw Markdown.
+public enum SourceFocus: Equatable, Sendable {
+    case none
+    case scoped(NSRange)
+    case document
+
+    public var range: NSRange? {
+        guard case .scoped(let range) = self else { return nil }
+        return range
+    }
+}
+
 public struct DecorationPolicy: Sendable, Equatable {
     public var showsInsertionPoint: Bool
     /// `#`, `>`, `-`, `1.` removed from the text run.  In Live mode they
@@ -122,6 +139,8 @@ extension NSAttributedString.Key {
     public static let drSpeechHighlight = NSAttributedString.Key("drSpeechHighlight")
     /// Inline-code content that receives a padded rounded background.
     public static let drInlineCode = NSAttributedString.Key("drInlineCode")
+    /// Source range temporarily shown as a flat, monospaced editing region.
+    public static let drSourceFocus = NSAttributedString.Key("drSourceFocus")
 }
 
 // MARK: - Fragments
