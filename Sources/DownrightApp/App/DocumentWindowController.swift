@@ -601,6 +601,9 @@ final class DocumentWindowController: NSWindowController {
         }
         let panel = NavigationPanelView(styleSheet: activeStyleSheet)
         panel.delegate = self
+        panel.onLayoutNeedsUpdate = { [weak self] in
+            self?.repositionNavigationOverlay(animated: true)
+        }
         panel.headings = markdownDocument.parsed.headings
         panel.sectionMetrics = Metrics.sectionMetrics(markdownDocument.parsed)
         panel.siblings = scanner?.siblings ?? []
@@ -610,6 +613,7 @@ final class DocumentWindowController: NSWindowController {
         panel.currentHeadingIndex = markdownDocument.parsed.headings.lastIndex {
             $0.range.location <= containerTextView.topVisibleOffset
         }
+        panel.reload()
         navigationPanel = panel
         let child = NavigationPanelWindow(
             contentRect: .zero,
@@ -630,6 +634,9 @@ final class DocumentWindowController: NSWindowController {
         child.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
         window.addChildWindow(child, ordered: .above)
         child.orderFront(nil)
+        DispatchQueue.main.async { [weak panel] in
+            panel?.reload()
+        }
         startNavigationDismissalObservers(parent: window, panel: child)
         PanelAnimation.run(reduceMotion: activeStyleSheet.reduceMotion, duration: 0.16) { _ in
             child.alphaValue = 1
@@ -701,13 +708,22 @@ final class DocumentWindowController: NSWindowController {
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? screenFrame
         return NavigationPanelGeometry.frame(
             contentScreenFrame: screenFrame,
-            visibleScreenFrame: visible
+            visibleScreenFrame: visible,
+            preferredHeight: navigationPanel?.preferredHeight
         )
     }
 
-    private func repositionNavigationOverlay() {
+    private func repositionNavigationOverlay(animated: Bool = false) {
         guard let window, let child = navigationWindow, navigationPanel != nil else { return }
-        child.setFrame(navigationOverlayFrame(in: window), display: true)
+        let frame = navigationOverlayFrame(in: window)
+        guard frame != child.frame else { return }
+        if animated && !activeStyleSheet.reduceMotion {
+            PanelAnimation.run(reduceMotion: false, duration: Motion.quick) { _ in
+                child.animator().setFrame(frame, display: true)
+            }
+        } else {
+            child.setFrame(frame, display: true)
+        }
     }
 
     private func startNavigationDismissalObservers(parent: NSWindow, panel: NSPanel) {

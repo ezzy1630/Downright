@@ -28,6 +28,18 @@ final class NavigationPanelView: NSView, PanelSurface {
     }
 
     var preferredWidth: CGFloat { NavigationPanelGeometry.width }
+    var preferredHeight: CGFloat {
+        let sectionGap = contents.hasVisibleContent && files.hasVisibleContent ? sectionSpacing : 0
+        let contentHeight = 92 + contents.preferredHeight + files.preferredHeight + sectionGap
+        return min(
+            NavigationPanelGeometry.maximumHeight,
+            max(NavigationPanelGeometry.minimumHeight, contentHeight)
+        )
+    }
+
+    /// The host owns the child-window animation and calls this after the
+    /// panel's filtered content changes its natural height.
+    var onLayoutNeedsUpdate: (() -> Void)?
     var headings: [HeadingNode] { get { contents.headings } set { contents.headings = newValue } }
     var sectionMetrics: [ReadingMetrics] { get { contents.sectionMetrics } set { contents.sectionMetrics = newValue } }
     var foldedIndices: Set<Int> { get { contents.foldedIndices } set { contents.foldedIndices = newValue } }
@@ -39,38 +51,62 @@ final class NavigationPanelView: NSView, PanelSurface {
             contents.filterText = newValue
             files.filterText = newValue
             if searchField.stringValue != newValue { searchField.stringValue = newValue }
+            updateSectionLayout()
         }
     }
     var visibleHeadingCountForTesting: Int { contents.visibleRowCountForTesting }
     var visibleFileCountForTesting: Int { files.visibleFileCountForTesting }
+    var visibleSectionCountForTesting: Int {
+        [contents.hasVisibleContent, files.hasVisibleContent].filter { $0 }.count
+    }
+    var emptyStateVisibleForTesting: Bool { !emptyState.isHidden }
 
     private let backdrop: PanelBackdrop
+    private let titleLabel = NSTextField(labelWithString: "Navigate")
+    private let summaryLabel = NSTextField(labelWithString: "")
     private let searchField = NSSearchField()
     private let pinButton: NSButton
     private let closeButton: NSButton
     private let contents: OutlinePanelView
     private let files: SiblingSidebarView
-    private let stack = NSStackView()
-    private var searchAction: ButtonAction?
+    private let sections = NSView()
+    private let emptyLabel = NSTextField(labelWithString: "No headings or files")
+    private let emptyState = NSStackView()
+    private let sectionSpacing: CGFloat = 8
     private var pinAction: ButtonAction?
     private var closeAction: ButtonAction?
+    private var lastPreferredHeight: CGFloat = 0
 
     init(styleSheet: StyleSheet = .current) {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet, material: .popover)
         contents = OutlinePanelView(styleSheet: styleSheet)
         files = SiblingSidebarView(styleSheet: styleSheet)
-        pinButton = PanelButton.symbol("pin", label: "Pin Contents sidebar", action: ButtonAction({}))
-        closeButton = PanelButton.symbol("xmark", label: "Close Contents", action: ButtonAction({}))
+        pinButton = PanelButton.symbol("pin", label: "Keep navigation sidebar open", action: ButtonAction({}))
+        closeButton = PanelButton.symbol("xmark", label: "Close navigation", action: ButtonAction({}))
         super.init(frame: .zero)
 
         backdrop.autoresizingMask = [.width, .height]
         backdrop.frame = bounds
         addSubview(backdrop)
 
-        searchField.placeholderString = "Search contents and files"
+        titleLabel.font = PanelFont.title
+        titleLabel.textColor = styleSheet.text
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleLabel)
+
+        summaryLabel.font = PanelFont.secondary
+        summaryLabel.alignment = .right
+        summaryLabel.textColor = styleSheet.textFaint
+        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(summaryLabel)
+
+        searchField.placeholderString = "Search headings and files"
         searchField.font = PanelFont.row
-        searchField.controlSize = .small
+        searchField.controlSize = .regular
+        searchField.bezelStyle = .roundedBezel
+        searchField.focusRingType = .default
+        searchField.drawsBackground = true
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.setAccessibilityLabel("Search contents and files")
         addSubview(searchField)
@@ -93,34 +129,58 @@ final class NavigationPanelView: NSView, PanelSurface {
 
         contents.delegate = self
         files.delegate = self
-        stack.orientation = .vertical
-        stack.distribution = .fillEqually
-        stack.spacing = 1
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(contents)
-        stack.addArrangedSubview(files)
-        addSubview(stack)
+        sections.translatesAutoresizingMaskIntoConstraints = false
+        sections.addSubview(files)
+        sections.addSubview(contents, positioned: .above, relativeTo: nil)
+        addSubview(sections)
+
+        emptyState.orientation = .vertical
+        emptyState.alignment = .centerX
+        emptyState.spacing = 5
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.font = PanelFont.row
+        emptyLabel.alignment = .center
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyState.addArrangedSubview(emptyLabel)
+        addSubview(emptyState)
+        emptyState.isHidden = true
 
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
         searchField.sendAction(on: [.keyDown, .keyUp])
         NSLayoutConstraint.activate([
-            searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            searchField.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -6),
-            searchField.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.inset),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.inset),
+            summaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
+            summaryLabel.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -8),
+            summaryLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             pinButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
-            pinButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            pinButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             pinButton.widthAnchor.constraint(equalToConstant: 18),
             pinButton.heightAnchor.constraint(equalToConstant: 18),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            closeButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 18),
             closeButton.heightAnchor.constraint(equalToConstant: 18),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            searchField.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            searchField.heightAnchor.constraint(equalToConstant: 26),
+            sections.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sections.trailingAnchor.constraint(equalTo: trailingAnchor),
+            sections.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: sectionSpacing),
+            sections.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -PanelMetrics.inset),
+            emptyState.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            emptyState.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            emptyState.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 32),
+            emptyState.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PanelMetrics.inset),
         ])
+
+        // Keep the header controls above the section surface while AppKit
+        // resolves the child frames.
+        for view in [titleLabel, summaryLabel, searchField, pinButton, closeButton] {
+            addSubview(view, positioned: .above, relativeTo: nil)
+        }
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Contents and Files")
@@ -133,28 +193,110 @@ final class NavigationPanelView: NSView, PanelSurface {
 
     func focusSearch() {
         window?.makeFirstResponder(searchField)
+        searchField.selectText(nil)
     }
 
     func setPinned(_ pinned: Bool) {
         pinButton.isHidden = pinned
-        pinButton.toolTip = pinned ? nil : "Pin Contents sidebar"
+        pinButton.toolTip = pinned ? nil : "Keep navigation sidebar open"
     }
 
     func reload() {
         contents.reload()
         files.reload()
+        updateSectionLayout()
     }
 
     @objc private func searchChanged(_ sender: NSSearchField) {
         let query = sender.stringValue
         contents.filterText = query
         files.filterText = query
+        updateSectionLayout()
     }
 
     private func applyStyle() {
+        titleLabel.textColor = styleSheet.text
+        summaryLabel.textColor = styleSheet.textFaint
+        emptyLabel.textColor = styleSheet.textSecondary
         searchField.textColor = styleSheet.text
         searchField.backgroundColor = styleSheet.background
+        pinButton.contentTintColor = styleSheet.textSecondary
+        closeButton.contentTintColor = styleSheet.textSecondary
         needsDisplay = true
+    }
+
+    private func updateSectionLayout() {
+        let showsContents = contents.hasVisibleContent
+        let showsFiles = files.hasVisibleContent
+        let previousHeight = lastPreferredHeight
+
+        contents.isHidden = !showsContents
+        files.isHidden = !showsFiles
+        let showsEmptyState = !showsContents && !showsFiles
+        sections.isHidden = showsEmptyState
+        emptyState.isHidden = !showsEmptyState
+
+        let headingCount = contents.visibleRowCountForTesting
+        let fileCount = files.visibleFileCountForTesting
+        switch (headingCount, fileCount) {
+        case (0, 0):
+            summaryLabel.stringValue = ""
+        case (0, let files):
+            summaryLabel.stringValue = "\(files) file\(files == 1 ? "" : "s")"
+        case (let headings, 0):
+            summaryLabel.stringValue = "\(headings) heading\(headings == 1 ? "" : "s")"
+        case (let headings, let files):
+            summaryLabel.stringValue = "\(headings) heading\(headings == 1 ? "" : "s") · \(files) file\(files == 1 ? "" : "s")"
+        }
+        setAccessibilityValue(summaryLabel.stringValue)
+
+        let nextHeight = preferredHeight
+        lastPreferredHeight = nextHeight
+        guard abs(nextHeight - previousHeight) > 0.5 else { return }
+        onLayoutNeedsUpdate?()
+    }
+
+    override func layout() {
+        super.layout()
+        backdrop.frame = bounds
+
+        let showsContents = !contents.isHidden
+        let showsFiles = !files.isHidden
+        let availableHeight = sections.bounds.height
+        let gap = showsContents && showsFiles ? sectionSpacing : 0
+
+        guard showsContents || showsFiles else {
+            contents.frame = .zero
+            files.frame = .zero
+            return
+        }
+
+        let contentHeight = contents.preferredHeight
+        let filesHeight = files.preferredHeight
+        let desiredHeight = contentHeight + filesHeight + gap
+        let scale = desiredHeight > availableHeight && desiredHeight > gap
+            ? max(0, (availableHeight - gap) / (desiredHeight - gap))
+            : 1
+        let fittedContentsHeight = showsContents ? contentHeight * scale : 0
+        let fittedFilesHeight = showsFiles ? filesHeight * scale : 0
+
+        files.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: sections.bounds.width,
+            height: fittedFilesHeight
+        )
+        contents.frame = NSRect(
+            x: 0,
+            y: fittedFilesHeight + gap,
+            width: sections.bounds.width,
+            height: fittedContentsHeight
+        )
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        layoutSubtreeIfNeeded()
     }
 
     override func cancelOperation(_ sender: Any?) {
@@ -217,18 +359,25 @@ final class NavigationPanelWindow: NSPanel {
 enum NavigationPanelGeometry {
     static let width: CGFloat = 312
     static let edgeInset: CGFloat = 12
+    static let minimumHeight: CGFloat = 210
     static let maximumHeight: CGFloat = 560
 
-    static func frame(contentScreenFrame: NSRect, visibleScreenFrame: NSRect) -> NSRect {
+    static func frame(
+        contentScreenFrame: NSRect,
+        visibleScreenFrame: NSRect,
+        preferredHeight: CGFloat? = nil
+    ) -> NSRect {
         let availableWidth = max(0, visibleScreenFrame.width - edgeInset * 2)
         let panelWidth = min(width, availableWidth)
         let availableHeight = max(
             0,
             min(contentScreenFrame.height, visibleScreenFrame.height) - edgeInset * 2
         )
+        let minimumHeight = min(Self.minimumHeight, availableHeight)
+        let targetHeight = preferredHeight ?? contentScreenFrame.height * 0.7
         let panelHeight = min(
             maximumHeight,
-            max(0, min(contentScreenFrame.height * 0.7, availableHeight))
+            max(minimumHeight, min(targetHeight, availableHeight))
         )
         var frame = NSRect(
             x: contentScreenFrame.minX + edgeInset,

@@ -65,7 +65,12 @@ final class OutlinePanelView: NSView, PanelSurface {
     }
 
     var preferredWidth: CGFloat { 320 }
-
+    var hasVisibleContent: Bool { !visibleRows.isEmpty }
+    var preferredHeight: CGFloat {
+        guard hasVisibleContent else { return 0 }
+        let rowCount = min(visibleRows.count, 12)
+        return 40 + CGFloat(rowCount) * table.rowHeight
+    }
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
@@ -117,7 +122,8 @@ final class OutlinePanelView: NSView, PanelSurface {
     private func buildTable() {
         table.dataSource = self
         table.delegate = self
-        table.rowHeight = 26
+        table.rowHeight = 30
+        table.selectionHighlightStyle = .none
         table.registerForDraggedTypes([.downrightHeading])
         table.setDraggingSourceOperationMask(.move, forLocal: true)
         // The gap style is what actually shows the reader where the section
@@ -125,6 +131,10 @@ final class OutlinePanelView: NSView, PanelSurface {
         // outline.
         table.draggingDestinationFeedbackStyle = .gap
         table.setAccessibilityLabel("Document headings")
+        table.onActivate = { [weak self] in
+            guard let self, let index = self.selectedHeadingIndex() else { return }
+            self.delegate?.outlinePanel(self, didSelectHeadingAt: index)
+        }
         // ← / → fold and unfold the selected section, so the panel's two
         // actions are both reachable without the pointer (§11.4).
         table.onKeyDown = { [weak self] key in
@@ -153,7 +163,25 @@ final class OutlinePanelView: NSView, PanelSurface {
     func reload() {
         rebuildVisibleRows()
         table.reloadData()
+        invalidateIntrinsicContentSize()
         revealCurrentHeading()
+        needsDisplay = true
+        scroll.needsDisplay = true
+        scroll.contentView.needsDisplay = true
+        table.needsDisplay = true
+        table.displayIfNeeded()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        reload()
+        displayIfNeeded()
+    }
+
+    override func layout() {
+        super.layout()
+        backdrop.frame = bounds
     }
 
     private func rebuildVisibleRows() {
@@ -212,6 +240,10 @@ final class OutlinePanelView: NSView, PanelSurface {
         applyStyle()
     }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: preferredHeight)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         // Hairline under the header so the section label reads as chrome.
         styleSheet.rule.setFill()
@@ -241,7 +273,8 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
             index: index,
             styleSheet: styleSheet,
             isFolded: foldedIndices.contains(index),
-            isCurrent: index == currentHeadingIndex
+            isCurrent: index == currentHeadingIndex,
+            isSelected: tableView.selectedRow == row
         )
         return cell
     }
@@ -249,6 +282,7 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = table.selectedRow
         guard row >= 0, row < visibleRows.count else { return }
+        table.reloadData()
         delegate?.outlinePanel(self, didSelectHeadingAt: visibleRows[row])
     }
 
@@ -326,6 +360,7 @@ private final class OutlineRowView: NSView {
     private var styleSheet: StyleSheet?
     private var headingIndex = 0
     private var isCurrent = false
+    private var isSelected = false
     private var isHovered = false
 
     init(identifier: NSUserInterfaceItemIdentifier) {
@@ -364,11 +399,13 @@ private final class OutlineRowView: NSView {
         index: Int,
         styleSheet: StyleSheet,
         isFolded: Bool,
-        isCurrent: Bool
+        isCurrent: Bool,
+        isSelected: Bool
     ) {
         self.styleSheet = styleSheet
         self.headingIndex = index
         self.isCurrent = isCurrent
+        self.isSelected = isSelected
 
         let indent = PanelMetrics.inset + CGFloat(min(heading.level, 6) - 1) * 11
         foldLeading.constant = indent
@@ -392,28 +429,41 @@ private final class OutlineRowView: NSView {
         foldAction = action
         foldButton.target = action
         foldButton.action = #selector(ButtonAction.fire(_:))
-        foldButton.isHidden = !(isCurrent || isHovered)
+        foldButton.isHidden = !(isCurrent || isSelected || isHovered)
 
-        setAccessibilityLabel("\(heading.title), heading level \(heading.level)")
+        let state = isCurrent ? ", current section" : ""
+        setAccessibilityLabel("\(heading.title), heading level \(heading.level)\(state)")
         needsDisplay = true
     }
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
         foldButton.isHidden = false
+        needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        foldButton.isHidden = !isCurrent
+        foldButton.isHidden = !(isCurrent || isSelected)
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let styleSheet else { return }
 
-        guard isCurrent else { return }
+        if isCurrent {
+            styleSheet.accent.setFill()
+            NSRect(x: 0, y: 3, width: 3, height: bounds.height - 6).fill()
+        }
+
+        let alpha: CGFloat?
+        if isSelected { alpha = 0.12 }
+        else if isCurrent { alpha = 0.08 }
+        else if isHovered { alpha = 0.05 }
+        else { alpha = nil }
+        guard let alpha else { return }
         styleSheet.text
-            .panelAlpha(0.08, increaseContrast: styleSheet.increaseContrast)
+            .panelAlpha(alpha, increaseContrast: styleSheet.increaseContrast)
             .setFill()
         NSBezierPath(
             roundedRect: bounds.insetBy(dx: 4, dy: 2),

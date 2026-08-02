@@ -30,7 +30,12 @@ final class SiblingSidebarView: NSView, PanelSurface {
     var filterText: String = "" { didSet { guard filterText != oldValue else { return }; reload() } }
 
     var preferredWidth: CGFloat { 320 }
-
+    var hasVisibleContent: Bool { !rows.isEmpty }
+    var preferredHeight: CGFloat {
+        guard hasVisibleContent else { return 0 }
+        let rowCount = min(rows.count, 12)
+        return 40 + CGFloat(rowCount) * 30
+    }
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
@@ -71,6 +76,7 @@ final class SiblingSidebarView: NSView, PanelSurface {
         table.dataSource = self
         table.delegate = self
         table.rowHeight = 30
+        table.selectionHighlightStyle = .none
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.openSelected(inNewWindow: false) }
@@ -98,6 +104,16 @@ final class SiblingSidebarView: NSView, PanelSurface {
     func reload() {
         rebuildRows()
         table.reloadData()
+        invalidateIntrinsicContentSize()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: preferredHeight)
+    }
+
+    override func layout() {
+        super.layout()
+        backdrop.frame = bounds
     }
 
     /// Groups in first-appearance order (the scanner lists the document's own
@@ -205,19 +221,31 @@ extension SiblingSidebarView: NSTableViewDataSource, NSTableViewDelegate {
             let identifier = NSUserInterfaceItemIdentifier("siblingRow")
             let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? SiblingRowView
                 ?? SiblingRowView(identifier: identifier)
-            cell.configure(sibling: ordered[index], styleSheet: styleSheet)
+            cell.configure(
+                sibling: ordered[index],
+                styleSheet: styleSheet,
+                isSelected: tableView.selectedRow == row
+            )
             return cell
         }
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        table.reloadData()
     }
 }
 
 // MARK: - Row
 
 private final class SiblingRowView: NSView {
+    private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
+    private let timeLabel = NSTextField(labelWithString: "")
     private var styleSheet: StyleSheet?
     private var hasUnseenChanges = false
     private var isCurrent = false
+    private var isSelected = false
+    private var isHovered = false
 
     private let dotDiameter: CGFloat = 6
 
@@ -225,41 +253,89 @@ private final class SiblingRowView: NSView {
         super.init(frame: .zero)
         self.identifier = identifier
 
+        iconView.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Markdown file")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .regular))
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+
         nameLabel.font = PanelFont.row
         nameLabel.lineBreakMode = .byTruncatingMiddle
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(nameLabel)
 
+        timeLabel.font = PanelFont.secondary
+        timeLabel.alignment = .right
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(timeLabel)
+
         NSLayoutConstraint.activate([
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset + 8),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset + 8),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
+            nameLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -6),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            timeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(sibling: SiblingScanner.Sibling, styleSheet: StyleSheet) {
+    func configure(sibling: SiblingScanner.Sibling, styleSheet: StyleSheet, isSelected: Bool) {
         self.styleSheet = styleSheet
         hasUnseenChanges = sibling.hasUnseenChanges
         isCurrent = sibling.isCurrent
+        self.isSelected = isSelected
 
         nameLabel.stringValue = sibling.displayName
         nameLabel.font = sibling.isCurrent ? PanelFont.rowEmphasised : PanelFont.row
         nameLabel.textColor = sibling.isCurrent ? styleSheet.text : styleSheet.textSecondary
+        iconView.contentTintColor = sibling.isCurrent ? styleSheet.accent : styleSheet.textFaint
+        timeLabel.stringValue = RelativeTime.short(sibling.modified)
+        timeLabel.textColor = styleSheet.textFaint
 
         var description = sibling.displayName
         if sibling.isCurrent { description += ", current document" }
         if sibling.hasUnseenChanges { description += ", changed since you last looked" }
+        description += ", modified \(RelativeTime.long(sibling.modified))"
         setAccessibilityLabel(description)
         toolTip = sibling.url.path
 
         needsDisplay = true
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let styleSheet else { return }
+
+        let alpha: CGFloat?
+        if isSelected { alpha = 0.12 }
+        else if isCurrent { alpha = 0.08 }
+        else if isHovered { alpha = 0.05 }
+        else { alpha = nil }
+        if let alpha {
+            styleSheet.text
+                .panelAlpha(alpha, increaseContrast: styleSheet.increaseContrast)
+                .setFill()
+            NSBezierPath(
+                roundedRect: bounds.insetBy(dx: 4, dy: 2),
+                xRadius: PanelMetrics.cornerRadius,
+                yRadius: PanelMetrics.cornerRadius
+            ).fill()
+        }
 
         if isCurrent {
             styleSheet.accent.setFill()

@@ -138,6 +138,13 @@ struct WorkspaceTests {
         navigator.filterText = "missing"
         #expect(navigator.siblings.count == 1, "source files stay intact while the Files view filters")
         #expect(navigator.visibleFileCountForTesting == 0)
+        #expect(navigator.visibleSectionCountForTesting == 0)
+        #expect(navigator.emptyStateVisibleForTesting)
+
+        navigator.filterText = ""
+        #expect(navigator.visibleSectionCountForTesting == 2)
+        #expect(!navigator.emptyStateVisibleForTesting)
+        #expect(navigator.preferredHeight < NavigationPanelGeometry.maximumHeight)
     }
 
     @Test
@@ -154,6 +161,13 @@ struct WorkspaceTests {
         #expect(frame.maxX <= visible.maxX - 12)
         #expect(frame.minY >= visible.minY + 12)
         #expect(frame.maxY <= visible.maxY - 12)
+
+        let compactFrame = NavigationPanelGeometry.frame(
+            contentScreenFrame: content,
+            visibleScreenFrame: visible,
+            preferredHeight: 240
+        )
+        #expect(compactFrame.height == 240)
     }
 }
 
