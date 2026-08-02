@@ -10,11 +10,25 @@ import SwiftUI
 @MainActor
 final class PreferencesWindowController: NSWindowController {
     convenience init() {
-        let host = NSHostingController(rootView: SettingsRootView())
-        let window = NSWindow(contentViewController: host)
+        let tabs = NSTabViewController()
+        tabs.tabStyle = .toolbar
+        let panes: [(String, String, [PreferenceRow])] = [
+            ("General", "gearshape", PreferencesForms.general()),
+            ("Appearance", "circle.lefthalf.filled", PreferencesForms.appearance()),
+            ("Typography", "textformat", PreferencesForms.typography()),
+            ("Editor", "square.and.pencil", PreferencesForms.editor()),
+            ("History", "clock.arrow.circlepath", PreferencesForms.history()),
+        ]
+        for (title, symbol, rows) in panes {
+            let pane = PreferencesPane(title: title, symbol: symbol, rows: rows)
+            tabs.addTabViewItem(NSTabViewItem(viewController: pane))
+        }
+        tabs.addTabViewItem(NSTabViewItem(viewController: KeybindingsPane()))
+
+        let window = NSWindow(contentViewController: tabs)
         window.title = "Downright Settings"
         window.styleMask.insert(.resizable)
-        window.setContentSize(NSSize(width: 760, height: 560))
+        window.setContentSize(NSSize(width: 760, height: 600))
         self.init(window: window)
     }
 }
@@ -373,6 +387,37 @@ enum PreferencesForms {
                      range: 0.8...1.3, step: 0.05,
                      get: { Double(Preferences.shared.values.typography.mathScale) },
                      set: { value in Preferences.shared.update { $0.typography.mathScale = CGFloat(value) } }),
+        ]
+    }
+
+    static func appearance() -> [PreferenceRow] {
+        [
+            .section("Themes"),
+            .choice("Light theme", help: "Used when macOS is in Light appearance.",
+                    options: ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name),
+                    get: {
+                        let names = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
+                        return names.firstIndex(of: Preferences.shared.values.themeName) ?? 0
+                    },
+                    set: { index in
+                        let names = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
+                        guard names.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.themeName = names[index] }
+                    }),
+            .choice("Dark theme", help: "Used when macOS is in Dark appearance.",
+                    options: ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name),
+                    get: {
+                        let names = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
+                        return names.firstIndex(of: Preferences.shared.values.darkThemeName) ?? 0
+                    },
+                    set: { index in
+                        let names = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
+                        guard names.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.darkThemeName = names[index] }
+                    }),
+            .toggle("Follow system appearance", help: "Switch between the selected light and dark themes automatically.",
+                    get: { Preferences.shared.values.followsSystemAppearance },
+                    set: { value in Preferences.shared.update { $0.followsSystemAppearance = value } }),
         ]
     }
 

@@ -99,6 +99,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "down",
+            dependencies: ["drdownright"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "drdownright",
+            dependencies: ["MarkdownCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // The Quick Look extensions build as libraries here so they are
@@ -129,6 +135,12 @@ let package = Package(
         .testTarget(
             name: "DownrightAppTests",
             dependencies: ["DownrightApp"],
+            swiftSettings: testSwiftSettings,
+            linkerSettings: testLinkerSettings
+        ),
+        .testTarget(
+            name: "MarkdownCLITests",
+            dependencies: ["drdownright"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),

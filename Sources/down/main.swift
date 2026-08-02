@@ -1,95 +1,39 @@
 import Foundation
+import drdownright
 
-// `down` — the terminal launcher (§3.4).
-//
-// Deliberately tiny and dependency-free: it finds Downright.app and hands it
-// files.  Being unsandboxed is what makes this possible at all, and piping is
-// what makes it worth having — `claude -p … | down` or `down PLAN.md` is how
-// you actually end up in the app.
+let arguments = Array(CommandLine.arguments.dropFirst())
 
-let toolVersion = "1.0.0"
-
-func printUsage() {
-    print("""
-    down \(toolVersion) — open markdown in Downright
-
-    USAGE
-      down [options] [file ...]
-      … | down [options]              read markdown from stdin
-
-    OPTIONS
-      -n, --new         open each file in a new window
-      -b, --background  do not bring Downright to the front
-      -w, --wait        wait for the app to exit
-      -e, --edit        open in Live mode instead of Read mode
-      -h, --help        show this message
-      -v, --version     show the version
-
-    EXAMPLES
-      down PLAN.md
-      down docs/*.md
-      claude -p "summarise this repo" | down
-    """)
+func writeError(_ message: String, status: Int32) -> Never {
+    FileHandle.standardError.write(Data("down: \(message)\n".utf8))
+    exit(status)
 }
 
-struct Options {
-    var newWindow = false
-    var background = false
-    var wait = false
-    var edit = false
-    var files: [URL] = []
-}
-
-func parseArguments(_ arguments: [String]) -> Options? {
-    var options = Options()
-    var index = 0
-    while index < arguments.count {
-        let argument = arguments[index]
-        switch argument {
-        case "-h", "--help":
-            printUsage()
-            return nil
-        case "-v", "--version":
-            print("down \(toolVersion)")
-            return nil
-        case "-n", "--new": options.newWindow = true
-        case "-b", "--background": options.background = true
-        case "-w", "--wait": options.wait = true
-        case "-e", "--edit": options.edit = true
-        case "--":
-            for rest in arguments[(index + 1)...] {
-                options.files.append(URL(fileURLWithPath: rest).standardizedFileURL)
-            }
-            index = arguments.count
-        default:
-            if argument.hasPrefix("-"), argument.count > 1 {
-                FileHandle.standardError.write(Data("down: unknown option \(argument)\n".utf8))
-                exit(64)
-            }
-            options.files.append(URL(fileURLWithPath: argument).standardizedFileURL)
+func readInputs(_ paths: [String]) -> [(String, String)] {
+    let requested = paths.isEmpty ? ["-"] : paths
+    return requested.map { path in
+        if path == "-" {
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            guard !data.isEmpty else { writeError("stdin is empty", status: 66) }
+            return ("stdin", String(decoding: data, as: UTF8.self))
         }
-        index += 1
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            writeError("\(path): no such file", status: 66)
+        }
+        do { return (url.path, try String(contentsOf: url, encoding: .utf8)) }
+        catch { writeError("\(path): cannot read UTF-8 Markdown (\(error.localizedDescription))", status: 65) }
     }
-    return options
 }
 
-/// Markdown arriving on stdin becomes a real file in a temp directory, because
-/// the app models documents as files on disk — that is what makes watching,
-/// history, and sibling scanning work identically for piped input (§8).
-func fileFromStandardInput() -> URL? {
+func stdinFile() -> URL? {
     guard isatty(FileHandle.standardInput.fileDescriptor) == 0 else { return nil }
     let data = FileHandle.standardInput.readDataToEndOfFile()
     guard !data.isEmpty else { return nil }
-
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("Downright", isDirectory: true)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Downright", isDirectory: true)
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-    let stamp = ISO8601DateFormatter().string(from: Date())
-        .replacingOccurrences(of: ":", with: "-")
-    let url = directory.appendingPathComponent("stdin-\(stamp).md")
-    try? data.write(to: url)
-    return url
+    let url = directory.appendingPathComponent("stdin-\(UUID().uuidString).md")
+    do { try data.write(to: url, options: .atomic); return url }
+    catch { writeError("cannot create stdin document: \(error.localizedDescription)", status: 70) }
 }
 
 func locateApp() -> URL? {
@@ -98,71 +42,91 @@ func locateApp() -> URL? {
         "\(NSHomeDirectory())/Applications/Downright.app",
         FileManager.default.currentDirectoryPath + "/.build/bundle/Downright.app",
     ]
-    for path in candidates where FileManager.default.fileExists(atPath: path) {
+    if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
         return URL(fileURLWithPath: path)
     }
-
-    // Fall back to Spotlight, which knows about copies anywhere on disk.
-    let query = Process()
-    query.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-    query.arguments = ["kMDItemCFBundleIdentifier == 'com.unrulyagency.downright'"]
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+    process.arguments = ["kMDItemCFBundleIdentifier == 'com.unrulyagency.downright'"]
     let pipe = Pipe()
-    query.standardOutput = pipe
-    query.standardError = FileHandle.nullDevice
-    guard (try? query.run()) != nil else { return nil }
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return nil }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    query.waitUntilExit()
-    let path = String(decoding: data, as: UTF8.self)
-        .split(separator: "\n").first.map(String.init)
-    return path.map { URL(fileURLWithPath: $0) }
+    process.waitUntilExit()
+    return String(decoding: data, as: UTF8.self).split(separator: "\n").first.map { URL(fileURLWithPath: String($0)) }
 }
 
-// MARK: - Main
+let action: MarkdownCLI.Action
+do { action = try MarkdownCLI.parse(arguments) }
+catch let error as MarkdownCLI.ParseError { writeError(error.description, status: 64) }
+catch { writeError(error.localizedDescription, status: 64) }
 
-guard let options = parseArguments(Array(CommandLine.arguments.dropFirst())) else { exit(0) }
-
-var files = options.files
-if let piped = fileFromStandardInput() { files.append(piped) }
-
-guard !files.isEmpty else {
-    printUsage()
-    exit(64)
-}
-
-for file in files where !FileManager.default.fileExists(atPath: file.path) {
-    FileHandle.standardError.write(Data("down: \(file.path): no such file\n".utf8))
-    exit(66)
-}
-
-guard let app = locateApp() else {
-    FileHandle.standardError.write(Data("""
-    down: could not find Downright.app.
-          Install it in /Applications, or run Scripts/bundle-app.sh from the source tree.
-
-    """.utf8))
-    exit(69)
-}
-
-var arguments = ["-a", app.path]
-if options.newWindow { arguments.append("-n") }
-if options.background { arguments.append("-g") }
-if options.wait { arguments.append("-W") }
-arguments.append(contentsOf: files.map(\.path))
-
-// Mode is passed out of band; the app reads it once at launch and applies it to
-// the documents opened in that same activation.
-if options.edit {
-    arguments.append(contentsOf: ["--args", "--mode", "live"])
-}
-
-let open = Process()
-open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-open.arguments = arguments
-do {
-    try open.run()
-    open.waitUntilExit()
-    exit(open.terminationStatus)
-} catch {
-    FileHandle.standardError.write(Data("down: failed to launch: \(error.localizedDescription)\n".utf8))
-    exit(70)
+switch action {
+case .help:
+    print(MarkdownCLI.usage())
+case .version:
+    print("down \(MarkdownCLI.version)")
+case .read(let json, let paths):
+    let inputs = readInputs(paths)
+    if json {
+        let values = inputs.map { ["path": $0.0, "markdown": $0.1] }
+        guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted, .sortedKeys]) else { writeError("cannot encode JSON", status: 70) }
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    } else {
+        for (index, input) in inputs.enumerated() {
+            if index > 0 { print("\n", terminator: "") }
+            print(input.1, terminator: input.1.hasSuffix("\n") ? "" : "\n")
+        }
+    }
+case .export(_, let output, let paths):
+    let inputs = readInputs(paths)
+    let html = inputs.count == 1
+        ? MarkdownCLI.html(for: inputs[0].1, title: URL(fileURLWithPath: inputs[0].0).deletingPathExtension().lastPathComponent)
+        : MarkdownCLI.html(for: inputs.map { $0.1 }.joined(separator: "\n\n"), title: "Markdown export")
+    let data = Data(html.utf8)
+    if let output, output != "-" {
+        do { try data.write(to: URL(fileURLWithPath: output), options: .atomic) }
+        catch { writeError("cannot write \(output): \(error.localizedDescription)", status: 73) }
+    } else { FileHandle.standardOutput.write(data) }
+case .check(let json, let paths):
+    let inputs = readInputs(paths)
+    var findings = 0
+    for (index, input) in inputs {
+        let base = input == "stdin" ? nil : URL(fileURLWithPath: index).deletingLastPathComponent()
+        let diagnostics = MarkdownCLI.diagnostics(for: input, baseURL: base)
+        findings += diagnostics.count
+        if json {
+            let values = diagnostics.map {
+                ["path": index, "id": $0.id, "severity": $0.severity.rawValue, "category": $0.category.rawValue, "message": $0.message, "location": $0.range.location] as [String: Any]
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) else { writeError("cannot encode JSON", status: 70) }
+            FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data("\n".utf8))
+        } else {
+            for diagnostic in diagnostics { print("\(index):\(diagnostic.range.location + 1): \(diagnostic.severity.rawValue): \(diagnostic.message) [\(diagnostic.id)]") }
+        }
+    }
+    if findings > 0 { exit(1) }
+case .open(let options, let paths):
+    var paths = paths
+    if let piped = stdinFile() { paths.append(piped.path) }
+    guard !paths.isEmpty else { print(MarkdownCLI.usage()); exit(64) }
+    for path in paths where !FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).path) {
+        writeError("\(path): no such file", status: 66)
+    }
+    guard let app = locateApp() else {
+        writeError("could not find Downright.app; install it in /Applications or run Scripts/bundle-app.sh", status: 69)
+    }
+    var openArguments = ["-a", app.path]
+    if options.newWindow { openArguments.append("-n") }
+    if options.background { openArguments.append("-g") }
+    if options.wait { openArguments.append("-W") }
+    openArguments.append(contentsOf: paths)
+    if options.edit { openArguments.append(contentsOf: ["--args", "--mode", "live"]) }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    process.arguments = openArguments
+    do { try process.run(); process.waitUntilExit(); exit(process.terminationStatus) }
+    catch { writeError("failed to launch: \(error.localizedDescription)", status: 70) }
 }
