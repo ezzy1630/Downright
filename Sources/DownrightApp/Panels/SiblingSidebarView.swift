@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol SiblingSidebarDelegate: AnyObject {
     func siblingSidebar(_ sidebar: SiblingSidebarView, didSelect url: URL, inNewWindow: Bool)
 }

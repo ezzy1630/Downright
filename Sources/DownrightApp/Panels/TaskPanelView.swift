@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol TaskPanelDelegate: AnyObject {
     /// `markOffset` is the location of the single character between the
     /// brackets, so the host's write is a one-character replacement (§8.5).

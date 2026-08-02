@@ -217,6 +217,7 @@ enum MainMenu {
 }
 
 /// Any object in the responder chain that can run a `Command`.
+@MainActor
 @objc protocol CommandResponder {
     @objc func performDownrightCommand(_ sender: Any?)
 }

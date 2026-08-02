@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol OutlinePanelDelegate: AnyObject {
     func outlinePanel(_ panel: OutlinePanelView, didSelectHeadingAt index: Int)
     /// Move the section at `index` — the heading *and everything beneath it* —

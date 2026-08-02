@@ -37,6 +37,7 @@ public struct ContextTarget {
 /// it reports what happened in source coordinates and the app decides.  That
 /// separation is what lets the same package drive the Quick Look extension
 /// (§10) without dragging the app's world in with it.
+@MainActor
 public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, didActivateLink destination: String, at range: NSRange, modifiers: NSEvent.ModifierFlags)
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange)

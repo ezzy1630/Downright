@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol TidySheetDelegate: AnyObject {
     func tidySheet(_ sheet: TidySheetView, didApply edits: [TextEdit])
     func tidySheetDidCancel(_ sheet: TidySheetView)

@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol FindBarDelegate: AnyObject {
     func findBar(_ bar: FindBarView, didChange query: FindQuery)
     func findBar(_ bar: FindBarView, didRequestAdvance forward: Bool)

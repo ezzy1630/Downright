@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol BreadcrumbDelegate: AnyObject {
     func breadcrumb(_ view: BreadcrumbView, didSelectHeadingAt index: Int)
 }

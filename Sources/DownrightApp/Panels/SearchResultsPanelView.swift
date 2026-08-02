@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol SearchResultsDelegate: AnyObject {
     func searchResults(_ view: SearchResultsPanelView, didSelect hit: SiblingSearch.Hit)
 }

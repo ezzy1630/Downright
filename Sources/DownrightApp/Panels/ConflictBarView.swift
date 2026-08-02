@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol ConflictBarDelegate: AnyObject {
     func conflictBarDidRequestReview(_ bar: ConflictBarView)
     func conflictBarDidRequestKeepMine(_ bar: ConflictBarView)

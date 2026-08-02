@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol ChangeSummaryBarDelegate: AnyObject {
     func changeSummaryBar(_ bar: ChangeSummaryBarView, didRequestJump forward: Bool)
     func changeSummaryBarDidRequestDismiss(_ bar: ChangeSummaryBarView)

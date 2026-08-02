@@ -2,6 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+@MainActor
 protocol VersionTimelineDelegate: AnyObject {
     func versionTimeline(_ view: VersionTimelineView, didScrubTo record: SnapshotStore.VersionRecord)
     func versionTimeline(_ view: VersionTimelineView, didRequestRestore record: SnapshotStore.VersionRecord)

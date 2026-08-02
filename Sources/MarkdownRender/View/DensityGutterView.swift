@@ -1,6 +1,7 @@
 import AppKit
 import MarkdownCore
 
+@MainActor
 public protocol DensityGutterDelegate: AnyObject {
     func densityGutter(_ gutter: DensityGutterView, didRequestScrollToFraction fraction: CGFloat)
     /// Return the heading title and rendered preview for the hover/scrub tooltip.
