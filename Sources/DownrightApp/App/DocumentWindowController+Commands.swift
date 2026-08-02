@@ -25,7 +25,7 @@ extension DocumentWindowController: CommandResponder {
         case .pinWindow:
             togglePin()
         case .focusMode:
-            Preferences.shared.update { $0.focusMode.toggle() }
+            toggleFocusMode()
         case .typewriterScrolling:
             Preferences.shared.update { $0.typewriterScrolling.toggle() }
 

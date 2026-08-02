@@ -241,6 +241,7 @@ public final class MarkdownTextView: NSTextView {
         updateGeneration &+= 1
         pathExistence.removeAll(keepingCapacity: true)
         fragmentContext.frontMatterFields = (document.frontMatter?.fields ?? []).map { ($0.key, $0.value) }
+        fragmentContext.documentHasH1 = document.headings.contains { $0.level == 1 }
         rebuildParagraphIndex()
 
         guard let storage = textStorage else { return }
@@ -277,7 +278,7 @@ public final class MarkdownTextView: NSTextView {
 
         let used = layoutManager.usageBoundsForTextContainer
         let viewportHeight = enclosingScrollView?.contentView.bounds.height ?? 0
-        let height = max(used.maxY + textContainerInset.height * 2, viewportHeight)
+        let height = max(used.maxY + textContainerInset.height + viewportHeight * 0.40, viewportHeight)
         guard abs(frame.height - height) > 0.5 else { return }
         setFrameSize(NSSize(width: frame.width, height: height))
     }
@@ -742,13 +743,13 @@ public final class MarkdownTextView: NSTextView {
 
         // §11.4: full respect for Reduce Motion.
         if animated && !styleSheet.reduceMotion {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.28
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                clip.animator().setBoundsOrigin(target)
-            } completionHandler: {
-                scrollView.reflectScrolledClipView(clip)
-            }
+            Motion.run(
+                reduceMotion: false,
+                duration: Motion.deliberate,
+                curve: .spring,
+                changes: { _ in clip.animator().setBoundsOrigin(target) },
+                completion: { scrollView.reflectScrolledClipView(clip) }
+            )
         } else {
             clip.setBoundsOrigin(target)
             scrollView.reflectScrolledClipView(clip)
@@ -766,14 +767,24 @@ public final class MarkdownTextView: NSTextView {
         maxSize = NSSize(width: styleSheet.measureWidth + RenderMetrics.revealSlack * 2,
                          height: CGFloat.greatestFiniteMagnitude)
         backgroundColor = styleSheet.background
-        insertionPointColor = styleSheet.accent
+        insertionPointColor = mode == .read ? styleSheet.text : styleSheet.accent
         selectedTextAttributes = [.backgroundColor: styleSheet.selection]
+    }
+
+    func applyResponsiveMeasure(_ width: CGFloat) {
+        guard width > 100 else { return }
+        textContainer?.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        fragmentContext.contentWidth = width
+        minSize = NSSize(width: width, height: 0)
+        maxSize = NSSize(width: width + RenderMetrics.revealSlack * 2,
+                         height: CGFloat.greatestFiniteMagnitude)
     }
 
     private func applyModeChrome() {
         // Read mode: no insertion caret, everything else live (§3.2, §5).
         isEditable = mode.policy.showsInsertionPoint
         isSelectable = true
+        insertionPointColor = mode == .read ? styleSheet.text : styleSheet.accent
         typingAttributes = [
             .font: styleSheet.bodyFont(),
             .foregroundColor: styleSheet.text,

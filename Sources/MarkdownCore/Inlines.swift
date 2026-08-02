@@ -273,11 +273,20 @@ struct InlineBuilder {
                     location: match.range.location + 2,
                     length: max(0, match.range.length - 4)
                 )
+                let targetLength = (match.target as NSString).length
+                let hasLabel = match.label != nil
+                let leadingLength = hasLabel ? 2 + targetLength + 1 : 2
+                let content = hasLabel
+                    ? NSRange(
+                        location: match.range.location + leadingLength,
+                        length: max(0, match.range.length - leadingLength - 2)
+                    )
+                    : inner
                 return InlineSpan(
                     kind: .wikilink(target: match.target, label: match.label),
                     range: match.range,
-                    contentRange: inner,
-                    leadingMarkerRange: NSRange(location: match.range.location, length: 2),
+                    contentRange: content,
+                    leadingMarkerRange: NSRange(location: match.range.location, length: leadingLength),
                     trailingMarkerRange: NSRange(location: inner.upperBound, length: 2)
                 )
             }

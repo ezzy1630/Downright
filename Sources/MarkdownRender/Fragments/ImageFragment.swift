@@ -35,6 +35,11 @@ final class ImageFragment: DownrightFragment {
             cg.fillRect(rect, color: style.background, radius: RenderMetrics.imageCornerRadius)
             cg.restoreGState()
             draw(image: image, in: rect, in: cg, cornerRadius: RenderMetrics.imageCornerRadius)
+            if style.theme.appearance == .dark {
+                cg.setStrokeColor(style.text.withAlphaComponent(0.08).cgColor)
+                cg.setLineWidth(1)
+                cg.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
+            }
         } else {
             // §8.4's trust instrument applied to images: a picture the agent
             // says it wrote and did not is visibly absent, not silently blank.
@@ -70,8 +75,11 @@ final class ImageFragment: DownrightFragment {
             return CGSize(width: contentWidth, height: 64)
         }
         let natural = image.size
-        guard natural.width > contentWidth else { return natural }
-        return CGSize(width: contentWidth, height: (natural.height * contentWidth / natural.width).rounded())
+        let viewportCap = max(120, (context?.textView?.enclosingScrollView?.contentSize.height ?? 800) * 0.70)
+        let widthScale = min(1, contentWidth / natural.width)
+        let heightScale = min(1, viewportCap / natural.height)
+        let scale = min(widthScale, heightScale)
+        return CGSize(width: (natural.width * scale).rounded(), height: (natural.height * scale).rounded())
     }
 
     private func loadedImage() -> NSImage? {

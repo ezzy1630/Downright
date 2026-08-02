@@ -43,6 +43,13 @@ adding it is purely additive. [RELEASE.md](RELEASE.md) has the steps.
 
 ## Deliberate deviations from the spec
 
+### Callout tint
+
+The UI plan's recommended 5% semantic-colour tint is adopted for callouts.
+This intentionally departs from the original "never filled boxes" rule: the
+tint is low enough to remain document typography, while making callouts
+distinct from plain blockquotes in both signature themes.
+
 ### Syntax highlighting is a native lexer, not tree-sitter
 
 §12 names **SwiftTreeSitter + Neon**. Those need a separate SPM package per

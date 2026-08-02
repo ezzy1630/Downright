@@ -9,9 +9,20 @@ import PackageDescription
 // no-op and the standard toolchain is used unmodified.
 let cltFrameworks = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 let cltLibraries = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
+let selectedDeveloperPath: String = {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+    process.arguments = ["-p"]
+    process.standardOutput = output
+    guard (try? process.run()) != nil else { return "" }
+    process.waitUntilExit()
+    return String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+}()
 let needsCLTTestPaths = FileManager.default.fileExists(
     atPath: cltFrameworks + "/Testing.framework"
-)
+) && selectedDeveloperPath.hasPrefix("/Library/Developer/CommandLineTools")
 
 let testSwiftSettings: [SwiftSetting] = needsCLTTestPaths
     ? [.swiftLanguageMode(.v5), .unsafeFlags(["-F", cltFrameworks])]

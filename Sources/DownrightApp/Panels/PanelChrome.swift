@@ -58,12 +58,8 @@ enum PanelAnimation {
         _ changes: (NSAnimationContext) -> Void,
         completion: (() -> Void)? = nil
     ) {
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = reduceMotion ? 0 : duration
-            context.allowsImplicitAnimation = !reduceMotion
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            changes(context)
-        }, completionHandler: completion)
+        Motion.run(reduceMotion: reduceMotion, duration: duration,
+                   changes: changes, completion: completion)
     }
 }
 

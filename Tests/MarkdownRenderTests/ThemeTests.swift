@@ -155,22 +155,21 @@ final class ThemeTests {
 
     // MARK: - Typography (§11.1)
 
-    @Test("Heading sizes decrease strictly and follow the modular scale")
+    @Test("Heading sizes follow the retuned document hierarchy")
     func headingSizesFollowTheScale() {
         for theme in bundled() {
             let sheet = StyleSheet(theme: theme, appearance: aqua)
             let sizes = (1...6).map { sheet.headingFont(level: $0).pointSize }
-            for level in 1..<6 {
+            for level in 1..<4 {
                 #expect(sizes[level - 1] > sizes[level], "\(theme.name): H\(level) is not larger than H\(level + 1)")
             }
-            // H1–H4 are whole steps of the ratio.
             let ratio = theme.typography.scaleRatio
-            for level in 1...3 {
-                expectClose(sizes[level - 1] / sizes[level], ratio, within: 0.001, "\(theme.name): H\(level)/H\(level + 1)")
-            }
-            expectClose(sizes[3], theme.typography.bodySize, within: 0.001, "\(theme.name): H4 is the body size")
-            // H5 and H6 are half steps below it.
-            expectClose(sizes[4] / sizes[5], sqrt(ratio), within: 0.001, "\(theme.name): H5/H6 is a half step")
+            expectClose(sizes[0], theme.typography.bodySize * pow(ratio, 3), within: 0.001, "\(theme.name): H1")
+            expectClose(sizes[1], theme.typography.bodySize * pow(ratio, 2), within: 0.001, "\(theme.name): H2")
+            expectClose(sizes[2], theme.typography.bodySize * pow(ratio, 1.25), within: 0.001, "\(theme.name): H3")
+            expectClose(sizes[3], theme.typography.bodySize * pow(ratio, 0.5), within: 0.001, "\(theme.name): H4")
+            expectClose(sizes[4], theme.typography.bodySize, within: 0.001, "\(theme.name): H5")
+            expectClose(sizes[5], theme.typography.bodySize, within: 0.001, "\(theme.name): H6")
         }
     }
 

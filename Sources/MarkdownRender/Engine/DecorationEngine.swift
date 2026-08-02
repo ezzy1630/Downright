@@ -290,23 +290,42 @@ public final class DecorationEngine {
             for child in block.children { walk(child, context: childContext, state: &state) }
             return
 
-        case .callout(let kind, _):
-            emitFragment(.callout, block: block, detail: kind.rawValue, state: &state)
+        case .callout(let kind, let title):
+            emitFragment(.callout, block: block,
+                         detail: kind.rawValue + "|" + (title == nil ? kind.rawValue.capitalized : ""), state: &state)
             childContext.quoteDepth += 1
             childContext.calloutKind = kind
             applyBase(block, context: context, state: &state)
             for child in block.children { walk(child, context: childContext, state: &state) }
+            if let title, !title.isEmpty {
+                let source = state.document.substring(block.range) as NSString
+                let found = source.range(of: title)
+                if found.location != NSNotFound {
+                    apply([
+                        .font: NSFont.systemFont(ofSize: styleSheet.bodyFont().pointSize, weight: .semibold),
+                        .foregroundColor: styleSheet.calloutColor(kind),
+                    ], to: NSRange(location: block.range.location + found.location, length: found.length), state: &state)
+                }
+            }
             return
 
         case .listItem(let ordinal, let checkbox):
             childContext.ordinal = ordinal
             applyBase(block, context: context, state: &state)
             applyBlockMarker(block, context: childContext, state: &state)
+            let ornament: String
+            if let checkbox { ornament = checkbox.isChecked ? "task:checked" : "task:unchecked" }
+            else if let ordinal { ornament = "ordered:\(ordinal)" }
+            else { ornament = "unordered:\(max(1, context.listDepth))" }
+            emitFragment(.listOrnament, block: block, detail: ornament, state: &state)
             if let checkbox {
                 apply([.drCheckbox: checkbox.isChecked], to: checkbox.markRange, state: &state)
             }
             applyInlinesIfLeaf(block, context: context, state: &state)
             for child in block.children { walk(child, context: childContext, state: &state) }
+            if checkbox?.isChecked == true {
+                apply([.foregroundColor: styleSheet.textSecondary], to: block.contentRange, state: &state)
+            }
             return
 
         case .codeBlock(let language, _, let contentRange):
@@ -352,6 +371,9 @@ public final class DecorationEngine {
         case .heading, .paragraph, .htmlBlock, .footnoteDefinition:
             if let program = cachedProgram(for: block, context: context) {
                 applyProgram(program, at: block.range.location, state: &state)
+                let attributes = styles.baseAttributes(for: block, context: context)
+                applyFirstHeadingSpacing(block, attributes: attributes, state: &state)
+                applyHardWrapContinuationSpacing(block, attributes: attributes, state: &state)
             } else {
                 applyBase(block, context: context, state: &state)
                 applyBlockMarker(block, context: context, state: &state)
@@ -378,8 +400,64 @@ public final class DecorationEngine {
     }
 
     private func applyBase(_ block: MDBlock, context: BlockContext, state: inout DecorateState) {
-        apply(styles.baseAttributes(for: block, context: context), to: block.range, state: &state)
+        var attributes = styles.baseAttributes(for: block, context: context)
+        if styleSheet.theme.typography.opticalMargins,
+           context.listDepth == 0,
+           case .paragraph = block.content,
+           let first = state.document.substring(block.contentRange).first,
+           "\"'“‘".contains(first),
+           let original = attributes[.paragraphStyle] as? NSParagraphStyle,
+           let paragraph = original.mutableCopy() as? NSMutableParagraphStyle {
+            paragraph.firstLineHeadIndent -= styles.font(for: block.content).pointSize * 0.34
+            attributes[.paragraphStyle] = paragraph.copy() as? NSParagraphStyle ?? original
+        }
+        apply(attributes, to: block.range, state: &state)
         apply([.drBlock: block.identity], to: block.range, state: &state)
+
+        applyFirstHeadingSpacing(block, attributes: attributes, state: &state)
+        applyHardWrapContinuationSpacing(block, attributes: attributes, state: &state)
+    }
+
+    private func applyFirstHeadingSpacing(
+        _ block: MDBlock,
+        attributes: [NSAttributedString.Key: Any],
+        state: inout DecorateState
+    ) {
+        if case .heading = block.content,
+           state.document.headings.first?.range.location == block.range.location,
+           let original = attributes[.paragraphStyle] as? NSParagraphStyle,
+           let paragraph = original.mutableCopy() as? NSMutableParagraphStyle {
+            paragraph.paragraphSpacingBefore = 0
+            apply([.paragraphStyle: paragraph.copy() as? NSParagraphStyle ?? original],
+                  to: block.range, state: &state)
+        }
+    }
+
+    private func applyHardWrapContinuationSpacing(
+        _ block: MDBlock,
+        attributes: [NSAttributedString.Key: Any],
+        state: inout DecorateState
+    ) {
+        guard case .paragraph = block.content,
+              state.document.substring(block.contentRange).contains("\n"),
+              let original = attributes[.paragraphStyle] as? NSParagraphStyle,
+              let paragraph = original.mutableCopy() as? NSMutableParagraphStyle
+        else { return }
+        paragraph.paragraphSpacingBefore = 0
+        paragraph.paragraphSpacing = 0
+        let continuationStyle = paragraph.copy() as? NSParagraphStyle ?? original
+        let text = state.storage.string as NSString
+        var cursor = block.range.location
+        var first = true
+        while cursor < block.range.upperBound {
+            let range = text.paragraphRange(for: NSRange(location: cursor, length: 0))
+                .intersection(block.range) ?? NSRange(location: cursor, length: 0)
+            if range.length == 0 { break }
+            if !first { apply([.paragraphStyle: continuationStyle], to: range, state: &state) }
+            first = false
+            cursor = range.upperBound
+        }
+        apply([.paragraphStyle: continuationStyle], to: block.range, state: &state)
     }
 
     /// Block markers are attributed but never revealed inline (§6.1a); the
@@ -424,13 +502,13 @@ public final class DecorationEngine {
                 apply([
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
                     .strikethroughColor: styleSheet.textFaint,
-                    .foregroundColor: styleSheet.textSecondary,
+                    .foregroundColor: styleSheet.textFaint,
                 ], to: span.contentRange, state: &state)
             case .inlineCode:
                 apply([
                     .font: styleSheet.monoFont(size: blockFont.pointSize * 0.94),
                     .foregroundColor: styleSheet.text,
-                    .backgroundColor: styleSheet.codeBackground,
+                    .backgroundColor: styleSheet.inlineCodeBackground,
                 ], to: span.contentRange, state: &state)
             case .link(let destination, _):
                 applyLink(destination, span: span, state: &state)
@@ -465,7 +543,7 @@ public final class DecorationEngine {
                     .drReference: identifier,
                     .foregroundColor: styleSheet.link,
                     .baselineOffset: blockFont.pointSize * 0.3,
-                    .font: blockFont.withSize(blockFont.pointSize * 0.78),
+                    .font: blockFont.withSize(blockFont.pointSize * 0.70),
                 ], to: span.range, state: &state)
             case .inlineHTML:
                 apply([.foregroundColor: styleSheet.textFaint], to: span.range, state: &state)
@@ -536,18 +614,28 @@ public final class DecorationEngine {
         let code = state.document.substring(contentRange)
         let runs = syntaxCache.runs(for: code, language: language, highlighter: highlighter)
         let isDiff = (language?.lowercased() == "diff")
+        if isDiff {
+            let ns = code as NSString
+            var cursor = 0
+            while cursor < ns.length {
+                let line = ns.lineRange(for: NSRange(location: cursor, length: 0))
+                if line.length > 0 {
+                    let first = ns.character(at: line.location)
+                    if first == 0x2B || first == 0x2D {
+                        let token: SyntaxToken = first == 0x2B ? .diffAdded : .diffRemoved
+                        apply([.backgroundColor: styleSheet.codeColor(token).withAlphaComponent(0.12)],
+                              to: NSRange(location: contentRange.location + line.location, length: line.length),
+                              state: &state)
+                    }
+                }
+                cursor = max(cursor + 1, line.upperBound)
+            }
+        }
         for run in runs {
             let absolute = NSRange(location: contentRange.location + run.range.location, length: run.range.length)
-            var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: styleSheet.codeColor(run.token)]
+            let attrs: [NSAttributedString.Key: Any] = [.foregroundColor: styleSheet.codeColor(run.token)]
             // §11.3: ```diff fences get real diff colouring, which means a
             // tinted line, not just a coloured `+`.
-            if isDiff {
-                switch run.token {
-                case .diffAdded: attrs[.backgroundColor] = styleSheet.codeColor(.diffAdded).withAlphaComponent(0.12)
-                case .diffRemoved: attrs[.backgroundColor] = styleSheet.codeColor(.diffRemoved).withAlphaComponent(0.12)
-                default: break
-                }
-            }
             apply(attrs, to: absolute, state: &state)
         }
     }

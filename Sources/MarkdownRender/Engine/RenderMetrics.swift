@@ -18,11 +18,11 @@ public enum RenderMetrics {
     public static let revealSlack: CGFloat = 44
 
     /// Vertical inset at the top and bottom of the text container.
-    public static let verticalInset: CGFloat = 28
+    public static let verticalInset: CGFloat = 56
 
     /// Padding inside a code block's tinted band.
-    public static let codeInsetX: CGFloat = 14
-    public static let codeInsetY: CGFloat = 9
+    public static let codeInsetX: CGFloat = 16
+    public static let codeInsetY: CGFloat = 10
     public static let codeRuleWidth: CGFloat = 2
     public static let codeCornerRadius: CGFloat = 6
 
@@ -33,6 +33,7 @@ public enum RenderMetrics {
 
     public static let calloutRuleWidth: CGFloat = 3
     public static let calloutInsetX: CGFloat = 16
+    public static let calloutIconInsetX: CGFloat = 34
     public static let quoteRuleWidth: CGFloat = 2
 
     public static let tableRowPadding: CGFloat = 6

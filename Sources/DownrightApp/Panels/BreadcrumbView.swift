@@ -53,8 +53,12 @@ final class BreadcrumbView: NSView {
         self.styleSheet = styleSheet
         // Within-window blending is the point: the blur has to be of the
         // document underneath, not of the desktop behind the app.
-        self.backdrop = PanelBackdrop(styleSheet: styleSheet, material: .headerView, blendingMode: .withinWindow)
+        self.backdrop = PanelBackdrop(styleSheet: styleSheet, material: .hudWindow, blendingMode: .withinWindow)
         super.init(frame: .zero)
+
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.masksToBounds = true
 
         backdrop.autoresizingMask = [.width, .height]
         backdrop.frame = bounds
@@ -76,7 +80,7 @@ final class BreadcrumbView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: 26)
+        NSSize(width: 360, height: 28)
     }
 
     // MARK: - Building
@@ -251,8 +255,6 @@ final class BreadcrumbView: NSView {
             (separator as NSString).draw(at: NSPoint(x: origin, y: y), withAttributes: attributes)
         }
 
-        styleSheet.rule.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width, height: PanelMetrics.hairline).fill()
     }
 
     override func viewDidChangeEffectiveAppearance() {

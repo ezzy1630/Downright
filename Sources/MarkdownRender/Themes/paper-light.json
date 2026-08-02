@@ -14,7 +14,10 @@
     "rule": "#e3dacd",
     "selection": "#e9d9bf",
     "codeBackground": "#f3ede3",
+    "inlineCodeBackground": "#eee6da",
     "codeRule": "#dcd1c0",
+    "railTick": "#9a9086",
+    "railTickCurrent": "#2b2724",
     "quoteRule": "#d3c4ae",
     "changeAdded": "#2f7a46",
     "changeRemoved": "#b03a34",
@@ -28,8 +31,8 @@
     "calloutDanger": "#b03a34"
   },
   "code": {
-    "keyword": "#a03e8c",
-    "string": "#2e7d5b",
+    "keyword": "#8e4f7d",
+    "string": "#4b755e",
     "number": "#b4622d",
     "comment": "#99908a",
     "type": "#1f6fa8",

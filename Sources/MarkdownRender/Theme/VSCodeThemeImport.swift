@@ -132,7 +132,10 @@ enum VSCodeThemeImporter {
             // background rather than copied — copying it would make code blocks
             // invisible on a theme whose editor and page are the same colour.
             codeBackground: ThemeColor(background.blended(with: text, 0.05).hexString),
+            inlineCodeBackground: ThemeColor(background.blended(with: text, 0.08).hexString),
             codeRule: ThemeColor(background.blended(with: text, 0.20).hexString),
+            railTick: ThemeColor(text.blended(with: background, 0.55).hexString),
+            railTickCurrent: ThemeColor(text.hexString),
             quoteRule: ThemeColor(background.blended(with: text, 0.30).hexString),
             changeAdded: ThemeColor(added.hexString),
             changeRemoved: ThemeColor(removed.hexString),

@@ -6,6 +6,7 @@ import MarkdownRender
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [DocumentWindowController] = []
     private var preferencesWindow: NSWindowController?
+    private var startWindow: StartWindowController?
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
 
@@ -34,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // through to the open panel.
         if openCommandLineFiles() { return }
         if Preferences.shared.values.restoreSession, restoreSession() { return }
-        showOpenPanel()
+        showStartWindow()
     }
 
     @discardableResult
@@ -57,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows && windowControllers.isEmpty { showOpenPanel() }
+        if !hasVisibleWindows && windowControllers.isEmpty { showStartWindow() }
         return true
     }
 
@@ -100,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         adopt(controller)
+        startWindow?.close()
+        startWindow = nil
         controller.showWindow(nil)
         return controller
     }
@@ -129,6 +132,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.message = "Open a markdown markdownDocument"
         guard panel.runModal() == .OK else { return }
         for url in panel.urls { open(url) }
+    }
+
+    private func showStartWindow() {
+        if let startWindow {
+            startWindow.showWindow(nil)
+            startWindow.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let controller = StartWindowController(recents: DocumentStateStore.shared.recents(limit: 8))
+        controller.onOpen = { [weak self] url in self?.open(url) }
+        controller.onOpenPanel = { [weak self] in self?.showOpenPanel() }
+        controller.onNew = { [weak self] in self?.newDocument() }
+        startWindow = controller
+        controller.showWindow(nil)
     }
 
     // MARK: - Session restore (§9.3)
@@ -252,7 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func newDocument() {
+    func newDocument() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = DocumentTypes.contentTypes
         panel.nameFieldStringValue = "Untitled.md"

@@ -54,7 +54,10 @@ public struct StyleSheet {
     public var link: NSColor
     public var rule: NSColor
     public var codeBackground: NSColor
+    public var inlineCodeBackground: NSColor
     public var codeRule: NSColor
+    public var railTick: NSColor
+    public var railTickCurrent: NSColor
     public var quoteRule: NSColor
     public var pathMissing: NSColor
     public var searchHit: NSColor
@@ -136,7 +139,10 @@ public struct StyleSheet {
         link = resolver.resolve(palette.link)
         rule = resolver.resolve(palette.rule, towards: resolvedText, if: boost)
         codeBackground = resolver.resolve(palette.codeBackground)
+        inlineCodeBackground = resolver.resolve(palette.inlineCodeBackground)
         codeRule = resolver.resolve(palette.codeRule, towards: resolvedText, if: boost)
+        railTick = resolver.resolve(palette.railTick, towards: resolvedText, if: boost)
+        railTickCurrent = resolver.resolve(palette.railTickCurrent, towards: resolvedText, if: boost)
         quoteRule = resolver.resolve(palette.quoteRule, towards: resolvedText, if: boost)
         pathMissing = resolver.resolve(palette.pathMissing)
         searchHit = resolver.resolve(palette.searchHit)
@@ -193,7 +199,7 @@ public struct StyleSheet {
     /// size for H5–H6.  A pure power law would put H6 at `body · ratio⁻²` —
     /// 10pt against a 16pt body — which is unreadable; half steps keep the six
     /// levels strictly ordered without dropping off a cliff (§11.1).
-    private static let headingExponents: [CGFloat] = [3, 2, 1, 0, -0.5, -1]
+    private static let headingExponents: [CGFloat] = [3, 2, 1.25, 0.5, 0, 0]
 
     static func headingSize(level: Int, typography: TypographyConfig) -> CGFloat {
         let exponent = headingExponents[clampLevel(level) - 1]
@@ -203,8 +209,8 @@ public struct StyleSheet {
     /// Vertical rhythm in whole grid units, so a heading never knocks the body
     /// text off the baseline grid (§11.1).
     public func headingSpacing(level: Int) -> (before: CGFloat, after: CGFloat) {
-        let before: [CGFloat] = [4, 3, 3, 2, 2, 2]
-        let after: [CGFloat] = [2, 2, 1, 1, 1, 1]
+        let before: [CGFloat] = [4, 5, 4, 3, 2, 2]
+        let after: [CGFloat] = [2, 2, 2, 1, 1, 1]
         let index = StyleSheet.clampLevel(level) - 1
         return (before[index] * baselineGrid, after[index] * baselineGrid)
     }

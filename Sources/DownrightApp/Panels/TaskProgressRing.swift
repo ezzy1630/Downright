@@ -11,6 +11,7 @@ import MarkdownRender
 final class TaskProgressRing: NSView {
     var progress: (done: Int, total: Int) = (0, 0) {
         didSet {
+            isHidden = progress.total == 0
             updateAccessibility()
             needsDisplay = true
         }
@@ -27,6 +28,7 @@ final class TaskProgressRing: NSView {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         super.init(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
+        isHidden = true
         setAccessibilityElement(true)
         setAccessibilityRole(.progressIndicator)
         updateAccessibility()

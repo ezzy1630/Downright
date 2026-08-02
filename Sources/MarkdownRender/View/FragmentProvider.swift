@@ -84,6 +84,10 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             return CalloutFragment(textElement: textElement, range: elementRange,
                                    payload: payload, context: context)
 
+        case .listOrnament:
+            return ListOrnamentFragment(textElement: textElement, range: elementRange,
+                                        payload: payload, context: context)
+
         case .inlineMath:
             return plain()
         }

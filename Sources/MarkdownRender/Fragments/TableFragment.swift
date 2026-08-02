@@ -6,7 +6,8 @@ struct TableLayout {
     var columnX: [CGFloat]
     var columnWidths: [CGFloat]
     var alignments: [NSTextAlignment]
-    var rowHeight: CGFloat
+    var rowHeights: [CGFloat]
+    var totalWidth: CGFloat
 
     /// §11.3: numeric columns are right-aligned automatically.  A column
     /// counts as numeric when most of its non-empty body cells parse as a
@@ -66,9 +67,27 @@ struct TableLayout {
             }
         }
 
-        let rowHeight = RenderMetrics.snap(style.lineHeight + RenderMetrics.tableRowPadding * 2,
-                                           grid: max(1, style.baselineGrid))
-        return TableLayout(columnX: xs, columnWidths: widths, alignments: alignments, rowHeight: rowHeight)
+        var rowHeights: [CGFloat] = []
+        rowHeights.reserveCapacity(data.rows.count)
+        for row in data.rows {
+            var lines: CGFloat = 1
+            for (index, cell) in row.cells.enumerated() where index < widths.count {
+                let value = substring(storage, cell.contentRange)
+                let font = row.isHeader
+                    ? style.emphasisFont(bold: true, italic: false).withSize(style.bodyFont().pointSize * 0.85)
+                    : style.bodyFont()
+                let rect = (value as NSString).boundingRect(
+                    with: CGSize(width: widths[index], height: style.lineHeight * 3),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    attributes: [.font: font]
+                )
+                lines = max(lines, min(3, ceil(rect.height / max(1, style.lineHeight))))
+            }
+            rowHeights.append(RenderMetrics.snap(style.lineHeight * lines + RenderMetrics.tableRowPadding * 2,
+                                                  grid: max(1, style.baselineGrid)))
+        }
+        return TableLayout(columnX: xs, columnWidths: widths, alignments: alignments,
+                           rowHeights: rowHeights, totalWidth: max(0, cursor - RenderMetrics.tableColumnGap))
     }
 
     private static func substring(_ storage: NSAttributedString, _ range: NSRange) -> String {
@@ -125,7 +144,10 @@ final class TableRowFragment: DownrightFragment {
 
     override var suppressesText: Bool { true }
 
-    override var overrideHeight: CGFloat? { row == nil ? 0 : layout()?.rowHeight }
+    override var overrideHeight: CGFloat? {
+        guard row != nil, let layout = layout(), rowIndex < layout.rowHeights.count else { return 0 }
+        return layout.rowHeights[rowIndex]
+    }
 
     private var row: TableRow? {
         rowIndex >= 0 && rowIndex < data.rows.count ? data.rows[rowIndex] : nil
@@ -143,26 +165,31 @@ final class TableRowFragment: DownrightFragment {
 
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard let style = styleSheet, let layout = layout(), let row else { return }
-        let frame = CGRect(x: point.x, y: point.y, width: contentWidth, height: layout.rowHeight)
+        let rowHeight = rowIndex < layout.rowHeights.count ? layout.rowHeights[rowIndex] : style.lineHeight
+        let frame = CGRect(x: point.x, y: point.y, width: max(contentWidth, layout.totalWidth), height: rowHeight)
 
         if !row.isHeader, context?.hoveredTableRow == row.range {
-            cg.fillRect(frame, color: style.codeBackground.withAlphaComponent(0.6))
+            cg.fillRect(frame, color: style.text.withAlphaComponent(0.04))
         }
 
         for (index, cell) in row.cells.enumerated() where index < layout.columnX.count {
-            let text = NSMutableAttributedString(attributedString: attributedSource(cell.contentRange))
+            let source = attributedSource(cell.contentRange)
+            let text = NSMutableAttributedString(attributedString: row.isHeader
+                ? NSAttributedString(string: source.string.uppercased(), attributes: source.length > 0 ? source.attributes(at: 0, effectiveRange: nil) : [:])
+                : source)
             guard text.length > 0 else { continue }
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = layout.alignments[index]
-            paragraph.lineBreakMode = .byTruncatingTail
+            paragraph.lineBreakMode = .byWordWrapping
             paragraph.firstLineHeadIndent = 0
             paragraph.headIndent = 0
             let whole = NSRange(location: 0, length: text.length)
             text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
             if row.isHeader {
                 text.addAttributes([
-                    .font: style.emphasisFont(bold: true, italic: false),
+                    .font: style.emphasisFont(bold: true, italic: false).withSize(style.bodyFont().pointSize * 0.85),
                     .foregroundColor: style.textSecondary,
+                    .kern: style.bodyFont().pointSize * 0.06,
                 ], range: whole)
             }
             let cellRect = CGRect(x: frame.minX + layout.columnX[index],
@@ -172,8 +199,8 @@ final class TableRowFragment: DownrightFragment {
             cg.drawText(text, in: cellRect, flipped: true)
         }
 
-        // Horizontal rules only — one under the header, one under the last row.
-        if row.isHeader || rowIndex == data.rows.count - 1 {
+        // One rule under the header. An open bottom keeps the table out of box territory.
+        if row.isHeader {
             cg.fillRect(CGRect(x: frame.minX, y: frame.maxY - RenderMetrics.tableRuleWidth,
                                width: frame.width, height: RenderMetrics.tableRuleWidth),
                         color: style.rule)

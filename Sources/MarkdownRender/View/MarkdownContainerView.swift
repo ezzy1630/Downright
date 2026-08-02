@@ -14,6 +14,16 @@ public final class MarkdownContainerView: NSView {
     public let scrollView: NSScrollView
     private let gutter: GutterRailView
 
+    public var styleSheet: StyleSheet {
+        get { textView.styleSheet }
+        set {
+            textView.styleSheet = newValue
+            scrollView.backgroundColor = newValue.background
+            needsDisplay = true
+            needsLayout = true
+        }
+    }
+
     /// Width reserved on the left for block markers in Live mode (§6.1a).
     public private(set) var gutterWidth: CGFloat = RenderMetrics.gutterWidth
 
@@ -91,13 +101,15 @@ public final class MarkdownContainerView: NSView {
         let topHeight = topAccessory.map { $0.fittingSize.height > 0 ? $0.fittingSize.height : 28 } ?? 0
         let trailingWidth = trailingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 14 } ?? 0
 
-        topAccessory?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: topHeight)
-        trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: topHeight,
-                                          width: trailingWidth, height: bounds.height - topHeight)
+        let accessoryWidth = min(max(160, textView.styleSheet.measureWidth), max(160, bounds.width - 80))
+        topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 8,
+                                     width: accessoryWidth, height: topHeight)
+        trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: 0,
+                                          width: trailingWidth, height: bounds.height)
 
-        scrollView.frame = NSRect(x: 0, y: topHeight,
+        scrollView.frame = NSRect(x: 0, y: 0,
                                   width: max(0, bounds.width - trailingWidth),
-                                  height: max(0, bounds.height - topHeight))
+                                  height: bounds.height)
 
         // The text column is centred in the measure (§11.1); the rail sits
         // immediately to its left, so markers track the text rather than the
@@ -105,14 +117,18 @@ public final class MarkdownContainerView: NSView {
         // The inset is measured to where the *text* starts, not to where the
         // text view starts: the view carries `revealSlack` of its own lead-in
         // so a caret-anchored reveal can shift a line left (§6.1c).
-        let measure = textView.styleSheet.measureWidth
+        let responsiveCharacters: CGFloat = bounds.width < 900 ? 66 : (bounds.width > 1200 ? 74 : textView.styleSheet.theme.typography.measureCharacters)
+        let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
+        let measure = min(preferredMeasure, max(240, scrollView.frame.width - RenderMetrics.revealSlack * 2))
+        textView.applyResponsiveMeasure(measure)
         let textLeft = max(gutterWidth + RenderMetrics.revealSlack, (scrollView.frame.width - measure) / 2)
         let columnOrigin = textLeft - RenderMetrics.revealSlack
         textView.minSize = NSSize(width: measure + RenderMetrics.revealSlack * 2, height: 0)
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)
 
-        gutter.frame = NSRect(x: max(0, textLeft - gutterWidth), y: topHeight,
+        gutter.frame = NSRect(x: max(0, textLeft - gutterWidth), y: 0,
                               width: gutterWidth, height: scrollView.frame.height)
+
     }
 
     public override func viewDidChangeEffectiveAppearance() {

@@ -26,17 +26,7 @@ enum GutterChrome {
 
     /// Full respect for Reduce Motion (§11.4).
     static func animate(reduceMotion: Bool, duration: TimeInterval, _ body: @escaping (NSAnimationContext) -> Void) {
-        guard !reduceMotion else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0
-                body(context)
-            }
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            body(context)
-        }
+        Motion.run(reduceMotion: reduceMotion, duration: duration, changes: body)
     }
 }
 

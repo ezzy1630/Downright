@@ -100,6 +100,18 @@ import Testing
         }
     }
 
+    @Test func labelledFormDisplaysOnlyItsLabel() throws {
+        let source = "See [[Design Notes|the notes]] here\n"
+        let document = MarkdownParser.parse(source)
+        let paragraph = try #require(document.root.children.first)
+        let span = try #require(paragraph.inlines.first { inline in
+            if case .wikilink = inline.kind { return true }
+            return false
+        })
+        #expect((source as NSString).substring(with: span.contentRange) == "the notes")
+        #expect((source as NSString).substring(with: try #require(span.leadingMarkerRange)) == "[[Design Notes|")
+    }
+
     @Test func wholeParagraphDisplayMathBecomesABlock() {
         let doc = MarkdownParser.parse("Intro.\n\n$$\ne^{i\\pi} + 1 = 0\n$$\n\nOutro.\n")
         var found: String?

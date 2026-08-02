@@ -51,7 +51,7 @@ final class CodeBlockFragment: DownrightFragment {
 
     override var overrideHeight: CGFloat? {
         switch role {
-        case .openChrome: return language.isEmpty ? RenderMetrics.codeInsetY : 24
+        case .openChrome: return RenderMetrics.codeInsetY
         case .closeChrome: return RenderMetrics.codeInsetY
         case .collapsedChip: return RenderMetrics.chipHeight
         case .body: return nil
@@ -99,7 +99,11 @@ final class CodeBlockFragment: DownrightFragment {
         if context?.hoveredFragmentRange == payload.sourceRange {
             let copy = Self.copyButtonRect(in: band, style: style, language: language)
             cg.fillRect(copy, color: style.codeRule.withAlphaComponent(0.16), radius: 4)
-            cg.drawText(Self.chipText("Copy", style: style), in: copy.insetBy(dx: 6, dy: 2), flipped: true)
+            if let image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy code")?
+                .withSymbolConfiguration(.init(pointSize: 11, weight: .medium)) {
+                let tinted = image.tinted(style.textSecondary)
+                draw(image: tinted, in: copy.insetBy(dx: 5, dy: 4), in: cg)
+            }
         }
     }
 
@@ -110,12 +114,17 @@ final class CodeBlockFragment: DownrightFragment {
                     color: style.codeRule)
 
         let label = language.isEmpty ? "code" : language
-        let text = "▸  \(label) · \(lineCount) lines"
+        let text = "\(label) · \(lineCount) lines"
         let attributed = NSAttributedString(string: text, attributes: [
             .font: style.monoFont(size: 11),
             .foregroundColor: style.textSecondary,
         ])
         cg.drawText(attributed, in: chip.insetBy(dx: RenderMetrics.codeInsetX, dy: 6), flipped: true)
+        if let triangle = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Expand code")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)) {
+            draw(image: triangle.tinted(style.textSecondary),
+                 in: CGRect(x: chip.minX + 7, y: chip.midY - 5, width: 10, height: 10), in: cg)
+        }
     }
 
     /// The tinted band, inset to the block's own indentation so a code block
@@ -143,8 +152,19 @@ final class CodeBlockFragment: DownrightFragment {
     }
 
     static func copyButtonRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
-        let width = chipText("Copy", style: style).size().width + 12
+        let width: CGFloat = 24
         let chip = language.isEmpty ? band.maxX - RenderMetrics.codeInsetX : chipRect(in: band, style: style, language: language).minX
         return CGRect(x: chip - width - 6, y: band.minY + 3, width: width, height: 17)
+    }
+}
+
+private extension NSImage {
+    func tinted(_ color: NSColor) -> NSImage {
+        NSImage(size: size, flipped: false) { rect in
+            self.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
     }
 }

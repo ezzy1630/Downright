@@ -17,11 +17,14 @@ final class ThematicBreakFragment: DownrightFragment {
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         let height = layoutFragmentFrame.height
-        // A hairline, not a point: on Retina this is a genuine 0.5pt rule.
-        let thickness: CGFloat = style.increaseContrast ? 1 : 0.5
-        let inset = contentWidth * 0.04
-        cg.fillRect(CGRect(x: point.x + inset, y: (point.y + height / 2).rounded(),
-                           width: max(1, contentWidth - inset * 2), height: thickness),
-                    color: style.rule)
+        let diameter: CGFloat = 3
+        let gap: CGFloat = 32
+        let centre = point.x + contentWidth / 2
+        let y = point.y + height / 2 - diameter / 2
+        cg.setFillColor(style.textFaint.cgColor)
+        for offset in [-gap, 0, gap] as [CGFloat] {
+            cg.fillEllipse(in: CGRect(x: centre + offset - diameter / 2, y: y,
+                                      width: diameter, height: diameter))
+        }
     }
 }

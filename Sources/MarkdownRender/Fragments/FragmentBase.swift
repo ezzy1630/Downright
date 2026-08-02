@@ -70,6 +70,7 @@ public final class FragmentContext {
     var collapseOverrides: [Int: Bool] = [:]
     /// Front matter fields, so the metadata card does not re-parse YAML.
     var frontMatterFields: [(key: String, value: String)] = []
+    var documentHasH1 = false
     /// Column geometry per table, keyed by the table's start offset.
     var tableLayouts: [Int: TableLayout] = [:]
 

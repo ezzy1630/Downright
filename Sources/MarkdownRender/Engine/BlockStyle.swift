@@ -94,10 +94,10 @@ final class BlockStyleFactory {
     private func color(for content: BlockContent, context: BlockContext) -> NSColor {
         switch content {
         case .heading(let level): return styleSheet.headingColor(level: level)
-        case .blockQuote: return styleSheet.textSecondary
+        case .blockQuote: return styleSheet.text
         case .callout(let kind, _): return context.quoteDepth > 0 ? styleSheet.calloutColor(kind) : styleSheet.text
         case .thematicBreak, .frontMatter: return styleSheet.textSecondary
-        default: return context.quoteDepth > 0 ? styleSheet.textSecondary : styleSheet.text
+        default: return styleSheet.text
         }
     }
 
@@ -107,6 +107,12 @@ final class BlockStyleFactory {
     /// rather than by care.
     func lineHeight(for content: BlockContent) -> CGFloat {
         let f = font(for: content)
+        switch content {
+        case .codeBlock, .mermaid:
+            return RenderMetrics.snap(f.pointSize * 1.45, grid: grid)
+        default:
+            break
+        }
         let natural = f.ascender - f.descender + f.leading
         let base = max(styleSheet.lineHeight, natural * 1.02)
         return RenderMetrics.snap(base, grid: grid)
@@ -152,8 +158,11 @@ final class BlockStyleFactory {
             style.paragraphSpacingBefore = 0
             style.paragraphSpacing = 0
         case .callout, .blockQuote:
-            style.firstLineHeadIndent = indent + RenderMetrics.calloutInsetX
-            style.headIndent = indent + RenderMetrics.calloutInsetX
+            let inset = context.calloutKind == nil
+                ? RenderMetrics.calloutInsetX
+                : RenderMetrics.calloutIconInsetX
+            style.firstLineHeadIndent = indent + inset
+            style.headIndent = indent + inset
             style.paragraphSpacingBefore = 0
             style.paragraphSpacing = 0
         default:
@@ -161,6 +170,11 @@ final class BlockStyleFactory {
             // them full inter-paragraph air would space a tight list like a
             // sequence of essays.
             style.paragraphSpacing = RenderMetrics.snap(h * (context.listDepth > 0 ? 0.15 : 0.45), grid: grid)
+            if context.listDepth > 0 {
+                let markerColumn = styleSheet.bodyFont().pointSize * 1.1
+                style.firstLineHeadIndent = indent
+                style.headIndent = indent + markerColumn
+            }
         }
 
         let frozen = style.copy() as? NSParagraphStyle ?? NSParagraphStyle.default
@@ -178,7 +192,13 @@ final class BlockStyleFactory {
             .foregroundColor: color(for: block.content, context: context),
             .paragraphStyle: paragraphStyle(for: block, context: context),
         ]
-        if case .heading(let level) = block.content { attrs[.drHeading] = level }
+        if case .heading(let level) = block.content {
+            attrs[.drHeading] = level
+            let pointSize = font(for: block.content).pointSize
+            if pointSize > 28 { attrs[.kern] = pointSize * -0.022 }
+            else if pointSize >= 20 { attrs[.kern] = pointSize * -0.014 }
+            else if level >= 5 { attrs[.kern] = pointSize * 0.08 }
+        }
         if styleSheet.theme.typography.monoLigatures == false, isMono(block.content) {
             attrs[.ligature] = 0
         }

@@ -19,6 +19,12 @@ extension DocumentWindowController {
 
     func updateBreadcrumbAndGutter() {
         refreshBreadcrumb()
+        showTransientBreadcrumb()
+        if let current = markdownDocument.parsed.headings.lastIndex(where: {
+            $0.range.location <= containerTextView.topVisibleOffset
+        }) {
+            outlinePanel?.currentHeadingIndex = current
+        }
         let length = max(1, markdownDocument.parsed.length)
         let top = CGFloat(containerTextView.topVisibleOffset) / CGFloat(length)
         let visibleHeight = primaryContainer.scrollView.contentView.bounds.height
@@ -26,6 +32,21 @@ extension DocumentWindowController {
         let span = min(1, visibleHeight / documentHeight)
         densityGutterView.visibleRange = top...min(1, top + span)
         densityGutterView.readProgress = max(densityGutterView.readProgress, min(1, top + span))
+    }
+
+    private func showTransientBreadcrumb() {
+        breadcrumbHideWorkItem?.cancel()
+        PanelAnimation.run(reduceMotion: activeStyleSheet.reduceMotion, duration: 0.12) { _ in
+            self.breadcrumbView.animator().alphaValue = 1
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            PanelAnimation.run(reduceMotion: self.activeStyleSheet.reduceMotion, duration: 0.09) { _ in
+                self.breadcrumbView.animator().alphaValue = 0
+            }
+        }
+        breadcrumbHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
     // MARK: - Images
@@ -173,6 +194,7 @@ extension DocumentWindowController: NSToolbarDelegate {
     private static let siblingsItem = NSToolbarItem.Identifier("siblings")
     private static let findItem = NSToolbarItem.Identifier("find")
     private static let timelineItem = NSToolbarItem.Identifier("timeline")
+    private static let overflowItem = NSToolbarItem.Identifier("overflow")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // §11.4: "No permanent sidebars, panels, or status bar."  The toolbar
@@ -182,14 +204,14 @@ extension DocumentWindowController: NSToolbarDelegate {
         // panel's slider (§5.2); it does not need to sit on screen permanently,
         // so it stays available for customisation rather than shown by default.
         [
-            Self.siblingsItem, Self.outlineItem, .flexibleSpace,
+            .toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace,
             Self.modeItem, .flexibleSpace,
-            Self.tasksItem, Self.timelineItem, Self.findItem,
+            Self.findItem, Self.tasksItem, Self.timelineItem, Self.overflowItem,
         ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [.space, .flexibleSpace]
+        toolbarDefaultItemIdentifiers(toolbar) + [Self.outlineItem, Self.siblingsItem, Self.zoomItem, .space, .flexibleSpace]
     }
 
     func toolbar(
@@ -203,9 +225,26 @@ extension DocumentWindowController: NSToolbarDelegate {
                 trackingMode: .selectOne, target: self, action: #selector(modeSegmentChanged(_:))
             )
             control.selectedSegment = RenderMode.allCases.firstIndex(of: mode) ?? 0
+            let symbols = ["book.pages", "pencil.and.outline", "chevron.left.forwardslash.chevron.right"]
+            for index in 0..<min(control.segmentCount, symbols.count) {
+                control.setImage(NSImage(systemSymbolName: symbols[index], accessibilityDescription: nil), forSegment: index)
+            }
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.label = "Mode"
+            return item
+
+        case Self.overflowItem:
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            item.label = "More"
+            item.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "More")
+            let menu = NSMenu(title: "More")
+            for command in [Command.zoomIn, .zoomOut, .splitView, .exportHTML, .exportPDF, .tidyDocument] {
+                let menuItem = MainMenu.commandItem(command)
+                menuItem.target = self
+                menu.addItem(menuItem)
+            }
+            item.menu = menu
             return item
 
         case Self.zoomItem:

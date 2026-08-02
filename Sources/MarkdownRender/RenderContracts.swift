@@ -115,7 +115,7 @@ extension NSAttributedString.Key {
 // MARK: - Fragments
 
 public enum FragmentKind: String, Sendable {
-    case codeBlock, collapsedCodeBlock, table, inlineMath, blockMath, mermaid, image, thematicBreak, frontMatter, callout
+    case codeBlock, collapsedCodeBlock, table, inlineMath, blockMath, mermaid, image, thematicBreak, frontMatter, callout, listOrnament
 }
 
 /// Payload attached to a range that draws as an object rather than as glyphs.
@@ -191,7 +191,10 @@ public struct ThemePalette: Codable, Sendable, Equatable {
     public var rule: ThemeColor
     public var selection: ThemeColor
     public var codeBackground: ThemeColor
+    public var inlineCodeBackground: ThemeColor
     public var codeRule: ThemeColor
+    public var railTick: ThemeColor
+    public var railTickCurrent: ThemeColor
     public var quoteRule: ThemeColor
     public var changeAdded: ThemeColor
     public var changeRemoved: ThemeColor

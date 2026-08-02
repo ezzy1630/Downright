@@ -1,6 +1,7 @@
 import AppKit
 import MarkdownCore
 import MarkdownRender
+import SwiftUI
 
 /// Settings, including the keybinding editor §7.2 promises.
 ///
@@ -9,28 +10,117 @@ import MarkdownRender
 @MainActor
 final class PreferencesWindowController: NSWindowController {
     convenience init() {
-        let tabs = NSTabViewController()
-        tabs.tabStyle = .toolbar
-
-        tabs.addChild(PreferencesPane(
-            title: "General", symbol: "gearshape", rows: PreferencesForms.general()
-        ))
-        tabs.addChild(PreferencesPane(
-            title: "Typography", symbol: "textformat", rows: PreferencesForms.typography()
-        ))
-        tabs.addChild(PreferencesPane(
-            title: "Editor", symbol: "square.and.pencil", rows: PreferencesForms.editor()
-        ))
-        tabs.addChild(PreferencesPane(
-            title: "History", symbol: "clock.arrow.circlepath", rows: PreferencesForms.history()
-        ))
-        tabs.addChild(KeybindingsPane())
-
-        let window = NSWindow(contentViewController: tabs)
+        let host = NSHostingController(rootView: SettingsRootView())
+        let window = NSWindow(contentViewController: host)
         window.title = "Downright Settings"
         window.styleMask.insert(.resizable)
-        window.setContentSize(NSSize(width: 620, height: 520))
+        window.setContentSize(NSSize(width: 760, height: 560))
         self.init(window: window)
+    }
+}
+
+private struct SettingsRootView: View {
+    @State private var refresh = UUID()
+
+    var body: some View {
+        TabView {
+            Form {
+                Toggle("Restore previous documents", isOn: binding(\.restoreSession))
+                Picker("Default mode", selection: binding(\.defaultMode)) {
+                    ForEach(RenderMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Toggle("Follow system appearance", isOn: binding(\.followsSystemAppearance))
+            }
+            .tabItem { Label("General", systemImage: "gearshape") }
+
+            Form {
+                Picker("Light theme", selection: binding(\.themeName)) {
+                    ForEach(ThemeStore.shared.themes.filter { $0.appearance != .dark }, id: \.name) { Text($0.name).tag($0.name) }
+                }
+                Picker("Dark theme", selection: binding(\.darkThemeName)) {
+                    ForEach(ThemeStore.shared.themes.filter { $0.appearance != .light }, id: \.name) { Text($0.name).tag($0.name) }
+                }
+                ThemePreview()
+            }
+            .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
+
+            Form {
+                Picker("Preset", selection: typographyBinding(\.preset)) {
+                    ForEach(TypographyConfig.BodyPreset.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Slider(value: typographyBinding(\.bodySize), in: 10...28, step: 1) { Text("Body size") }
+                Slider(value: typographyBinding(\.lineHeightMultiple), in: 1.2...1.9, step: 0.05) { Text("Line height") }
+                Slider(value: typographyBinding(\.measureCharacters), in: 64...74, step: 1) { Text("Measure") }
+                Toggle("Optical margins", isOn: typographyBinding(\.opticalMargins))
+                ThemePreview()
+            }
+            .tabItem { Label("Typography", systemImage: "textformat") }
+
+            Form {
+                Toggle("Typographic substitutions", isOn: binding(\.typographicSubstitution))
+                Toggle("Show invisibles", isOn: binding(\.showInvisibles))
+                Toggle("Typewriter scrolling", isOn: binding(\.typewriterScrolling))
+                Toggle("Resolve path tokens", isOn: binding(\.resolvePathTokens))
+                Stepper("Collapse code after \(Preferences.shared.values.codeBlockCollapseThreshold) lines",
+                        value: binding(\.codeBlockCollapseThreshold), in: 6...100)
+            }
+            .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+
+            Form {
+                Toggle("Vim-style keys", isOn: binding(\.vimKeys))
+                Text("Keyboard shortcuts remain fully editable from the Keys pane command table.")
+                    .foregroundStyle(.secondary)
+            }
+            .tabItem { Label("Keys", systemImage: "keyboard") }
+
+            Form {
+                Toggle("Watch files for external changes", isOn: binding(\.watchFiles))
+                Stepper("History: \(Preferences.shared.values.historyMaximumDays) days",
+                        value: binding(\.historyMaximumDays), in: 1...365)
+                Stepper("Large-file threshold: \(Preferences.shared.values.largeFileThresholdMegabytes) MB",
+                        value: binding(\.largeFileThresholdMegabytes), in: 1...100)
+            }
+            .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
+        }
+        .id(refresh)
+        .padding(12)
+        .frame(minWidth: 720, minHeight: 520)
+    }
+
+    private func binding<Value>(_ keyPath: WritableKeyPath<Preferences.Values, Value>) -> Binding<Value> {
+        Binding(
+            get: { Preferences.shared.values[keyPath: keyPath] },
+            set: { value in
+                Preferences.shared.update { $0[keyPath: keyPath] = value }
+                refresh = UUID()
+            }
+        )
+    }
+
+    private func typographyBinding<Value>(_ keyPath: WritableKeyPath<TypographyConfig, Value>) -> Binding<Value> {
+        Binding(
+            get: { Preferences.shared.values.typography[keyPath: keyPath] },
+            set: { value in
+                Preferences.shared.update { $0.typography[keyPath: keyPath] = value }
+                refresh = UUID()
+            }
+        )
+    }
+}
+
+private struct ThemePreview: View {
+    var body: some View {
+        let sheet = StyleSheet.current
+        VStack(alignment: .leading, spacing: 8) {
+            Text("A Native Markdown Document").font(.system(size: 22, weight: .bold, design: .serif))
+            Text("Typography updates live so measure, rhythm, and hierarchy can be judged before closing Settings.")
+            Text("let result = render(markdown)").font(.system(.body, design: .monospaced)).padding(8)
+                .background(Color(nsColor: sheet.codeBackground), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .padding(16)
+        .foregroundStyle(Color(nsColor: sheet.text))
+        .background(Color(nsColor: sheet.background), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: sheet.rule)))
     }
 }
 

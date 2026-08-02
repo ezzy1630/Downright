@@ -29,10 +29,12 @@ final class DocumentWindowController: NSWindowController {
     var outlinePanel: OutlinePanelView?
     var taskPanel: TaskPanelView?
     var siblingSidebar: SiblingSidebarView?
+    var navigationSidebar: NSStackView?
     var findBar: FindBarView?
     var conflictBar: ConflictBarView?
     var changeSummaryBar: ChangeSummaryBarView?
     var searchResults: SearchResultsPanelView?
+    var inspectorHost: InspectorHostView?
     var tidySheetWindow: NSWindow?
     private var auxiliaryWindows: [NSWindowController] = []
 
@@ -41,8 +43,9 @@ final class DocumentWindowController: NSWindowController {
     private var leadingPane: NSView!
     private var trailingPane: NSView!
     var barStack: NSStackView!
-    private var leadingWidth: NSLayoutConstraint!
-    private var trailingWidth: NSLayoutConstraint!
+    private var windowSplitController: NSSplitViewController!
+    private var sidebarItem: NSSplitViewItem!
+    private var inspectorItem: NSSplitViewItem!
 
     // State
     var scanner: SiblingScanner?
@@ -53,7 +56,9 @@ final class DocumentWindowController: NSWindowController {
     private var themeObservation: ThemeObservation?
     let progressRing = TaskProgressRing()
     private var isPinned = false
+    private var isFocusMode = false
     var pendingConflict: MarkdownDocument.Conflict?
+    var breadcrumbHideWorkItem: DispatchWorkItem?
 
     // MARK: - Construction
 
@@ -64,12 +69,13 @@ final class DocumentWindowController: NSWindowController {
             backing: .buffered, defer: false
         )
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.titleVisibility = .visible
         window.tabbingMode = .preferred
         window.setFrameAutosaveName("DownrightDocumentWindow")
         window.minSize = NSSize(width: 520, height: 400)
         self.init(window: window)
         buildInterface()
+        window.setContentSize(NSSize(width: 1020, height: 728))
         wireDocument()
         observeTheme()
     }
@@ -88,11 +94,24 @@ final class DocumentWindowController: NSWindowController {
         pathResolver = PathResolver(documentURL: url)
 
         window?.title = url.lastPathComponent
+        window?.subtitle = url.deletingLastPathComponent().lastPathComponent
         window?.representedURL = url
         applyMode(self.mode)
         primaryContainer.textView.zoomLevel = markdownDocument.state.zoomLevel
         primaryContainer.textView.foldedHeadingSlugs = markdownDocument.state.foldedHeadings
         primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
+
+        primaryContainer.wantsLayer = true
+        primaryContainer.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
+        primaryContainer.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -6))
+        Motion.run(
+            reduceMotion: activeStyleSheet.reduceMotion,
+            duration: Motion.quick,
+            changes: { _ in
+                self.primaryContainer.animator().alphaValue = 1
+                self.primaryContainer.layer?.setAffineTransform(.identity)
+            }
+        )
 
         refreshDerivedUI()
         if markdownDocument.state.sidebarVisible { toggleSiblingSidebar() }
@@ -194,6 +213,7 @@ final class DocumentWindowController: NSWindowController {
         densityGutterView.delegate = self
         densityGutterView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
+        breadcrumbView.alphaValue = 0
 
         rootView = NSView()
         leadingPane = NSView()
@@ -204,41 +224,42 @@ final class DocumentWindowController: NSWindowController {
         barStack.distribution = .fill
         barStack.alignment = .leading
 
-        for view in [leadingPane, primaryContainer, trailingPane, barStack] as [NSView] {
+        for view in [primaryContainer, barStack] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
 
-        // Install the root first: the content layout guide belongs to the
-        // window's contentView, and constraining to it from a detached view
-        // hierarchy has no common ancestor and throws at activation.
-        window?.contentView = rootView
+        let sidebarController = NSViewController()
+        sidebarController.view = leadingPane
+        let documentController = NSViewController()
+        documentController.view = rootView
+        let inspectorController = NSViewController()
+        inspectorController.view = trailingPane
 
-        leadingWidth = leadingPane.widthAnchor.constraint(equalToConstant: 0)
-        trailingWidth = trailingPane.widthAnchor.constraint(equalToConstant: 0)
-
-        // `.fullSizeContentView` puts the content behind the titlebar, which is
-        // what lets text scroll under a translucent toolbar — but only the
-        // *scrolling* content belongs there.  Pinning the panes to the window's
-        // content layout guide instead of the raw view keeps the breadcrumb and
-        // the panels clear of the traffic lights and the toolbar.
-        let contentTop: NSLayoutYAxisAnchor =
-            (window?.contentLayoutGuide as? NSLayoutGuide)?.topAnchor ?? rootView.topAnchor
+        let split = NSSplitViewController()
+        let sidebar = NSSplitViewItem(sidebarWithViewController: sidebarController)
+        sidebar.minimumThickness = 200
+        sidebar.maximumThickness = 380
+        sidebar.canCollapse = true
+        sidebar.isCollapsed = true
+        let document = NSSplitViewItem(viewController: documentController)
+        let inspector = NSSplitViewItem(inspectorWithViewController: inspectorController)
+        inspector.minimumThickness = 260
+        inspector.maximumThickness = 420
+        inspector.canCollapse = true
+        inspector.isCollapsed = true
+        split.addSplitViewItem(sidebar)
+        split.addSplitViewItem(document)
+        split.addSplitViewItem(inspector)
+        windowSplitController = split
+        sidebarItem = sidebar
+        inspectorItem = inspector
+        window?.contentViewController = split
 
         NSLayoutConstraint.activate([
-            leadingPane.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            leadingPane.topAnchor.constraint(equalTo: contentTop),
-            leadingPane.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            leadingWidth,
-
-            trailingPane.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            trailingPane.topAnchor.constraint(equalTo: contentTop),
-            trailingPane.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            trailingWidth,
-
-            primaryContainer!.leadingAnchor.constraint(equalTo: leadingPane.trailingAnchor),
-            primaryContainer.trailingAnchor.constraint(equalTo: trailingPane.leadingAnchor),
-            primaryContainer.topAnchor.constraint(equalTo: contentTop),
+            primaryContainer!.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            primaryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            primaryContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
             primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             barStack.leadingAnchor.constraint(equalTo: primaryContainer!.leadingAnchor),
@@ -252,7 +273,7 @@ final class DocumentWindowController: NSWindowController {
     private func buildToolbar() {
         let toolbar = NSToolbar(identifier: "DownrightToolbar")
         toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
+        toolbar.displayMode = .iconAndLabel
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
         window?.toolbar = toolbar
@@ -318,8 +339,17 @@ final class DocumentWindowController: NSWindowController {
         // Switching is instant and preserves scroll and selection because it is
         // the same layout manager over the same storage — the text view only
         // swaps its decoration policy (§3.2).
-        primaryContainer.textView.mode = newMode
-        splitContainer?.textView.mode = newMode
+        Motion.run(reduceMotion: activeStyleSheet.reduceMotion, duration: Motion.quick) { _ in
+            self.primaryContainer.animator().alphaValue = 0.72
+            self.splitContainer?.animator().alphaValue = 0.72
+        } completion: {
+            self.primaryContainer.textView.mode = newMode
+            self.splitContainer?.textView.mode = newMode
+            Motion.run(reduceMotion: self.activeStyleSheet.reduceMotion, duration: Motion.quick) { _ in
+                self.primaryContainer.animator().alphaValue = 1
+                self.splitContainer?.animator().alphaValue = 1
+            }
+        }
         markdownDocument.state.mode = newMode
         window?.toolbar?.validateVisibleItems()
     }
@@ -330,6 +360,9 @@ final class DocumentWindowController: NSWindowController {
         let parsed = markdownDocument.parsed
         outlinePanel?.headings = parsed.headings
         outlinePanel?.sectionMetrics = Metrics.sectionMetrics(parsed)
+        outlinePanel?.foldedIndices = Set(parsed.headings.indices.filter {
+            primaryContainer.textView.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
+        })
         outlinePanel?.reload()
 
         taskPanel?.tasks = parsed.tasks
@@ -453,10 +486,15 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Panels
 
     func toggleOutlinePanel() {
+        if navigationSidebar != nil {
+            dismissSiblingSidebar()
+            markdownDocument.state.sidebarVisible = false
+            return
+        }
         if let panel = outlinePanel {
             panel.removeFromSuperview()
             outlinePanel = nil
-            leadingWidth.animator().constant = 0
+            sidebarItem.isCollapsed = true
             return
         }
         dismissSiblingSidebar()
@@ -468,7 +506,7 @@ final class DocumentWindowController: NSWindowController {
         panel.zoomLevel = primaryContainer.textView.zoomLevel
         install(panel, in: leadingPane)
         outlinePanel = panel
-        leadingWidth.animator().constant = 260
+        sidebarItem.isCollapsed = false
         panel.reload()
     }
 
@@ -476,7 +514,8 @@ final class DocumentWindowController: NSWindowController {
         if let panel = taskPanel {
             panel.removeFromSuperview()
             taskPanel = nil
-            trailingWidth.animator().constant = 0
+            inspectorHost?.removeContent(segment: 0)
+            if searchResults == nil { inspectorItem.isCollapsed = true }
             return
         }
         let panel = TaskPanelView()
@@ -484,14 +523,14 @@ final class DocumentWindowController: NSWindowController {
         panel.styleSheet = activeStyleSheet
         panel.tasks = markdownDocument.parsed.tasks
         panel.headings = markdownDocument.parsed.headings
-        install(panel, in: trailingPane)
+        showInInspector(panel, segment: 0)
         taskPanel = panel
-        trailingWidth.animator().constant = 300
+        inspectorItem.isCollapsed = false
         panel.reload()
     }
 
     func toggleSiblingSidebar() {
-        if siblingSidebar != nil {
+        if navigationSidebar != nil || siblingSidebar != nil {
             dismissSiblingSidebar()
             markdownDocument.state.sidebarVisible = false
             return
@@ -501,22 +540,54 @@ final class DocumentWindowController: NSWindowController {
         sidebar.delegate = self
         sidebar.styleSheet = activeStyleSheet
         sidebar.siblings = scanner?.siblings ?? []
-        install(sidebar, in: leadingPane)
+        let outline = OutlinePanelView()
+        outline.delegate = self
+        outline.styleSheet = activeStyleSheet
+        outline.headings = markdownDocument.parsed.headings
+        outline.sectionMetrics = Metrics.sectionMetrics(markdownDocument.parsed)
+        outline.zoomLevel = primaryContainer.textView.zoomLevel
+        outline.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
+            primaryContainer.textView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
+        })
+        let stack = NSStackView(views: [sidebar, outline])
+        stack.orientation = .vertical
+        stack.distribution = .fillEqually
+        stack.spacing = 1
+        install(stack, in: leadingPane)
         siblingSidebar = sidebar
-        leadingWidth.animator().constant = 240
+        outlinePanel = outline
+        navigationSidebar = stack
+        sidebarItem.isCollapsed = false
         markdownDocument.state.sidebarVisible = true
         sidebar.reload()
+        outline.reload()
     }
 
     private func dismissSiblingSidebar() {
+        navigationSidebar?.removeFromSuperview()
+        navigationSidebar = nil
         siblingSidebar?.removeFromSuperview()
         siblingSidebar = nil
-        leadingWidth.animator().constant = 0
+        outlinePanel = nil
+        sidebarItem.isCollapsed = true
     }
 
     func installTrailing(_ view: NSView) {
-        install(view, in: trailingPane)
-        trailingWidth.animator().constant = 320
+        showInInspector(view, segment: 1)
+    }
+
+    private func showInInspector(_ view: NSView, segment: Int) {
+        let host: InspectorHostView
+        if let inspectorHost { host = inspectorHost }
+        else {
+            let created = InspectorHostView()
+            created.onHistory = { [weak self] in self?.perform(.versionTimeline) }
+            install(created, in: trailingPane)
+            inspectorHost = created
+            host = created
+        }
+        host.setContent(view, segment: segment)
+        inspectorItem.isCollapsed = false
     }
 
     /// Keeps auxiliary windows (timeline, compare, lightbox) alive for as long
@@ -623,12 +694,18 @@ final class DocumentWindowController: NSWindowController {
 
     func toggleSplitView() {
         if let split = splitViewContainer {
+            primaryContainer.removeFromSuperview()
             split.removeFromSuperview()
             splitViewContainer = nil
             splitContainer = nil
-            buildInterface()
-            primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
-            applyMode(mode)
+            primaryContainer.translatesAutoresizingMaskIntoConstraints = false
+            rootView.addSubview(primaryContainer)
+            NSLayoutConstraint.activate([
+                primaryContainer.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+                primaryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+                primaryContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
+                primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            ])
             return
         }
 
@@ -652,8 +729,8 @@ final class DocumentWindowController: NSWindowController {
         split.addArrangedSubview(second)
         rootView.addSubview(split)
         NSLayoutConstraint.activate([
-            split.leadingAnchor.constraint(equalTo: leadingPane.trailingAnchor),
-            split.trailingAnchor.constraint(equalTo: trailingPane.leadingAnchor),
+            split.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            split.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             split.topAnchor.constraint(equalTo: rootView.topAnchor),
             split.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
@@ -674,6 +751,19 @@ final class DocumentWindowController: NSWindowController {
     func togglePin() {
         isPinned.toggle()
         window?.level = isPinned ? .floating : .normal
+    }
+
+    func toggleFocusMode() {
+        isFocusMode.toggle()
+        window?.toolbar?.isVisible = !isFocusMode
+        densityGutterView.isHidden = isFocusMode
+        breadcrumbView.isHidden = isFocusMode
+        if isFocusMode {
+            sidebarItem.isCollapsed = true
+            inspectorItem.isCollapsed = true
+        } else if markdownDocument.state.sidebarVisible {
+            sidebarItem.isCollapsed = false
+        }
     }
 }
 

@@ -18,7 +18,9 @@ TEST_SCRATCH="${TEST_SCRATCH:-.build-test}"
 
 CLT_FRAMEWORKS="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 TEST_FLAGS=()
-if [ -d "$CLT_FRAMEWORKS/Testing.framework" ]; then
+SELECTED_DEVELOPER="$(xcode-select -p 2>/dev/null || true)"
+if [[ "$SELECTED_DEVELOPER" == /Library/Developer/CommandLineTools* ]] \
+    && [ -d "$CLT_FRAMEWORKS/Testing.framework" ]; then
     TEST_FLAGS=(-Xswiftc -F -Xswiftc "$CLT_FRAMEWORKS")
 fi
 

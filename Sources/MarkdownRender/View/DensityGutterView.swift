@@ -71,7 +71,7 @@ public final class DensityGutterView: NSView {
     /// gutter shown if the panel is wide enough") — leave it out.
     /// Rail width.  Lives here rather than in the app's panel metrics so the
     /// Quick Look extension gets the same rail without importing the app.
-    public static let width: CGFloat = 14
+    public static let width: CGFloat = 28
 
     public static let minimumHostWidth: CGFloat = 360
 
@@ -79,7 +79,7 @@ public final class DensityGutterView: NSView {
     private var isScrubbing = false
     private var trackingArea: NSTrackingArea?
 
-    private let horizontalMargin: CGFloat = 2
+    private let horizontalMargin: CGFloat = 1
 
     // MARK: - Init
 
@@ -121,18 +121,6 @@ public final class DensityGutterView: NSView {
         guard height > 0 else { return }
         let contrast = styleSheet.increaseContrast
 
-        styleSheet.textFaint.panelAlpha(0.05, increaseContrast: contrast).setFill()
-        bounds.fill()
-
-        // Reading progress sits behind everything (§5.1): it is context, not a
-        // band, and must never be mistaken for content.
-        if readProgress > 0 {
-            styleSheet.textFaint.panelAlpha(0.10, increaseContrast: contrast).setFill()
-            NSRect(x: 0, y: 0, width: bounds.width, height: readProgress * height).fill()
-        }
-
-        drawThumb(height: height, contrast: contrast)
-
         for band in bands.sorted(by: { Self.paintOrder($0.kind) < Self.paintOrder($1.kind) }) {
             draw(band: band, height: height, contrast: contrast)
         }
@@ -156,7 +144,17 @@ public final class DensityGutterView: NSView {
     }
 
     private func draw(band: DensityBand, height: CGFloat, contrast: Bool) {
-        let style = self.style(for: band.kind, contrast: contrast)
+        let isHeading: Bool
+        if case .heading = band.kind { isHeading = true } else { isHeading = false }
+        guard isHeading || Self.paintOrder(band.kind) >= 2 else { return }
+        var style = self.style(for: band.kind, contrast: contrast)
+        if case .heading = band.kind {
+            let current = visibleRange.contains(band.startFraction)
+            style.minHeight = current ? 2 : 1.5
+            style.color = current
+                ? styleSheet.railTickCurrent.withAlphaComponent(0.9)
+                : styleSheet.railTick.withAlphaComponent(band.startFraction <= readProgress ? 0.5 : 0.3)
+        }
         let available = bounds.width - horizontalMargin * 2
         let x = horizontalMargin + available * style.inset
         let width = max(2, available * style.width)
@@ -178,14 +176,13 @@ public final class DensityGutterView: NSView {
     private func style(for kind: DensityBand.Kind, contrast: Bool) -> BandStyle {
         switch kind {
         case .heading(let level):
-            // Indented by level, so the outline's shape is legible as a shape.
-            let depth = CGFloat(min(max(level, 1), 6) - 1)
+            let lengths: [CGFloat] = [26, 20, 14]
+            let width = lengths[min(2, max(0, level - 1))]
             return BandStyle(
-                inset: depth * 0.11,
-                width: 1 - depth * 0.11,
-                minHeight: 2,
-                color: styleSheet.headingColor(level: level)
-                    .panelAlpha(level == 1 ? 0.85 : 0.55, increaseContrast: contrast)
+                inset: max(0, (bounds.width - width) / max(1, bounds.width)),
+                width: width / max(1, bounds.width - horizontalMargin * 2),
+                minHeight: 1.5,
+                color: styleSheet.railTick
             )
         case .codeBlock:
             return BandStyle(inset: 0.25, width: 0.5, minHeight: 3,
@@ -211,6 +208,7 @@ public final class DensityGutterView: NSView {
             return BandStyle(inset: 0, width: 1, minHeight: 3, color: styleSheet.changeColor(changeKind))
         }
     }
+
 
     /// Changes last, search hits just under them: both are transient answers to
     /// "where is the thing I am looking for", and losing one behind a heading
