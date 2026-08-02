@@ -41,6 +41,10 @@ extension DocumentWindowController: CommandResponder {
         case .commandPalette: showCommandPalette()
         case .documentLens: toggleDocumentLensPanel()
         case .readerProfiles: showReaderProfiles()
+        case .documentHealth: toggleDocumentHealthPanel()
+        case .renderTargets: toggleRenderTargetsPanel()
+        case .visualDebugger: toggleVisualDebuggerPanel()
+        case .reviewPanel: showReviewPanel()
 
         // MARK: Navigation
         case .nextHeading: jumpHeading(forward: true)

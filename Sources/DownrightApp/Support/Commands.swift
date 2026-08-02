@@ -13,6 +13,7 @@ enum Command: String, CaseIterable, Codable {
     case toggleSidebar, outlineQuickOpen, outlinePanel, taskPanel, versionTimeline, compareFiles
     case frontMatterEditor, tableEditor, assetDoctor
     case commandPalette, documentLens, readerProfiles
+    case documentHealth, renderTargets, visualDebugger, reviewPanel
 
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
@@ -66,6 +67,10 @@ enum Command: String, CaseIterable, Codable {
         case .commandPalette: return "Command Palette…"
         case .documentLens: return "Document Lens"
         case .readerProfiles: return "Reader Profiles…"
+        case .documentHealth: return "Document Health"
+        case .renderTargets: return "Render Targets"
+        case .visualDebugger: return "Visual Debugger"
+        case .reviewPanel: return "Review"
         case .nextHeading: return "Next Heading"
         case .previousHeading: return "Previous Heading"
         case .nextChange: return "Next Change"
@@ -172,7 +177,8 @@ enum Command: String, CaseIterable, Codable {
              .zoomLevel5, .zoomIn, .zoomOut, .increaseTextSize, .decreaseTextSize, .resetTextSize,
              .focusMode, .typewriterScrolling, .toggleSidebar, .outlinePanel, .taskPanel,
              .versionTimeline, .reloadTheme, .commandPalette, .documentLens,
-             .readerProfiles:
+             .readerProfiles, .documentHealth, .renderTargets, .visualDebugger,
+             .reviewPanel:
             return .view
         case .nextHeading, .previousHeading, .nextChange, .previousChange, .scrollDown, .scrollUp,
              .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward,

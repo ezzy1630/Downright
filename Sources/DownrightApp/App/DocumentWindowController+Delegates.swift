@@ -80,6 +80,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {
         window?.toolbar?.validateVisibleItems()
+        refreshVisualDebuggerIfVisible()
     }
 
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {

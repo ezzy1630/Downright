@@ -376,6 +376,9 @@ final class DocumentWindowController: NSWindowController {
         frontMatterEditor?.document = parsed
         if let assetDoctorPanel { configureAssetDoctor(assetDoctorPanel) }
         refreshDocumentLensIfVisible()
+        refreshDiagnosticsPanels()
+        refreshVisualDebuggerIfVisible()
+        refreshReviewPanelIfVisible()
         progressRing.progress = (
             done: parsed.tasks.filter(\.isChecked).count,
             total: parsed.tasks.count
