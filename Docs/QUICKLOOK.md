@@ -77,20 +77,29 @@ cannot be produced by SwiftPM: it needs an app-extension target, an embedded
 `Info.plist` with an `NSExtension` dictionary, and a signed bundle nested inside
 the host app's `Contents/PlugIns/`.
 
-The sources are complete and compile as libraries against the same package. To
-ship them:
+The repository includes an XcodeGen specification and extension plists. Run
+the wrapper script from the repository root:
 
-1. Create an Xcode project wrapping this SwiftPM package (File → Add Package
-   Dependencies → Add Local, pointing at this directory).
-2. Add a **Quick Look Preview Extension** target. Set its principal class to
-   `PreviewViewController` and add `Sources/DownrightQL/` to it.
-3. Add a **Quick Look Thumbnail Extension** target. Set its principal class to
-   `ThumbnailProvider` and add `Sources/DownrightThumb/` to it.
-4. Add `MarkdownCore` and `MarkdownRender` to both targets' Frameworks phases.
-5. Set both extensions' `QLSupportedContentTypes` to the UTIs listed above.
-6. Embed both into the host app's `Contents/PlugIns/`.
+```bash
+Scripts/bundle-xcode-app.sh
+```
 
-The `Info.plist` fragments each extension needs:
+This generates the ignored `Downright.xcodeproj`, builds the host app, and
+embeds `DownrightQL.appex` and `DownrightThumb.appex` in
+`Contents/PlugIns/`. Set `CONFIGURATION=Debug` or `SCRATCH=/path/to/build` to
+change the build. The script uses ad-hoc local settings; release builds need a
+Developer ID identity and notarisation (see [RELEASE.md](RELEASE.md)).
+
+The extension targets use these plists and principal classes:
+
+- `Config/DownrightQL-Info.plist` → `DownrightQL.PreviewViewController`
+- `Config/DownrightThumb-Info.plist` → `DownrightThumb.ThumbnailProvider`
+
+Both declare the Markdown UTIs listed above. XcodeGen wires `MarkdownCore` and
+`MarkdownRender` into both extensions and embeds both into the host app.
+
+For reference, each extension plist contains an `NSExtension` dictionary like
+this:
 
 ```xml
 <!-- DownrightQL -->

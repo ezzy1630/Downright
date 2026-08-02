@@ -138,10 +138,11 @@ The repository contains native preview and thumbnail providers. They can give
 `.md` files full previews and Finder icons that show the first heading.
 
 The default SwiftPM app bundle does not include the required `.appex` bundles.
-See [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for the Xcode packaging steps. After
-those bundles are installed, launch the host app once. You may then need to
-enable Downright under **System Settings → General → Login Items & Extensions
-→ Quick Look**.
+Run `Scripts/bundle-xcode-app.sh` to generate the Xcode project, build the host
+app, and embed the preview and thumbnail extensions. See
+[Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for details. After those bundles are
+installed, launch the host app once. You may then need to enable Downright
+under **System Settings → General → Login Items & Extensions → Quick Look**.
 
 ## Themes
 

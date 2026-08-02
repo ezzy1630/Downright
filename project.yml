@@ -1,0 +1,91 @@
+name: Downright
+options:
+  bundleIdPrefix: com.unrulyagency
+  deploymentTarget:
+    macOS: 14.0
+  createIntermediateGroups: true
+  groupSortPosition: top
+  developmentLanguage: en
+packages:
+  Downright:
+    path: .
+targets:
+  Downright:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/DownrightApp
+    dependencies:
+      - package: Downright
+        product: MarkdownCore
+      - package: Downright
+        product: MarkdownRender
+      - target: DownrightQL
+        embed: true
+      - target: DownrightThumb
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unrulyagency.downright
+        PRODUCT_NAME: Downright
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: Config/Downright-Info.plist
+        SWIFT_VERSION: 5.0
+        MACOSX_DEPLOYMENT_TARGET: 14.0
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+  DownrightQL:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/DownrightQL
+    dependencies:
+      - package: Downright
+        product: MarkdownCore
+      - package: Downright
+        product: MarkdownRender
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unrulyagency.downright.quicklook
+        PRODUCT_NAME: DownrightQL
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: Config/DownrightQL-Info.plist
+        SWIFT_VERSION: 5.0
+        MACOSX_DEPLOYMENT_TARGET: 14.0
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+  DownrightThumb:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/DownrightThumb
+    dependencies:
+      - package: Downright
+        product: MarkdownCore
+      - package: Downright
+        product: MarkdownRender
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unrulyagency.downright.thumbnail
+        PRODUCT_NAME: DownrightThumb
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: Config/DownrightThumb-Info.plist
+        SWIFT_VERSION: 5.0
+        MACOSX_DEPLOYMENT_TARGET: 14.0
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  Downright:
+    build:
+      targets:
+        Downright: all
+    run:
+      config: Debug
+    archive:
+      config: Release
