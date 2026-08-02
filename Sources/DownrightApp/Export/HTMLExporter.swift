@@ -246,7 +246,10 @@ struct HTMLExporter {
         case .lineBreak:
             return "<br>\n"
         case .inlineHTML:
-            return document.substring(span.range)
+            // Exported documents are standalone files opened outside the app.
+            // Treat inline HTML as source text so a heading like `<Tag>` keeps
+            // its content and an untrusted markdown file cannot inject script.
+            return escape(document.substring(span.range))
         }
     }
 

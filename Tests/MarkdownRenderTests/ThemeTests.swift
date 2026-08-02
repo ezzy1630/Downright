@@ -53,7 +53,7 @@ final class ThemeTests {
     func everyColourParses() {
         for theme in bundled() {
             #expect(theme.invalidColorPaths() == [], "\(theme.name) has unparseable colours")
-            #expect(theme.allColors().count == 24 + 14, "\(theme.name): unexpected colour count")
+            #expect(theme.allColors().count == 24 + 17, "\(theme.name): unexpected colour count")
             for (path, color) in theme.allColors() {
                 #expect(color.validated() != nil, "\(theme.name).\(path) = \(color.raw)")
             }
