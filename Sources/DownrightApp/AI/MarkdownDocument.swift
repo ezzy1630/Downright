@@ -57,10 +57,18 @@ final class MarkdownDocument: NSObject {
     private var reparseScheduled = false
     private var isApplyingExternalChange = false
     private var suppressReparse = false
+    private let parseWorker: MarkdownParseWorker
+    private var parseTask: Task<Void, Never>?
+    private(set) var revision = MarkdownParseRevision.zero
 
     // MARK: - Init
 
-    override init() {
+    override convenience init() {
+        self.init(parseWorker: MarkdownParseWorker())
+    }
+
+    init(parseWorker: MarkdownParseWorker) {
+        self.parseWorker = parseWorker
         self.state = DocumentState(path: "")
         super.init()
         storage.delegate = self
@@ -75,6 +83,7 @@ final class MarkdownDocument: NSObject {
     // MARK: - Opening and saving
 
     func open(_ fileURL: URL) throws {
+        cancelParseWork()
         let (text, fidelity) = try DocumentIO.read(contentsOf: fileURL)
         self.url = fileURL
         self.fidelity = fidelity
@@ -87,7 +96,7 @@ final class MarkdownDocument: NSObject {
         suppressReparse = false
 
         diskHash = SnapshotStore.hash(text)
-        reparse(notifying: true, wholesale: true)
+        reparseSynchronously(notifying: true, wholesale: true)
         isDirty = false
 
         SnapshotStore.shared.record(text, for: fileURL, kind: .baseline)
@@ -107,13 +116,14 @@ final class MarkdownDocument: NSObject {
     /// Adopts text with no backing file — used by `Compare` windows and by the
     /// version timeline's preview pane.
     func adopt(text: String, displayURL: URL?) {
+        cancelParseWork()
         self.url = displayURL
         suppressReparse = true
         storage.beginEditing()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
         storage.endEditing()
         suppressReparse = false
-        reparse(notifying: true, wholesale: true)
+        reparseSynchronously(notifying: true, wholesale: true)
         isDirty = false
     }
 
@@ -136,6 +146,7 @@ final class MarkdownDocument: NSObject {
     }
 
     func close() {
+        cancelParseWork()
         persistState()
         watcher?.stop()
         watcher = nil
@@ -207,6 +218,7 @@ final class MarkdownDocument: NSObject {
 
     /// Toggling a checkbox writes the file immediately (§7.1, §8.5).
     func toggleTask(atMarkOffset offset: Int) {
+        ensureParsedCurrent()
         guard let edit = Restructure.toggleTask(parsed, atMarkOffset: offset) else { return }
         apply([edit], actionName: "Toggle Task")
         reparseNow()
@@ -227,24 +239,78 @@ final class MarkdownDocument: NSObject {
         guard !reparseScheduled, !suppressReparse else { return }
         reparseScheduled = true
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
-            guard let self else { return }
-            self.reparseScheduled = false
-            self.reparse(notifying: true, wholesale: false)
+            self?.flushScheduledReparse()
         }
+    }
+
+    /// Starts the coalesced worker snapshot.  Kept as a small seam so tests
+    /// can flush scheduled work without depending on wall-clock run-loop time.
+    func flushScheduledReparse() {
+        guard reparseScheduled else { return }
+        reparseScheduled = false
+        startAsyncReparse()
     }
 
     func reparseNow() {
         reparseScheduled = false
-        reparse(notifying: true, wholesale: false)
+        reparseSynchronously(notifying: true, wholesale: false)
     }
 
-    private func reparse(notifying: Bool, wholesale: Bool) {
+    /// Forces convergence before an operation that reads the tree.  Commands
+    /// that rewrite source must never plan edits from an older async parse.
+    func ensureParsedCurrent() {
+        guard parsed.text != storage.string else { return }
+        reparseNow()
+    }
+
+    private func reparseSynchronously(notifying: Bool, wholesale: Bool) {
+        cancelParseWork()
         let previous = parsed
         let fresh = MarkdownParser.parse(storage.string)
         parsed = fresh
         guard notifying else { return }
         let dirty = wholesale ? DirtySet.wholesale : ASTDiff.dirtySet(old: previous, new: fresh)
         onReparse?(fresh, dirty)
+    }
+
+    private func startAsyncReparse() {
+        guard !suppressReparse else { return }
+        let text = storage.string
+        let previous = parsed
+        let parseRevision = revision
+        let worker = parseWorker
+
+        parseTask?.cancel()
+        parseTask = Task.detached(priority: .userInitiated) { [weak self, worker, text, previous, parseRevision] in
+            let result = await worker.run(text: text, previous: previous, revision: parseRevision)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.applyAsyncParse(result)
+            }
+        }
+    }
+
+    private func applyAsyncParse(_ result: MarkdownParseResult) {
+        guard result.revision == revision,
+              result.text == storage.string,
+              result.document.text == result.text else { return }
+        parseTask = nil
+        parsed = result.document
+        onReparse?(result.document, result.dirty)
+    }
+
+    private func cancelParseWork() {
+        parseTask?.cancel()
+        parseTask = nil
+        reparseScheduled = false
+        revision = revision.advanced()
+    }
+
+    private func invalidateParseWorkForEdit() {
+        parseTask?.cancel()
+        parseTask = nil
+        revision = revision.advanced()
     }
 
     // MARK: - External changes (§8.1)
@@ -355,7 +421,9 @@ extension MarkdownDocument: NSTextStorageDelegate {
     ) {
         guard editedMask.contains(.editedCharacters) else { return }
         MainActor.assumeIsolated {
-            if !isApplyingExternalChange && !suppressReparse {
+            guard !suppressReparse else { return }
+            invalidateParseWorkForEdit()
+            if !isApplyingExternalChange {
                 setDirty(true)
             }
             scheduleReparse()

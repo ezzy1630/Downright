@@ -110,6 +110,7 @@ extension DocumentWindowController {
     // MARK: - Tables (§6.3)
 
     func tableInsertRow(_ tableRange: NSRange) {
+        markdownDocument.ensureParsedCurrent()
         let row = rowIndex(in: tableRange)
         markdownDocument.apply(
             Restructure.insertRow(markdownDocument.parsed, tableRange: tableRange, afterRow: row),
@@ -118,6 +119,7 @@ extension DocumentWindowController {
     }
 
     func tableDeleteRow(_ tableRange: NSRange) {
+        markdownDocument.ensureParsedCurrent()
         let row = rowIndex(in: tableRange)
         markdownDocument.apply(
             Restructure.deleteRow(markdownDocument.parsed, tableRange: tableRange, row: row),
@@ -126,6 +128,7 @@ extension DocumentWindowController {
     }
 
     func tableSetAlignment(_ tableRange: NSRange, _ alignment: TableAlignment) {
+        markdownDocument.ensureParsedCurrent()
         let column = columnIndex(in: tableRange)
         markdownDocument.apply(
             Restructure.setColumnAlignment(

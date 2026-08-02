@@ -166,6 +166,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             }
             menu.addItem(actionItem("Realign Source") { [weak self] in
                 guard let self else { return }
+                self.markdownDocument.ensureParsedCurrent()
                 self.markdownDocument.apply(
                     Restructure.realignTable(self.markdownDocument.parsed, tableRange: range),
                     actionName: "Realign Table"
@@ -232,11 +233,13 @@ extension DocumentWindowController: OutlinePanelDelegate {
 
     func outlinePanel(_ panel: OutlinePanelView, didMoveHeadingAt index: Int, before targetIndex: Int) {
         // Moves the heading and everything beneath it (§7.1).
+        markdownDocument.ensureParsedCurrent()
         let edits = Restructure.moveSection(markdownDocument.parsed, headingIndex: index, before: targetIndex)
         markdownDocument.apply(edits, actionName: "Move Section")
     }
 
     func outlinePanel(_ panel: OutlinePanelView, didToggleFoldAt index: Int) {
+        markdownDocument.ensureParsedCurrent()
         guard index < markdownDocument.parsed.headings.count else { return }
         let slug = markdownDocument.parsed.headings[index].slug
         if containerTextView.foldedHeadingSlugs.contains(slug) {
@@ -255,6 +258,7 @@ extension DocumentWindowController: OutlinePanelDelegate {
 
 extension DocumentWindowController: TaskPanelDelegate {
     func taskPanel(_ panel: TaskPanelView, didToggleTaskAt markOffset: Int) {
+        markdownDocument.ensureParsedCurrent()
         markdownDocument.toggleTask(atMarkOffset: markOffset)
     }
 

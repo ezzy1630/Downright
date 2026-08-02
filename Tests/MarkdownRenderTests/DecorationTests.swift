@@ -621,6 +621,30 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
             != base.textKitOffset(forSource: second.location + 3))
 }
 
+@Test @MainActor func multiParagraphSelectionKeepsHiddenAttributesInSync() {
+    let text = "First **bold** line.\nSecond *italic* line.\n"
+    let storage = NSTextStorage(string: text)
+    let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), storage: storage)
+    view.mode = .live
+    view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+
+    let source = text as NSString
+    let start = source.range(of: "bold").location
+    let end = source.range(of: "italic").upperBound
+    let selected = NSRange(location: start, length: end - start)
+    let textKitSelection = view.currentDisplayMap.textKitRange(forSource: selected)
+    view.setSelectedRanges(
+        [NSValue(range: textKitSelection)], affinity: .downstream, stillSelecting: false)
+
+    var attributedHidden: [NSRange] = []
+    storage.enumerateAttribute(
+        .drHidden, in: NSRange(location: 0, length: storage.length)
+    ) { value, range, _ in
+        if value != nil { attributedHidden.append(range) }
+    }
+    #expect(RangeSet.normalized(attributedHidden) == view.currentDisplayMap.hiddenRanges)
+}
+
 @Test func wholesaleDecorationOfALargeDocumentIsAffordable() {
     // Not a budget in §12, but the number that decides whether a mode switch
     // feels instant (§3.2), so it is worth having on the record.

@@ -180,6 +180,7 @@ extension DocumentWindowController: CommandResponder {
     // MARK: - Restructuring
 
     private func restructureHeading(promote: Bool) {
+        markdownDocument.ensureParsedCurrent()
         guard let index = currentHeadingIndex() else { return }
         let edits = promote
             ? Restructure.promoteHeading(markdownDocument.parsed, headingIndex: index)
@@ -188,22 +189,26 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func moveBlock(_ direction: MoveDirection) {
+        markdownDocument.ensureParsedCurrent()
         let offset = caretOffset()
         let edits = Restructure.moveBlock(markdownDocument.parsed, containing: offset, direction)
         markdownDocument.apply(edits, actionName: direction == .up ? "Move Block Up" : "Move Block Down")
     }
 
     private func convertSelection(to conversion: ListConversion) {
+        markdownDocument.ensureParsedCurrent()
         let edits = Restructure.convert(markdownDocument.parsed, range: selectionRange(), to: conversion)
         markdownDocument.apply(edits, actionName: "Convert to \(conversion.title)")
     }
 
     private func sortList(order: ListSortOrder) {
+        markdownDocument.ensureParsedCurrent()
         let edits = Restructure.sortList(markdownDocument.parsed, containing: caretOffset(), order: order)
         markdownDocument.apply(edits, actionName: "Sort List")
     }
 
     private func insertTableOfContents() {
+        markdownDocument.ensureParsedCurrent()
         let toc = Restructure.tableOfContents(markdownDocument.parsed, maxLevel: 3)
         guard !toc.isEmpty else { return }
         let insertion = markdownDocument.parsed.frontMatter.map { $0.range.upperBound } ?? 0
@@ -214,6 +219,7 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func foldCurrentSection(fold: Bool) {
+        markdownDocument.ensureParsedCurrent()
         guard let index = currentHeadingIndex() else { return }
         let slug = markdownDocument.parsed.headings[index].slug
         if fold { textView.foldedHeadingSlugs.insert(slug) } else { textView.foldedHeadingSlugs.remove(slug) }
@@ -221,11 +227,13 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func setAllFolds(folded: Bool) {
+        markdownDocument.ensureParsedCurrent()
         textView.foldedHeadingSlugs = folded ? Set(markdownDocument.parsed.headings.map(\.slug)) : []
         markdownDocument.state.foldedHeadings = textView.foldedHeadingSlugs
     }
 
     private func showTidySheet() {
+        markdownDocument.ensureParsedCurrent()
         let edits = TidyDocument.plan(markdownDocument.parsed)
         guard !edits.isEmpty else {
             let alert = NSAlert()
@@ -273,12 +281,14 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func indentSelection(outdent: Bool) {
+        markdownDocument.ensureParsedCurrent()
         let line = (markdownDocument.text as NSString).lineRange(for: selectionRange())
         let edits = ListEditing.indent(markdownDocument.parsed, lineRange: line, outdent: outdent)
         markdownDocument.apply(edits, actionName: outdent ? "Outdent" : "Indent")
     }
 
     private func toggleTaskAtCaret() {
+        markdownDocument.ensureParsedCurrent()
         let offset = caretOffset()
         guard let task = markdownDocument.parsed.tasks.first(where: {
             $0.contentRange.touches(offset: offset) || $0.markRange.touches(offset: offset)

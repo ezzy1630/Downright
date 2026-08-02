@@ -237,6 +237,9 @@ public final class MarkdownTextView: NSTextView {
 
     /// Re-decorates only what the AST diff says changed (§3.5).
     public func update(document: ParsedDocument, dirty: DirtySet) {
+        let selection = sourceSelectedRanges
+        let anchor = topVisibleOffset
+        let currentMode = mode
         parsedDocument = document
         updateGeneration &+= 1
         pathExistence.removeAll(keepingCapacity: true)
@@ -255,6 +258,18 @@ public final class MarkdownTextView: NSTextView {
         invalidateAllFragments()
         gutterRail?.reload()
         resizeToFitContent()
+
+        // Async parses replace only the tree and decorations. Keep the same
+        // source coordinates, scroll anchor, and render mode across commit;
+        // TextKit coordinates may have changed with elision.
+        if mode != currentMode { mode = currentMode }
+        let boundedSelection = selection.map { range -> NSRange in
+            let location = min(max(0, range.location), document.length)
+            let end = min(max(location, range.upperBound), document.length)
+            return NSRange(location: location, length: end - location)
+        }
+        setSourceSelectedRanges(boundedSelection)
+        scroll(toOffset: min(max(0, anchor), document.length), position: .top, animated: false)
     }
 
     /// Size the document view to the height layout actually used.
@@ -348,6 +363,7 @@ public final class MarkdownTextView: NSTextView {
         let caret = primarySourceCaret
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
+        var requiresFullHiddenRefresh = false
         displayMap = baseDisplayMap
 
         if let composing = composingParagraph {
@@ -356,6 +372,7 @@ public final class MarkdownTextView: NSTextView {
             // bookkeeping is exactly right.
             hidden = hidden.filter { $0.upperBound <= composing.location || $0.location >= composing.upperBound }
             displayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: [])
+            requiresFullHiddenRefresh = caret == nil
         } else if mode.policy.revealsAtCaret {
             let revealed = MarkerPolicy.revealedMarkerRanges(
                 document: parsedDocument, policy: mode.policy,
@@ -390,13 +407,18 @@ public final class MarkdownTextView: NSTextView {
             } else if !revealed.isEmpty {
                 hidden = subtract(revealed, from: hidden)
                 displayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
+                // A selection can span any number of paragraphs. The map was
+                // rebuilt for the whole document, so its mirrored attributes
+                // must use the same scope. This path is gesture-driven and is
+                // not part of the insertion-caret hot path.
+                requiresFullHiddenRefresh = true
             }
         }
         substitution.displayMap = displayMap
 
         let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
         let scope: NSRange?
-        if fullRefresh {
+        if fullRefresh || requiresFullHiddenRefresh {
             scope = nil
         } else {
             switch (revealParagraph, current) {
