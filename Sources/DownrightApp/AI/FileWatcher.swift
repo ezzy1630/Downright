@@ -122,8 +122,17 @@ final class FileWatcher {
         let callback: FSEventStreamCallback = { _, info, count, eventPaths, _, _ in
             guard let info else { return }
             let watcher = Unmanaged<FileWatcher>.fromOpaque(info).takeUnretainedValue()
-            guard let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] else { return }
-            watcher.handleStreamEvents(paths: Array(paths.prefix(count)))
+            // Without `kFSEventStreamCreateFlagUseCFTypes`, `eventPaths` is a
+            // C array of UTF-8 path pointers. Bridging the raw pointer itself
+            // as an NSArray is undefined behaviour and crashes in objc_msgSend.
+            let pointers = eventPaths.assumingMemoryBound(to: UnsafePointer<CChar>?.self)
+            var paths: [String] = []
+            paths.reserveCapacity(count)
+            for index in 0..<count {
+                guard let path = pointers[index] else { continue }
+                paths.append(String(cString: path))
+            }
+            watcher.handleStreamEvents(paths: paths)
         }
 
         let flags = UInt32(
