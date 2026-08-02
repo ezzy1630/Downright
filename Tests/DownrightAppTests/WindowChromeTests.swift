@@ -13,12 +13,17 @@ struct WindowChromeTests {
 
         #expect(controller.window?.isRestorable == false)
         #expect(controller.window?.delegate === controller)
-        #expect(toolbar.displayMode == .iconOnly)
-        #expect(toolbar.identifier == "DownrightToolbar.v4")
-        #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
+        #expect(controller.window?.titlebarAppearsTransparent == false)
+        #expect(controller.primaryContainer.trailingAccessory === controller.densityGutterView)
+        #expect(toolbar.displayMode == .iconAndLabel)
+        #expect(toolbar.identifier == "DownrightToolbar.v5")
+        #expect(toolbar.centeredItemIdentifier == nil)
+        let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             "contents",
+            flexibleSpace,
             "presentation-mode",
+            flexibleSpace,
             "find", "inspector", "overflow",
         ])
 
@@ -40,10 +45,10 @@ struct WindowChromeTests {
         #expect(mode.selectedSegment == 0)
 
         #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
-        let inspector = try #require(
-            toolbar.items.first { $0.itemIdentifier.rawValue == "inspector" } as? NSMenuToolbarItem
-        )
-        #expect(inspector.menu.items.map(\.title) == ["Tasks", "History", "", "Close Inspector"])
+        let inspector = try #require(toolbar.items.first { $0.itemIdentifier.rawValue == "inspector" })
+        #expect(inspector.label == "Inspector")
+        #expect(inspector.image != nil)
+        #expect(inspector.action != nil)
         let overflow = try #require(
             toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" } as? NSMenuToolbarItem
         )
@@ -153,5 +158,19 @@ struct WindowChromeTests {
         #expect(!inspector.showsReplace)
         inspector.showsReplace = true
         #expect(inspector.findBar.showsReplace)
+    }
+
+    @Test
+    func localFindUsesCompactDocumentBar() {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+
+        controller.showFindBar(replace: false)
+
+        #expect(controller.findBar?.superview === controller.barStack)
+        #expect(controller.inspectorItem.isCollapsed)
+
+        controller.dismissFindBar()
+        #expect(controller.findBar == nil)
     }
 }

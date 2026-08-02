@@ -211,7 +211,7 @@ extension DocumentWindowController {
 
     func showSiblingSearch() {
         guard let scanner else { return }
-        showFindBar(replace: false)
+        showFindInspector(replace: false)
         if searchResults == nil {
             let panel = SearchResultsPanelView()
             panel.delegate = self

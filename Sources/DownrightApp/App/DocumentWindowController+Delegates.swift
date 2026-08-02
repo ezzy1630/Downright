@@ -92,9 +92,6 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         let selection = view.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
         markdownDocument.state.selectionLength = selection.length
-        if view.configuration.typewriterScrolling, view.primarySourceCaret != nil {
-            view.scroll(toOffset: selection.location, position: .center, animated: true)
-        }
         updateFocusDimmingViews()
         window?.toolbar?.validateVisibleItems()
         refreshVisualDebuggerIfVisible()

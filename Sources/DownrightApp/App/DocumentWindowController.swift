@@ -103,10 +103,10 @@ final class DocumentWindowController: NSWindowController {
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1020, height: 780),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
         window.tabbingMode = .preferred
         // Session restoration is owned by DocumentStateStore. AppKit window
@@ -263,7 +263,10 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.markdownDelegate = self
         primaryContainer.textView.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
-        // The density rail is available on demand, not a permanent right rail.
+        // Keep the document map on the same surface as the text. It is narrow,
+        // non-scrolling chrome, so it cannot steal the text view's coordinate
+        // space or make the scrollbar carry two meanings.
+        primaryContainer.trailingAccessory = densityGutterView
 
         breadcrumbView.delegate = self
         breadcrumbView.styleSheet = activeStyleSheet
@@ -272,7 +275,7 @@ final class DocumentWindowController: NSWindowController {
         progressRing.styleSheet = activeStyleSheet
         breadcrumbView.alphaValue = 0
 
-        rootView = DocumentRootView()
+        rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
         leadingPane = NSView()
         trailingPane = NSView()
         barStack = NSStackView()
@@ -328,16 +331,16 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func buildToolbar() {
-        // v4 installs the centred Document/Source presentation control and
-        // replaces the previous multi-button inspector cluster.
-        let toolbar = NSToolbar(identifier: "DownrightToolbar.v4")
+        // Keep the document switch in the optical centre with explicit flexible
+        // spaces. AppKit then owns hit testing and the layout stays stable when
+        // a toolbar item is hidden or the window gets narrower.
+        let toolbar = NSToolbar(identifier: "DownrightToolbar.v5")
         toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
+        toolbar.displayMode = .iconAndLabel
         toolbar.sizeMode = .regular
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
         toolbar.isVisible = true
-        toolbar.centeredItemIdentifier = NSToolbarItem.Identifier("presentation-mode")
         window?.toolbar = toolbar
         window?.toolbarStyle = .unified
     }
@@ -406,6 +409,7 @@ final class DocumentWindowController: NSWindowController {
         searchResults?.styleSheet = activeStyleSheet
         frontMatterEditor?.styleSheet = activeStyleSheet
         assetDoctorPanel?.styleSheet = activeStyleSheet
+        (rootView as? DocumentRootView)?.backgroundColor = activeStyleSheet.background
         applyRenderConfiguration()
     }
 
@@ -925,6 +929,31 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Find (§9.4)
 
     func showFindBar(replace: Bool) {
+        if searchInspector != nil {
+            dismissFindBar()
+        }
+
+        let bar: FindBarView
+        if let findBar {
+            bar = findBar
+        } else {
+            let created = FindBarView(styleSheet: activeStyleSheet, presentation: .bar)
+            created.delegate = self
+            findBar = created
+            barStack.addArrangedSubview(created)
+            created.widthAnchor.constraint(equalTo: barStack.widthAnchor).isActive = true
+            bar = created
+        }
+        bar.showsReplace = replace
+        bar.focusSearchField()
+        refreshToolbarSelectionState()
+    }
+
+    func showFindInspector(replace: Bool) {
+        if searchInspector == nil, findBar != nil {
+            dismissFindBar()
+        }
+
         let inspector: SearchInspectorView
         if let searchInspector { inspector = searchInspector }
         else {
@@ -940,6 +969,10 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func dismissFindBar() {
+        if let findBar, barStack.arrangedSubviews.contains(findBar) {
+            barStack.removeArrangedSubview(findBar)
+        }
+        findBar?.removeFromSuperview()
         searchInspector?.removeFromSuperview()
         inspectorHost?.removeContent(section: .search)
         searchInspector = nil
@@ -1316,5 +1349,24 @@ private final class FocusDimmingView: NSView {
 /// its frame coordinates agree with the flipped Markdown container and avoids
 /// inverted bar/document constraints.
 private final class DocumentRootView: NSView {
+    var backgroundColor: NSColor {
+        didSet { needsDisplay = true }
+    }
+
+    init(backgroundColor: NSColor) {
+        self.backgroundColor = backgroundColor
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        backgroundColor = .windowBackgroundColor
+        super.init(coder: coder)
+    }
+
     override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        backgroundColor.setFill()
+        dirtyRect.fill()
+    }
 }

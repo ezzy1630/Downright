@@ -79,11 +79,11 @@ extension MarkdownTextView {
             gutterRail?.needsDisplay = true
         }
 
-        if attribute(.drLink, at: point) != nil || attribute(.drReference, at: point) != nil
+        let hasInteractiveTarget = attribute(.drLink, at: point) != nil
+            || attribute(.drReference, at: point) != nil
             || attribute(.drPathToken, at: point) != nil
-            || attribute(.drCheckbox, at: point) != nil {
-            NSCursor.pointingHand.set()
-        }
+            || attribute(.drCheckbox, at: point) != nil
+        setPointerCursor(interactive: hasInteractiveTarget)
 
         let nextToolTip: String?
         if payload?.kind != .image,
@@ -107,19 +107,28 @@ extension MarkdownTextView {
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
         toolTip = nil
+        setPointerCursor(interactive: false)
         needsDisplay = true
         gutterRail?.needsDisplay = true
     }
 
+    private func setPointerCursor(interactive: Bool) {
+        if interactive {
+            NSCursor.pointingHand.set()
+        } else if isEditable {
+            NSCursor.iBeam.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
     public override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if attribute(.drLink, at: point) != nil || attribute(.drReference, at: point) != nil
+        let hasInteractiveTarget = attribute(.drLink, at: point) != nil
+            || attribute(.drReference, at: point) != nil
             || attribute(.drPathToken, at: point) != nil
-            || attribute(.drCheckbox, at: point) != nil {
-            NSCursor.pointingHand.set()
-        } else {
-            super.cursorUpdate(with: event)
-        }
+            || attribute(.drCheckbox, at: point) != nil
+        setPointerCursor(interactive: hasInteractiveTarget)
     }
 
     // MARK: - Click (§7.1)
@@ -175,8 +184,10 @@ extension MarkdownTextView {
         // `super` owns the whole click/drag gesture.  Delay marker reveal until
         // it resolves to a caret or a selection, so selection never causes a
         // transient source flash or moves the glyphs under the pointer.
+        isTrackingMouseSelection = true
         suppressesCaretReveal = true
         super.mouseDown(with: event)
+        isTrackingMouseSelection = false
         suppressesCaretReveal = false
 
         if case .scoped(let focus) = sourceFocus {
@@ -189,7 +200,7 @@ extension MarkdownTextView {
                 return
             }
         }
-        handleSelectionChanged()
+        handleSelectionChanged(allowTypewriterScrolling: false)
     }
 
     public override func cancelOperation(_ sender: Any?) {
@@ -384,7 +395,9 @@ extension MarkdownTextView {
         endSourceEdit()
 
         markdownDelegate?.markdownTextView(self, didEdit: clamped, delta: inserted - clamped.length)
+        shouldFollowCaretAfterLocalEdit = true
         setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
+        handleSelectionChanged()
         return true
     }
 

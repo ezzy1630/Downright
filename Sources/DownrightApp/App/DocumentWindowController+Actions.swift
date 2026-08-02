@@ -255,7 +255,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             Self.contentsItem,
+            .flexibleSpace,
             Self.modeItem,
+            .flexibleSpace,
             Self.findItem, Self.inspectorToolbarItem, Self.overflowItem,
         ]
     }
@@ -327,11 +329,13 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             return item
 
         case Self.inspectorToolbarItem:
-            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            let item = NSToolbarItem(itemIdentifier: identifier)
             item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Inspector")
             item.label = "Inspector"
             item.toolTip = "Inspector — Tasks and History"
-            item.menu = makeInspectorMenu()
+            item.target = self
+            item.action = #selector(toolbarShowTasks(_:))
+            item.isBordered = false
             item.visibilityPriority = .high
             return item
 
@@ -369,7 +373,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     @objc private func toolbarContents(_ sender: Any?) { toggleOutlinePanel() }
 
     @objc private func toolbarFind(_ sender: Any?) {
-        if inspectorHost?.selectedSection == .search, !inspectorItem.isCollapsed {
+        if findBar != nil || (inspectorHost?.selectedSection == .search && !inspectorItem.isCollapsed) {
             dismissFindBar()
         } else {
             if !navigationPinned { closeNavigationOverlay() }
@@ -387,21 +391,13 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         showHistoryInspector()
     }
 
-    @objc private func toolbarCloseInspector(_ sender: Any?) { closeInspector() }
-
-    private func makeInspectorMenu() -> NSMenu {
-        let menu = NSMenu(title: "Inspector")
-        menu.delegate = self
-        menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
-        menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
-        menu.addItem(.separator())
-        menu.addItem(menuItem(title: "Close Inspector", symbol: "sidebar.right", action: #selector(toolbarCloseInspector(_:))))
-        return menu
-    }
-
     private func makeOverflowMenu() -> NSMenu {
         let menu = NSMenu(title: "More")
         menu.delegate = self
+        menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
+        menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
+        menu.addItem(menuItem(title: "Close Inspector", symbol: "sidebar.right", action: #selector(closeInspectorFromMenu(_:))))
+        menu.addItem(.separator())
         addCommands([.focusMode, .splitView, .pinWindow], to: menu)
 
         menu.addItem(.separator())
@@ -425,6 +421,8 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         menu.addItem(exportItem)
         return menu
     }
+
+    @objc private func closeInspectorFromMenu(_ sender: Any?) { closeInspector() }
 
     private func addCommands(_ commands: [Command], to menu: NSMenu) {
         for command in commands {
@@ -457,7 +455,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         toolbar.items.first(where: { $0.itemIdentifier == Self.contentsItem })?.isBordered = navigationOpen
         let inspectorOpen = !inspectorItem.isCollapsed
         toolbar.items.first(where: { $0.itemIdentifier == Self.inspectorToolbarItem })?.isBordered = inspectorOpen
-        let searchOpen = inspectorOpen && inspectorHost?.selectedSection == .search
+        let searchOpen = findBar != nil
         toolbar.items.first(where: { $0.itemIdentifier == Self.findItem })?.isBordered = searchOpen
 
         let progress = progressRing.progress
@@ -468,18 +466,14 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        if menu.title == "Inspector" {
-            for item in menu.items {
-                switch item.title {
-                case "Tasks": item.state = inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed ? .on : .off
-                case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
-                case "Close Inspector": item.isEnabled = !inspectorItem.isCollapsed
-                default: break
-                }
+        for item in menu.items {
+            switch item.title {
+            case "Tasks": item.state = inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed ? .on : .off
+            case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
+            case "Close Inspector": item.isEnabled = !inspectorItem.isCollapsed
+            default: break
             }
-            return
         }
-
         updateCommandStates(in: menu)
     }
 
