@@ -127,8 +127,10 @@ public final class DecorationEngine {
             storage.setAttributes(state.documentBase, range: target)
             state.attributeRanges += 1
             state.target = target
-            for child in document.root.children { walk(child, context: .root, state: &state) }
-            collapseSeparators(in: document.root, state: &state)
+            for childIndex in Self.intersectingChildIndices(document.root.children, target: state.target) {
+                walk(document.root.children[childIndex], context: .root, state: &state)
+            }
+            collapseSeparators(state: &state)
         }
         storage.endEditing()
 
@@ -164,7 +166,7 @@ public final class DecorationEngine {
     ///
     /// Source mode is exempt — the whole point of that mode is seeing the
     /// markdown exactly as it is written (§3.2).
-    private func collapseSeparators(in root: MDBlock, state: inout DecorateState) {
+    private func collapseSeparators(state: inout DecorateState) {
         guard policy.hidesBlockMarkers else { return }
         let separator = separatorParagraphStyle()
         let document = state.document
@@ -175,7 +177,7 @@ public final class DecorationEngine {
         // gap spans the newline that *terminates* the preceding block as well
         // as the blank line itself, and collapsing that terminator would
         // squash the block's own last line.  Whole blank lines are unambiguous.
-        for index in 0..<document.lineStarts.count {
+        for index in Self.lineIndices(intersecting: state.target, lineStarts: document.lineStarts) {
             let lineStart = document.lineStarts[index]
             let nextStart = index + 1 < document.lineStarts.count ? document.lineStarts[index + 1] : length
             guard nextStart > lineStart else { continue }
@@ -205,6 +207,66 @@ public final class DecorationEngine {
             state.storage.addAttribute(.paragraphStyle, value: separator, range: clipped)
             state.attributeRanges += 1
         }
+    }
+
+    /// Returns the line indices whose full source ranges intersect `target`.
+    /// `lineStarts` is sorted, so two binary searches avoid scanning unrelated
+    /// lines on a local edit.
+    private static func lineIndices(intersecting target: NSRange, lineStarts: [Int]) -> Range<Int> {
+        guard target.length > 0, !lineStarts.isEmpty else { return 0..<0 }
+
+        var lower = 0
+        var upper = lineStarts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if lineStarts[middle] <= target.location {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        let first = max(0, lower - 1)
+
+        lower = 0
+        upper = lineStarts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if lineStarts[middle] < target.upperBound {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return first..<max(first, lower)
+    }
+
+    /// Child blocks are sorted and non-overlapping, so only the contiguous
+    /// slice that intersects `target` needs to enter the recursive walk.
+    private static func intersectingChildIndices(_ children: [MDBlock], target: NSRange) -> Range<Int> {
+        guard target.length > 0, !children.isEmpty else { return 0..<0 }
+
+        var lower = 0
+        var upper = children.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if children[middle].range.upperBound <= target.location {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        let first = lower
+
+        upper = children.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if children[middle].range.location < target.upperBound {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return first..<max(first, lower)
     }
 
     private var cachedSeparatorStyle: NSParagraphStyle?
@@ -274,12 +336,16 @@ public final class DecorationEngine {
         var childContext = context
         switch block.content {
         case .document:
-            for child in block.children { walk(child, context: context, state: &state) }
+            for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
+                walk(block.children[childIndex], context: context, state: &state)
+            }
             return
 
         case .list:
             childContext.listDepth += 1
-            for child in block.children { walk(child, context: childContext, state: &state) }
+            for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
+                walk(block.children[childIndex], context: childContext, state: &state)
+            }
             return
 
         case .blockQuote:
@@ -287,7 +353,9 @@ public final class DecorationEngine {
             childContext.quoteDepth += 1
             childContext.calloutKind = nil
             applyBase(block, context: context, state: &state)
-            for child in block.children { walk(child, context: childContext, state: &state) }
+            for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
+                walk(block.children[childIndex], context: childContext, state: &state)
+            }
             return
 
         case .callout(let kind, let title):
@@ -296,7 +364,9 @@ public final class DecorationEngine {
             childContext.quoteDepth += 1
             childContext.calloutKind = kind
             applyBase(block, context: context, state: &state)
-            for child in block.children { walk(child, context: childContext, state: &state) }
+            for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
+                walk(block.children[childIndex], context: childContext, state: &state)
+            }
             if let title, !title.isEmpty {
                 let source = state.document.substring(block.range) as NSString
                 let found = source.range(of: title)
@@ -322,7 +392,9 @@ public final class DecorationEngine {
                 apply([.drCheckbox: checkbox.isChecked], to: checkbox.markRange, state: &state)
             }
             applyInlinesIfLeaf(block, context: context, state: &state)
-            for child in block.children { walk(child, context: childContext, state: &state) }
+            for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
+                walk(block.children[childIndex], context: childContext, state: &state)
+            }
             if checkbox?.isChecked == true {
                 apply([.foregroundColor: styleSheet.textSecondary], to: block.contentRange, state: &state)
             }
@@ -381,7 +453,9 @@ public final class DecorationEngine {
             }
             apply([.drBlock: block.identity], to: block.range, state: &state)
             emitInlineImageFragmentIfSolitary(block, state: &state)
-            for child in block.children { walk(child, context: context, state: &state) }
+            for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
+                walk(block.children[childIndex], context: context, state: &state)
+            }
             return
         }
     }

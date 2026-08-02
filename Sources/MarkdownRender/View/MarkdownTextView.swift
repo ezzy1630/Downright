@@ -347,6 +347,7 @@ public final class MarkdownTextView: NSTextView {
     private func rebuildDisplayMap(fullRefresh: Bool = false) {
         let caret = primarySourceCaret
         var hidden = baseHiddenRanges
+        var revealedForAttributes: [NSRange] = []
         displayMap = baseDisplayMap
 
         if let composing = composingParagraph {
@@ -359,21 +360,36 @@ public final class MarkdownTextView: NSTextView {
             let revealed = MarkerPolicy.revealedMarkerRanges(
                 document: parsedDocument, policy: mode.policy,
                 caret: caret, selections: sourceSelectedRanges)
-            if !revealed.isEmpty {
-                hidden = subtract(revealed, from: hidden)
-                let paragraph = caret.map { paragraphIndex.paragraphRange(containing: $0) }
-                // The fast path holds when the reveal is confined to the
-                // caret's own paragraph, which is every ordinary keystroke.  A
-                // span straddling a soft line break, or a multi-paragraph
-                // selection, falls back to a full rebuild — rare, and driven
-                // by a gesture rather than by typing.
-                if let paragraph, caret != nil,
-                   revealed.allSatisfy({ $0.location >= paragraph.location && $0.upperBound <= paragraph.upperBound }) {
-                    let kept = RangeSet.intersecting(hidden, paragraph).map(DisplaySubstitution.hide)
-                    displayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location, with: kept)
-                } else {
-                    displayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
+            let paragraph = caret.map { paragraphIndex.paragraphRange(containing: $0) }
+            // The fast path holds when the reveal is confined to the caret's
+            // own paragraph, which is every ordinary keystroke.  A span
+            // straddling a soft line break, or a multi-paragraph selection,
+            // falls back to a full rebuild — rare, and driven by a gesture
+            // rather than by typing.
+            let singleCaret = paragraph.map { paragraph in
+                sourceSelectedRanges.count <= 1 && revealed.allSatisfy {
+                    $0.location >= paragraph.location && $0.upperBound <= paragraph.upperBound
                 }
+            } ?? false
+            if let paragraph, singleCaret {
+                if !revealed.isEmpty {
+                    displayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
+                                                                    excluding: revealed)
+                    // Keep the cached document-wide set intact.  The display
+                    // map and this exclusion list together describe the one
+                    // paragraph that is currently revealed; no global filter
+                    // is needed on a caret move.
+                    revealedForAttributes = revealed
+                }
+                if !fullRefresh {
+                    let affected = [paragraph, revealParagraph].compactMap { $0 }
+                    hidden = RangeSet.normalized(affected.flatMap {
+                        baseDisplayMap.hiddenRanges(inParagraphContaining: $0.location)
+                    })
+                }
+            } else if !revealed.isEmpty {
+                hidden = subtract(revealed, from: hidden)
+                displayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
             }
         }
         substitution.displayMap = displayMap
@@ -391,14 +407,14 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         revealParagraph = current
-        applyHiddenAttribute(hidden, scope: scope)
+        applyHiddenAttribute(hidden, scope: scope, excluding: revealedForAttributes)
         invalidateFragments(in: scope)
     }
 
     /// `drHidden` mirrors the map so anything reading the storage (rich-text
     /// copy, export, the Quick Look renderer) sees the same decision the layout
     /// did.  `scope == nil` refreshes the document; a range refreshes only that.
-    private func applyHiddenAttribute(_ hidden: [NSRange], scope: NSRange?) {
+    private func applyHiddenAttribute(_ hidden: [NSRange], scope: NSRange?, excluding: [NSRange] = []) {
         guard let storage = textStorage, storage.length > 0 else { return }
         let window = scope.flatMap { clampToStorage($0) } ?? NSRange(location: 0, length: storage.length)
         guard window.length > 0 else { return }
@@ -406,6 +422,9 @@ public final class MarkdownTextView: NSTextView {
         storage.removeAttribute(.drHidden, range: window)
         for range in RangeSet.intersecting(hidden, window) {
             storage.addAttribute(.drHidden, value: true, range: range)
+        }
+        for range in RangeSet.intersecting(excluding, window) {
+            storage.removeAttribute(.drHidden, range: range)
         }
         storage.endEditing()
     }

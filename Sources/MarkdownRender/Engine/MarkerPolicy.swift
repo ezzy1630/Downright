@@ -116,6 +116,19 @@ public enum MarkerPolicy {
         selections: [NSRange]
     ) -> [NSRange] {
         guard policy.hidesInlineMarkers, policy.revealsAtCaret else { return [] }
+
+        // A lone insertion caret can identify its deepest block directly.
+        // The general walk below is still required for selections and for
+        // block-boundary carets, where two adjacent blocks may both touch the
+        // anchor and must retain the old inclusive-boundary behaviour.
+        if let caret, selections.count <= 1,
+           let block = document.root.block(at: caret),
+           caret > block.range.location, caret < block.range.upperBound {
+            var out: [NSRange] = []
+            for span in block.inlines { collectRevealed(span, anchors: [NSRange(location: caret, length: 0)], into: &out) }
+            return RangeSet.normalized(out)
+        }
+
         let anchors: [NSRange]
         if let caret { anchors = [NSRange(location: caret, length: 0)] }
         else if let first = selections.first { anchors = [first] }

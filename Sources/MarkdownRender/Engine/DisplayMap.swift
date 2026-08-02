@@ -358,6 +358,28 @@ public struct DisplayMap {
                           overrideParagraph: p, overrideEntries: entries)
     }
 
+    /// A paragraph-local reveal.  The base map already partitions its entries
+    /// by paragraph, so dropping a handful of marker substitutions never
+    /// needs to scan the document-wide hidden set.
+    public func replacingParagraph(containing offset: Int,
+                                   excluding sourceRanges: [NSRange]) -> DisplayMap {
+        guard !sourceRanges.isEmpty else { return self }
+        let p = paragraphs.index(containing: Swift.max(0, Swift.min(offset, paragraphs.length)))
+        let kept = entries(inParagraphAt: p).filter { entry in
+            !sourceRanges.contains { $0 == entry.sourceRange }
+        }
+        return replacingParagraph(containing: offset, with: Array(kept))
+    }
+
+    /// Hidden substitutions in one paragraph.  This is the companion to the
+    /// paragraph override and keeps caret moves off the global range list.
+    public func hiddenRanges(inParagraphContaining offset: Int) -> [NSRange] {
+        let p = paragraphs.index(containing: Swift.max(0, Swift.min(offset, paragraphs.length)))
+        return entries(inParagraphAt: p)
+            .filter { $0.displayLength == 0 }
+            .map(\.sourceRange)
+    }
+
     /// Ascending by location.  Already-ordered input — which is what every
     /// caller in this package produces — skips the sort after one linear check.
     private static func ordered(_ subs: [DisplaySubstitution]) -> [DisplaySubstitution] {

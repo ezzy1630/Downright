@@ -573,11 +573,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
                                                          caret: caret, selections: [])
         var map = base
         if !revealed.isEmpty {
-            let hidden = collapsed.filter { candidate in !revealed.contains { $0 == candidate } }
-            let paragraph = index.paragraphRange(containing: caret)
-            map = base.replacingParagraph(
-                containing: caret,
-                with: RangeSet.intersecting(hidden, paragraph).map(DisplaySubstitution.hide))
+            map = base.replacingParagraph(containing: caret, excluding: revealed)
         }
         _ = map.textKitOffset(forSource: caret)
         samples.append((CFAbsoluteTimeGetCurrent() - started) * 1000)
