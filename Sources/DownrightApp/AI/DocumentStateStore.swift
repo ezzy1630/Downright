@@ -66,7 +66,12 @@ struct DocumentState: Codable, Equatable {
         // now the only restorable state; Source Focus is always transient.
         _ = try c.decodeIfPresent(RenderMode.self, forKey: .mode)
         mode = .live
-        zoomLevel = try c.decodeIfPresent(ZoomLevel.self, forKey: .zoomLevel) ?? .everything
+        // Structural zoom belonged to the old read-only mode. Restoring it in
+        // the editable Document surface makes paragraphs disappear around the
+        // caret and looks like data loss. Keep it transient and always reopen
+        // a complete document.
+        _ = try c.decodeIfPresent(ZoomLevel.self, forKey: .zoomLevel)
+        zoomLevel = .everything
         foldedHeadings = try c.decodeIfPresent(Set<String>.self, forKey: .foldedHeadings) ?? []
         expandedCodeBlocks = try c.decodeIfPresent(Set<Int>.self, forKey: .expandedCodeBlocks) ?? []
         collapsedCodeBlocks = try c.decodeIfPresent(Set<Int>.self, forKey: .collapsedCodeBlocks) ?? []

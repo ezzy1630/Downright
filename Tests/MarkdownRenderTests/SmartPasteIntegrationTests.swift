@@ -169,6 +169,28 @@ struct SmartPasteIntegrationTests {
         #expect(view.sourceSelectedRange == NSRange(location: bodyEnd + 5, length: 0))
     }
 
+    @Test("an edit keeps unaffected paragraphs rendered until async parse commits")
+    func transientEditProjection() throws {
+        let source = "# Title\n\nBody with **bold** text.\n\nTail with _emphasis_.\n"
+        let view = view(for: source)
+        view.zoomLevel = .skeleton
+        let body = (source as NSString).range(of: "Body with **bold** text.\n")
+        let tailMarker = (source as NSString).range(of: "_emphasis_").location
+
+        #expect(!view.currentDisplayMap.hiddenRanges.isEmpty)
+        #expect(view.performSourceEdit(
+            range: NSRange(location: body.location + 4, length: 0),
+            replacement: " edited"
+        ))
+        #expect(view.zoomLevel == .everything)
+
+        let projected = view.currentDisplayMap.hiddenRanges
+        let editedParagraph = view.paragraphIndex.paragraphRange(containing: body.location)
+        #expect(projected.allSatisfy { NSIntersectionRange($0, editedParagraph).length == 0 })
+        #expect(projected.contains { $0.location >= tailMarker + 7 })
+        #expect(view.currentDisplayMap.paragraphs.length == view.textStorage?.length)
+    }
+
     @Test("code, math, and front matter keep clipboard text literal")
     func literalContextsBypassTransforms() {
         let html = MarkdownPastePayload.html(

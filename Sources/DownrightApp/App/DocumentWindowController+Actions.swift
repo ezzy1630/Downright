@@ -216,9 +216,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.contentsItem, .sidebarTrackingSeparator, .flexibleSpace,
+            Self.contentsItem,
             Self.modeItem,
-            .flexibleSpace, Self.findItem, Self.inspectorToolbarItem, Self.overflowItem,
+            Self.findItem, Self.inspectorToolbarItem, Self.overflowItem,
         ]
     }
 
@@ -265,6 +265,12 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             control.setToolTip("Document — rendered Markdown", forSegment: 0)
             control.setToolTip("Source — raw Markdown (⇧⌘E)", forSegment: 1)
             control.setAccessibilityLabel("Presentation")
+            let controlSize = control.fittingSize
+            control.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                control.widthAnchor.constraint(equalToConstant: controlSize.width),
+                control.heightAnchor.constraint(equalToConstant: controlSize.height),
+            ])
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.label = "Presentation"

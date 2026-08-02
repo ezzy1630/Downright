@@ -215,6 +215,39 @@ public enum RangeSet {
         }
         return false
     }
+
+    /// Projects cached source ranges across one edit while dropping every
+    /// range in the edited paragraph span.
+    ///
+    /// A parse result arrives asynchronously. During that gap, keeping valid
+    /// substitutions outside the edit prevents the entire document from
+    /// flashing back to raw Markdown. The edited paragraphs deliberately use
+    /// identity presentation until the parser supplies authoritative ranges.
+    public static func projectedAcrossEdit(
+        _ ranges: [NSRange],
+        edit: NSRange,
+        insertedLength: Int,
+        oldParagraphs: ParagraphIndex
+    ) -> [NSRange] {
+        let boundedLocation = Swift.max(0, Swift.min(edit.location, oldParagraphs.length))
+        let boundedEnd = Swift.max(
+            boundedLocation,
+            Swift.min(edit.upperBound, oldParagraphs.length)
+        )
+        let first = oldParagraphs.index(containing: boundedLocation)
+        let lastOffset = Swift.max(boundedLocation, boundedEnd - 1)
+        let last = oldParagraphs.index(containing: lastOffset)
+        let affected = NSUnionRange(oldParagraphs.range(at: first), oldParagraphs.range(at: last))
+        let delta = insertedLength - edit.length
+
+        return normalized(ranges.compactMap { range in
+            if range.upperBound <= affected.location { return range }
+            if range.location >= affected.upperBound {
+                return NSRange(location: range.location + delta, length: range.length)
+            }
+            return nil
+        })
+    }
 }
 
 // MARK: - Substitutions

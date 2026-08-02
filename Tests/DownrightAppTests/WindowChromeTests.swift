@@ -17,9 +17,9 @@ struct WindowChromeTests {
         #expect(toolbar.identifier == "DownrightToolbar.v4")
         #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
-            "contents", "NSToolbarSidebarTrackingSeparatorItemIdentifier", "NSToolbarFlexibleSpaceItem",
+            "contents",
             "presentation-mode",
-            "NSToolbarFlexibleSpaceItem", "find", "inspector", "overflow",
+            "find", "inspector", "overflow",
         ])
 
         let mode = try #require(
@@ -29,6 +29,9 @@ struct WindowChromeTests {
         #expect(mode.label(forSegment: 0) == "Document")
         #expect(mode.label(forSegment: 1) == "Source")
         #expect(mode.selectedSegment == 0)
+        #expect(mode.constraints.contains {
+            $0.firstAttribute == .width && $0.relation == .equal && $0.constant == mode.fittingSize.width
+        })
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
@@ -41,6 +44,10 @@ struct WindowChromeTests {
             toolbar.items.first { $0.itemIdentifier.rawValue == "inspector" } as? NSMenuToolbarItem
         )
         #expect(inspector.menu.items.map(\.title) == ["Tasks", "History", "", "Close Inspector"])
+        let overflow = try #require(
+            toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" } as? NSMenuToolbarItem
+        )
+        #expect(overflow.menu.items.contains { $0.title == "Structural Zoom" })
     }
 
     @Test

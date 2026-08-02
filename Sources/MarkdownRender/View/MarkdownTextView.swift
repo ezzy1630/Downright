@@ -558,14 +558,38 @@ public final class MarkdownTextView: NSTextView {
         rebuildDisplayMap()
     }
 
-    /// Used for the window between a text edit and the host's reparse.
-    func resetDisplayMapToIdentity() {
-        displayMap = DisplayMap(paragraphs: paragraphIndex, substitutions: [])
-        baseDisplayMap = displayMap
-        baseHiddenRanges = []
+    /// Keeps unaffected paragraphs rendered while an asynchronous parse is in
+    /// flight. Only the edited paragraph span falls back to literal source.
+    func projectDisplayMapAcrossEdit(
+        _ edit: NSRange,
+        insertedLength: Int,
+        oldParagraphs: ParagraphIndex,
+        oldHiddenRanges: [NSRange]
+    ) {
+        let projected = RangeSet.projectedAcrossEdit(
+            oldHiddenRanges,
+            edit: edit,
+            insertedLength: insertedLength,
+            oldParagraphs: oldParagraphs
+        )
+        baseHiddenRanges = projected
+        baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: projected)
+        displayMap = baseDisplayMap
         substitution.displayMap = displayMap
         revealParagraph = nil
-        invalidateAllFragments()
+
+        guard let storage = textStorage, storage.length > 0 else { return }
+        let insertedEnd = min(storage.length, edit.location + insertedLength)
+        let first = paragraphIndex.paragraphRange(containing: min(edit.location, storage.length))
+        let last = paragraphIndex.paragraphRange(containing: max(edit.location, insertedEnd - 1))
+        let affected = first.union(last).intersection(NSRange(location: 0, length: storage.length))
+        guard let affected, affected.length > 0 else { return }
+        storage.beginEditing()
+        storage.removeAttribute(.drHidden, range: affected)
+        storage.removeAttribute(.drFragment, range: affected)
+        storage.removeAttribute(.drElided, range: affected)
+        storage.endEditing()
+        invalidateFragments(in: affected)
     }
 
     func beginSourceEdit() {

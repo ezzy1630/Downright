@@ -158,12 +158,14 @@ struct AppLayerTests {
         state.selectionLength = 7
         state.splitViewEnabled = true
         state.mode = .source
+        state.zoomLevel = .skeleton
         let data = try JSONEncoder().encode(state)
         let decoded = try JSONDecoder().decode(DocumentState.self, from: data)
         #expect(decoded.selectionLocation == 42)
         #expect(decoded.selectionLength == 7)
         #expect(decoded.splitViewEnabled)
         #expect(decoded.mode == .live, "transient Source Focus must not restore")
+        #expect(decoded.zoomLevel == .everything, "editable documents must reopen without hidden prose")
     }
 
     // MARK: - Find (§9.4)

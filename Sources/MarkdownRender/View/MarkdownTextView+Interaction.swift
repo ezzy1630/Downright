@@ -310,23 +310,28 @@ extension MarkdownTextView {
         let clamped = NSRange(location: max(0, min(range.location, storage.length)),
                               length: max(0, min(range.length, storage.length - min(range.location, storage.length))))
         guard shouldChangeText(in: clamped, replacementString: replacement) else { return false }
+        // Structural zoom is a reading projection. Editing through an elided
+        // projection makes nearby paragraphs appear and disappear around the
+        // caret, so the first mutation returns to the complete document.
+        if zoomLevel != .everything { zoomLevel = .everything }
 
-        let generation = updateGeneration
+        let oldParagraphs = paragraphIndex
+        let oldHiddenRanges = currentDisplayMap.hiddenRanges
         beginSourceEdit()
         storage.replaceCharacters(in: clamped, with: replacement)
-        didChangeText()
-        endSourceEdit()
-
         let inserted = (replacement as NSString).length
         rebuildParagraphIndex()
         adjustScopedSourceFocus(forEdit: clamped, insertedLength: inserted)
+        projectDisplayMapAcrossEdit(
+            clamped,
+            insertedLength: inserted,
+            oldParagraphs: oldParagraphs,
+            oldHiddenRanges: oldHiddenRanges
+        )
+        didChangeText()
+        endSourceEdit()
+
         markdownDelegate?.markdownTextView(self, didEdit: clamped, delta: inserted - clamped.length)
-        if updateGeneration == generation {
-            // The host has not reparsed yet.  Keep the view coherent with an
-            // identity map rather than a stale one — unhidden markers for a
-            // frame are recoverable, a wrong index map is not.
-            resetDisplayMapToIdentity()
-        }
         setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
         return true
     }
