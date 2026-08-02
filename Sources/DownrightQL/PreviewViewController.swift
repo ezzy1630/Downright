@@ -10,17 +10,16 @@ import QuickLookUI
 /// That is the entire reason §3.3 forbids a WebView — a `WKWebView` carrying
 /// KaTeX and Mermaid.js would not reliably fit under the extension's hard
 /// ~120MB ceiling, and an extension that exceeds it is killed outright.
+@available(macOS 14.0, *)
 final class PreviewViewController: NSViewController, QLPreviewingController {
     private let storage = NSTextStorage()
     private var container: MarkdownContainerView?
     private var fallbackTextView: NSTextView?
 
     /// Well under the ~120MB kill threshold, per §10's non-negotiable budget.
-    private let memoryCeiling = 60 * 1024 * 1024
-    /// Above this file size we render a prefix and offer "Open in app" (§10).
-    private let largeFileThreshold = 2 * 1024 * 1024
+    private let memoryCeiling = QuickLookPolicy.memoryCeilingBytes
     /// Number of top-level blocks rendered for an oversized file.
-    private let prefixBlockCount = 60
+    private let prefixBlockCount = QuickLookPolicy.prefixBlockCount
 
     private var memoryTimer: Timer?
 
@@ -37,7 +36,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? text.utf8.count
 
         await MainActor.run {
-            if byteCount > largeFileThreshold {
+            if case .prefix = QuickLookPolicy.presentation(forByteCount: byteCount) {
                 presentTruncated(text, url: url)
             } else {
                 present(text, url: url)
@@ -164,7 +163,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private func startMemoryWatch() {
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let self else { return }
-            guard PreviewViewController.residentBytes() > self.memoryCeiling else { return }
+            guard QuickLookPolicy.shouldFallBack(residentBytes: PreviewViewController.residentBytes()) else { return }
             MainActor.assumeIsolated { self.fallBackToPlainText() }
         }
         RunLoop.main.add(timer, forMode: .common)

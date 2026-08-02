@@ -110,7 +110,13 @@ case .check(let json, let paths):
     if findings > 0 { exit(1) }
 case .open(let options, let paths):
     var paths = paths
-    if let piped = stdinFile() { paths.append(piped.path) }
+    if paths.contains("-") {
+        guard let piped = stdinFile() else { writeError("stdin is not available", status: 66) }
+        paths = paths.filter { $0 != "-" }
+        paths.append(piped.path)
+    } else if let piped = stdinFile() {
+        paths.append(piped.path)
+    }
     guard !paths.isEmpty else { print(MarkdownCLI.usage()); exit(64) }
     for path in paths where !FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).path) {
         writeError("\(path): no such file", status: 66)

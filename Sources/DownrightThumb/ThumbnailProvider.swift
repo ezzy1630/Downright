@@ -11,6 +11,7 @@ import QuickLookThumbnailing
 ///
 /// Runs under the same memory ceiling as the preview extension, so it parses
 /// with `ParseOptions.structureOnly` and never touches math, mermaid, or images.
+@available(macOS 14.0, *)
 final class ThumbnailProvider: QLThumbnailProvider {
     override func provideThumbnail(
         for request: QLFileThumbnailRequest,
