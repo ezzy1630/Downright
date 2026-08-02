@@ -22,20 +22,33 @@ not public releases.
 | External writes | Watch, rendered diff, unread marks, conflicts | P4 | Dirty buffer never gets clobbered |
 | History | Local content-addressed snapshots and timeline | P4 | Restore is undoable and local |
 | Paths | Resolve document and git-root paths; open editor | P5 | Existing and missing paths are distinct |
-| Workspace | Optional sibling sidebar; no vault or index | P5 | One file works without workspace |
+| Workspace | Optional folder tree, local index, search, links, and backlinks | P7 | One file works without workspace |
 | Workflow | Tidy, move/promote/demote, split, compare, export | P6 | Commands preserve source invariants |
+| Smart Paste | URL, HTML, TSV, code-safe plain text | P3 | One reversible source edit |
+| Front matter | Visual fields with exact source fallback | P3 | Unknown fields and formatting survive |
+| Asset Doctor | Find, relink, copy, rename, optimise, and inspect assets | P3/P5 | Actions preview their source changes |
+| Document Lens | Structure, health, links, assets, tasks, and changes | P4/P5 | A selection maps to an exact source range |
+| Document Health | Structure, access, references, links, media, syntax, prose | P5 | Stable findings and safe local fixes |
+| Render Targets | Built-in and custom renderer profiles | P5 | Exact findings and reversible proposals |
+| Review | Local comments, suggestions, and resolved state in sidecars | P6 | Markdown stays clean; stale anchors are visible |
+| Reader profiles | Saved typography, width, chrome, and motion sets | P4/P10 | Profiles do not change source |
+| Visual Debugger | Source range, AST block, style, target, and asset state | P5 | A render element explains its inputs |
+| Command palette | Searchable actions, keys, scope, and recent use | P4 | Every action has one command owner |
+| Trust | Per-file and per-folder link, asset, and automation trust | P7/P8 | Untrusted content cannot cause an external effect |
 | Quick Look | Preview and thumbnail extensions | P2 | Preview meets time and memory limits |
 | Themes | JSON themes, warm light/dark, VS Code/Shiki import | P7 | Theme reload changes semantic tokens |
 | Preferences | Appearance, typography, editor, keys, advanced | P8 | Settings round-trip and apply live |
 | Accessibility | VoiceOver, keyboard, contrast, motion, transparency | P8 | Accessibility audit has no release blocker |
 | CLI | `down` and `md` open files and stdin | P8 | Terminal launch opens the target document |
-| AI | Optional on-device Apple Intelligence only | P4/P8 | Core path works with AI unavailable |
+| System integration | Quick Look, Spotlight, Services, Share, App Intents | P8 | Each entry opens the exact file or command |
+| AI | Optional on-device Apple Intelligence tools only | P9 | Core path works with AI absent or disabled |
 
 ## Explicitly out of scope
 
 | Feature | Decision |
 |---|---|
-| Vault, graph, backlinks, tag database | Excluded |
+| Required vault or global content database | Excluded; files and optional folder workspaces are equal entry points |
+| Cloud graph or social knowledge network | Excluded; local workspace links and backlinks are allowed |
 | Sync, collaboration, multiplayer | Excluded |
 | Plugin system or marketplace | Excluded |
 | Code execution, shell, notebook evaluation | Excluded |
@@ -45,20 +58,23 @@ not public releases.
 
 ## Full phase matrix
 
-| Phase | Scope | Exit gate | Estimate |
-|---|---|---|---:|
-| P0 | TextKit 2 spike, parser, attribute-only styling, keystroke benchmark | Byte identity proven; 8 ms p95 decision made | 1 week |
-| P1 | Render core and Read mode; GFM, extensions, code, math, images, find | Render corpus and first usable reader | 4 weeks |
-| P2 | Quick Look preview and thumbnail with memory limits | <400 ms and <60 MB preview target | 2 weeks |
-| P3 | Live mode; caret reveal, gutter markers, popovers, tables, paste | Typing and IME behave without layout jumps | 5 weeks |
-| P4 | AI-adjacent file layer; watcher, diff, unread, snapshots, conflicts | External writes are reviewable and safe | 3 weeks |
-| P5 | Navigation and structure; zoom, gutter, outline, tasks, paths, siblings | Large document navigation is direct | 3 weeks |
-| P6 | Commands and workflow; tidy, restructure, split, compare, search, export | Source edits preserve ranges and undo | 3 weeks |
-| P7 | Visual system; themes, import, dark mode, motion, print | Theme and accessibility visual pass complete | 3 weeks |
-| P8 | Release engineering; preferences, keys, CLI, audit, notarise, docs | Release checklist and package complete | 3 weeks |
+| Phase | Scope | Exit gate |
+|---|---|---|
+| P0 | Baseline, product docs, source contracts, tests, performance gates | Byte identity and test execution are proven |
+| P1 | Complete and verify the current reader and UI plan | The existing surface has no known release blocker |
+| P2 | Correctness, concurrency, incremental render, large-file policy | Typing stays under budget; stale work cannot commit |
+| P3 | Smart Paste, visual tables, front matter, assets, Source mode | Each tool creates one safe source edit and one undo step |
+| P4 | Navigation, command palette, reader profiles, Document Lens | Large documents are direct to inspect and move through |
+| P5 | Document Health, Render Targets, Asset Doctor, Visual Debugger | Findings have exact ranges, clear reasons, and safe proposals |
+| P6 | Review sidecars, suggestions, and history | Review state stays local and never pollutes Markdown |
+| P7 | Optional folder workspace, local links, backlinks, search, trust | A single file stays first class |
+| P8 | Quick Look, Spotlight, Services, Share, App Intents, CLI, updates | Native entry points share safe command owners |
+| P9 | Optional on-device Apple Intelligence tools | AI never delays open, render, edit, search, or save |
+| P10 | Accessibility, motion, themes, reader profiles, micro-interactions | Keyboard, VoiceOver, contrast, motion, and polish pass |
+| P11 | Packaging, signing, notarisation, docs, launch verification | A clean Mac installs, opens, edits, previews, and updates safely |
 
-Approximate total: 27 weeks of committed part-time work. Run focused tests and
-the release benchmark at every phase boundary.
+Run focused tests during each phase. Run the full suite and release benchmark
+at every phase boundary.
 
 ## UI refinement sequence
 
