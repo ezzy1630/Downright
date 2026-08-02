@@ -142,6 +142,13 @@ Approximate:
   for whoever implements it.
 - **IME suspends hiding in the composing paragraph** so AppKit's marked-text
   bookkeeping stays exact.
+- **Hard-wrapped markdown paragraphs suppress continuation spacing but retain
+  physical line breaks.** The UI plan's grouped-element step cannot safely
+  compose with marker hiding on current AppKit: custom `NSTextParagraph`
+  strings must match their source range length. A prototype that shortened the
+  string was runtime-tested, trapped in `NSTextContentStorage`, and was removed.
+  Correct reflow therefore needs a custom `NSTextContentManager` coordinate
+  store, not a risky override shipped behind a toggle.
 
 ## Core-layer semantics worth knowing
 
@@ -163,10 +170,9 @@ Approximate:
 - **Setext headings get no gutter marker** (there is nothing to put there), and
   tidy and promote/demote skip them, since a setext heading cannot express a
   level jump.
-- **Heading scale exponents are `[3, 2, 1, 0, −0.5, −1]`**, not a pure power
-  law. A pure law puts H6 at `body·ratio⁻²` — 10pt against a 16pt body. H1–H4
-  are whole steps; H5–H6 are half steps so all six stay strictly ordered without
-  becoming unreadable.
+- **Heading scale exponents are `[3, 2, 1.25, 0.5, 0, 0]`**, not a pure power
+  law. H5 and H6 remain body-sized and are distinguished by weight and tracking,
+  while H1–H4 carry the size hierarchy.
 - **`mathPointSize` is clamped to 0.90–1.10× body.** Matching Latin Modern
   Math's x-height against SF Pro would give 1.19× — the same number that makes
   KaTeX look too big everywhere else (§11.3).
@@ -206,6 +212,6 @@ what they mean for §13's P0 kill criterion.
 
 | Suite | Covers |
 |---|---|
-| `MarkdownCoreTests` (168 tests, 19 suites) | Byte-identical round trips over a tricky corpus, source-range invariants, every extension pass including the negative math cases (`echo $PATH` must not be math), AST diff locality, text diff, tidy idempotence, restructuring, zoom plans. |
-| `MarkdownRenderTests` (39 + decoration suites) | Theme decoding and colour resolution, type scale and measure cap, VS Code theme import, the lexer per language, decoration byte-identity across all three modes, the source↔display index map round-tripping every offset, and the keystroke benchmark. |
-| `DownrightAppTests` | Scroll anchoring across an agent's insertion, change-mark shifting and navigation, snapshot dedup and restore, find/regex/replace, path resolution present-vs-missing, key binding round trips and conflicts, jump history, HTML export self-containment, sibling scanning, and an end-to-end offscreen render of `Docs/sample.md` in all three modes. |
+| `MarkdownCoreTests` (169 tests) | Byte-identical round trips over a tricky corpus, source-range invariants, every extension pass including the negative math cases (`echo $PATH` must not be math), AST diff locality, text diff, tidy idempotence, restructuring, zoom plans. |
+| `MarkdownRenderTests` (60 tests) | Theme decoding and colour resolution, type scale and measure cap, VS Code theme import, the lexer per language, decoration byte-identity across all three modes, the source↔display index map round-tripping every offset, and the keystroke benchmark. |
+| `DownrightAppTests` (28 tests) | Scroll anchoring across an agent's insertion, change-mark shifting and navigation, snapshot dedup and restore, find/regex/replace, path resolution present-vs-missing, key binding round trips and conflicts, jump history, HTML export self-containment, sibling scanning, and an end-to-end offscreen render of `Docs/sample.md` in all three modes. |
