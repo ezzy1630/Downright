@@ -6,6 +6,7 @@ import MarkdownRender
 protocol ReviewPanelViewDelegate: AnyObject {
     func reviewPanel(_ panel: ReviewPanelView, didSelect review: ReviewItem)
     func reviewPanel(_ panel: ReviewPanelView, didApply review: ReviewItem)
+    func reviewPanel(_ panel: ReviewPanelView, didReject review: ReviewItem)
     func reviewPanel(_ panel: ReviewPanelView, didResolve review: ReviewItem)
     func reviewPanelDidRequestClose(_ panel: ReviewPanelView)
 }
@@ -60,12 +61,16 @@ final class ReviewPanelView: NSView, PanelSurface {
 
         let applyAction = ButtonAction { [weak self] in self?.applySelected() }
         let resolveAction = ButtonAction { [weak self] in self?.resolveSelected() }
+        let rejectAction = ButtonAction { [weak self] in self?.rejectSelected() }
         let apply = PanelButton.text("Apply", action: applyAction)
+        let reject = PanelButton.text("Reject", action: rejectAction)
         let resolve = PanelButton.text("Resolve", action: resolveAction)
-        actions = [applyAction, resolveAction]
+        actions = [applyAction, rejectAction, resolveAction]
         apply.translatesAutoresizingMaskIntoConstraints = false
+        reject.translatesAutoresizingMaskIntoConstraints = false
         resolve.translatesAutoresizingMaskIntoConstraints = false
         addSubview(apply)
+        addSubview(reject)
         addSubview(resolve)
 
         NSLayoutConstraint.activate([
@@ -76,8 +81,10 @@ final class ReviewPanelView: NSView, PanelSurface {
             statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
             apply.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             apply.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 7),
-            resolve.leadingAnchor.constraint(equalTo: apply.trailingAnchor, constant: 6),
-            resolve.centerYAnchor.constraint(equalTo: apply.centerYAnchor),
+            reject.leadingAnchor.constraint(equalTo: apply.trailingAnchor, constant: 6),
+            reject.centerYAnchor.constraint(equalTo: apply.centerYAnchor),
+            resolve.leadingAnchor.constraint(equalTo: reject.trailingAnchor, constant: 6),
+            resolve.centerYAnchor.constraint(equalTo: reject.centerYAnchor),
         ])
     }
 
@@ -101,7 +108,7 @@ final class ReviewPanelView: NSView, PanelSurface {
     func reload() {
         table.reloadData()
         let open = reviews.filter { $0.state == .open }.count
-        statusLabel.stringValue = open == 0 ? "No open reviews" : "(open) open"
+        statusLabel.stringValue = open == 0 ? "No open reviews" : "\(open) open"
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
     }
 
@@ -123,6 +130,11 @@ final class ReviewPanelView: NSView, PanelSurface {
     private func resolveSelected() {
         guard let review = selectedReview() else { return }
         delegate?.reviewPanel(self, didResolve: review)
+    }
+
+    private func rejectSelected() {
+        guard let review = selectedReview(), review.kind == .suggestion else { return }
+        delegate?.reviewPanel(self, didReject: review)
     }
 
     private func applyStyle() {
@@ -189,7 +201,7 @@ private final class ReviewRowView: NSTableCellView {
         bodyLabel.stringValue = review.kind == .suggestion
             ? "Replace \(quoted(review.anchor.selectedText)) with \(quoted(review.replacement ?? ""))"
             : review.body
-        let state = review.state == .resolved ? "Resolved" : status.rawValue.capitalized
+        let state = review.state == .open ? status.rawValue.capitalized : review.state.rawValue.capitalized
         statusLabel.stringValue = state
         setAccessibilityLabel("\(review.title): \(review.body)")
         setAccessibilityValue(state)

@@ -104,6 +104,53 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
         configureReviewPanel(panel)
     }
 
+    func reviewPanel(_ panel: ReviewPanelView, didReject review: ReviewItem) {
+        updateReview(review.id, state: .rejected)
+        configureReviewPanel(panel)
+    }
+
+    func presentAddReview(kind: ReviewKind) {
+        guard let window, containerTextView.sourceSelectedRange.length > 0 else {
+            NSSound.beep()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = kind == .comment ? "Add Comment" : "Suggest Replacement"
+        alert.informativeText = "This review stays in a local sidecar file."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        let body = NSTextField(string: "")
+        body.placeholderString = kind == .comment ? "Comment" : "Reason"
+        body.setAccessibilityLabel(body.placeholderString ?? "Review text")
+        let fields: [NSView]
+        let replacement: NSTextField?
+        if kind == .suggestion {
+            let field = NSTextField(string: "")
+            field.placeholderString = "Replacement text"
+            field.setAccessibilityLabel("Replacement text")
+            replacement = field
+            fields = [body, field]
+        } else {
+            replacement = nil
+            fields = [body]
+        }
+        let stack = NSStackView(views: fields)
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 360, height: kind == .suggestion ? 60 : 28)
+        alert.accessoryView = stack
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let reviewBody = body.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = self?.addReview(
+                kind: kind,
+                body: reviewBody.isEmpty && kind == .suggestion ? "Suggested replacement" : reviewBody,
+                replacement: replacement?.stringValue
+            )
+        }
+    }
+
     func reviewPanelDidRequestClose(_ panel: ReviewPanelView) {
         dismissTrailing(panel)
         if reviewPanel === panel { reviewPanel = nil }

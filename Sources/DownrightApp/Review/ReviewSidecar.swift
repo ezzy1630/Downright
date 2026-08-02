@@ -9,6 +9,7 @@ enum ReviewKind: String, Codable, CaseIterable {
 enum ReviewState: String, Codable, CaseIterable {
     case open
     case resolved
+    case rejected
 }
 
 enum ReviewAnchorStatus: String, Codable {

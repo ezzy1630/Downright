@@ -64,7 +64,16 @@ struct ReviewSidecarTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let document = directory.appendingPathComponent("note.md")
         let anchor = try #require(ReviewAnchorResolver.makeAnchor(in: "Text", range: NSRange(location: 0, length: 4)))
-        let original = ReviewSidecar(reviews: [ReviewItem(kind: .comment, anchor: anchor, body: "Check this")])
+        let original = ReviewSidecar(reviews: [
+            ReviewItem(kind: .comment, anchor: anchor, body: "Check this"),
+            ReviewItem(
+                kind: .suggestion,
+                anchor: anchor,
+                body: "Replace this",
+                replacement: "Other",
+                state: .rejected
+            ),
+        ])
         let store = LocalReviewSidecarStore()
         try store.save(original, for: document)
         let loaded = try store.load(for: document)

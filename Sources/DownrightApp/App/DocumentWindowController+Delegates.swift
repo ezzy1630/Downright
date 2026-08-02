@@ -193,6 +193,12 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             add(.copyAsRichText, to: menu)
             add(.copyAsPlainText, to: menu)
             menu.addItem(.separator())
+            menu.addItem(actionItem("Add Comment…") { [weak self] in
+                self?.presentAddReview(kind: .comment)
+            })
+            menu.addItem(actionItem("Suggest Replacement…") { [weak self] in
+                self?.presentAddReview(kind: .suggestion)
+            })
             add(.speakDocument, to: menu, title: "Speak Selection")
             menu.addItem(.separator())
             add(.convertToBulletList, to: menu)
