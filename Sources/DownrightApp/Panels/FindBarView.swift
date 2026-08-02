@@ -18,6 +18,11 @@ protocol FindBarDelegate: AnyObject {
 /// and the document keeps its previous highlighting rather than throwing a
 /// dialog per character.
 final class FindBarView: NSView {
+    enum Presentation {
+        case bar
+        case inspector
+    }
+
     weak var delegate: FindBarDelegate?
 
     var styleSheet: StyleSheet {
@@ -77,15 +82,17 @@ final class FindBarView: NSView {
     private let replaceRow = NSStackView()
     private let rows = NSStackView()
     private var actions: [ButtonAction] = []
+    private let presentation: Presentation
 
     // MARK: - Init
 
     /// Hosts build panels before they have a theme in hand and assign
     /// `styleSheet` immediately afterwards.
-    convenience init() { self.init(styleSheet: .current) }
+    convenience init() { self.init(styleSheet: .current, presentation: .bar) }
 
-    init(styleSheet: StyleSheet) {
+    init(styleSheet: StyleSheet, presentation: Presentation = .bar) {
         self.styleSheet = styleSheet
+        self.presentation = presentation
         self.backdrop = PanelBackdrop(styleSheet: styleSheet, material: .headerView, blendingMode: .withinWindow)
 
         // Targets are rebound below; the toggles have to exist before
@@ -107,7 +114,7 @@ final class FindBarView: NSView {
 
         rows.orientation = .vertical
         rows.alignment = .leading
-        rows.spacing = 6
+        rows.spacing = presentation == .inspector ? 10 : 6
         rows.translatesAutoresizingMaskIntoConstraints = false
         rows.addArrangedSubview(findRow)
         rows.addArrangedSubview(replaceRow)
@@ -117,7 +124,7 @@ final class FindBarView: NSView {
         NSLayoutConstraint.activate([
             rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            rows.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            rows.topAnchor.constraint(equalTo: topAnchor, constant: presentation == .inspector ? 8 : 6),
             findRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
             replaceRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
         ])
@@ -170,27 +177,55 @@ final class FindBarView: NSView {
             guard let self else { return }
             self.delegate?.findBar(self, didRequestAdvance: true)
         }
-        let close = ButtonAction { [weak self] in
-            guard let self else { return }
-            self.delegate?.findBarDidRequestClose(self)
-        }
-        actions.append(contentsOf: [previous, next, close])
+        actions.append(contentsOf: [previous, next])
 
-        findRow.orientation = .horizontal
-        findRow.spacing = 6
-        findRow.alignment = .centerY
+        let previousButton = PanelButton.symbol("chevron.up", label: "Previous match", action: previous)
+        let nextButton = PanelButton.symbol("chevron.down", label: "Next match", action: next)
         findRow.translatesAutoresizingMaskIntoConstraints = false
-        findRow.addArrangedSubview(searchField)
-        findRow.addArrangedSubview(warningImage)
-        findRow.addArrangedSubview(statusLabel)
-        findRow.addArrangedSubview(regexToggle)
-        findRow.addArrangedSubview(caseToggle)
-        findRow.addArrangedSubview(wordToggle)
-        findRow.addArrangedSubview(scopeToggle)
-        findRow.addArrangedSubview(PanelButton.symbol("chevron.up", label: "Previous match", action: previous))
-        findRow.addArrangedSubview(PanelButton.symbol("chevron.down", label: "Next match", action: next))
-        findRow.addArrangedSubview(PanelButton.symbol("xmark", label: "Close find bar", action: close))
         findRow.setHuggingPriority(.defaultLow, for: .horizontal)
+
+        switch presentation {
+        case .bar:
+            let close = ButtonAction { [weak self] in
+                guard let self else { return }
+                self.delegate?.findBarDidRequestClose(self)
+            }
+            actions.append(close)
+            findRow.orientation = .horizontal
+            findRow.spacing = 6
+            findRow.alignment = .centerY
+            for view in [searchField, warningImage, statusLabel, regexToggle, caseToggle,
+                         wordToggle, scopeToggle, previousButton, nextButton,
+                         PanelButton.symbol("xmark", label: "Close find bar", action: close)] {
+                findRow.addArrangedSubview(view)
+            }
+
+        case .inspector:
+            let searchLine = NSStackView(views: [searchField, warningImage])
+            searchLine.orientation = .horizontal
+            searchLine.spacing = 6
+            searchLine.alignment = .centerY
+
+            let options = NSStackView(views: [regexToggle, caseToggle, wordToggle, scopeToggle])
+            options.orientation = .horizontal
+            options.spacing = 6
+            options.alignment = .centerY
+
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            let navigation = NSStackView(views: [statusLabel, spacer, previousButton, nextButton])
+            navigation.orientation = .horizontal
+            navigation.spacing = 6
+            navigation.alignment = .centerY
+
+            findRow.orientation = .vertical
+            findRow.spacing = 8
+            findRow.alignment = .leading
+            for view in [searchLine, options, navigation] {
+                findRow.addArrangedSubview(view)
+                view.widthAnchor.constraint(equalTo: findRow.widthAnchor).isActive = true
+            }
+        }
     }
 
     private func buildReplaceRow() {
@@ -223,7 +258,12 @@ final class FindBarView: NSView {
     // MARK: - API
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: showsReplace ? 66 : 34)
+        switch presentation {
+        case .bar:
+            NSSize(width: NSView.noIntrinsicMetric, height: showsReplace ? 66 : 34)
+        case .inspector:
+            NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+        }
     }
 
     func focusSearchField() {

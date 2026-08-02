@@ -101,6 +101,12 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         updateBreadcrumbAndGutter()
     }
 
+    func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {
+        refreshSourceFocusToolbar()
+        primaryContainer.needsLayout = true
+        splitContainer?.needsLayout = true
+    }
+
     func markdownTextView(_ view: MarkdownTextView, didEdit range: NSRange, delta: Int) {
         // The document owns reparsing; the storage delegate already scheduled
         // it.  Change marks shift here so they keep pointing at the same text.
@@ -113,6 +119,11 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         let menu = NSMenu()
         switch target.kind {
         case .heading(let index):
+            menu.addItem(editMarkdownItem(
+                view: view,
+                range: markdownDocument.parsed.headings[index].range
+            ))
+            menu.addItem(.separator())
             add(.copySection, to: menu, title: "Copy Section as Markdown")
             menu.addItem(richTextSectionItem(index: index))
             add(.copySectionLink, to: menu)
@@ -126,6 +137,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             add(.moveBlockDown, to: menu, title: "Move Section Down")
 
         case .codeBlock(let range):
+            menu.addItem(editMarkdownItem(view: view, range: range))
+            menu.addItem(.separator())
             menu.addItem(actionItem("Copy Code") { [weak self] in
                 self?.copy(range: range, flavour: .plain)
             })
@@ -137,6 +150,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
 
         case .pathToken(let token):
+            menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
+            menu.addItem(.separator())
             menu.addItem(actionItem("Open in Editor") { [weak self] in
                 guard let self, let resolution = self.pathResolver?.resolve(token), let url = resolution.url else { return }
                 self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
@@ -155,6 +170,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
 
         case .image(let source):
+            menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
+            menu.addItem(.separator())
             menu.addItem(actionItem("Open in Lightbox") { [weak self] in
                 self?.presentLightbox(source: source, caption: nil)
             })
@@ -168,6 +185,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
 
         case .link(let destination):
+            menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
+            menu.addItem(.separator())
             menu.addItem(actionItem("Open Link") { [weak self] in
                 guard let self else { return }
                 self.markdownTextView(view, didActivateLink: destination, at: target.sourceRange, modifiers: [])
@@ -178,6 +197,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
 
         case .table(let range):
+            menu.addItem(editMarkdownItem(view: view, range: range))
+            menu.addItem(.separator())
             menu.addItem(actionItem("Insert Row") { [weak self] in self?.tableInsertRow(range) })
             menu.addItem(actionItem("Delete Row") { [weak self] in self?.tableDeleteRow(range) })
             menu.addItem(.separator())
@@ -196,6 +217,11 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
 
         case .selection:
+            let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+            copy.target = view
+            menu.addItem(copy)
+            menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
+            menu.addItem(.separator())
             add(.copyAsMarkdown, to: menu)
             add(.copyAsRichText, to: menu)
             add(.copyAsPlainText, to: menu)
@@ -214,7 +240,10 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             add(.convertToBlockquote, to: menu)
 
         case .plain:
-            add(.toggleReadLive, to: menu)
+            let blockRange = markdownDocument.parsed.root.block(at: target.sourceRange.location)?.range
+                ?? target.sourceRange
+            menu.addItem(editMarkdownItem(view: view, range: blockRange))
+            menu.addItem(.separator())
             add(.tidyDocument, to: menu)
             add(.outlineQuickOpen, to: menu)
         }
@@ -226,6 +255,13 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         if let title { item.title = title }
         item.target = self
         menu.addItem(item)
+    }
+
+    private func editMarkdownItem(view: MarkdownTextView, range: NSRange) -> NSMenuItem {
+        actionItem("Edit Markdown") { [weak view] in
+            view?.focusSource(in: range)
+            view?.window?.makeFirstResponder(view)
+        }
     }
 
     private func richTextSectionItem(index: Int) -> NSMenuItem {
@@ -466,5 +502,25 @@ extension DocumentWindowController: SearchResultsDelegate {
         } else if let controller = (NSApp.delegate as? AppDelegate)?.open(hit.url) {
             controller.jump(to: hit.range.location, label: "Search hit")
         }
+    }
+}
+
+extension DocumentWindowController: HistoryInspectorViewDelegate {
+    func historyInspectorDidRequestFullHistory(_ inspector: HistoryInspectorView) {
+        perform(.versionTimeline)
+    }
+
+    func historyInspector(
+        _ inspector: HistoryInspectorView,
+        didRequestRestore record: SnapshotStore.VersionRecord
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Restore this version?"
+        alert.informativeText = "The current text will be replaced with the selected version. This is an ordinary edit, so ⌘Z undoes it."
+        alert.addButton(withTitle: "Restore")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        markdownDocument.restore(version: record)
+        inspector.versions = markdownDocument.versions()
     }
 }

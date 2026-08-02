@@ -203,36 +203,27 @@ enum CodeFileExtensions {
 
 // MARK: - Toolbar
 //
-// Auto-hiding in Read mode until the pointer moves (§11.4) is the window's job;
-// the toolbar itself just carries the controls that stay useful in every mode.
+// The toolbar has three stable zones: navigation at the leading edge, the
+// document/source presentation at the optical centre, and document tools at
+// the trailing edge. AppKit owns the chrome and all pointer states.
 
-extension DocumentWindowController: NSToolbarDelegate {
+extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     private static let contentsItem = NSToolbarItem.Identifier("contents")
-    private static let modeItem = NSToolbarItem.Identifier("mode")
-    private static let zoomItem = NSToolbarItem.Identifier("zoom")
-    private static let outlineItem = NSToolbarItem.Identifier("outline")
-    private static let tasksItem = NSToolbarItem.Identifier("tasks")
-    private static let siblingsItem = NSToolbarItem.Identifier("siblings")
+    private static let modeItem = NSToolbarItem.Identifier("presentation-mode")
     private static let findItem = NSToolbarItem.Identifier("find")
-    private static let timelineItem = NSToolbarItem.Identifier("timeline")
+    private static let inspectorToolbarItem = NSToolbarItem.Identifier("inspector")
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // §11.4: "No permanent sidebars, panels, or status bar."  The toolbar
-        // is held to the same standard — two competing pill groups in the
-        // centre read as an application, and this is meant to read as a
-        // document.  Structural zoom keeps its `1`–`5` keys and the outline
-        // panel's slider (§5.2); it does not need to sit on screen permanently,
-        // so it stays available for customisation rather than shown by default.
         [
-            Self.contentsItem, .flexibleSpace,
-            Self.modeItem, .flexibleSpace,
-            Self.findItem, Self.tasksItem, Self.timelineItem, Self.overflowItem,
+            Self.contentsItem, .sidebarTrackingSeparator, .flexibleSpace,
+            Self.modeItem,
+            .flexibleSpace, Self.findItem, Self.inspectorToolbarItem, Self.overflowItem,
         ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [Self.outlineItem, Self.siblingsItem, Self.zoomItem, .space, .flexibleSpace]
+        toolbarDefaultItemIdentifiers(toolbar) + [.space, .flexibleSpace]
     }
 
     func toolbar(
@@ -242,113 +233,233 @@ extension DocumentWindowController: NSToolbarDelegate {
         switch identifier {
         case Self.contentsItem:
             let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "Contents")
+            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Contents")
             item.label = "Contents"
             item.toolTip = "Contents (⌘⇧O)"
             item.target = self
             item.action = #selector(toolbarContents(_:))
+            item.isBordered = false
+            item.visibilityPriority = .high
             return item
+
         case Self.modeItem:
             let control = NSSegmentedControl(
-                labels: RenderMode.userFacingModes.map(\.title),
-                trackingMode: .selectOne, target: self, action: #selector(modeSegmentChanged(_:))
+                labels: ["Document", "Source"],
+                trackingMode: .selectOne,
+                target: self,
+                action: #selector(toolbarModeChanged(_:))
             )
-            control.selectedSegment = RenderMode.userFacingModes.firstIndex(of: mode) ?? 0
-            let symbols = ["doc.richtext", "chevron.left.forwardslash.chevron.right"]
-            for index in 0..<min(control.segmentCount, symbols.count) {
-                control.setImage(NSImage(systemSymbolName: symbols[index], accessibilityDescription: nil), forSegment: index)
-            }
+            control.segmentStyle = .capsule
+            control.controlSize = .regular
+            control.selectedSegment = 0
+            control.setWidth(112, forSegment: 0)
+            control.setWidth(96, forSegment: 1)
+            control.setImage(
+                NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: "Document"),
+                forSegment: 0
+            )
+            control.setImage(
+                NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: "Source"),
+                forSegment: 1
+            )
+            control.setToolTip("Document — rendered Markdown", forSegment: 0)
+            control.setToolTip("Source — raw Markdown (⇧⌘E)", forSegment: 1)
+            control.setAccessibilityLabel("Presentation")
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
-            item.label = "Mode"
+            item.label = "Presentation"
+            item.visibilityPriority = .high
+            return item
+
+        case Self.findItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Find")
+            item.label = "Find"
+            item.toolTip = "Find in Document (⌘F)"
+            item.target = self
+            item.action = #selector(toolbarFind(_:))
+            item.isBordered = false
+            item.visibilityPriority = .high
+            return item
+
+        case Self.inspectorToolbarItem:
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Inspector")
+            item.label = "Inspector"
+            item.toolTip = "Inspector — Tasks and History"
+            item.menu = makeInspectorMenu()
+            item.visibilityPriority = .high
             return item
 
         case Self.overflowItem:
             let item = NSMenuToolbarItem(itemIdentifier: identifier)
             item.label = "More"
             item.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "More")
-            let menu = NSMenu(title: "More")
-            for command in [Command.zoomIn, .zoomOut, .splitView, .exportHTML, .exportPDF, .tidyDocument] {
-                let menuItem = MainMenu.commandItem(command)
-                menuItem.target = self
-                menu.addItem(menuItem)
-            }
-            item.menu = menu
+            item.toolTip = "More document actions"
+            item.menu = makeOverflowMenu()
             return item
-
-        case Self.zoomItem:
-            // The structural-zoom segmented control (§5.2).
-            let control = NSSegmentedControl(
-                labels: ["1", "2", "3", "4", "5"],
-                trackingMode: .selectOne, target: self, action: #selector(zoomSegmentChanged(_:))
-            )
-            control.selectedSegment = containerTextView.zoomLevel.rawValue - 1
-            for (index, level) in ZoomLevel.allCases.enumerated() {
-                control.setToolTip(level.title, forSegment: index)
-            }
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = control
-            item.label = "Zoom"
-            return item
-
-        case Self.tasksItem:
-            // A progress ring appears whenever a document has tasks (§8.5).
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            progressRing.frame = NSRect(x: 0, y: 0, width: 22, height: 22)
-            item.view = progressRing
-            item.label = "Tasks"
-            item.toolTip = "Tasks"
-            item.action = #selector(toolbarTasks(_:))
-            item.target = self
-            return item
-
         default:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.target = self
-            switch identifier {
-            case Self.outlineItem:
-                item.image = NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: "Outline")
-                item.label = "Outline"; item.action = #selector(toolbarOutline(_:))
-            case Self.siblingsItem:
-                item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Siblings")
-                item.label = "Siblings"; item.action = #selector(toolbarSiblings(_:))
-            case Self.findItem:
-                item.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Find")
-                item.label = "Find"; item.action = #selector(toolbarFind(_:))
-            case Self.timelineItem:
-                item.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
-                item.label = "History"; item.action = #selector(toolbarTimeline(_:))
-            default:
-                return nil
-            }
-            item.isBordered = true
-            return item
+            return nil
         }
     }
 
-    @objc private func modeSegmentChanged(_ sender: NSSegmentedControl) {
-        guard sender.selectedSegment < RenderMode.userFacingModes.count else { return }
-        applyMode(RenderMode.userFacingModes[sender.selectedSegment])
+    @objc private func toolbarModeChanged(_ sender: NSSegmentedControl) {
+        let showSource = sender.selectedSegment == 1
+        let views = [primaryContainer?.textView, splitContainer?.textView].compactMap { $0 }
+        for view in views {
+            if showSource { view.focusEntireSource() }
+            else { view.clearSourceFocus() }
+        }
     }
 
-    func refreshModeControlSelection() {
-        guard let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.modeItem }),
+    func refreshSourceFocusToolbar() {
+        guard let toolbar = window?.toolbar else { return }
+        let isActive = primaryContainer.textView.sourceFocus != .none
+            || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)
+        guard let item = toolbar.items.first(where: { $0.itemIdentifier == Self.modeItem }),
               let control = item.view as? NSSegmentedControl
         else { return }
-        control.selectedSegment = RenderMode.userFacingModes.firstIndex(of: mode) ?? 0
+        control.selectedSegment = isActive ? 1 : 0
     }
 
-    @objc private func zoomSegmentChanged(_ sender: NSSegmentedControl) {
-        guard let level = ZoomLevel(rawValue: sender.selectedSegment + 1) else { return }
-        containerTextView.zoomLevel = level
-        markdownDocument.state.zoomLevel = level
-        outlinePanel?.zoomLevel = level
+    @objc private func toolbarContents(_ sender: Any?) { toggleOutlinePanel() }
+
+    @objc private func toolbarFind(_ sender: Any?) {
+        if inspectorHost?.selectedSection == .search, !inspectorItem.isCollapsed {
+            dismissFindBar()
+        } else {
+            if !navigationPinned { closeNavigationOverlay() }
+            showFindBar(replace: false)
+        }
     }
 
-    @objc private func toolbarOutline(_ sender: Any?) { toggleOutlinePanel() }
-    @objc private func toolbarContents(_ sender: Any?) { openNavigationOverlay(focusSearch: false) }
-    @objc private func toolbarTasks(_ sender: Any?) { toggleTaskPanel() }
-    @objc private func toolbarSiblings(_ sender: Any?) { toggleSiblingSidebar() }
-    @objc private func toolbarFind(_ sender: Any?) { showFindBar(replace: false) }
-    @objc private func toolbarTimeline(_ sender: Any?) { perform(.versionTimeline) }
+    @objc private func toolbarShowTasks(_ sender: Any?) {
+        if !navigationPinned { closeNavigationOverlay() }
+        toggleTaskPanel()
+    }
+
+    @objc private func toolbarShowHistory(_ sender: Any?) {
+        if !navigationPinned { closeNavigationOverlay() }
+        showHistoryInspector()
+    }
+
+    @objc private func toolbarCloseInspector(_ sender: Any?) { closeInspector() }
+
+    private func makeInspectorMenu() -> NSMenu {
+        let menu = NSMenu(title: "Inspector")
+        menu.delegate = self
+        menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
+        menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
+        menu.addItem(.separator())
+        menu.addItem(menuItem(title: "Close Inspector", symbol: "sidebar.right", action: #selector(toolbarCloseInspector(_:))))
+        return menu
+    }
+
+    private func makeOverflowMenu() -> NSMenu {
+        let menu = NSMenu(title: "More")
+        menu.delegate = self
+        addCommands([.focusMode, .splitView, .pinWindow], to: menu)
+
+        menu.addItem(.separator())
+        let zoom = NSMenu(title: "Structural Zoom")
+        addCommands([.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5], to: zoom)
+        zoom.addItem(.separator())
+        addCommands([.zoomIn, .zoomOut], to: zoom)
+        let zoomItem = NSMenuItem(title: "Structural Zoom", action: nil, keyEquivalent: "")
+        zoomItem.image = NSImage(systemSymbolName: "text.magnifyingglass", accessibilityDescription: nil)
+        zoomItem.submenu = zoom
+        menu.addItem(zoomItem)
+
+        menu.addItem(.separator())
+        addCommands([.tidyDocument, .readerProfiles], to: menu)
+
+        let export = NSMenu(title: "Export")
+        addCommands([.exportPDF, .exportHTML, .exportSelectionAsImage], to: export)
+        let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+        exportItem.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
+        exportItem.submenu = export
+        menu.addItem(exportItem)
+        return menu
+    }
+
+    private func addCommands(_ commands: [Command], to menu: NSMenu) {
+        for command in commands {
+            let item = MainMenu.commandItem(command)
+            item.target = self
+            menu.addItem(item)
+        }
+    }
+
+    private func menuItem(title: String, symbol: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        return item
+    }
+
+    func showHistoryInspector() {
+        let inspector = historyInspector ?? HistoryInspectorView(styleSheet: activeStyleSheet)
+        if historyInspector == nil {
+            inspector.delegate = self
+            historyInspector = inspector
+        }
+        inspector.versions = markdownDocument.versions()
+        showInInspector(inspector, section: .history)
+    }
+
+    func refreshToolbarSelectionState() {
+        guard let toolbar = window?.toolbar else { return }
+        let navigationOpen = navigationPinned || navigationWindow != nil
+        toolbar.items.first(where: { $0.itemIdentifier == Self.contentsItem })?.isBordered = navigationOpen
+        let inspectorOpen = !inspectorItem.isCollapsed
+        toolbar.items.first(where: { $0.itemIdentifier == Self.inspectorToolbarItem })?.isBordered = inspectorOpen
+        let searchOpen = inspectorOpen && inspectorHost?.selectedSection == .search
+        toolbar.items.first(where: { $0.itemIdentifier == Self.findItem })?.isBordered = searchOpen
+
+        let progress = progressRing.progress
+        let progressText = progress.total == 0 ? "" : " — \(progress.done) of \(progress.total) tasks complete"
+        toolbar.items.first(where: { $0.itemIdentifier == Self.inspectorToolbarItem })?.toolTip =
+            "Inspector — Tasks and History\(progressText)"
+        refreshSourceFocusToolbar()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu.title == "Inspector" {
+            for item in menu.items {
+                switch item.title {
+                case "Tasks": item.state = inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed ? .on : .off
+                case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
+                case "Close Inspector": item.isEnabled = !inspectorItem.isCollapsed
+                default: break
+                }
+            }
+            return
+        }
+
+        updateCommandStates(in: menu)
+    }
+
+    private func updateCommandStates(in menu: NSMenu) {
+        for item in menu.items {
+            if let command = MainMenu.command(for: item) {
+                item.state = commandState(command) ? .on : .off
+            }
+            if let submenu = item.submenu { updateCommandStates(in: submenu) }
+        }
+    }
+
+    private func commandState(_ command: Command) -> Bool {
+        switch command {
+        case .focusMode: return isFocusModeEnabled
+        case .splitView: return splitViewContainer != nil
+        case .pinWindow: return isWindowPinned
+        case .typewriterScrolling: return Preferences.shared.values.typewriterScrolling
+        case .zoomLevel1: return containerTextView.zoomLevel == .h1
+        case .zoomLevel2: return containerTextView.zoomLevel == .h2
+        case .zoomLevel3: return containerTextView.zoomLevel == .headings
+        case .zoomLevel4: return containerTextView.zoomLevel == .skeleton
+        case .zoomLevel5: return containerTextView.zoomLevel == .everything
+        default: return false
+        }
+    }
 }

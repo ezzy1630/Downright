@@ -8,16 +8,20 @@ extension DocumentWindowController {
 
     // MARK: - Accessors
 
-    var containerTextView: MarkdownTextView { primaryContainer.textView }
+    var containerTextView: MarkdownTextView {
+        guard let split = splitContainer?.textView,
+              window?.firstResponder === split else { return primaryContainer.textView }
+        return split
+    }
     var currentStyleSheet: StyleSheet { activeStyleSheet }
 
     func caretOffset() -> Int {
-        let selection = containerTextView.selectedRange()
+        let selection = containerTextView.sourceSelectedRange
         return selection.length > 0 ? selection.location : max(0, selection.location)
     }
 
     func selectionRange() -> NSRange {
-        let selection = containerTextView.selectedRange()
+        let selection = containerTextView.sourceSelectedRange
         guard selection.length == 0 else { return selection }
         // With no selection, commands act on the caret's block, which is what
         // makes ⌘B and the convert commands usable without selecting first.
@@ -35,7 +39,7 @@ extension DocumentWindowController {
     enum CopyFlavour { case markdown, richText, plain }
 
     func copy(flavour: CopyFlavour) {
-        let range = containerTextView.selectedRange()
+        let range = containerTextView.sourceSelectedRange
         let effective = range.length > 0 ? range : NSRange(location: 0, length: markdownDocument.parsed.length)
         copy(range: effective, flavour: flavour)
     }
@@ -47,8 +51,6 @@ extension DocumentWindowController {
 
         switch flavour {
         case .markdown:
-            // ⌘C always yields markdown (§3.1).  Rich text is a separate,
-            // explicit command — never a surprise.
             pasteboard.setString(markdown, forType: .string)
         case .richText:
             let attributed = containerTextView.attributedStringForRichTextCopy(range: range)
@@ -125,7 +127,7 @@ extension DocumentWindowController {
     }
 
     func exportSelectionAsImage() {
-        let range = containerTextView.selectedRange()
+        let range = containerTextView.sourceSelectedRange
         guard range.length > 0, let image = containerTextView.imageForSelection(range) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
@@ -165,15 +167,15 @@ extension DocumentWindowController {
 
     func showSiblingSearch() {
         guard let scanner else { return }
+        showFindBar(replace: false)
         if searchResults == nil {
             let panel = SearchResultsPanelView()
             panel.delegate = self
             panel.styleSheet = currentStyleSheet
             searchResults = panel
-            installTrailing(panel)
+            searchInspector?.setResults(panel)
         }
         searchResults?.isSearching = true
-        showFindBar(replace: false)
 
         let urls = scanner.siblings.map(\.url)
         let query = currentFindQuery

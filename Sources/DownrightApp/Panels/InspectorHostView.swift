@@ -1,73 +1,123 @@
 import AppKit
 
-final class InspectorHostView: NSView {
-    var onHistory: (() -> Void)?
+enum InspectorSection: Int, CaseIterable, Equatable {
+    case search
+    case tasks
+    case history
+    case context
 
-    private let picker = NSSegmentedControl(labels: ["Tasks", "Search", "History"],
-                                            trackingMode: .selectOne, target: nil, action: nil)
+    var title: String {
+        switch self {
+        case .search: "Search"
+        case .tasks: "Tasks"
+        case .history: "History"
+        case .context: "Inspector"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .search: "magnifyingglass"
+        case .tasks: "checkmark.circle"
+        case .history: "clock.arrow.circlepath"
+        case .context: "sidebar.right"
+        }
+    }
+}
+
+/// Owns the one trailing inspector surface. The toolbar chooses the section;
+/// this view owns only its header, close affordance, and content lifecycle.
+@MainActor
+final class InspectorHostView: NSView {
+    var onClose: (() -> Void)?
+
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let closeButton: NSButton
     private let content = NSView()
-    private var views: [Int: NSView] = [:]
+    private var closeAction: ButtonAction?
+    private var views: [InspectorSection: NSView] = [:]
+
+    private(set) var selectedSection: InspectorSection?
 
     override init(frame frameRect: NSRect) {
+        closeButton = PanelButton.symbol("xmark", label: "Close inspector", action: ButtonAction({}))
         super.init(frame: frameRect)
-        picker.target = self
-        picker.action = #selector(selectionChanged(_:))
-        picker.selectedSegment = 0
-        picker.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = PanelFont.header
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let action = ButtonAction { [weak self] in self?.onClose?() }
+        closeAction = action
+        closeButton.target = action
+        closeButton.action = #selector(ButtonAction.fire(_:))
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+
         content.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(picker)
+        addSubview(titleLabel)
+        addSubview(closeButton)
         addSubview(content)
+
         NSLayoutConstraint.activate([
-            picker.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            picker.centerXAnchor.constraint(equalTo: centerXAnchor),
-            content.topAnchor.constraint(equalTo: picker.bottomAnchor, constant: 8),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            titleLabel.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
+            closeButton.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            closeButton.widthAnchor.constraint(equalToConstant: 18),
+            closeButton.heightAnchor.constraint(equalToConstant: 18),
+            content.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8),
             content.leadingAnchor.constraint(equalTo: leadingAnchor),
             content.trailingAnchor.constraint(equalTo: trailingAnchor),
             content.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Inspector")
     }
 
     required init?(coder: NSCoder) { nil }
 
-    func setContent(_ view: NSView, segment: Int) {
-        views[segment]?.removeFromSuperview()
-        views[segment] = view
-        picker.selectedSegment = segment
-        show(segment)
-    }
-
-    func removeContent(segment: Int) {
-        views.removeValue(forKey: segment)?.removeFromSuperview()
-    }
-
-    func removeContent(_ view: NSView, segment: Int) {
-        guard views[segment] === view else { return }
-        removeContent(segment: segment)
-    }
-
     var hasContent: Bool { !views.isEmpty }
 
-    @objc private func selectionChanged(_ sender: NSSegmentedControl) {
-        if sender.selectedSegment == 2 {
-            onHistory?()
-            sender.selectedSegment = views[1] == nil ? 0 : 1
-        }
-        show(sender.selectedSegment)
+    func setContent(_ view: NSView, section: InspectorSection) {
+        if let old = views[section], old !== view { old.removeFromSuperview() }
+        views[section] = view
+        installIfNeeded(view)
+        select(section)
     }
 
-    private func show(_ segment: Int) {
-        for (index, view) in views { view.isHidden = index != segment }
-        guard let view = views[segment] else { return }
-        if view.superview == nil {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            content.addSubview(view)
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-                view.topAnchor.constraint(equalTo: content.topAnchor),
-                view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            ])
-        }
-        view.isHidden = false
+    func select(_ section: InspectorSection) {
+        guard views[section] != nil else { return }
+        selectedSection = section
+        titleLabel.stringValue = section.title
+        titleLabel.setAccessibilityLabel("\(section.title) inspector")
+        for (candidate, view) in views { view.isHidden = candidate != section }
+    }
+
+    func removeContent(section: InspectorSection) {
+        views.removeValue(forKey: section)?.removeFromSuperview()
+        guard selectedSection == section else { return }
+        selectedSection = views.keys.sorted { $0.rawValue < $1.rawValue }.first
+        if let selectedSection { select(selectedSection) }
+        else { titleLabel.stringValue = "" }
+    }
+
+    func removeContent(_ view: NSView, section: InspectorSection) {
+        guard views[section] === view else { return }
+        removeContent(section: section)
+    }
+
+    private func installIfNeeded(_ view: NSView) {
+        guard view.superview == nil else { return }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            view.topAnchor.constraint(equalTo: content.topAnchor),
+            view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
     }
 }
