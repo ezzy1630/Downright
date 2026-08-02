@@ -326,8 +326,39 @@ extension MarkdownTextView {
 
     public override func paste(_ sender: Any?) {
         guard isEditable else { return }
-        guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        performSourceEdit(range: sourceSelectedRange, replacement: text)
+        let pasteboard = NSPasteboard.general
+        guard let payload = markdownPastePayload(from: pasteboard) else { return }
+        let range = sourceSelectedRange
+        let selection = sourceText(in: range)
+        let context = MarkdownSmartPaste.context(for: range, in: parsedDocument, mode: mode)
+        let replacement = MarkdownSmartPaste.replacement(
+            for: payload, selection: selection, context: context)
+        performSourceEdit(range: range, replacement: replacement)
+    }
+
+    private func sourceText(in range: NSRange) -> String {
+        guard let storage = textStorage, range.location >= 0,
+              range.upperBound <= storage.length else { return "" }
+        return storage.attributedSubstring(from: range).string
+    }
+
+    /// Read the richest useful clipboard flavour first.  URL is intentionally
+    /// ahead of HTML/string because browser URL copies commonly advertise all
+    /// three and the URL is the user's explicit intent.
+    private func markdownPastePayload(from pasteboard: NSPasteboard) -> MarkdownPastePayload? {
+        let orderedTypes: [NSPasteboard.PasteboardType] = [.URL, .html, .string]
+        for type in orderedTypes where pasteboard.types?.contains(type) == true {
+            if type == .URL {
+                if let url = pasteboard.string(forType: type), !url.isEmpty { return .url(url) }
+            } else if type == .html {
+                guard let html = pasteboard.string(forType: type) else { continue }
+                let fallback = pasteboard.string(forType: .string) ?? ""
+                return .html(html, fallback: fallback)
+            } else if let text = pasteboard.string(forType: type) {
+                return .text(text)
+            }
+        }
+        return nil
     }
 
     /// A hidden marker is deleted whole.  Deleting half of `**` would leave
