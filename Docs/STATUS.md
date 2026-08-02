@@ -86,7 +86,7 @@ Share extension, or Sparkle.
 
 | Question | Decision |
 |---|---|
-| **1. Name** | Downright. Bundle ID `com.unrulyagency.downright`, CLI verb `down` (with `md` as an alias, per §3.4). |
+| **1. Name** | Downright. Bundle ID `com.ezzyrappeport.downright`, CLI verb `down` (with `md` as an alias, per §3.4). |
 | **2. Licence** | MIT. `MarkdownRender`'s value compounds through adoption; a fork has to keep pace with the original, and a licence that discourages contribution costs more than the fork it prevents. |
 | **3. `.mdx` / `.qmd`** | Open them. Render the markdown, grey out the JSX and executable chunks, never evaluate them (§2). Refusing a file is worse than rendering the 90% of it that is plain markdown. |
 | **4. Very large files** | 5MB, as suggested, configurable in Settings → Editor. |

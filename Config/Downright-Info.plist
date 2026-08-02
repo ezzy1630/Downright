@@ -42,7 +42,7 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>net.daringfireball.markdown</string>
-				<string>com.unrulyagency.downright.markdown</string>
+				<string>com.ezzyrappeport.downright.markdown</string>
 			</array>
 			<key>CFBundleTypeExtensions</key>
 			<array>
@@ -93,7 +93,7 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.unrulyagency.downright.markdown</string>
+			<string>com.ezzyrappeport.downright.markdown</string>
 			<key>UTTypeDescription</key>
 			<string>Extended Markdown Document</string>
 			<key>UTTypeConformsTo</key>

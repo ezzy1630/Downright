@@ -239,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openProjectPage(_ sender: Any?) {
-        guard let url = URL(string: "https://github.com/unrulyagency/downright") else { return }
+        guard let url = URL(string: "https://github.com/ezzy1630/Downright") else { return }
         NSWorkspace.shared.open(url)
     }
 

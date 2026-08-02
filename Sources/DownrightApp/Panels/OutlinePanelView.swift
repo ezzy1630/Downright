@@ -15,7 +15,7 @@ protocol OutlinePanelDelegate: AnyObject {
 
 extension NSPasteboard.PasteboardType {
     /// Local-only drag payload: the index of the heading being moved.
-    static let downrightHeading = NSPasteboard.PasteboardType("com.unrulyagency.downright.heading")
+    static let downrightHeading = NSPasteboard.PasteboardType("com.ezzyrappeport.downright.heading")
 }
 
 /// The document contents panel (§7.1 drag-reorder).

@@ -14,7 +14,7 @@ cd "$ROOT"
 CONFIGURATION="${CONFIGURATION:-release}"
 SCRATCH="${SCRATCH:-.build-main}"
 APP_NAME="Downright"
-BUNDLE_ID="com.unrulyagency.downright"
+BUNDLE_ID="com.ezzyrappeport.downright"
 VERSION="1.0.0"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
@@ -90,7 +90,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
             <key>LSItemContentTypes</key>
             <array>
                 <string>net.daringfireball.markdown</string>
-                <string>com.unrulyagency.downright.markdown</string>
+                <string>com.ezzyrappeport.downright.markdown</string>
             </array>
             <key>CFBundleTypeExtensions</key>
             <array>
@@ -123,7 +123,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
-            <key>UTTypeIdentifier</key><string>com.unrulyagency.downright.markdown</string>
+            <key>UTTypeIdentifier</key><string>com.ezzyrappeport.downright.markdown</string>
             <key>UTTypeDescription</key><string>Extended Markdown Document</string>
             <key>UTTypeConformsTo</key><array><string>public.plain-text</string></array>
             <key>UTTypeTagSpecification</key>

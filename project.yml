@@ -1,6 +1,6 @@
 name: Downright
 options:
-  bundleIdPrefix: com.unrulyagency
+  bundleIdPrefix: com.ezzyrappeport
   deploymentTarget:
     macOS: 14.0
   createIntermediateGroups: true
@@ -26,16 +26,13 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.unrulyagency.downright
+        PRODUCT_BUNDLE_IDENTIFIER: com.ezzyrappeport.downright
         PRODUCT_NAME: Downright
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_FILE: Config/Downright-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
   DownrightQL:
     type: app-extension
     platform: macOS
@@ -48,16 +45,13 @@ targets:
         product: MarkdownRender
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.unrulyagency.downright.quicklook
+        PRODUCT_BUNDLE_IDENTIFIER: com.ezzyrappeport.downright.quicklook
         PRODUCT_NAME: DownrightQL
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_FILE: Config/DownrightQL-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
   DownrightThumb:
     type: app-extension
     platform: macOS
@@ -70,16 +64,13 @@ targets:
         product: MarkdownRender
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.unrulyagency.downright.thumbnail
+        PRODUCT_BUNDLE_IDENTIFIER: com.ezzyrappeport.downright.thumbnail
         PRODUCT_NAME: DownrightThumb
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_FILE: Config/DownrightThumb-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
 schemes:
   Downright:
     build:

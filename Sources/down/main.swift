@@ -63,7 +63,7 @@ func locateApp() -> URL? {
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-    process.arguments = ["kMDItemCFBundleIdentifier == 'com.unrulyagency.downright'"]
+    process.arguments = ["kMDItemCFBundleIdentifier == 'com.ezzyrappeport.downright'"]
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice

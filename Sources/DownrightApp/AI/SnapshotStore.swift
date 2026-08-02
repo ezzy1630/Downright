@@ -47,7 +47,7 @@ final class SnapshotStore {
     var maximumAge: TimeInterval = 30 * 24 * 60 * 60
     var maximumBytes: Int = 500 * 1024 * 1024
 
-    private let queue = DispatchQueue(label: "com.unrulyagency.downright.history", qos: .utility)
+    private let queue = DispatchQueue(label: "com.ezzyrappeport.downright.history", qos: .utility)
     private let fm = FileManager.default
     private let pendingLock = NSLock()
     private struct DocumentState {

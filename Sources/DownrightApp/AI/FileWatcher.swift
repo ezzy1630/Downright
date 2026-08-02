@@ -33,7 +33,7 @@ final class FileWatcher {
 
     private(set) var url: URL
     private let handler: (Event) -> Void
-    private let queue = DispatchQueue(label: "com.unrulyagency.downright.filewatcher", qos: .utility)
+    private let queue = DispatchQueue(label: "com.ezzyrappeport.downright.filewatcher", qos: .utility)
 
     private var stream: FSEventStreamRef?
     private var pollTimer: DispatchSourceTimer?

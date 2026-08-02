@@ -3,7 +3,7 @@ import Foundation
 /// Where Downright keeps its state.  Unsandboxed (§3.4), so these are real
 /// paths in Application Support rather than a container.
 enum AppPaths {
-    static let bundleIdentifier = "com.unrulyagency.downright"
+    static let bundleIdentifier = "com.ezzyrappeport.downright"
 
     static var supportDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

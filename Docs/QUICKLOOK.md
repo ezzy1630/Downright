@@ -110,7 +110,7 @@ this:
         <key>QLSupportedContentTypes</key>
         <array>
             <string>net.daringfireball.markdown</string>
-            <string>com.unrulyagency.downright.markdown</string>
+            <string>com.ezzyrappeport.downright.markdown</string>
         </array>
         <key>QLSupportsSearchableItems</key><false/>
     </dict>
@@ -130,7 +130,7 @@ this:
         <key>QLSupportedContentTypes</key>
         <array>
             <string>net.daringfireball.markdown</string>
-            <string>com.unrulyagency.downright.markdown</string>
+            <string>com.ezzyrappeport.downright.markdown</string>
         </array>
     </dict>
     <key>NSExtensionPointIdentifier</key>

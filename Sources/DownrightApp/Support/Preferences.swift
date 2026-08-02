@@ -85,7 +85,7 @@ final class Preferences {
         }
     }
 
-    static let didChange = Notification.Name("com.unrulyagency.downright.preferencesDidChange")
+    static let didChange = Notification.Name("com.ezzyrappeport.downright.preferencesDidChange")
 
     private init() {
         if let data = try? Data(contentsOf: AppPaths.preferencesFile),
