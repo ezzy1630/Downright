@@ -81,7 +81,7 @@ update checks of its own, so wiring `SPUStandardUpdaterController` is additive.
 
 ## Release checklist
 
-1. `swift test` — all suites green.
+1. `Scripts/check.sh` — all suites run and pass.
 2. `Scripts/bundle-app.sh` and launch the bundle; open `Docs/sample.md` and
    check every renderer path.
 3. Verify the performance budget (spec §12) on a 5k-line document: cold launch

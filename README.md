@@ -106,8 +106,11 @@ claude -p "summarise this repo" | down
 Run the tests with:
 
 ```bash
-swift test
+Scripts/check.sh
 ```
+
+The script supplies the Swift Testing framework path when the active toolchain
+needs it. It also fails if Swift runs zero tests.
 
 ## Keyboard
 
