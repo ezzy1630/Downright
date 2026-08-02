@@ -10,7 +10,10 @@ struct MarkdownCLITests {
     @Test func commandsParseTheirOptions() throws {
         #expect(try MarkdownCLI.parse(["read", "--json", "-"]) == .read(json: true, paths: ["-"]))
         #expect(try MarkdownCLI.parse(["export", "-f", "html", "-o", "out.html", "doc.md"]) == .export(format: .html, output: "out.html", paths: ["doc.md"]))
-        #expect(try MarkdownCLI.parse(["check", "--json", "doc.md"]) == .check(json: true, paths: ["doc.md"]))
+        #expect(try MarkdownCLI.parse(["check", "--json", "--target", "github", "doc.md"])
+            == .check(json: true, target: .gitHub, paths: ["doc.md"]))
+        #expect(try MarkdownCLI.parse(["outline", "--json", "doc.md"])
+            == .outline(json: true, paths: ["doc.md"]))
     }
 
     @Test func badArgumentsHaveActionableErrors() {
@@ -35,5 +38,13 @@ struct MarkdownCLITests {
         let first = MarkdownCLI.diagnostics(for: markdown)
         let second = MarkdownCLI.diagnostics(for: markdown)
         #expect(first.map(\.id) == second.map(\.id))
+    }
+
+    @Test func outlineAndTargetChecksUseCoreParser() {
+        let markdown = "# First\n\n## Child\n\n[^1]: note\n"
+        #expect(MarkdownCLI.outline(for: markdown).map(\.title) == ["First", "Child"])
+        #expect(MarkdownCLI.compatibilityDiagnostics(for: markdown, target: .commonMark)
+            .contains { $0.capability == .footnotes })
+        #expect(MarkdownCLI.renderTarget(named: "CommonMark") == .commonMark)
     }
 }

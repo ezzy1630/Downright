@@ -25,6 +25,22 @@ func readInputs(_ paths: [String]) -> [(String, String)] {
     }
 }
 
+func expandedMarkdownPaths(_ paths: [String]) -> [String] {
+    paths.flatMap { path -> [String] in
+        guard path != "-" else { return [path] }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return [path]
+        }
+        guard let enumerator = FileManager.default.enumerator(atPath: path) else { return [] }
+        return enumerator.compactMap { item in
+            guard let item = item as? String else { return nil }
+            let full = URL(fileURLWithPath: path).appendingPathComponent(item).path
+            return MarkdownCLI.isMarkdownPath(full) ? full : nil
+        }.sorted()
+    }
+}
+
 func stdinFile() -> URL? {
     guard isatty(FileHandle.standardInput.fileDescriptor) == 0 else { return nil }
     let data = FileHandle.standardInput.readDataToEndOfFile()
@@ -90,24 +106,53 @@ case .export(_, let output, let paths):
         do { try data.write(to: URL(fileURLWithPath: output), options: .atomic) }
         catch { writeError("cannot write \(output): \(error.localizedDescription)", status: 73) }
     } else { FileHandle.standardOutput.write(data) }
-case .check(let json, let paths):
-    let inputs = readInputs(paths)
+case .check(let json, let target, let paths):
+    let inputs = readInputs(expandedMarkdownPaths(paths))
     var findings = 0
     for (index, input) in inputs {
         let base = input == "stdin" ? nil : URL(fileURLWithPath: index).deletingLastPathComponent()
         let diagnostics = MarkdownCLI.diagnostics(for: input, baseURL: base)
-        findings += diagnostics.count
+        let compatibility = target.map { MarkdownCLI.compatibilityDiagnostics(for: input, target: $0) } ?? []
+        findings += diagnostics.count + compatibility.count
         if json {
-            let values = diagnostics.map {
+            var values = diagnostics.map {
                 ["path": index, "id": $0.id, "severity": $0.severity.rawValue, "category": $0.category.rawValue, "message": $0.message, "location": $0.range.location] as [String: Any]
+            }
+            values += compatibility.map {
+                [
+                    "path": index,
+                    "id": $0.id,
+                    "severity": $0.severity.rawValue,
+                    "category": "compatibility",
+                    "target": target?.rawValue ?? "",
+                    "message": $0.title,
+                    "location": $0.range.location,
+                ] as [String: Any]
             }
             guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) else { writeError("cannot encode JSON", status: 70) }
             FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data("\n".utf8))
         } else {
             for diagnostic in diagnostics { print("\(index):\(diagnostic.range.location + 1): \(diagnostic.severity.rawValue): \(diagnostic.message) [\(diagnostic.id)]") }
+            for diagnostic in compatibility {
+                print("\(index):\(diagnostic.range.location + 1): warning: \(diagnostic.title) [target:\(target?.rawValue ?? "unknown")]")
+            }
         }
     }
     if findings > 0 { exit(1) }
+case .outline(let json, let paths):
+    let inputs = readInputs(paths)
+    for input in inputs {
+        let outline = MarkdownCLI.outline(for: input.1)
+        if json {
+            guard let data = try? JSONEncoder().encode(outline) else { writeError("cannot encode JSON", status: 70) }
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        } else {
+            for heading in outline {
+                print("\(input.0):\(heading.line): \(String(repeating: "  ", count: max(0, heading.level - 1)))\(heading.title) #\(heading.slug)")
+            }
+        }
+    }
 case .open(let options, let paths):
     var paths = paths
     if paths.contains("-") {

@@ -12,7 +12,8 @@ public enum MarkdownCLI {
         case open(OpenOptions, paths: [String])
         case read(json: Bool, paths: [String])
         case export(format: ExportFormat, output: String?, paths: [String])
-        case check(json: Bool, paths: [String])
+        case check(json: Bool, target: BuiltInRenderTarget?, paths: [String])
+        case outline(json: Bool, paths: [String])
         case help
         case version
     }
@@ -59,6 +60,7 @@ public enum MarkdownCLI {
         case "read": return try parseRead(Array(arguments.dropFirst()))
         case "export": return try parseExport(Array(arguments.dropFirst()))
         case "check": return try parseCheck(Array(arguments.dropFirst()))
+        case "outline": return try parseOutline(Array(arguments.dropFirst()))
         case "open": return try parseOpen(Array(arguments.dropFirst()))
         default: return try parseOpen(arguments)
         }
@@ -72,14 +74,20 @@ public enum MarkdownCLI {
           down [open options] [file ...]
           down read [--json] [file ...]
           down export [--format html] [-o path] [file ...]
-          down check [--json] [file ...]
+          down check [--json] [--target name] [file or folder ...]
+          down outline [--json] [file ...]
           … | down [command] -
 
         COMMANDS
           open       Open files in Downright (the default)
           read       Write Markdown source to stdout
           export     Write self-contained HTML to stdout or -o a file
-          check      Run document-health checks (exit 1 when findings exist)
+          check      Run health and target checks (exit 1 when findings exist)
+          outline    List document headings
+
+        CHECK TARGETS
+          downright, commonmark, github, obsidian, pandoc, multimarkdown,
+          jekyll, hugo, quarto
 
         OPEN OPTIONS
           -n, --new         open each file in a new window
@@ -142,6 +150,33 @@ public enum MarkdownCLI {
 
     private static func parseCheck(_ arguments: [String]) throws -> Action {
         var json = false
+        var target: BuiltInRenderTarget?
+        var paths: [String] = []
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--json": json = true
+            case "--target":
+                index += 1
+                guard index < arguments.count else { throw ParseError.missingValue(argument) }
+                guard let value = renderTarget(named: arguments[index]) else {
+                    throw ParseError.unexpectedArgument("unknown render target \(arguments[index])")
+                }
+                target = value
+            case "-h", "--help": return .help
+            case "-v", "--version": return .version
+            default:
+                if argument != "-", argument.hasPrefix("-") { throw ParseError.unknownOption(argument) }
+                paths.append(argument)
+            }
+            index += 1
+        }
+        return .check(json: json, target: target, paths: paths)
+    }
+
+    private static func parseOutline(_ arguments: [String]) throws -> Action {
+        var json = false
         var paths: [String] = []
         for argument in arguments {
             switch argument {
@@ -153,7 +188,7 @@ public enum MarkdownCLI {
                 paths.append(argument)
             }
         }
-        return .check(json: json, paths: paths)
+        return .outline(json: json, paths: paths)
     }
 
     private static func parseExport(_ arguments: [String]) throws -> Action {
@@ -245,6 +280,53 @@ public enum MarkdownCLI {
             }
         }
         return DocumentHealth.analyze(markdown, resolver: resolver)
+    }
+
+    public struct OutlineItem: Codable, Equatable, Sendable {
+        public let level: Int
+        public let title: String
+        public let slug: String
+        public let location: Int
+        public let line: Int
+    }
+
+    public static func outline(for markdown: String) -> [OutlineItem] {
+        let source = markdown as NSString
+        var cursor = 0
+        var line = 1
+        return MarkdownParser.parse(markdown, options: .structureOnly).headings.map { heading in
+            while cursor < min(heading.range.location, source.length) {
+                if source.character(at: cursor) == 0x0A { line += 1 }
+                cursor += 1
+            }
+            return OutlineItem(
+                level: heading.level,
+                title: heading.title,
+                slug: heading.slug,
+                location: heading.range.location,
+                line: line
+            )
+        }
+    }
+
+    public static func compatibilityDiagnostics(
+        for markdown: String,
+        target: BuiltInRenderTarget
+    ) -> [CompatibilityDiagnostic] {
+        MarkdownCompatibility.diagnose(MarkdownParser.parse(markdown), for: target.profile).diagnostics
+    }
+
+    public static func renderTarget(named name: String) -> BuiltInRenderTarget? {
+        let normalized = name.lowercased().replacingOccurrences(of: "-", with: "")
+        return BuiltInRenderTarget.allCases.first {
+            $0.rawValue.lowercased() == normalized
+                || $0.displayName.lowercased().replacingOccurrences(of: "-", with: "") == normalized
+        }
+    }
+
+    public static func isMarkdownPath(_ path: String) -> Bool {
+        let supported = Set(["md", "markdown", "mdown", "mkd", "mdx", "mdc", "qmd", "rmd"])
+        return supported.contains(URL(fileURLWithPath: path).pathExtension.lowercased())
     }
 
     private static func escape(_ value: String) -> String {
