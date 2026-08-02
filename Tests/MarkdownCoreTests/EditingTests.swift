@@ -91,7 +91,7 @@ import Testing
         #expect(SmartPaste.linkified(selection: "mail me", url: "mailto:a@b.com")
             == "[mail me](mailto:a@b.com)")
         #expect(SmartPaste.linkified(selection: "x", url: "www.example.com")
-            == "[x](www.example.com)")
+            == "[x](https://www.example.com)")
     }
 
     @Test func refusesNonURLs() {

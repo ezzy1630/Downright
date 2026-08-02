@@ -14,6 +14,15 @@ import Testing
 
         #expect(selected == "[the docs](https://example.com)")
         #expect(empty == "<https://example.com>")
+        #expect(SmartPaste.linkified(selection: "the docs", url: "www.example.com")
+                == "[the docs](https://www.example.com)")
+        #expect(SmartPaste.linkified(selection: "", url: "www.example.com")
+                == "<https://www.example.com>")
+        #expect(SmartPaste.linkified(
+            selection: "the docs", url: "https://example.com/a(b)?q=1")
+                == "[the docs](<https://example.com/a(b)?q=1>)")
+        #expect(SmartPaste.linkified(selection: "the docs", url: "javascript://alert(1)") == nil)
+        #expect(SmartPaste.linkified(selection: "the docs", url: "file:///tmp/readme.md") == nil)
     }
 
     @Test func htmlAndTabsUseMarkdownConversions() {

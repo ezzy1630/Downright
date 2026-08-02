@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MarkdownCore
 
@@ -19,6 +20,24 @@ enum MarkdownPastePayload: Equatable {
 }
 
 enum MarkdownSmartPaste {
+    /// Reads clipboard flavours in the same order as AppKit's paste action:
+    /// an explicit URL wins over browser HTML, then plain text. The named
+    /// pasteboard seam keeps tests and Quick Look callers off the global board.
+    static func payload(from pasteboard: NSPasteboard) -> MarkdownPastePayload? {
+        let orderedTypes: [NSPasteboard.PasteboardType] = [.URL, .html, .string]
+        for type in orderedTypes where pasteboard.types?.contains(type) == true {
+            if type == .URL {
+                if let url = pasteboard.string(forType: type), !url.isEmpty { return .url(url) }
+            } else if type == .html {
+                guard let html = pasteboard.string(forType: type) else { continue }
+                return .html(html, fallback: pasteboard.string(forType: .string) ?? "")
+            } else if let text = pasteboard.string(forType: type) {
+                return .text(text)
+            }
+        }
+        return nil
+    }
+
     static func replacement(
         for payload: MarkdownPastePayload,
         selection: String,
@@ -40,7 +59,7 @@ enum MarkdownSmartPaste {
     private static func plainText(for payload: MarkdownPastePayload) -> String {
         switch payload {
         case .url(let url): return url
-        case .html(_, let fallback): return fallback
+        case .html(let html, let fallback): return fallback.isEmpty ? html : fallback
         case .text(let text): return text
         }
     }
@@ -54,6 +73,26 @@ enum MarkdownSmartPaste {
         mode: RenderMode = .live
     ) -> MarkdownPasteContext {
         guard mode != .source else { return .plain }
+        var literalInlineRanges: [NSRange] = []
+        for block in document.root.flattened() {
+            for inline in block.inlines {
+                inline.walk { span in
+                    switch span.kind {
+                    case .inlineCode, .inlineMath:
+                        literalInlineRanges.append(span.range)
+                    default:
+                        break
+                    }
+                }
+            }
+        }
+        let intersectsLiteralInline = literalInlineRanges.contains {
+            range.length == 0
+                ? $0.contains(offset: range.location)
+                : $0.location < range.upperBound && range.location < $0.upperBound
+        }
+        if intersectsLiteralInline { return .plain }
+
         let blocks = document.root.flattened().filter {
             guard $0.range.length > 0 else { return false }
             if case .document = $0.content { return false }

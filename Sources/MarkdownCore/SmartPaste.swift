@@ -53,17 +53,25 @@ public enum SmartPaste {
     public static func linkified(selection: String, url: String) -> String? {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains(where: \.isWhitespace) else { return nil }
-        let isURL = trimmed.contains("://")
-            || trimmed.lowercased().hasPrefix("mailto:")
-            || trimmed.lowercased().hasPrefix("www.")
-        guard isURL else { return nil }
+        let lowercased = trimmed.lowercased()
+        let normalized = lowercased.hasPrefix("www.") ? "https://\(trimmed)" : trimmed
+        guard let components = URLComponents(string: normalized),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https", "mailto"].contains(scheme) else { return nil }
+        if scheme == "http" || scheme == "https" {
+            guard let host = components.host, !host.isEmpty else { return nil }
+        } else {
+            guard !components.path.isEmpty else { return nil }
+        }
 
         let label = selection.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty else { return "<\(trimmed)>" }
+        guard !label.isEmpty else { return "<\(normalized)>" }
         let escaped = label
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
-        return "[\(escaped)](\(trimmed))"
+        let destination = normalized.contains(where: { $0 == "(" || $0 == ")" })
+            ? "<\(normalized)>" : normalized
+        return "[\(escaped)](\(destination))"
     }
 }
 
