@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MarkdownCore
 @testable import DownrightApp
 
 @Suite(.serialized)
@@ -84,5 +85,51 @@ struct CommandPaletteTests {
         store.record(.find)
         #expect(store.recentCommands() == [.find, .tableEditor])
         defaults.removePersistentDomain(forName: suite)
+    }
+    @Test func queryPrefixesSelectQuickOpenProvider() {
+        #expect(QuickOpenQuery("> format").filter == .commands)
+        #expect(QuickOpenQuery("@head").filter == .symbols)
+        #expect(QuickOpenQuery("#task fix").filter == .tasks)
+        #expect(QuickOpenQuery("file: notes").filter == .files)
+        #expect(QuickOpenQuery("asset: logo").filter == .assets)
+        #expect(QuickOpenQuery("link: docs").filter == .links)
+    }
+
+    @Test func currentDocumentProviderReturnsHeadingsTasksLinksAndAssets() {
+        let text = """
+        # Plan
+
+        - [ ] Write [docs](https://example.com).
+        ![logo](images/logo.png)
+        """
+        let provider = CurrentDocumentQuickOpenProvider(document: MarkdownParser.parse(text))
+        #expect(provider.results(for: QuickOpenQuery("@plan")).contains { $0.kind == .heading })
+        #expect(provider.results(for: QuickOpenQuery("#task write")).contains { $0.kind == .task })
+        #expect(provider.results(for: QuickOpenQuery("link: docs")).contains { $0.kind == .link })
+        #expect(provider.results(for: QuickOpenQuery("asset: logo")).contains { $0.kind == .asset })
+    }
+
+    @Test func injectedWorkspaceFilesAndSymbolsJoinOneRankedList() {
+        let url = URL(fileURLWithPath: "/tmp/notes.md")
+        let symbol = QuickOpenResult(id: "symbol:1", kind: .symbol, title: "Project Symbol", action: .select(NSRange(location: 3, length: 2)))
+        var model = CommandPaletteModel(
+            entries: entries,
+            providers: [WorkspaceQuickOpenProvider(files: [url], symbols: [symbol])]
+        )
+        model.updateQuery("file: notes")
+        #expect(model.selectedResult?.kind == .workspaceFile)
+        model.updateQuery("@project")
+        #expect(model.quickResults.first?.id == "symbol:1")
+    }
+
+    @Test func quickOpenCommandActionPreservesCommandRecents() {
+        var model = CommandPaletteModel(entries: entries)
+        model.updateQuery("> find")
+        guard case .command(.find) = model.selectedResult?.action else {
+            Issue.record("command prefix must return a command action")
+            return
+        }
+        model.record(.find)
+        #expect(model.recentCommands.first == .find)
     }
 }

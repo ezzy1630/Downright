@@ -114,10 +114,14 @@ extension DocumentWindowController: CommandResponder {
         case .close: window?.performClose(nil)
         case .revealInFinder:
             guard let url = markdownDocument.url else { return true }
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
         case .openInEditor:
             guard let url = markdownDocument.url else { return true }
-            Preferences.shared.values.externalEditor.open(url, line: nil)
+            authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                Preferences.shared.values.externalEditor.open(url, line: nil)
+            }
 
         // MARK: Copy and export (§9.5)
         case .copyAsMarkdown: copy(flavour: .markdown)

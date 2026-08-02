@@ -64,18 +64,25 @@ final class UserDefaultsCommandPaletteRecentStore: CommandPaletteRecentStore {
 struct CommandPaletteModel {
     private(set) var entries: [CommandPaletteEntry]
     private(set) var recentCommands: [Command]
+    private(set) var providers: [any QuickOpenProvider]
     private(set) var selectedIndex: Int = 0
     private(set) var query = ""
 
-    init(entries: [CommandPaletteEntry], recentCommands: [Command] = []) {
+    init(
+        entries: [CommandPaletteEntry],
+        recentCommands: [Command] = [],
+        providers: [any QuickOpenProvider] = []
+    ) {
         self.entries = entries
         self.recentCommands = Self.unique(recentCommands)
+        self.providers = providers
     }
 
     init(
         commands: [Command] = Command.allCases,
         bindings: (Command) -> [KeyBinding] = { KeybindingStore.shared.bindings(for: $0) },
-        recentCommands: [Command] = []
+        recentCommands: [Command] = [],
+        providers: [any QuickOpenProvider] = []
     ) {
         self.init(
             entries: commands.map { command in
@@ -87,7 +94,8 @@ struct CommandPaletteModel {
                     scopes: CommandScope.allCases.filter { command.scopes.contains($0) }
                 )
             },
-            recentCommands: recentCommands
+            recentCommands: recentCommands,
+            providers: providers
         )
     }
 
@@ -121,19 +129,57 @@ struct CommandPaletteModel {
         return values[selectedIndex]
     }
 
+    /// One ranked list for commands and every injected Quick Open provider.
+    var quickResults: [QuickOpenResult] {
+        let parsed = QuickOpenQuery(query)
+        var candidates: [QuickOpenResult] = []
+        if parsed.filter == .all || parsed.filter == .commands {
+            candidates += commandResults(for: parsed.terms).map { entry in
+                QuickOpenResult(
+                    id: "command:\(entry.command.rawValue)", kind: .command,
+                    title: entry.title,
+                    subtitle: [entry.binding, entry.scopeLabel].compactMap { $0 }.joined(separator: "  ·  "),
+                    action: .command(entry.command)
+                )
+            }
+        }
+        candidates += providers.flatMap { $0.results(for: parsed) }
+        let scored = candidates.map { result in
+            (result: result, score: Self.matchScore(parsed.terms, result: result))
+        }
+        return scored
+            .filter { parsed.terms.isEmpty || $0.score >= 0 }
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                if case (.command, .command) = (lhs.result.kind, rhs.result.kind) {
+                    let left = Self.recentRank(lhs.result, recents: recentCommands)
+                    let right = Self.recentRank(rhs.result, recents: recentCommands)
+                    if left != right { return left < right }
+                }
+                return lhs.result.title.localizedStandardCompare(rhs.result.title) == .orderedAscending
+            }
+            .map(\.result)
+    }
+
+    var selectedResult: QuickOpenResult? {
+        let values = quickResults
+        guard values.indices.contains(selectedIndex) else { return nil }
+        return values[selectedIndex]
+    }
+
     mutating func updateQuery(_ value: String) {
         query = value
         selectedIndex = 0
     }
 
     mutating func moveSelection(by offset: Int) {
-        let count = results.count
+        let count = quickResults.count
         guard count > 0 else { selectedIndex = 0; return }
         selectedIndex = (selectedIndex + offset).modulo(count)
     }
 
     mutating func select(index: Int) {
-        guard results.indices.contains(index) else { return }
+        guard quickResults.indices.contains(index) else { return }
         selectedIndex = index
     }
 
@@ -145,6 +191,36 @@ struct CommandPaletteModel {
     private static func unique(_ commands: [Command]) -> [Command] {
         var seen = Set<Command>()
         return commands.filter { seen.insert($0).inserted }
+    }
+
+    private func commandResults(for terms: String) -> [CommandPaletteEntry] {
+        guard !terms.isEmpty else { return results }
+        let scored: [(score: Int, entry: CommandPaletteEntry)] = entries.compactMap { entry in
+            guard let score = PaletteFuzzyMatcher.score(terms, in: entry) else { return nil }
+            return (score: score, entry: entry)
+        }
+        return scored.sorted { lhs, rhs in lhs.score > rhs.score }.map(\.entry)
+    }
+
+    private static func matchScore(_ terms: String, result: QuickOpenResult) -> Int {
+        guard !terms.isEmpty else { return 0 }
+        let text = "\(result.title) \(result.subtitle)".lowercased()
+        let query = terms.lowercased()
+        if text == query { return 1_000 }
+        if text.hasPrefix(query) { return 800 - text.count }
+        var cursor = text.startIndex
+        var matched = 0
+        for character in query {
+            guard let index = text[cursor...].firstIndex(of: character) else { return -1 }
+            matched += 1
+            cursor = text.index(after: index)
+        }
+        return 300 + matched * 10 - text.count
+    }
+
+    private static func recentRank(_ result: QuickOpenResult, recents: [Command]) -> Int {
+        guard case .command(let command) = result.action else { return .max }
+        return recents.firstIndex(of: command) ?? .max
     }
 }
 

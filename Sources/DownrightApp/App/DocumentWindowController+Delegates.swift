@@ -18,7 +18,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         }
 
         if destination.contains("://") {
-            NSWorkspace.shared.open(URL(string: destination) ?? URL(fileURLWithPath: "/"))
+            guard let url = URL(string: destination) else { return }
+            authorizeExternalURL(url) { NSWorkspace.shared.open(url) }
             return
         }
 
@@ -34,18 +35,24 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
                 openInPlace(target)
             }
         } else {
-            NSWorkspace.shared.open(target)
+            authorizeLocalEffect(.launchPathOrEditor, target: target) {
+                NSWorkspace.shared.open(target)
+            }
         }
     }
 
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange) {
         guard let resolution = pathResolver?.resolve(token), resolution.exists, let url = resolution.url else { return }
         if resolution.isDirectory {
-            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+            authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+            }
         } else if DocumentTypes.isMarkdown(url.pathExtension) {
             (NSApp.delegate as? AppDelegate)?.open(url)
         } else {
-            Preferences.shared.values.externalEditor.open(url, line: token.line)
+            authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                Preferences.shared.values.externalEditor.open(url, line: token.line)
+            }
         }
     }
 
@@ -124,12 +131,16 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
         case .pathToken(let token):
             menu.addItem(actionItem("Open in Editor") { [weak self] in
-                guard let resolution = self?.pathResolver?.resolve(token), let url = resolution.url else { return }
-                Preferences.shared.values.externalEditor.open(url, line: token.line)
+                guard let self, let resolution = self.pathResolver?.resolve(token), let url = resolution.url else { return }
+                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                    Preferences.shared.values.externalEditor.open(url, line: token.line)
+                }
             })
             menu.addItem(actionItem("Reveal in Finder") { [weak self] in
-                guard let url = self?.pathResolver?.resolve(token).url else { return }
-                NSWorkspace.shared.activateFileViewerSelecting([url])
+                guard let self, let url = self.pathResolver?.resolve(token).url else { return }
+                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             })
             menu.addItem(actionItem("Copy Path") {
                 NSPasteboard.general.clearContents()
@@ -142,8 +153,11 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
             menu.addItem(actionItem("Save a Copy…") { [weak self] in self?.saveImageCopy(source: source) })
             menu.addItem(actionItem("Reveal in Finder") { [weak self] in
-                guard let base = self?.markdownDocument.url?.deletingLastPathComponent() else { return }
-                NSWorkspace.shared.activateFileViewerSelecting([base.appendingPathComponent(source)])
+                guard let self, let base = self.markdownDocument.url?.deletingLastPathComponent() else { return }
+                let url = base.appendingPathComponent(source).standardizedFileURL
+                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             })
 
         case .link(let destination):

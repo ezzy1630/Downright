@@ -64,17 +64,27 @@ extension DocumentWindowController {
         let url: URL? = source.contains("://")
             ? URL(string: source)
             : markdownDocument.url?.deletingLastPathComponent().appendingPathComponent(source)
-        guard let url, let image = NSImage(contentsOf: url) else { return }
-        LightboxWindow(image: image, caption: caption).present(over: window)
+        guard let url else { return }
+        let present = {
+            guard let image = NSImage(contentsOf: url) else { return }
+            LightboxWindow(image: image, caption: caption).present(over: window)
+        }
+        if url.isFileURL {
+            authorizeLocalEffect(.readLocalAsset, target: url, action: present)
+        } else {
+            authorizeExternalURL(url, action: present)
+        }
     }
 
     func saveImageCopy(source: String) {
         guard let base = markdownDocument.url?.deletingLastPathComponent() else { return }
-        let origin = base.appendingPathComponent(source)
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = origin.lastPathComponent
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
-        try? FileManager.default.copyItem(at: origin, to: destination)
+        let origin = base.appendingPathComponent(source).standardizedFileURL
+        authorizeLocalEffect(.readLocalAsset, target: origin) {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = origin.lastPathComponent
+            guard panel.runModal() == .OK, let destination = panel.url else { return }
+            try? FileManager.default.copyItem(at: origin, to: destination)
+        }
     }
 
     // MARK: - Code blocks
@@ -104,7 +114,9 @@ extension DocumentWindowController {
         }
         let url = directory.appendingPathComponent(name)
         try? Data(code.utf8).write(to: url)
-        Preferences.shared.values.externalEditor.open(url, line: nil)
+        authorizeLocalEffect(.launchPathOrEditor, target: url) {
+            Preferences.shared.values.externalEditor.open(url, line: nil)
+        }
     }
 
     // MARK: - Tables (§6.3)

@@ -14,6 +14,21 @@ extension DocumentWindowController: AssetDoctorViewDelegate {
             self.assetDoctorPanel = nil
             return
         }
+        if let folder = markdownDocument.url?.deletingLastPathComponent(),
+           trustDecision(for: TrustRequest(
+               effect: .readLocalAsset,
+               target: TrustTarget(displayName: folder.path, canonicalPath: folder.path),
+               documentURL: markdownDocument.url
+           )) != .allow {
+            authorizeLocalEffect(.readLocalAsset, target: folder) { [weak self] in
+                self?.showAssetDoctorPanel()
+            }
+            return
+        }
+        showAssetDoctorPanel()
+    }
+
+    private func showAssetDoctorPanel() {
         frontMatterEditor = nil
         let panel = AssetDoctorView(styleSheet: activeStyleSheet)
         assetDoctorPanel = panel
@@ -48,7 +63,9 @@ extension DocumentWindowController: AssetDoctorViewDelegate {
               diagnostic.reference.kind == .absoluteLocal ||
               diagnostic.reference.kind == .fileURL,
               let url = diagnostic.reference.url else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        authorizeLocalEffect(.launchPathOrEditor, target: url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 
     func assetDoctorView(

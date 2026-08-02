@@ -3,7 +3,7 @@ import MarkdownRender
 
 @MainActor
 protocol CommandPaletteViewDelegate: AnyObject {
-    func commandPalette(_ palette: CommandPaletteView, didChoose command: Command)
+    func commandPalette(_ palette: CommandPaletteView, didChoose result: QuickOpenResult)
     func commandPaletteDidCancel(_ palette: CommandPaletteView)
 }
 
@@ -26,7 +26,7 @@ final class CommandPaletteView: NSView, PanelSurface {
     private let searchField = NSSearchField()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-    private let hintLabel = NSTextField(labelWithString: "↑ ↓ Move   Return Run   Esc Close")
+    private let hintLabel = NSTextField(labelWithString: "↑ ↓ Move   Return Open   Esc Close")
     private var model: CommandPaletteModel
     private let recentStore: CommandPaletteRecentStore
     private var keyMonitor: Any?
@@ -38,7 +38,8 @@ final class CommandPaletteView: NSView, PanelSurface {
     init(
         styleSheet: StyleSheet,
         recentStore: CommandPaletteRecentStore,
-        model: CommandPaletteModel? = nil
+        model: CommandPaletteModel? = nil,
+        providers: [any QuickOpenProvider] = []
     ) {
         self.styleSheet = styleSheet
         self.backdrop = PanelBackdrop(
@@ -47,7 +48,7 @@ final class CommandPaletteView: NSView, PanelSurface {
             blendingMode: .withinWindow
         )
         self.recentStore = recentStore
-        self.model = model ?? CommandPaletteModel(recentCommands: recentStore.recentCommands())
+        self.model = model ?? CommandPaletteModel(recentCommands: recentStore.recentCommands(), providers: providers)
         super.init(frame: .zero)
         buildInterface()
         reloadResults()
@@ -79,13 +80,13 @@ final class CommandPaletteView: NSView, PanelSurface {
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        searchField.placeholderString = "Search commands"
+        searchField.placeholderString = "Search commands, headings, files"
         searchField.sendsSearchStringImmediately = true
         searchField.controlSize = .large
         searchField.font = NSFont.systemFont(ofSize: 16)
         searchField.delegate = self
-        searchField.setAccessibilityLabel("Search commands")
-        searchField.setAccessibilityHelp("Type a command name or synonym")
+        searchField.setAccessibilityLabel("Search commands and document items")
+        searchField.setAccessibilityHelp("Type a command, heading, task, link, asset, or file")
         searchField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(searchField)
 
@@ -115,7 +116,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         hintLabel.textColor = .secondaryLabelColor
         hintLabel.alignment = .right
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.setAccessibilityLabel("Keyboard commands: move, run, close")
+        hintLabel.setAccessibilityLabel("Keyboard commands: move, open, close")
         addSubview(hintLabel)
 
         NSLayoutConstraint.activate([
@@ -147,7 +148,7 @@ final class CommandPaletteView: NSView, PanelSurface {
 
     private func reloadResults() {
         tableView.reloadData()
-        let count = model.results.count
+        let count = model.quickResults.count
         if count > 0 {
             tableView.selectRowIndexes(IndexSet(integer: model.selectedIndex), byExtendingSelection: false)
             tableView.scrollRowToVisible(model.selectedIndex)
@@ -182,10 +183,12 @@ final class CommandPaletteView: NSView, PanelSurface {
     }
 
     private func chooseSelection() {
-        guard let entry = model.selectedEntry else { return }
-        model.record(entry.command)
-        recentStore.record(entry.command)
-        delegate?.commandPalette(self, didChoose: entry.command)
+        guard let result = model.selectedResult else { return }
+        if case .command(let command) = result.action {
+            model.record(command)
+            recentStore.record(command)
+        }
+        delegate?.commandPalette(self, didChoose: result)
     }
 
     @objc private func doubleClick(_ sender: NSTableView) {
@@ -205,16 +208,16 @@ extension CommandPaletteView: NSSearchFieldDelegate {
 
 @MainActor
 extension CommandPaletteView: NSTableViewDataSource, NSTableViewDelegate {
-    func numberOfRows(in tableView: NSTableView) -> Int { model.results.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { model.quickResults.count }
 
     func tableView(
         _ tableView: NSTableView,
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
-        let entry = model.results[row]
+        let result = model.quickResults[row]
         let cell = CommandPaletteRowView()
-        cell.configure(entry)
+        cell.configure(result)
         return cell
     }
 
@@ -223,7 +226,7 @@ extension CommandPaletteView: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        model.results.indices.contains(row)
+        model.quickResults.indices.contains(row)
     }
 
     func tableViewSelectionIsChanging(_ notification: Notification) {
@@ -264,11 +267,10 @@ private final class CommandPaletteRowView: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(_ entry: CommandPaletteEntry) {
-        titleLabel.stringValue = entry.title
-        let binding = entry.binding ?? "No shortcut"
-        metadataLabel.stringValue = "\(binding)  ·  \(entry.scopeLabel)"
-        setAccessibilityLabel(entry.title)
+    func configure(_ result: QuickOpenResult) {
+        titleLabel.stringValue = result.title
+        metadataLabel.stringValue = result.subtitle.isEmpty ? result.kind.rawValue.capitalized : result.subtitle
+        setAccessibilityLabel(result.title)
         setAccessibilityValue(metadataLabel.stringValue)
     }
 }
