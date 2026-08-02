@@ -1,6 +1,11 @@
 import Foundation
 import MarkdownCore
 
+#if canImport(CoreSpotlight)
+import CoreSpotlight
+import UniformTypeIdentifiers
+#endif
+
 /// Stable keys used by the Spotlight importer and by metadata tests.  The
 /// importer emits only local facts derived from the file; it never evaluates
 /// code fences or follows links.
@@ -76,3 +81,34 @@ public enum SpotlightMetadataImporter {
         }
     }
 }
+
+#if canImport(CoreSpotlight)
+/// Adds documents that the user opens to the local Spotlight index. This gives
+/// the app a useful system search path without scanning folders in the
+/// background. A future MDImporter bundle can reuse the same extractor to
+/// cover files that the user has not opened in Downright.
+@available(macOS 14.0, *)
+public enum SpotlightIndexer {
+    public static func indexOpenedDocument(at url: URL) {
+        DispatchQueue.global(qos: .utility).async {
+            guard let metadata = try? SpotlightMetadataImporter.metadata(at: url),
+                  let contentType = UTType(metadata.contentType)
+            else { return }
+
+            let attributes = CSSearchableItemAttributeSet(contentType: contentType)
+            attributes.title = metadata.title
+            attributes.textContent = metadata.textContent
+            attributes.keywords = metadata.keywords
+            attributes.contentURL = url
+            attributes.kind = "Markdown document"
+
+            let item = CSSearchableItem(
+                uniqueIdentifier: url.standardizedFileURL.path,
+                domainIdentifier: "com.unrulyagency.downright.documents",
+                attributeSet: attributes
+            )
+            CSSearchableIndex.default().indexSearchableItems([item])
+        }
+    }
+}
+#endif

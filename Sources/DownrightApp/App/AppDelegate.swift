@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         adopt(controller)
+        SpotlightIndexer.indexOpenedDocument(at: url)
         startWindow?.close()
         startWindow = nil
         controller.showWindow(nil)
