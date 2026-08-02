@@ -115,8 +115,6 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         addControl(label: "Measure width", titles: ["68 characters", "70 characters", "72 characters"])
         addControl(label: "Chrome density", titles: ReaderChromeDensity.allCases.map(\.title))
         addControl(label: "Motion", titles: ReaderMotionPreference.allCases.map(\.title))
-        addControl(label: "Code width", titles: ReaderWidthPolicy.allCases.map(\.title))
-        addControl(label: "Table width", titles: ReaderWidthPolicy.allCases.map(\.title))
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
@@ -180,8 +178,6 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         controls[safe: 1]?.selectItem(at: measure)
         controls[safe: 2]?.selectItem(at: ReaderChromeDensity.allCases.firstIndex(of: selectedProfile.chromeDensity) ?? 0)
         controls[safe: 3]?.selectItem(at: ReaderMotionPreference.allCases.firstIndex(of: selectedProfile.motionPreference) ?? 0)
-        controls[safe: 4]?.selectItem(at: ReaderWidthPolicy.allCases.firstIndex(of: selectedProfile.codeWidthPolicy) ?? 0)
-        controls[safe: 5]?.selectItem(at: ReaderWidthPolicy.allCases.firstIndex(of: selectedProfile.tableWidthPolicy) ?? 0)
         nameField.stringValue = selectedProfile.isBuiltIn ? "" : selectedProfile.name
         deleteButton.isEnabled = !selectedProfile.isBuiltIn
         isReloading = false
@@ -204,8 +200,6 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         else if controls.indices.contains(1), sender === controls[1] { profile.measureCharacters = CGFloat([68, 70, 72][sender.indexOfSelectedItem]) }
         else if controls.indices.contains(2), sender === controls[2] { profile.chromeDensity = ReaderChromeDensity.allCases[sender.indexOfSelectedItem] }
         else if controls.indices.contains(3), sender === controls[3] { profile.motionPreference = ReaderMotionPreference.allCases[sender.indexOfSelectedItem] }
-        else if controls.indices.contains(4), sender === controls[4] { profile.codeWidthPolicy = ReaderWidthPolicy.allCases[sender.indexOfSelectedItem] }
-        else if controls.indices.contains(5), sender === controls[5] { profile.tableWidthPolicy = ReaderWidthPolicy.allCases[sender.indexOfSelectedItem] }
         selectedProfile = profile
         updatePreview()
     }

@@ -112,6 +112,8 @@ extension NSAttributedString.Key {
     public static let drCurrentSearchHit = NSAttributedString.Key("drCurrentSearchHit")
     /// Current word spoken by the system speech synthesizer.
     public static let drSpeechHighlight = NSAttributedString.Key("drSpeechHighlight")
+    /// Inline-code content that receives a padded rounded background.
+    public static let drInlineCode = NSAttributedString.Key("drInlineCode")
 }
 
 // MARK: - Fragments

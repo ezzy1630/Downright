@@ -582,7 +582,7 @@ public final class DecorationEngine {
                 apply([
                     .font: styleSheet.monoFont(size: blockFont.pointSize * 0.94),
                     .foregroundColor: styleSheet.text,
-                    .backgroundColor: styleSheet.inlineCodeBackground,
+                    .drInlineCode: true,
                 ], to: span.contentRange, state: &state)
             case .link(let destination, _):
                 applyLink(destination, span: span, state: &state)

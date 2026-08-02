@@ -152,6 +152,18 @@ struct AppLayerTests {
         #expect(SnapshotStore.hash("").count == 64, "sha256 hex")
     }
 
+    @Test func documentStateKeepsSelectionAndSplitView() throws {
+        var state = DocumentState(path: "/tmp/note.md")
+        state.selectionLocation = 42
+        state.selectionLength = 7
+        state.splitViewEnabled = true
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(DocumentState.self, from: data)
+        #expect(decoded.selectionLocation == 42)
+        #expect(decoded.selectionLength == 7)
+        #expect(decoded.splitViewEnabled)
+    }
+
     // MARK: - Find (§9.4)
 
     @Test func findLiteralRegexAndWholeWord() {

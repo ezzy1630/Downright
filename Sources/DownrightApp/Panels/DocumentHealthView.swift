@@ -185,7 +185,9 @@ final class DocumentHealthView: NSView, PanelSurface {
             rows.append(.group(category, severity, indices.count))
             rows.append(contentsOf: indices.map(Row.diagnostic))
         }
-        countLabel.stringValue = visibleDiagnostics.isEmpty ? "No issues" : "(visibleDiagnostics.count) finding\(visibleDiagnostics.count == 1 ? "" : "s")"
+        countLabel.stringValue = visibleDiagnostics.isEmpty
+            ? "No issues"
+            : "\(visibleDiagnostics.count) finding\(visibleDiagnostics.count == 1 ? "" : "s")"
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         table.reloadData()
         table.deselectAll(nil)

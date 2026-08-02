@@ -5,6 +5,10 @@ import MarkdownRender
 // MARK: - Text surface
 
 extension DocumentWindowController: MarkdownTextViewDelegate {
+    func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange) {
+        presentLightbox(source: source, caption: nil)
+    }
+
     func markdownTextView(
         _ view: MarkdownTextView, didActivateLink destination: String,
         at range: NSRange, modifiers: NSEvent.ModifierFlags
@@ -86,6 +90,9 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     }
 
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {
+        let selection = view.sourceSelectedRange
+        markdownDocument.state.selectionLocation = selection.location
+        markdownDocument.state.selectionLength = selection.length
         window?.toolbar?.validateVisibleItems()
         refreshVisualDebuggerIfVisible()
     }

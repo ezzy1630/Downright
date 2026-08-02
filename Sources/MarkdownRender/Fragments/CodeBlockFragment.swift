@@ -99,7 +99,10 @@ final class CodeBlockFragment: DownrightFragment {
         if context?.hoveredFragmentRange == payload.sourceRange {
             let copy = Self.copyButtonRect(in: band, style: style, language: language)
             cg.fillRect(copy, color: style.codeRule.withAlphaComponent(0.16), radius: 4)
-            if let image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy code")?
+            let copied = context?.copiedCodeRange == payload.sourceRange
+            let symbol = copied ? "checkmark" : "doc.on.doc"
+            let description = copied ? "Copied" : "Copy code"
+            if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
                 .withSymbolConfiguration(.init(pointSize: 11, weight: .medium)) {
                 let tinted = image.tinted(style.textSecondary)
                 draw(image: tinted, in: copy.insetBy(dx: 5, dy: 4), in: cg)

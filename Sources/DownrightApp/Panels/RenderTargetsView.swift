@@ -211,7 +211,9 @@ final class RenderTargetsView: NSView, PanelSurface {
             rows.append(.group(capability, indices.count))
             rows.append(contentsOf: indices.map(Row.diagnostic))
         }
-        countLabel.stringValue = report.diagnostics.isEmpty ? "Compatible" : "(report.diagnostics.count) issue\(report.diagnostics.count == 1 ? "" : "s")"
+        countLabel.stringValue = report.diagnostics.isEmpty
+            ? "Compatible"
+            : "\(report.diagnostics.count) issue\(report.diagnostics.count == 1 ? "" : "s")"
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         table.reloadData()
         table.deselectAll(nil)

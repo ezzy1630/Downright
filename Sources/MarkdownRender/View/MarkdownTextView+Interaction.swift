@@ -79,10 +79,25 @@ extension MarkdownTextView {
             gutterRail?.needsDisplay = true
         }
 
-        if attribute(.drLink, at: point) != nil || attribute(.drPathToken, at: point) != nil
+        if attribute(.drLink, at: point) != nil || attribute(.drReference, at: point) != nil
+            || attribute(.drPathToken, at: point) != nil
             || attribute(.drCheckbox, at: point) != nil {
             NSCursor.pointingHand.set()
         }
+
+        let nextToolTip: String?
+        if payload?.kind != .image,
+           let hit = attribute(.drReference, at: point),
+           let identifier = hit.value as? String,
+           let footnote = parsedDocument.footnotes[identifier] {
+            nextToolTip = parsedDocument.substring(footnote.contentRange)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let hit = attribute(.drLink, at: point), let destination = hit.value as? String {
+            nextToolTip = destination
+        } else {
+            nextToolTip = nil
+        }
+        if toolTip != nextToolTip { toolTip = nextToolTip }
 
         if needsRedraw { needsDisplay = true }
     }
@@ -91,13 +106,15 @@ extension MarkdownTextView {
         fragmentContext.hoveredFragmentRange = nil
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
+        toolTip = nil
         needsDisplay = true
         gutterRail?.needsDisplay = true
     }
 
     public override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if attribute(.drLink, at: point) != nil || attribute(.drPathToken, at: point) != nil
+        if attribute(.drLink, at: point) != nil || attribute(.drReference, at: point) != nil
+            || attribute(.drPathToken, at: point) != nil
             || attribute(.drCheckbox, at: point) != nil {
             NSCursor.pointingHand.set()
         } else {
@@ -132,11 +149,21 @@ extension MarkdownTextView {
             markdownDelegate?.markdownTextView(self, didActivateLink: destination, at: hit.range, modifiers: modifiers)
             return
         }
+        if activates,
+           let hit = attribute(.drReference, at: point),
+           let identifier = hit.value as? String,
+           let footnote = parsedDocument.footnotes[identifier] {
+            scroll(toOffset: footnote.range.location, position: .center, animated: true)
+            return
+        }
         if activates, let payload = fragmentPayload(at: point)?.payload, payload.kind == .image {
             // §7.1: click an image → lightbox.  The render package owns no
             // windows, so it reports and the app presents.
-            markdownDelegate?.markdownTextView(self, didActivateLink: payload.detail,
-                                               at: payload.sourceRange, modifiers: modifiers)
+            markdownDelegate?.markdownTextView(
+                self,
+                didActivateImage: payload.detail,
+                at: payload.sourceRange
+            )
             return
         }
 
@@ -168,6 +195,17 @@ extension MarkdownTextView {
         guard !code.isEmpty else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
+        fragmentContext.copiedCodeRange = payload.sourceRange
+        copiedCodeFeedbackWorkItem?.cancel()
+        needsDisplay = true
+        let copiedRange = payload.sourceRange
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.fragmentContext.copiedCodeRange == copiedRange else { return }
+            self.fragmentContext.copiedCodeRange = nil
+            self.needsDisplay = true
+        }
+        copiedCodeFeedbackWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
         return true
     }
 
@@ -441,7 +479,7 @@ extension MarkdownTextView {
     static let privateAttributeKeys: [NSAttributedString.Key] = [
         .drHidden, .drMarker, .drFragment, .drBlock, .drHeading, .drLink, .drPathToken,
         .drPathExists, .drCheckbox, .drChange, .drReference, .drElided, .drGutterMarker,
-        .drSearchHit, .drCurrentSearchHit, .drSpeechHighlight,
+        .drSearchHit, .drCurrentSearchHit, .drSpeechHighlight, .drInlineCode,
     ]
 
     /// Text spoken by the native speech service. It uses the same substitutions

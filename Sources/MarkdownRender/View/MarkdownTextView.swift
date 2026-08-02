@@ -196,6 +196,7 @@ public final class MarkdownTextView: NSTextView {
     private var scrollObserver: NSObjectProtocol?
     private var pendingResizeRequest: ContentResizeRequest?
     private var resizeWorkItem: DispatchWorkItem?
+    var copiedCodeFeedbackWorkItem: DispatchWorkItem?
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: Int?
     private var resizeNeedsRepair = false
@@ -913,6 +914,58 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: - Layout plumbing
+
+    public override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let storage = textStorage, storage.length > 0 else { return }
+        storage.enumerateAttribute(
+            .drInlineCode,
+            in: NSRange(location: 0, length: storage.length)
+        ) { value, range, _ in
+            guard value != nil,
+                  let start = self.rect(forOffset: range.location),
+                  let end = self.rect(forOffset: range.upperBound) else { return }
+            let bands = self.inlineCodeBands(start: start, end: end)
+            self.styleSheet.inlineCodeBackground.setFill()
+            for band in bands where band.intersects(rect) {
+                NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4).fill()
+            }
+        }
+    }
+
+    private func inlineCodeBands(start: CGRect, end: CGRect) -> [CGRect] {
+        let padX: CGFloat = 3
+        let padY: CGFloat = 1
+        if abs(start.minY - end.minY) < 1 {
+            return [CGRect(
+                x: start.minX - padX,
+                y: start.minY - padY,
+                width: max(1, end.minX - start.minX + padX * 2),
+                height: max(start.height, end.height) + padY * 2
+            )]
+        }
+
+        var bands: [CGRect] = []
+        let lineHeight = max(1, styleSheet.lineHeight)
+        bands.append(CGRect(
+            x: start.minX - padX,
+            y: start.minY - padY,
+            width: max(1, bounds.maxX - start.minX),
+            height: start.height + padY * 2
+        ))
+        var y = start.minY + lineHeight
+        while y + lineHeight / 2 < end.minY {
+            bands.append(CGRect(x: 0, y: y - padY, width: bounds.width, height: lineHeight + padY * 2))
+            y += lineHeight
+        }
+        bands.append(CGRect(
+            x: 0,
+            y: end.minY - padY,
+            width: max(1, end.minX + padX),
+            height: end.height + padY * 2
+        ))
+        return bands
+    }
 
     private func applyMeasure() {
         // §11.1: measure capped at 68–72 characters.  The single most common

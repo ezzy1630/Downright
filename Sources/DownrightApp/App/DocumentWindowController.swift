@@ -118,6 +118,7 @@ final class DocumentWindowController: NSWindowController {
 
         refreshDerivedUI()
         if markdownDocument.state.sidebarVisible { toggleSiblingSidebar() }
+        if markdownDocument.state.splitViewEnabled { toggleSplitView() }
 
         // Restore reading position, then offer to jump to the first thing that
         // changed while the app was closed (§8.2).
@@ -125,6 +126,14 @@ final class DocumentWindowController: NSWindowController {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.primaryContainer.textView.scroll(toOffset: restored, position: .top, animated: false)
+            let selection = NSRange(
+                location: min(self.markdownDocument.state.selectionLocation, self.markdownDocument.storage.length),
+                length: 0
+            )
+            let available = self.markdownDocument.storage.length - selection.location
+            self.primaryContainer.textView.setSourceSelectedRanges([
+                NSRange(location: selection.location, length: min(self.markdownDocument.state.selectionLength, available))
+            ])
             if !self.markdownDocument.changes.isEmpty { self.presentUnreadChanges() }
             self.dumpLayoutIfRequested()
         }
@@ -733,6 +742,7 @@ final class DocumentWindowController: NSWindowController {
                 primaryContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
                 primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             ])
+            markdownDocument.state.splitViewEnabled = false
             return
         }
 
@@ -762,11 +772,16 @@ final class DocumentWindowController: NSWindowController {
             split.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
         splitViewContainer = split
+        markdownDocument.state.splitViewEnabled = true
     }
 
     // MARK: - Window lifecycle
 
     func documentWillClose() {
+        let selection = primaryContainer.textView.sourceSelectedRange
+        markdownDocument.state.selectionLocation = selection.location
+        markdownDocument.state.selectionLength = selection.length
+        markdownDocument.state.splitViewEnabled = splitViewContainer != nil
         markdownDocument.saveIfNeeded()
         markdownDocument.close()
         themeObservation?.cancel()

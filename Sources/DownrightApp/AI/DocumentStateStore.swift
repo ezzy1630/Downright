@@ -35,6 +35,9 @@ struct DocumentState: Codable, Equatable {
     var collapsedCodeBlocks: Set<Int>
     var lastOpened: Date
     var sidebarVisible: Bool
+    var selectionLocation: Int
+    var selectionLength: Int
+    var splitViewEnabled: Bool
 
     init(path: String) {
         self.path = path
@@ -47,6 +50,9 @@ struct DocumentState: Codable, Equatable {
         self.collapsedCodeBlocks = []
         self.lastOpened = Date()
         self.sidebarVisible = false
+        self.selectionLocation = 0
+        self.selectionLength = 0
+        self.splitViewEnabled = false
     }
 
     // Older state files won't have every key; decode leniently so a version
@@ -63,6 +69,9 @@ struct DocumentState: Codable, Equatable {
         collapsedCodeBlocks = try c.decodeIfPresent(Set<Int>.self, forKey: .collapsedCodeBlocks) ?? []
         lastOpened = try c.decodeIfPresent(Date.self, forKey: .lastOpened) ?? Date()
         sidebarVisible = try c.decodeIfPresent(Bool.self, forKey: .sidebarVisible) ?? false
+        selectionLocation = try c.decodeIfPresent(Int.self, forKey: .selectionLocation) ?? 0
+        selectionLength = try c.decodeIfPresent(Int.self, forKey: .selectionLength) ?? 0
+        splitViewEnabled = try c.decodeIfPresent(Bool.self, forKey: .splitViewEnabled) ?? false
     }
 }
 

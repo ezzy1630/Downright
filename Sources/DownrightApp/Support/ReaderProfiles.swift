@@ -64,20 +64,6 @@ enum ReaderMotionPreference: String, Codable, CaseIterable, Sendable {
     }
 }
 
-enum ReaderWidthPolicy: String, Codable, CaseIterable, Sendable {
-    case content
-    case measure
-    case window
-
-    var title: String {
-        switch self {
-        case .content: "Content width"
-        case .measure: "Reading measure"
-        case .window: "Window width"
-        }
-    }
-}
-
 struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
     var id: String
     var name: String
@@ -86,8 +72,6 @@ struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
     var measureCharacters: CGFloat
     var chromeDensity: ReaderChromeDensity
     var motionPreference: ReaderMotionPreference
-    var codeWidthPolicy: ReaderWidthPolicy
-    var tableWidthPolicy: ReaderWidthPolicy
 
     init(
         id: String,
@@ -96,9 +80,7 @@ struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
         typographyScale: ReaderTypographyScale = .standard,
         measureCharacters: CGFloat = 70,
         chromeDensity: ReaderChromeDensity = .comfortable,
-        motionPreference: ReaderMotionPreference = .followSystem,
-        codeWidthPolicy: ReaderWidthPolicy = .content,
-        tableWidthPolicy: ReaderWidthPolicy = .measure
+        motionPreference: ReaderMotionPreference = .followSystem
     ) {
         self.id = id
         self.name = name
@@ -107,17 +89,15 @@ struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.measureCharacters = min(72, max(68, measureCharacters))
         self.chromeDensity = chromeDensity
         self.motionPreference = motionPreference
-        self.codeWidthPolicy = codeWidthPolicy
-        self.tableWidthPolicy = tableWidthPolicy
     }
 
     static let builtIns: [ReaderProfile] = [
-        ReaderProfile(id: ReaderProfileID.documentation.rawValue, name: "Documentation", isBuiltIn: true, measureCharacters: 70, codeWidthPolicy: .content, tableWidthPolicy: .measure),
-        ReaderProfile(id: ReaderProfileID.longForm.rawValue, name: "Long-form", isBuiltIn: true, typographyScale: .large, measureCharacters: 68, chromeDensity: .compact, codeWidthPolicy: .measure, tableWidthPolicy: .measure),
-        ReaderProfile(id: ReaderProfileID.academic.rawValue, name: "Academic", isBuiltIn: true, measureCharacters: 68, codeWidthPolicy: .measure, tableWidthPolicy: .measure),
-        ReaderProfile(id: ReaderProfileID.specification.rawValue, name: "Specification", isBuiltIn: true, typographyScale: .compact, measureCharacters: 72, chromeDensity: .comfortable, codeWidthPolicy: .window, tableWidthPolicy: .window),
-        ReaderProfile(id: ReaderProfileID.github.rawValue, name: "GitHub", isBuiltIn: true, measureCharacters: 72, chromeDensity: .compact, codeWidthPolicy: .window, tableWidthPolicy: .window),
-        ReaderProfile(id: ReaderProfileID.presentation.rawValue, name: "Presentation", isBuiltIn: true, typographyScale: .extraLarge, measureCharacters: 68, chromeDensity: .spacious, codeWidthPolicy: .measure, tableWidthPolicy: .measure)
+        ReaderProfile(id: ReaderProfileID.documentation.rawValue, name: "Documentation", isBuiltIn: true, measureCharacters: 70),
+        ReaderProfile(id: ReaderProfileID.longForm.rawValue, name: "Long-form", isBuiltIn: true, typographyScale: .large, measureCharacters: 68, chromeDensity: .compact),
+        ReaderProfile(id: ReaderProfileID.academic.rawValue, name: "Academic", isBuiltIn: true, measureCharacters: 68),
+        ReaderProfile(id: ReaderProfileID.specification.rawValue, name: "Specification", isBuiltIn: true, typographyScale: .compact, measureCharacters: 72, chromeDensity: .comfortable),
+        ReaderProfile(id: ReaderProfileID.github.rawValue, name: "GitHub", isBuiltIn: true, measureCharacters: 72, chromeDensity: .compact),
+        ReaderProfile(id: ReaderProfileID.presentation.rawValue, name: "Presentation", isBuiltIn: true, typographyScale: .extraLarge, measureCharacters: 68, chromeDensity: .spacious)
     ]
 
     static func custom(id: String = UUID().uuidString, name: String) -> ReaderProfile {

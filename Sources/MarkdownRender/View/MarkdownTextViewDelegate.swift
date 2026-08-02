@@ -40,6 +40,7 @@ public struct ContextTarget {
 @MainActor
 public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, didActivateLink destination: String, at range: NSRange, modifiers: NSEvent.ModifierFlags)
+    func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange)
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange)
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int)
     func markdownTextView(_ view: MarkdownTextView, didActivateHeadingAnchor headingIndex: Int, modifiers: NSEvent.ModifierFlags)
@@ -56,6 +57,7 @@ public protocol MarkdownTextViewDelegate: AnyObject {
 /// the whole surface.
 public extension MarkdownTextViewDelegate {
     func markdownTextView(_ view: MarkdownTextView, didActivateLink destination: String, at range: NSRange, modifiers: NSEvent.ModifierFlags) {}
+    func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange) {}
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange) {}
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int) {}
     func markdownTextView(_ view: MarkdownTextView, didActivateHeadingAnchor headingIndex: Int, modifiers: NSEvent.ModifierFlags) {}

@@ -52,6 +52,8 @@ public final class FragmentContext {
     /// Source range of the fragment under the pointer, for hover affordances
     /// (§7.1: copy button, zebra row).
     public var hoveredFragmentRange: NSRange?
+    /// Code block that just copied, for short visual confirmation.
+    public var copiedCodeRange: NSRange?
     /// Row the pointer is over inside a hovered table.
     public var hoveredTableRow: NSRange?
     /// Primary caret in source coordinates, or `nil` in Read mode.

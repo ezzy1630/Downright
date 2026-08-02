@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 
 @MainActor
 final class StartWindowController: NSWindowController {
@@ -67,9 +68,11 @@ private final class StartView: NSView {
             button.alignment = .left
             button.image = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: nil)
             button.imagePosition = .imageLeading
+            button.imageScaling = .scaleProportionallyDown
             button.widthAnchor.constraint(equalToConstant: 620).isActive = true
             button.heightAnchor.constraint(equalToConstant: 48).isActive = true
             cards.addArrangedSubview(button)
+            Self.loadThumbnail(for: URL(fileURLWithPath: recent.path), into: button)
         }
 
         let stack = NSStackView(views: [title, subtitle, actions, heading, cards])
@@ -98,6 +101,23 @@ private final class StartView: NSView {
             .foregroundColor: NSColor.secondaryLabelColor,
         ]))
         return title
+    }
+
+    private static func loadThumbnail(for url: URL, into button: NSButton) {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: NSSize(width: 40, height: 40),
+            scale: NSScreen.main?.backingScaleFactor ?? 2,
+            representationTypes: .thumbnail
+        )
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak button] thumbnail, _ in
+            guard let image = thumbnail?.nsImage else { return }
+            DispatchQueue.main.async {
+                guard let button, button.identifier?.rawValue == url.path else { return }
+                button.image = image
+                button.image?.accessibilityDescription = "Preview of \(url.lastPathComponent)"
+            }
+        }
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
