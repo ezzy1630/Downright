@@ -140,6 +140,7 @@ final class NavigationPanelView: NSView, PanelSurface {
         emptyState.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = PanelFont.row
         emptyLabel.alignment = .center
+        emptyLabel.maximumNumberOfLines = 0
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyState.addArrangedSubview(emptyLabel)
         addSubview(emptyState)
@@ -156,12 +157,12 @@ final class NavigationPanelView: NSView, PanelSurface {
             summaryLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             pinButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
             pinButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            pinButton.widthAnchor.constraint(equalToConstant: 18),
-            pinButton.heightAnchor.constraint(equalToConstant: 18),
+            pinButton.widthAnchor.constraint(equalToConstant: 28),
+            pinButton.heightAnchor.constraint(equalToConstant: 28),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 18),
-            closeButton.heightAnchor.constraint(equalToConstant: 18),
+            closeButton.widthAnchor.constraint(equalToConstant: 28),
+            closeButton.heightAnchor.constraint(equalToConstant: 28),
             searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             searchField.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
@@ -248,6 +249,11 @@ final class NavigationPanelView: NSView, PanelSurface {
         case (let headings, let files):
             summaryLabel.stringValue = "\(headings) heading\(headings == 1 ? "" : "s") · \(files) file\(files == 1 ? "" : "s")"
         }
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        emptyLabel.stringValue = query.isEmpty
+            ? "No headings or files"
+            : "No headings or files match \u{201c}\(query)\u{201d}"
+        emptyLabel.setAccessibilityLabel(emptyLabel.stringValue)
         setAccessibilityValue(summaryLabel.stringValue)
 
         let nextHeight = preferredHeight

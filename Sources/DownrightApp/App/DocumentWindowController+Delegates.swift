@@ -73,12 +73,10 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         let heading = markdownDocument.parsed.headings[headingIndex]
         if modifiers.contains(.option) {
             // ⌥-click folds the section (§7.1).
-            if view.foldedHeadingSlugs.contains(heading.slug) {
-                view.foldedHeadingSlugs.remove(heading.slug)
-            } else {
-                view.foldedHeadingSlugs.insert(heading.slug)
-            }
-            markdownDocument.state.foldedHeadings = view.foldedHeadingSlugs
+            var folds = view.foldedHeadingSlugs
+            if folds.contains(heading.slug) { folds.remove(heading.slug) }
+            else { folds.insert(heading.slug) }
+            setSharedFolds(folds, from: view)
         } else {
             copySectionLink()
         }
@@ -90,18 +88,28 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     }
 
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {
+        synchronizePanes(from: view)
         let selection = view.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
         markdownDocument.state.selectionLength = selection.length
+        if view.configuration.typewriterScrolling, view.primarySourceCaret != nil {
+            view.scroll(toOffset: selection.location, position: .center, animated: true)
+        }
+        updateFocusDimmingViews()
         window?.toolbar?.validateVisibleItems()
         refreshVisualDebuggerIfVisible()
     }
 
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {
+        synchronizePanes(from: view)
         updateBreadcrumbAndGutter()
+        updateFocusDimmingViews()
     }
 
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {
+        synchronizePanes(from: view)
+        mode = view.mode.normalizedForEditing
+        markdownDocument.state.mode = .live
         refreshSourceFocusToolbar()
         primaryContainer.needsLayout = true
         splitContainer?.needsLayout = true
@@ -199,12 +207,16 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .table(let range):
             menu.addItem(editMarkdownItem(view: view, range: range))
             menu.addItem(.separator())
-            menu.addItem(actionItem("Insert Row") { [weak self] in self?.tableInsertRow(range) })
-            menu.addItem(actionItem("Delete Row") { [weak self] in self?.tableDeleteRow(range) })
+            menu.addItem(actionItem("Insert Row") { [weak self] in
+                self?.tableInsertRow(range, at: target.hitOffset)
+            })
+            menu.addItem(actionItem("Delete Row") { [weak self] in
+                self?.tableDeleteRow(range, at: target.hitOffset)
+            })
             menu.addItem(.separator())
             for alignment in [TableAlignment.left, .center, .right] {
                 menu.addItem(actionItem("Align Column \(alignment.rawValue.capitalized)") { [weak self] in
-                    self?.tableSetAlignment(range, alignment)
+                    self?.tableSetAlignment(range, alignment, at: target.hitOffset)
                 })
             }
             menu.addItem(actionItem("Realign Source") { [weak self] in
@@ -308,17 +320,14 @@ extension DocumentWindowController: OutlinePanelDelegate {
         markdownDocument.ensureParsedCurrent()
         guard index < markdownDocument.parsed.headings.count else { return }
         let slug = markdownDocument.parsed.headings[index].slug
-        if containerTextView.foldedHeadingSlugs.contains(slug) {
-            containerTextView.foldedHeadingSlugs.remove(slug)
-        } else {
-            containerTextView.foldedHeadingSlugs.insert(slug)
-        }
-        markdownDocument.state.foldedHeadings = containerTextView.foldedHeadingSlugs
+        var folds = containerTextView.foldedHeadingSlugs
+        if folds.contains(slug) { folds.remove(slug) }
+        else { folds.insert(slug) }
+        setSharedFolds(folds)
     }
 
     func outlinePanel(_ panel: OutlinePanelView, didChangeZoomLevel level: ZoomLevel) {
-        containerTextView.zoomLevel = level
-        markdownDocument.state.zoomLevel = level
+        setSharedZoom(level)
     }
 }
 
@@ -373,12 +382,10 @@ extension DocumentWindowController: NavigationPanelViewDelegate {
         markdownDocument.ensureParsedCurrent()
         guard index < markdownDocument.parsed.headings.count else { return }
         let slug = markdownDocument.parsed.headings[index].slug
-        if containerTextView.foldedHeadingSlugs.contains(slug) {
-            containerTextView.foldedHeadingSlugs.remove(slug)
-        } else {
-            containerTextView.foldedHeadingSlugs.insert(slug)
-        }
-        markdownDocument.state.foldedHeadings = containerTextView.foldedHeadingSlugs
+        var folds = containerTextView.foldedHeadingSlugs
+        if folds.contains(slug) { folds.remove(slug) }
+        else { folds.insert(slug) }
+        setSharedFolds(folds)
         panel.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
             containerTextView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
         })
@@ -459,8 +466,9 @@ extension DocumentWindowController: ConflictBarDelegate {
     }
 
     func conflictBarDidRequestKeepMine(_ bar: ConflictBarView) {
-        markdownDocument.resolveConflictKeepingMine()
-        dismissConflictBar()
+        if case .success = markdownDocument.resolveConflictKeepingMine() {
+            dismissConflictBar()
+        }
     }
 
     func conflictBarDidRequestTakeTheirs(_ bar: ConflictBarView) {

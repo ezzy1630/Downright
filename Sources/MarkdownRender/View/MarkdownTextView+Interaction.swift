@@ -216,11 +216,43 @@ extension MarkdownTextView {
             return true
         }
 
-        let band = CGRect(x: 0, y: chrome.minY, width: styleSheet.measureWidth, height: chrome.height)
+        let indent = max(
+            0,
+            ((textStorage?.attribute(.paragraphStyle, at: payload.sourceRange.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.headIndent ?? RenderMetrics.codeInsetX) - RenderMetrics.codeInsetX
+        )
+        let band = CGRect(
+            x: indent,
+            y: chrome.minY,
+            width: max(1, styleSheet.measureWidth - indent),
+            height: chrome.height
+        )
         let copy = CodeBlockFragment.copyButtonRect(in: band, style: styleSheet, language: payload.detail)
         let local = CGPoint(x: point.x - textContainerOrigin.x, y: point.y)
         guard copy.insetBy(dx: -3, dy: -3).contains(local) else { return false }
 
+        return copyCodeBlock(payload)
+    }
+
+    func copyCodeBlockForAccessibility() -> Bool {
+        let payload: FragmentPayload?
+        if let range = fragmentContext.hoveredFragmentRange,
+           let storage = textStorage, range.location >= 0, range.location < storage.length,
+           let value = storage.attribute(.drFragment, at: range.location, effectiveRange: nil) {
+            payload = value as? FragmentPayload
+        } else {
+            let selection = sourceSelectedRange
+            guard let storage = textStorage, selection.location >= 0, selection.location < storage.length else {
+                return false
+            }
+            payload = storage.attribute(.drFragment, at: selection.location, effectiveRange: nil) as? FragmentPayload
+        }
+        guard let payload,
+              payload.kind == .codeBlock || payload.kind == .collapsedCodeBlock else { return false }
+        return copyCodeBlock(payload)
+    }
+
+    private func copyCodeBlock(_ payload: FragmentPayload) -> Bool {
         let code = codeText(of: payload)
         guard !code.isEmpty else { return false }
         NSPasteboard.general.clearContents()
@@ -267,31 +299,51 @@ extension MarkdownTextView {
 
     private func contextTarget(at point: NSPoint, offset: Int) -> ContextTarget {
         if let hit = attribute(.drPathToken, at: point), let token = hit.value as? PathToken {
-            return ContextTarget(kind: .pathToken(token), sourceRange: hit.range)
+            return ContextTarget(kind: .pathToken(token), sourceRange: hit.range, hitOffset: offset)
         }
         if let hit = fragmentPayload(at: point) {
             switch hit.payload.kind {
             case .codeBlock, .collapsedCodeBlock:
-                return ContextTarget(kind: .codeBlock(hit.payload.sourceRange), sourceRange: hit.payload.sourceRange)
+                return ContextTarget(
+                    kind: .codeBlock(hit.payload.sourceRange),
+                    sourceRange: hit.payload.sourceRange,
+                    hitOffset: offset
+                )
             case .table:
-                return ContextTarget(kind: .table(hit.payload.sourceRange), sourceRange: hit.payload.sourceRange)
+                return ContextTarget(
+                    kind: .table(hit.payload.sourceRange),
+                    sourceRange: hit.payload.sourceRange,
+                    hitOffset: offset
+                )
             case .image:
-                return ContextTarget(kind: .image(hit.payload.detail), sourceRange: hit.payload.sourceRange)
+                return ContextTarget(
+                    kind: .image(hit.payload.detail),
+                    sourceRange: hit.payload.sourceRange,
+                    hitOffset: offset
+                )
             default:
                 break
             }
         }
         if let hit = attribute(.drLink, at: point), let destination = hit.value as? String {
-            return ContextTarget(kind: .link(destination), sourceRange: hit.range)
+            return ContextTarget(kind: .link(destination), sourceRange: hit.range, hitOffset: offset)
         }
         if let index = parsedDocument.headings.firstIndex(where: { $0.range.contains(offset: offset) }) {
-            return ContextTarget(kind: .heading(index), sourceRange: parsedDocument.headings[index].sectionRange)
+            return ContextTarget(
+                kind: .heading(index),
+                sourceRange: parsedDocument.headings[index].sectionRange,
+                hitOffset: offset
+            )
         }
         let selection = sourceSelectedRange
         if selection.length > 0, selection.contains(offset: offset) {
-            return ContextTarget(kind: .selection, sourceRange: selection)
+            return ContextTarget(kind: .selection, sourceRange: selection, hitOffset: offset)
         }
-        return ContextTarget(kind: .plain, sourceRange: NSRange(location: offset, length: 0))
+        return ContextTarget(
+            kind: .plain,
+            sourceRange: NSRange(location: offset, length: 0),
+            hitOffset: offset
+        )
     }
 
     /// Called by the gutter rail when a marker or anchor glyph is clicked.

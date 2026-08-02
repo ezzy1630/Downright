@@ -81,12 +81,41 @@ extension DocumentWindowController {
 
     // MARK: - Saving
 
+    @discardableResult
+    func saveDocument() -> Bool {
+        do {
+            try markdownDocument.save()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func presentSaveError(_ error: Error) {
+        presentOperationError("Couldn’t save \(markdownDocument.displayName)", error: error)
+    }
+
+    func presentOperationError(_ title: String, error: Error) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        if let window { alert.beginSheetModal(for: window) }
+        else { alert.runModal() }
+    }
+
     func saveAs() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = DocumentTypes.contentTypes
         panel.nameFieldStringValue = markdownDocument.url?.lastPathComponent ?? "Untitled.md"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? DocumentIO.write(markdownDocument.text, to: url, fidelity: .default)
+        do {
+            try DocumentIO.write(markdownDocument.text, to: url, fidelity: .default)
+        } catch {
+            presentOperationError("Couldn’t save a copy", error: error)
+            return
+        }
         (NSApp.delegate as? AppDelegate)?.open(url, mode: mode)
     }
 
@@ -109,7 +138,11 @@ extension DocumentWindowController {
         panel.nameFieldStringValue = markdownDocument.displayName + ".html"
         panel.message = "Export a self-contained HTML file"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? Data(exporter(forPrint: false).html().utf8).write(to: url)
+        do {
+            try Data(exporter(forPrint: false).html().utf8).write(to: url)
+        } catch {
+            presentOperationError("Couldn’t export HTML", error: error)
+        }
     }
 
     func exportPDF() {
@@ -117,7 +150,14 @@ extension DocumentWindowController {
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = markdownDocument.displayName + ".pdf"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        PrintRenderer.writePDF(html: exporter(forPrint: true).html(), to: url)
+        guard PrintRenderer.writePDF(html: exporter(forPrint: true).html(), to: url) else {
+            let error = NSError(
+                domain: "Downright.Export", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The PDF renderer could not write the selected file."]
+            )
+            presentOperationError("Couldn’t export PDF", error: error)
+            return
+        }
     }
 
     func printDocument() {
@@ -137,7 +177,11 @@ extension DocumentWindowController {
               let bitmap = NSBitmapImageRep(data: tiff),
               let png = bitmap.representation(using: .png, properties: [:])
         else { return }
-        try? png.write(to: url)
+        do {
+            try png.write(to: url)
+        } catch {
+            presentOperationError("Couldn’t export the selection", error: error)
+        }
     }
 
     // MARK: - Sheets and panels
@@ -271,8 +315,9 @@ enum PrintRenderer {
         operation.run()
     }
 
-    static func writePDF(html: String, to url: URL) {
-        guard let attributed = attributedString(from: html) else { return }
+    @discardableResult
+    static func writePDF(html: String, to url: URL) -> Bool {
+        guard let attributed = attributedString(from: html) else { return false }
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 468, height: 648))
         textView.textStorage?.setAttributedString(attributed)
 
@@ -285,7 +330,7 @@ enum PrintRenderer {
         let operation = NSPrintOperation(view: textView, printInfo: info)
         operation.showsPrintPanel = false
         operation.showsProgressPanel = false
-        operation.run()
+        return operation.run()
     }
 }
 

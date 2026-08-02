@@ -33,6 +33,25 @@ public final class GutterRailView: NSView {
         // come out blank.  Clip, and fill `bounds`, never `dirtyRect`.
         clipsToBounds = true
         textView.gutterRail = self
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Markdown gutter")
+        setAccessibilityHelp("Block markers and heading navigation")
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Toggle current heading") { [weak self] in
+                guard let self, let textView = self.textView else { return false }
+                let offset = textView.primarySourceCaret ?? textView.topVisibleOffset
+                let index = textView.hoveredHeadingIndex
+                    ?? textView.parsedDocument.headings.lastIndex { $0.range.location <= offset }
+                guard let index, index < textView.parsedDocument.headings.count else { return false }
+                textView.markdownDelegate?.markdownTextView(
+                    textView,
+                    didActivateHeadingAnchor: index,
+                    modifiers: [.option]
+                )
+                return true
+            },
+        ])
     }
 
     public required init?(coder: NSCoder) { nil }
@@ -169,11 +188,8 @@ public final class GutterRailView: NSView {
         guard let hit = best else { return }
 
         if let index = textView.parsedDocument.headings.firstIndex(where: { $0.range.contains(offset: hit.offset) }) {
-            let heading = textView.parsedDocument.headings[index]
-            // Click folds; the app decides what a plain anchor click means.
-            if modifiers.contains(.option) || modifiers.isEmpty {
-                textView.toggleFold(headingSlug: heading.slug)
-            }
+            // The controller owns fold state so split views and accessibility
+            // actions observe the same mutation.
             textView.activateHeadingAnchor(index, modifiers: modifiers)
             return
         }

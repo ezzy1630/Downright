@@ -106,7 +106,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func reload() {
-        locationLabel.stringValue = "Line (model.line), column (model.column)"
+        locationLabel.stringValue = "Line \(model.line), column \(model.column)"
         locationLabel.setAccessibilityLabel(locationLabel.stringValue)
         summaryView.string = model.summary
         summaryView.sizeToFit()

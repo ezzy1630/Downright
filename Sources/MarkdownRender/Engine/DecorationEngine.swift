@@ -56,7 +56,13 @@ public final class DecorationEngine {
         }
     }
 
+    public var codeCollapseLineCount: Int {
+        get { collapseLineCount }
+        set { collapseLineCount = min(10_000, max(1, newValue)) }
+    }
+
     private let highlighter: SyntaxHighlighter
+    private var collapseLineCount = RenderMetrics.codeCollapseLineCount
     private var styles: BlockStyleFactory
     private let syntaxCache = SyntaxRunCache()
 
@@ -669,7 +675,7 @@ public final class DecorationEngine {
         applyBase(block, context: context, state: &state)
 
         let lineCount = Self.lineCount(of: contentRange, in: state.document)
-        let collapses = policy.collapsesLongCodeBlocks && lineCount > RenderMetrics.codeCollapseLineCount
+        let collapses = policy.collapsesLongCodeBlocks && lineCount > collapseLineCount
         let payload = emitFragment(collapses ? .collapsedCodeBlock : .codeBlock,
                                    block: block, detail: language ?? "", state: &state)
         payload?.isCollapsed = collapses

@@ -75,7 +75,8 @@ public final class MarkdownTextView: NSTextView {
             } else if sourceFocus == .document {
                 sourceFocus = .none
             }
-            engine.policy = mode.policy
+            engine.policy = effectivePolicy
+            engine.codeCollapseLineCount = configuration.codeCollapseThreshold
             fragmentContext.mode = mode
             fragmentContext.sourceFocusRange = sourceFocus.range
             applyModeChrome()
@@ -88,6 +89,17 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    public var configuration = MarkdownRenderConfiguration() {
+        didSet {
+            engine.policy = effectivePolicy
+            engine.codeCollapseLineCount = configuration.codeCollapseThreshold
+            applyTypographicSubstitution()
+            rebuildEverything()
+            applyInvisibles()
+            requestContentResize(.viewport)
+        }
+    }
+
     /// Transient raw-Markdown visibility.  Never persisted by the render
     /// layer; hosts decide how its toolbar/menu affordance is presented.
     public internal(set) var sourceFocus: SourceFocus = .none
@@ -95,6 +107,8 @@ public final class MarkdownTextView: NSTextView {
     public var styleSheet: StyleSheet {
         didSet {
             let anchor = topVisibleOffset
+            inlineCodeBandCache.removeAll(keepingCapacity: true)
+            invisibleGlyphCache.removeAll(keepingCapacity: true)
             engine.styleSheet = styleSheet
             fragmentContext.styleSheet = styleSheet
             fragmentContext.invalidateDerivedLayout()
@@ -250,6 +264,13 @@ public final class MarkdownTextView: NSTextView {
     private var overlayRanges: [NSRange] = []
     private var pathExistence: [PathToken: Bool] = [:]
     private var codeCollapseOverrides: [Int: Bool] = [:]
+    /// Inline-code backgrounds are geometry, not text attributes. Cache their
+    /// bands between background passes and discard them whenever layout can
+    /// move. The draw path only populates entries intersecting the dirty
+    /// viewport, so a long document does not measure every code span on every
+    /// repaint.
+    private var inlineCodeBandCache: [NSRange: [CGRect]] = [:]
+    private var invisibleGlyphCache: [Int: NSRect] = [:]
     private var hoverTracking: NSTrackingArea?
     private var scrollObserver: NSObjectProtocol?
     private var pendingResizeRequest: ContentResizeRequest?
@@ -258,6 +279,13 @@ public final class MarkdownTextView: NSTextView {
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: Int?
     private var resizeNeedsRepair = false
+
+    private var effectivePolicy: DecorationPolicy {
+        var policy = mode.policy
+        policy.revealsAtCaret = configuration.revealPolicy != .never
+        policy.revealsAtAllCursors = configuration.revealPolicy == .allCursors
+        return policy
+    }
 
     // Test seam for the scheduler. It does not expose the view's layout
     // internals to the app target.
@@ -322,8 +350,17 @@ public final class MarkdownTextView: NSTextView {
         smartInsertDeleteEnabled = false
         isIncrementalSearchingEnabled = false
         textContainerInset = NSSize(width: RenderMetrics.revealSlack, height: RenderMetrics.verticalInset)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.textArea)
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Copy code block") { [weak self] in
+                self?.copyCodeBlockForAccessibility() ?? false
+            },
+        ])
 
-        engine.policy = mode.policy
+        engine.policy = effectivePolicy
+        engine.codeCollapseLineCount = configuration.codeCollapseThreshold
+        applyTypographicSubstitution()
         fragmentContext.mode = mode
         applyMeasure()
         applyModeChrome()
@@ -356,6 +393,8 @@ public final class MarkdownTextView: NSTextView {
         let isInitialUpdate = updateGeneration == 0
         let oldParagraphCount = paragraphIndex.starts.count
         parsedDocument = document
+        inlineCodeBandCache.removeAll(keepingCapacity: true)
+        invisibleGlyphCache.removeAll(keepingCapacity: true)
         updateGeneration &+= 1
         pathExistence.removeAll(keepingCapacity: true)
         fragmentContext.frontMatterFields = (document.frontMatter?.fields ?? []).map { ($0.key, $0.value) }
@@ -365,6 +404,7 @@ public final class MarkdownTextView: NSTextView {
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: document, dirty: dirty)
         applySourcePresentation()
+        applyInvisibles()
         rebuildBaseDisplayMap(document: document)
         refreshElision(rebuildingMap: false)
         rebuildDisplayMap(fullRefresh: true)
@@ -412,6 +452,18 @@ public final class MarkdownTextView: NSTextView {
     /// milliseconds once per structural change, not per keystroke.
     public func resizeToFitContent() {
         guard let layoutManager = textLayoutManager else { return }
+        if let storage = textStorage,
+           storage.length > configuration.largeFileThresholdMegabytes * 1024 * 1024 {
+            let viewportHeight = enclosingScrollView?.contentView.bounds.height ?? 0
+            let estimated = max(
+                viewportHeight,
+                CGFloat(max(1, paragraphIndex.starts.count)) * styleSheet.lineHeight
+                    + textContainerInset.height * 2 + viewportHeight * 0.40
+            )
+            guard abs(frame.height - estimated) > 0.5 else { return }
+            setFrameSize(NSSize(width: frame.width, height: estimated))
+            return
+        }
         layoutManager.ensureLayout(for: layoutManager.documentRange)
 
         let used = layoutManager.usageBoundsForTextContainer
@@ -470,6 +522,7 @@ public final class MarkdownTextView: NSTextView {
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
         applySourcePresentation()
+        applyInvisibles()
         rebuildBaseDisplayMap(document: parsedDocument)
         refreshElision(rebuildingMap: false)
         rebuildDisplayMap(fullRefresh: true)
@@ -626,9 +679,9 @@ public final class MarkdownTextView: NSTextView {
             hidden = hidden.filter { $0.upperBound <= composing.location || $0.location >= composing.upperBound }
             displayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: [])
             requiresFullHiddenRefresh = caret == nil
-        } else if mode.policy.revealsAtCaret {
+        } else if effectivePolicy.revealsAtCaret {
             let revealed = MarkerPolicy.revealedMarkerRanges(
-                document: parsedDocument, policy: mode.policy,
+                document: parsedDocument, policy: effectivePolicy,
                 caret: caret, selections: sourceSelectedRanges)
             let paragraph = caret.map { paragraphIndex.paragraphRange(containing: $0) }
             // The fast path holds when the reveal is confined to the caret's
@@ -893,7 +946,7 @@ public final class MarkdownTextView: NSTextView {
     /// Primary caret, or `nil` when there is no caret at all (Read mode) or
     /// the selection is not empty.
     public var primarySourceCaret: Int? {
-        guard mode.policy.showsInsertionPoint else { return nil }
+        guard effectivePolicy.showsInsertionPoint else { return nil }
         guard let first = selectedRanges.first?.rangeValue, first.length == 0 else { return nil }
         return displayMap.sourceOffset(forTextKit: first.location)
     }
@@ -937,6 +990,10 @@ public final class MarkdownTextView: NSTextView {
         }
         gutterRail?.needsDisplay = true
         markdownDelegate?.markdownTextViewDidChangeSelection(self)
+        if configuration.typewriterScrolling, let caret = primarySourceCaret,
+           sourceSelectedRange.length == 0 {
+            scroll(toOffset: caret, position: .center, animated: true)
+        }
     }
 
     // MARK: - Caret-anchored reveal (§6.1c)
@@ -955,11 +1012,11 @@ public final class MarkdownTextView: NSTextView {
     /// markers are never revealed inline and line height is fixed per block
     /// kind (§6.1a).
     private func applyCaretAnchorShift() {
-        guard !suppressesCaretReveal, mode.policy.revealsAtCaret, let caret = primarySourceCaret,
+        guard !suppressesCaretReveal, effectivePolicy.revealsAtCaret, let caret = primarySourceCaret,
               let storage = textStorage, storage.length > 0 else { return }
         let paragraph = paragraphIndex.paragraphRange(containing: caret)
         let revealed = MarkerPolicy.revealedMarkerRanges(
-            document: parsedDocument, policy: mode.policy, caret: caret, selections: [])
+            document: parsedDocument, policy: effectivePolicy, caret: caret, selections: [])
             .filter { $0.upperBound <= caret && $0.location >= paragraph.location }
         guard !revealed.isEmpty else { return }
 
@@ -1063,19 +1120,100 @@ public final class MarkdownTextView: NSTextView {
         guard let storage = textStorage, storage.length > 0 else { return }
 
         drawScopedSourceBackground(in: rect)
+        let whole = NSRange(location: 0, length: storage.length)
+        let visibleSourceRange = sourceRangeForDirtyRect(for: rect, storageLength: storage.length)
+        let visible = visibleSourceRange ?? whole
         storage.enumerateAttribute(
             .drInlineCode,
-            in: NSRange(location: 0, length: storage.length)
+            in: visible
         ) { value, range, _ in
-            guard value != nil,
-                  let start = self.rect(forOffset: range.location),
-                  let end = self.rect(forOffset: range.upperBound) else { return }
-            let bands = self.inlineCodeBands(start: start, end: end)
+            guard value != nil else { return }
+            let bands: [CGRect]
+            if let cached = self.inlineCodeBandCache[range] {
+                bands = cached
+            } else {
+                guard let start = self.rect(forOffset: range.location),
+                      let end = self.rect(forOffset: range.upperBound) else { return }
+                bands = self.inlineCodeBands(start: start, end: end)
+                self.inlineCodeBandCache[range] = bands
+            }
             self.styleSheet.inlineCodeBackground.setFill()
             for band in bands where band.intersects(rect) {
                 NSBezierPath(roundedRect: band, xRadius: 4, yRadius: 4).fill()
             }
         }
+        drawInvisibles(in: visibleSourceRange ?? NSRange(location: 0, length: 0), dirtyRect: rect)
+    }
+
+    private func applyInvisibles() {
+        guard let storage = textStorage, storage.length > 0 else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        storage.removeAttribute(.drInvisible, range: whole)
+        guard configuration.showInvisibles else { return }
+        let text = storage.string as NSString
+        storage.beginEditing()
+        for offset in 0..<text.length {
+            let value = text.character(at: offset)
+            guard value == 0x20 || value == 0x09 else { continue }
+            storage.addAttribute(.drInvisible, value: true, range: NSRange(location: offset, length: 1))
+        }
+        storage.endEditing()
+    }
+
+    private func drawInvisibles(in sourceRange: NSRange, dirtyRect: NSRect) {
+        guard configuration.showInvisibles, let storage = textStorage, sourceRange.length > 0 else { return }
+        let textKitRange = displayMap.textKitRange(forSource: sourceRange)
+        let origin = contentStorage.documentRange.location
+        if let start = contentStorage.location(origin, offsetBy: textKitRange.location),
+           let end = contentStorage.location(origin, offsetBy: textKitRange.upperBound),
+           let range = NSTextRange(location: start, end: end) {
+            markdownLayoutManager.ensureLayout(for: range)
+        }
+        let text = storage.string as NSString
+        storage.enumerateAttribute(.drInvisible, in: sourceRange) { value, range, _ in
+            guard value != nil else { return }
+            for offset in range.location..<range.upperBound {
+                guard offset < text.length,
+                      storage.attribute(.drHidden, at: offset, effectiveRange: nil) == nil else { continue }
+                let glyph: NSRect
+                if let cached = self.invisibleGlyphCache[offset] {
+                    glyph = cached
+                } else {
+                    guard let measured = self.rect(forOffset: offset) else { continue }
+                    self.invisibleGlyphCache[offset] = measured
+                    glyph = measured
+                }
+                guard glyph.intersects(dirtyRect) else { continue }
+                let point = NSPoint(x: glyph.midX, y: glyph.midY)
+                self.styleSheet.textFaint.setStroke()
+                if text.character(at: offset) == 0x09 {
+                    let arrow = NSBezierPath()
+                    arrow.move(to: NSPoint(x: glyph.minX, y: point.y))
+                    arrow.line(to: NSPoint(x: glyph.maxX, y: point.y))
+                    arrow.line(to: NSPoint(x: glyph.maxX - 3, y: point.y - 2))
+                    arrow.move(to: NSPoint(x: glyph.maxX, y: point.y))
+                    arrow.line(to: NSPoint(x: glyph.maxX - 3, y: point.y + 2))
+                    arrow.lineWidth = 1
+                    arrow.stroke()
+                } else {
+                    self.styleSheet.textFaint.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)).fill()
+                }
+            }
+        }
+    }
+
+    private func sourceRangeForDirtyRect(for rect: NSRect, storageLength: Int) -> NSRange? {
+        guard rect.height > 0, storageLength > 0 else { return nil }
+        let x = textContainerOrigin.x
+        let top = characterIndexForInsertion(at: NSPoint(x: x, y: max(0, rect.minY)))
+        let bottom = characterIndexForInsertion(at: NSPoint(x: x, y: max(0, rect.maxY)))
+        let lower = min(displayMap.sourceOffset(forTextKit: top), displayMap.sourceOffset(forTextKit: bottom))
+        let upper = max(displayMap.sourceOffset(forTextKit: top), displayMap.sourceOffset(forTextKit: bottom))
+        guard upper > lower else { return nil }
+        let start = max(0, lower - 1)
+        let end = min(storageLength, upper + 1)
+        return NSRange(location: start, length: max(0, end - start))
     }
 
     private func drawScopedSourceBackground(in dirtyRect: NSRect) {
@@ -1183,6 +1321,8 @@ public final class MarkdownTextView: NSTextView {
         maxSize = NSSize(width: width + RenderMetrics.revealSlack * 2,
                          height: CGFloat.greatestFiniteMagnitude)
         if abs(previousWidth - width) > 0.5 {
+            inlineCodeBandCache.removeAll(keepingCapacity: true)
+            invisibleGlyphCache.removeAll(keepingCapacity: true)
             requestContentResize(.viewport)
         }
     }
@@ -1198,6 +1338,12 @@ public final class MarkdownTextView: NSTextView {
         refreshSourceAccessibility()
     }
 
+    private func applyTypographicSubstitution() {
+        let enabled = configuration.typographicSubstitution
+        isAutomaticQuoteSubstitutionEnabled = enabled
+        isAutomaticDashSubstitutionEnabled = enabled
+    }
+
     private func refreshSourceAccessibility() {
         if sourceFocus == .none {
             setAccessibilityLabel("Document editor")
@@ -1209,6 +1355,8 @@ public final class MarkdownTextView: NSTextView {
     }
 
     func invalidateAllFragments() {
+        inlineCodeBandCache.removeAll(keepingCapacity: true)
+        invisibleGlyphCache.removeAll(keepingCapacity: true)
         invalidateFragments(in: nil)
     }
 
@@ -1216,6 +1364,8 @@ public final class MarkdownTextView: NSTextView {
     /// caret move would throw away the layout of a 5k-line file to reveal two
     /// asterisks (§12).
     func invalidateFragments(in sourceRange: NSRange?) {
+        inlineCodeBandCache.removeAll(keepingCapacity: true)
+        invisibleGlyphCache.removeAll(keepingCapacity: true)
         guard let sourceRange else {
             markdownLayoutManager.invalidateLayout(for: markdownLayoutManager.documentRange)
             needsDisplay = true

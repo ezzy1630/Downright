@@ -121,6 +121,13 @@ public final class DensityGutterView: NSView {
         setAccessibilityRole(.scrollBar)
         setAccessibilityLabel("Document map")
         setAccessibilityValueDescription("0 percent read")
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Show document outline") { [weak self] in
+                guard let self, self.window != nil, !self.outlineEntries.isEmpty else { return false }
+                self.presentOutlineForKeyboard()
+                return true
+            },
+        ])
     }
 
     public required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

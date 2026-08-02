@@ -128,7 +128,7 @@ struct WorkspaceTests {
         navigator.headings = MarkdownParser.parse("# Intro\n\n## Details\n").headings
         navigator.filterText = "details"
         #expect(navigator.headings.count == 2, "source headings stay intact while the Contents view filters")
-        #expect(navigator.visibleHeadingCountForTesting == 1)
+        #expect(navigator.visibleHeadingCountForTesting == 2)
 
         let file = SiblingScanner.Sibling(
             url: URL(fileURLWithPath: "/workspace/notes.md"),

@@ -52,6 +52,7 @@ final class TaskPanelView: NSView, PanelSurface {
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: "Tasks")
     private let countLabel = NSTextField(labelWithString: "")
+    private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let ring: TaskProgressRing
     private let filterButton = NSButton()
     private var filterAction: ButtonAction?
@@ -101,7 +102,16 @@ final class TaskPanelView: NSView, PanelSurface {
         countLabel.font = PanelFont.secondary
         countLabel.alignment = .right
         countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.setAccessibilityRole(.staticText)
         addSubview(countLabel)
+
+        emptyLabel.font = PanelFont.row
+        emptyLabel.alignment = .center
+        emptyLabel.textColor = styleSheet.textSecondary
+        emptyLabel.maximumNumberOfLines = 0
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.isHidden = true
+        addSubview(emptyLabel)
 
         ring.translatesAutoresizingMaskIntoConstraints = false
         addSubview(ring)
@@ -140,6 +150,7 @@ final class TaskPanelView: NSView, PanelSurface {
         table.delegate = self
         table.rowHeight = 24
         table.setAccessibilityLabel("Task list")
+        table.onActivate = { [weak self] in self?.activateSelection() }
 
         addSubview(scroll)
         NSLayoutConstraint.activate([
@@ -147,6 +158,9 @@ final class TaskPanelView: NSView, PanelSurface {
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: filterButton.bottomAnchor, constant: 6),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            emptyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            emptyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
         ])
     }
 
@@ -157,7 +171,18 @@ final class TaskPanelView: NSView, PanelSurface {
         let counts = progress
         ring.progress = counts
         countLabel.stringValue = counts.total > 0 ? "\(counts.done) of \(counts.total)" : "None"
+        countLabel.setAccessibilityLabel(countLabel.stringValue == "None"
+            ? "No tasks"
+            : "\(counts.done) of \(counts.total) tasks completed")
         table.reloadData()
+        let hasRows = !rows.isEmpty
+        scroll.isHidden = !hasRows
+        emptyLabel.isHidden = hasRows
+        emptyLabel.stringValue = tasks.isEmpty
+            ? "No tasks in this document."
+            : "No incomplete tasks."
+        emptyLabel.setAccessibilityLabel(emptyLabel.stringValue)
+        setAccessibilityValue(tasks.isEmpty ? "No tasks" : (hasRows ? countLabel.stringValue : "No incomplete tasks"))
     }
 
     /// Tasks arrive in document order, so grouping is a single pass: a new
@@ -187,8 +212,15 @@ final class TaskPanelView: NSView, PanelSurface {
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
         countLabel.textColor = styleSheet.textFaint
+        emptyLabel.textColor = styleSheet.textSecondary
         filterButton.contentTintColor = styleSheet.textSecondary
         table.reloadData()
+    }
+
+    private func activateSelection() {
+        let row = table.selectedRow
+        guard row >= 0, row < rows.count, case .task(let index) = rows[row], index < tasks.count else { return }
+        delegate?.taskPanel(self, didSelectTaskAt: tasks[index].contentRange.location)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -240,16 +272,16 @@ extension TaskPanelView: NSTableViewDataSource, NSTableViewDelegate {
                 guard let self else { return }
                 self.delegate?.taskPanel(self, didToggleTaskAt: markOffset)
             }
-            cell.configure(task: tasks[index], styleSheet: styleSheet)
+            cell.configure(
+                task: tasks[index],
+                groupTitle: groupTitle(for: tasks[index].headingIndex),
+                styleSheet: styleSheet
+            )
             return cell
         }
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = table.selectedRow
-        guard row >= 0, row < rows.count, case .task(let index) = rows[row], index < tasks.count else { return }
-        delegate?.taskPanel(self, didSelectTaskAt: tasks[index].contentRange.location)
-    }
+    func tableViewSelectionDidChange(_ notification: Notification) { table.reloadData() }
 }
 
 // MARK: - Row
@@ -269,6 +301,7 @@ private final class TaskRowView: NSView {
 
         checkbox.setButtonType(.switch)
         checkbox.title = ""
+        checkbox.focusRingType = .default
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         addSubview(checkbox)
 
@@ -289,11 +322,12 @@ private final class TaskRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(task: TaskItem, styleSheet: StyleSheet) {
+    func configure(task: TaskItem, groupTitle: String, styleSheet: StyleSheet) {
         markOffset = task.markRange.location
         checkboxLeading.constant = PanelMetrics.inset + CGFloat(min(task.indentLevel, 5)) * 12
         checkbox.state = task.isChecked ? .on : .off
-        checkbox.setAccessibilityLabel(task.isChecked ? "Completed: \(task.text)" : "Incomplete: \(task.text)")
+        checkbox.setAccessibilityLabel(task.isChecked ? "Mark incomplete: \(task.text)" : "Mark complete: \(task.text)")
+        checkbox.setAccessibilityValue(task.isChecked ? "Completed" : "Incomplete")
 
         let action = ButtonAction { [weak self] in
             guard let self else { return }
@@ -319,6 +353,7 @@ private final class TaskRowView: NSView {
                 .foregroundColor: styleSheet.text,
             ])
         }
-        setAccessibilityLabel(text)
+        setAccessibilityRole(.row)
+        setAccessibilityLabel("\(task.isChecked ? "Completed" : "Incomplete") task: \(text), in \(groupTitle)")
     }
 }

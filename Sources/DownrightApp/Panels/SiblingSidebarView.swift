@@ -302,6 +302,7 @@ private final class SiblingRowView: NSView {
         if sibling.isCurrent { description += ", current document" }
         if sibling.hasUnseenChanges { description += ", changed since you last looked" }
         description += ", modified \(RelativeTime.long(sibling.modified))"
+        setAccessibilityRole(.row)
         setAccessibilityLabel(description)
         toolTip = sibling.url.path
 

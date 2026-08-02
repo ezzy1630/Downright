@@ -76,6 +76,9 @@ public struct DecorationPolicy: Sendable, Equatable {
     public var hidesInlineMarkers: Bool
     /// Per-span reveal of inline markers around the caret (§6.1b).
     public var revealsAtCaret: Bool
+    /// When enabled, secondary insertion carets reveal their own inline
+    /// markers too. The default keeps multi-caret edits reflow-free.
+    public var revealsAtAllCursors: Bool
     public var showsGutterMarkers: Bool
     /// Source mode styles markers instead of hiding them.
     public var highlightsMarkers: Bool
@@ -86,16 +89,55 @@ public struct DecorationPolicy: Sendable, Equatable {
     public init(
         showsInsertionPoint: Bool, hidesBlockMarkers: Bool, hidesInlineMarkers: Bool,
         revealsAtCaret: Bool, showsGutterMarkers: Bool, highlightsMarkers: Bool,
-        rendersFragments: Bool, collapsesLongCodeBlocks: Bool
+        rendersFragments: Bool, collapsesLongCodeBlocks: Bool,
+        revealsAtAllCursors: Bool = false
     ) {
         self.showsInsertionPoint = showsInsertionPoint
         self.hidesBlockMarkers = hidesBlockMarkers
         self.hidesInlineMarkers = hidesInlineMarkers
         self.revealsAtCaret = revealsAtCaret
+        self.revealsAtAllCursors = revealsAtAllCursors
         self.showsGutterMarkers = showsGutterMarkers
         self.highlightsMarkers = highlightsMarkers
         self.rendersFragments = rendersFragments
         self.collapsesLongCodeBlocks = collapsesLongCodeBlocks
+    }
+}
+
+public enum MarkdownRevealPolicy: String, Codable, Sendable, CaseIterable {
+    case never
+    case primaryCaret
+    case allCursors
+}
+
+/// Bounded renderer-owned controls for app controllers and extensions. The
+/// renderer does not persist these values or depend on DownrightApp.
+public struct MarkdownRenderConfiguration: Codable, Sendable, Equatable {
+    public var showInvisibles: Bool
+    public var revealPolicy: MarkdownRevealPolicy
+    public var typographicSubstitution: Bool
+    public var typewriterScrolling: Bool
+    public var largeFileThresholdMegabytes: Int {
+        didSet { largeFileThresholdMegabytes = min(1024, max(1, largeFileThresholdMegabytes)) }
+    }
+    public var codeCollapseThreshold: Int {
+        didSet { codeCollapseThreshold = min(10_000, max(1, codeCollapseThreshold)) }
+    }
+
+    public init(
+        showInvisibles: Bool = false,
+        revealPolicy: MarkdownRevealPolicy = .primaryCaret,
+        typographicSubstitution: Bool = false,
+        typewriterScrolling: Bool = false,
+        codeCollapseThreshold: Int = RenderMetrics.codeCollapseLineCount,
+        largeFileThresholdMegabytes: Int = 5
+    ) {
+        self.showInvisibles = showInvisibles
+        self.revealPolicy = revealPolicy
+        self.typographicSubstitution = typographicSubstitution
+        self.typewriterScrolling = typewriterScrolling
+        self.codeCollapseThreshold = min(10_000, max(1, codeCollapseThreshold))
+        self.largeFileThresholdMegabytes = min(1024, max(1, largeFileThresholdMegabytes))
     }
 }
 
@@ -141,6 +183,8 @@ extension NSAttributedString.Key {
     public static let drInlineCode = NSAttributedString.Key("drInlineCode")
     /// Source range temporarily shown as a flat, monospaced editing region.
     public static let drSourceFocus = NSAttributedString.Key("drSourceFocus")
+    /// Marks spaces and tabs when the host asks the renderer to show them.
+    public static let drInvisible = NSAttributedString.Key("drInvisible")
 }
 
 // MARK: - Fragments

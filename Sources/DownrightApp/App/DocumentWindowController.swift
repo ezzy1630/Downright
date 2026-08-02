@@ -11,7 +11,9 @@ import MarkdownRender
 @MainActor
 final class DocumentWindowController: NSWindowController {
     let markdownDocument = MarkdownDocument()
-    private(set) var mode: RenderMode = .live
+    // Sibling extensions implement delegate callbacks, so the presentation
+    // mode is intentionally internal rather than file-private.
+    var mode: RenderMode = .live
 
     var onClose: (() -> Void)?
 
@@ -61,17 +63,42 @@ final class DocumentWindowController: NSWindowController {
     var pathResolver: PathResolver?
     let findSession = FindSession()
     let jumpHistory = JumpHistory()
-    var activeStyleSheet = StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
+    var activeStyleSheet = DocumentWindowController.makeStyleSheet(
+        theme: ThemeStore.shared.current,
+        appearance: NSApp.effectiveAppearance
+    )
     private var themeObservation: ThemeObservation?
     let progressRing = TaskProgressRing()
     private var isPinned = false
     var navigationPinned = false
-    private var isFocusMode = false
-    var isFocusModeEnabled: Bool { isFocusMode }
+    private var focusRestoreSidebar = false
+    private var focusRestoreInspector = false
+    private var focusModeApplied = false
+    private var discardChangesOnClose = false
+    private var focusDimmingViews: [FocusDimmingView] = []
+    private var isSynchronizingPanes = false
+    var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     var breadcrumbHideWorkItem: DispatchWorkItem?
 
     // MARK: - Construction
+
+    private static func makeStyleSheet(theme: Theme, appearance: NSAppearance) -> StyleSheet {
+        var configuredTheme = theme
+        configuredTheme.typography = Preferences.shared.effectiveTypography
+        return StyleSheet(theme: configuredTheme, appearance: appearance)
+    }
+
+    private var renderConfiguration: MarkdownRenderConfiguration {
+        MarkdownRenderConfiguration(
+            showInvisibles: Preferences.shared.values.showInvisibles,
+            revealPolicy: Preferences.shared.values.revealMarkersAtAllCursors ? .allCursors : .primaryCaret,
+            typographicSubstitution: Preferences.shared.values.typographicSubstitution,
+            typewriterScrolling: Preferences.shared.values.typewriterScrolling,
+            codeCollapseThreshold: Preferences.shared.values.codeBlockCollapseThreshold,
+            largeFileThresholdMegabytes: Preferences.shared.values.largeFileThresholdMegabytes
+        )
+    }
 
     convenience init() {
         let window = NSWindow(
@@ -99,9 +126,8 @@ final class DocumentWindowController: NSWindowController {
 
     func open(_ url: URL, mode: RenderMode) throws {
         try markdownDocument.open(url)
-        // Source Focus is a transient editing state.  Old Read/Source state
-        // always migrates into the single editable Document surface.
-        self.mode = .live
+        let requestedMode = mode.normalizedForEditing
+        self.mode = requestedMode
 
         scanner = SiblingScanner(
             documentURL: url,
@@ -113,7 +139,8 @@ final class DocumentWindowController: NSWindowController {
         window?.title = url.lastPathComponent
         window?.subtitle = url.deletingLastPathComponent().lastPathComponent
         window?.representedURL = url
-        applyMode(.live)
+        applyMode(requestedMode)
+        applyRenderConfiguration()
         primaryContainer.textView.zoomLevel = markdownDocument.state.zoomLevel
         primaryContainer.textView.foldedHeadingSlugs = markdownDocument.state.foldedHeadings
         primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
@@ -131,11 +158,12 @@ final class DocumentWindowController: NSWindowController {
         )
 
         refreshDerivedUI()
-        if markdownDocument.state.sidebarVisible {
+        if markdownDocument.state.sidebarVisible || Preferences.shared.values.siblingSidebarVisible {
             openNavigationOverlay(focusSearch: false)
             pinNavigationPanel()
         }
         if markdownDocument.state.splitViewEnabled { toggleSplitView() }
+        applyFocusMode(Preferences.shared.values.focusMode, animated: false)
 
         // Restore reading position, then offer to jump to the first thing that
         // changed while the app was closed (§8.2).
@@ -244,7 +272,7 @@ final class DocumentWindowController: NSWindowController {
         progressRing.styleSheet = activeStyleSheet
         breadcrumbView.alphaValue = 0
 
-        rootView = NSView()
+        rootView = DocumentRootView()
         leadingPane = NSView()
         trailingPane = NSView()
         barStack = NSStackView()
@@ -288,12 +316,12 @@ final class DocumentWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             primaryContainer!.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             primaryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            primaryContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
+            primaryContainer.topAnchor.constraint(equalTo: barStack.bottomAnchor),
             primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             barStack.leadingAnchor.constraint(equalTo: primaryContainer!.leadingAnchor),
             barStack.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
-            barStack.topAnchor.constraint(equalTo: primaryContainer.topAnchor),
+            barStack.topAnchor.constraint(equalTo: rootView.topAnchor),
         ])
 
         buildToolbar()
@@ -319,11 +347,15 @@ final class DocumentWindowController: NSWindowController {
             guard let self else { return }
             self.primaryContainer.textView.update(document: parsed, dirty: dirty)
             self.splitContainer?.textView.update(document: parsed, dirty: dirty)
+            self.synchronizePanes(from: self.primaryContainer.textView)
             self.refreshDerivedUI()
         }
         markdownDocument.onExternalEvent = { [weak self] event in self?.handleExternalEvent(event) }
         markdownDocument.onDirtyChanged = { [weak self] dirty in
             self?.window?.isDocumentEdited = dirty
+        }
+        markdownDocument.onSaveFailure = { [weak self] error in
+            self?.presentSaveError(error)
         }
         markdownDocument.currentTopOffsetProvider = { [weak self] in
             self?.primaryContainer.textView.topVisibleOffset ?? 0
@@ -337,7 +369,7 @@ final class DocumentWindowController: NSWindowController {
     private func observeTheme() {
         themeObservation = ThemeStore.shared.observe { [weak self] theme in
             guard let self, let window = self.window else { return }
-            self.activeStyleSheet = StyleSheet(theme: theme, appearance: window.effectiveAppearance)
+            self.activeStyleSheet = Self.makeStyleSheet(theme: theme, appearance: window.effectiveAppearance)
             self.applyStyleSheet()
         }
         NotificationCenter.default.addObserver(
@@ -347,8 +379,13 @@ final class DocumentWindowController: NSWindowController {
     }
 
     @objc private func preferencesDidChange() {
-        activeStyleSheet = StyleSheet(theme: ThemeStore.shared.current, appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+        activeStyleSheet = Self.makeStyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance
+        )
         applyStyleSheet()
+        applyFocusMode(Preferences.shared.values.focusMode, animated: true)
+        applySiblingVisibilityPreference()
     }
 
     func applyStyleSheet() {
@@ -369,6 +406,14 @@ final class DocumentWindowController: NSWindowController {
         searchResults?.styleSheet = activeStyleSheet
         frontMatterEditor?.styleSheet = activeStyleSheet
         assetDoctorPanel?.styleSheet = activeStyleSheet
+        applyRenderConfiguration()
+    }
+
+    private func applyRenderConfiguration() {
+        let configuration = renderConfiguration
+        for pane in documentPanes where pane.textView.configuration != configuration {
+            pane.textView.configuration = configuration
+        }
     }
 
     // MARK: - Modes (§3.2)
@@ -376,27 +421,81 @@ final class DocumentWindowController: NSWindowController {
     func applyMode(_ newMode: RenderMode) {
         let newMode = newMode.normalizedForEditing
         mode = newMode
-        primaryContainer.textView.mode = newMode
+        for pane in documentPanes where pane.textView.mode != newMode {
+            pane.textView.mode = newMode
+        }
         // Never persist a transient raw-source presentation.
         markdownDocument.state.mode = .live
         refreshSourceFocusToolbar()
         window?.toolbar?.validateVisibleItems()
     }
 
+    var documentPanes: [MarkdownContainerView] {
+        [primaryContainer, splitContainer].compactMap { $0 }
+    }
+
+    func synchronizePanes(from source: MarkdownTextView) {
+        guard splitContainer != nil, !isSynchronizingPanes else { return }
+        isSynchronizingPanes = true
+        defer { isSynchronizingPanes = false }
+
+        let selection = source.sourceSelectedRanges
+        let scrollOffset = source.topVisibleOffset
+        for pane in documentPanes where pane.textView !== source {
+            let textView = pane.textView
+            if textView.configuration != source.configuration { textView.configuration = source.configuration }
+            if textView.mode != source.mode { textView.mode = source.mode }
+            if textView.zoomLevel != source.zoomLevel { textView.zoomLevel = source.zoomLevel }
+            if textView.foldedHeadingSlugs != source.foldedHeadingSlugs {
+                textView.foldedHeadingSlugs = source.foldedHeadingSlugs
+            }
+            if textView.sourceFocus != source.sourceFocus {
+                switch source.sourceFocus {
+                case .none:
+                    textView.clearSourceFocus()
+                case .document:
+                    textView.focusEntireSource()
+                case .scoped(let range):
+                    textView.focusSource(in: range)
+                }
+            }
+            textView.setSourceSelectedRanges(selection)
+            textView.scroll(toOffset: scrollOffset, position: .top, animated: false)
+        }
+        markdownDocument.state.zoomLevel = source.zoomLevel
+        markdownDocument.state.foldedHeadings = source.foldedHeadingSlugs
+    }
+
+    func setSharedZoom(_ level: ZoomLevel) {
+        let source = containerTextView
+        source.zoomLevel = level
+        synchronizePanes(from: source)
+        markdownDocument.state.zoomLevel = level
+        outlinePanel?.zoomLevel = level
+    }
+
+    func setSharedFolds(_ folded: Set<String>, from source: MarkdownTextView? = nil) {
+        let source = source ?? containerTextView
+        source.foldedHeadingSlugs = folded
+        synchronizePanes(from: source)
+        markdownDocument.state.foldedHeadings = folded
+    }
+
     // MARK: - Derived UI
 
     func refreshDerivedUI() {
         let parsed = markdownDocument.parsed
+        let source = containerTextView
         outlinePanel?.headings = parsed.headings
         outlinePanel?.sectionMetrics = Metrics.sectionMetrics(parsed)
         outlinePanel?.foldedIndices = Set(parsed.headings.indices.filter {
-            primaryContainer.textView.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
+            source.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
         })
         outlinePanel?.reload()
         navigationPanel?.headings = parsed.headings
         navigationPanel?.sectionMetrics = Metrics.sectionMetrics(parsed)
         navigationPanel?.foldedIndices = Set(parsed.headings.indices.filter {
-            primaryContainer.textView.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
+            source.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
         })
         navigationPanel?.reload()
 
@@ -418,18 +517,20 @@ final class DocumentWindowController: NSWindowController {
         pathResolver?.invalidate()
         refreshDensityBands()
         refreshBreadcrumb()
-        markdownDocument.state.zoomLevel = primaryContainer.textView.zoomLevel
-        markdownDocument.state.foldedHeadings = primaryContainer.textView.foldedHeadingSlugs
+        markdownDocument.state.zoomLevel = source.zoomLevel
+        markdownDocument.state.foldedHeadings = source.foldedHeadingSlugs
+        updateFocusDimmingViews()
     }
 
     func refreshDensityBands() {
         let parsed = markdownDocument.parsed
+        let source = containerTextView
         let changes = markdownDocument.changes.visibleMarks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
             for: parsed, changes: changes, searchHits: findSession.matches
         )
         let length = CGFloat(max(1, parsed.length))
-        let current = parsed.headings.lastIndex { $0.range.location <= primaryContainer.textView.topVisibleOffset }
+        let current = parsed.headings.lastIndex { $0.range.location <= source.topVisibleOffset }
         densityGutterView.outlineEntries = parsed.headings.enumerated().map { index, heading in
             DensityOutlineEntry(
                 title: heading.title,
@@ -442,7 +543,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func refreshBreadcrumb() {
-        let offset = primaryContainer.textView.topVisibleOffset
+        let offset = containerTextView.topVisibleOffset
         let headings = markdownDocument.parsed.headings
         guard var index = headings.lastIndex(where: { $0.range.location <= offset }) else {
             breadcrumbView.trail = []
@@ -503,7 +604,7 @@ final class DocumentWindowController: NSWindowController {
         refreshChangeDecorations()
     }
 
-    private func showChangeSummary(_ message: String) {
+    func showChangeSummary(_ message: String) {
         if changeSummaryBar == nil {
             let bar = ChangeSummaryBarView()
             bar.delegate = self
@@ -513,9 +614,10 @@ final class DocumentWindowController: NSWindowController {
             bar.widthAnchor.constraint(equalTo: barStack.widthAnchor).isActive = true
         }
         changeSummaryBar?.message = message
+        rootView.needsLayout = true
     }
 
-    private func showConflictBar(_ message: String) {
+    func showConflictBar(_ message: String) {
         if conflictBar == nil {
             let bar = ConflictBarView()
             bar.delegate = self
@@ -525,17 +627,26 @@ final class DocumentWindowController: NSWindowController {
             bar.widthAnchor.constraint(equalTo: barStack.widthAnchor).isActive = true
         }
         conflictBar?.message = message
+        rootView.needsLayout = true
     }
 
     func dismissConflictBar() {
-        conflictBar?.removeFromSuperview()
+        if let conflictBar {
+            barStack.removeArrangedSubview(conflictBar)
+            conflictBar.removeFromSuperview()
+        }
         conflictBar = nil
         pendingConflict = nil
+        rootView.needsLayout = true
     }
 
     func dismissChangeSummary() {
-        changeSummaryBar?.removeFromSuperview()
+        if let changeSummaryBar {
+            barStack.removeArrangedSubview(changeSummaryBar)
+            changeSummaryBar.removeFromSuperview()
+        }
         changeSummaryBar = nil
+        rootView.needsLayout = true
     }
 
     // MARK: - Panels
@@ -835,8 +946,10 @@ final class DocumentWindowController: NSWindowController {
         findBar = nil
         searchResults = nil
         findSession.clear()
-        primaryContainer.textView.searchHits = []
-        primaryContainer.textView.currentSearchHit = nil
+        for pane in documentPanes {
+            pane.textView.searchHits = []
+            pane.textView.currentSearchHit = nil
+        }
         refreshDensityBands()
         if inspectorHost?.hasContent != true { closeInspector() }
         else { refreshToolbarSelectionState() }
@@ -847,56 +960,76 @@ final class DocumentWindowController: NSWindowController {
     func applyFindQuery(_ query: FindQuery) { runFind(query) }
 
     func runFind(_ query: FindQuery) {
-        findSession.update(query: query, in: markdownDocument.text, caret: primaryContainer.textView.topVisibleOffset)
+        let source = containerTextView
+        findSession.update(query: query, in: markdownDocument.text, caret: source.topVisibleOffset)
         // A hit inside a folded or elided range forces that range visible; the
         // text view owns that rule (§14's four-way interaction).
-        primaryContainer.textView.searchHits = findSession.matches
-        primaryContainer.textView.currentSearchHit = findSession.currentMatch
+        for pane in documentPanes {
+            pane.textView.searchHits = findSession.matches
+            pane.textView.currentSearchHit = findSession.currentMatch
+        }
         findBar?.statusText = findSession.statusText
         findBar?.isQueryValid = FindEngine.isValid(query)
         refreshDensityBands()
         if let match = findSession.currentMatch {
-            primaryContainer.textView.scroll(toOffset: match.location, position: .center, animated: false)
+            source.scroll(toOffset: match.location, position: .center, animated: false)
+            synchronizePanes(from: source)
         }
     }
 
     func advanceFind(forward: Bool) {
         guard let match = findSession.advance(forward: forward) else { return }
-        primaryContainer.textView.currentSearchHit = match
+        let source = containerTextView
+        for pane in documentPanes { pane.textView.currentSearchHit = match }
         findBar?.statusText = findSession.statusText
         recordJump(to: match.location, label: "Search hit")
-        primaryContainer.textView.scroll(toOffset: match.location, position: .center, animated: true)
+        source.scroll(toOffset: match.location, position: .center, animated: true)
+        synchronizePanes(from: source)
     }
 
     // MARK: - Navigation
 
     func recordJump(to offset: Int, label: String) {
         jumpHistory.record(
-            from: JumpHistory.Entry(url: markdownDocument.url, offset: primaryContainer.textView.topVisibleOffset, label: "Reading position"),
+            from: JumpHistory.Entry(url: markdownDocument.url, offset: containerTextView.topVisibleOffset, label: "Reading position"),
             to: JumpHistory.Entry(url: markdownDocument.url, offset: offset, label: label)
         )
     }
 
     func jump(to offset: Int, label: String, animated: Bool = true) {
         recordJump(to: offset, label: label)
-        primaryContainer.textView.scroll(toOffset: offset, position: .center, animated: animated)
+        let source = containerTextView
+        source.scroll(toOffset: offset, position: .center, animated: animated)
+        synchronizePanes(from: source)
         refreshBreadcrumb()
     }
 
     func goBack() {
         guard let entry = jumpHistory.goBack() else { return }
-        primaryContainer.textView.scroll(toOffset: entry.offset, position: .center, animated: true)
+        let source = containerTextView
+        source.scroll(toOffset: entry.offset, position: .center, animated: true)
+        synchronizePanes(from: source)
     }
 
     func goForward() {
         guard let entry = jumpHistory.goForward() else { return }
-        primaryContainer.textView.scroll(toOffset: entry.offset, position: .center, animated: true)
+        let source = containerTextView
+        source.scroll(toOffset: entry.offset, position: .center, animated: true)
+        synchronizePanes(from: source)
     }
 
     // MARK: - Split view (§9.3)
 
     func toggleSplitView() {
         if let split = splitViewContainer {
+            synchronizePanes(from: containerTextView)
+            focusDimmingViews.removeAll { view in
+                if view.superview === splitContainer {
+                    view.removeFromSuperview()
+                    return true
+                }
+                return false
+            }
             primaryContainer.removeFromSuperview()
             split.removeFromSuperview()
             splitViewContainer = nil
@@ -906,7 +1039,7 @@ final class DocumentWindowController: NSWindowController {
             NSLayoutConstraint.activate([
                 primaryContainer.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
                 primaryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-                primaryContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
+                primaryContainer.topAnchor.constraint(equalTo: barStack.bottomAnchor),
                 primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             ])
             markdownDocument.state.splitViewEnabled = false
@@ -919,8 +1052,14 @@ final class DocumentWindowController: NSWindowController {
         let second = MarkdownContainerView(storage: markdownDocument.storage)
         second.textView.markdownDelegate = self
         second.textView.styleSheet = activeStyleSheet
-        second.textView.mode = .live
+        second.textView.configuration = renderConfiguration
+        let source = containerTextView
+        second.textView.mode = source.mode
+        second.textView.zoomLevel = source.zoomLevel
+        second.textView.foldedHeadingSlugs = source.foldedHeadingSlugs
         second.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
+        second.textView.setSourceSelectedRanges(source.sourceSelectedRanges)
+        second.textView.scroll(toOffset: source.topVisibleOffset, position: .top, animated: false)
         splitContainer = second
 
         let split = NSSplitView()
@@ -937,30 +1076,131 @@ final class DocumentWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             split.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             split.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            split.topAnchor.constraint(equalTo: rootView.topAnchor),
+            split.topAnchor.constraint(equalTo: barStack.bottomAnchor),
             split.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
         rootView.layoutSubtreeIfNeeded()
         split.setPosition(max(1, split.bounds.width / 2), ofDividerAt: 0)
         splitViewContainer = split
         markdownDocument.state.splitViewEnabled = true
+        if isFocusModeEnabled { installFocusDimmingView(in: second) }
+        synchronizePanes(from: source)
+    }
+
+    // MARK: - Preference-driven presentation
+
+    func applySiblingVisibilityPreference() {
+        guard markdownDocument.url != nil else { return }
+        // Focus mode owns the chrome while active. Apply this preference after
+        // focus mode exits so it cannot reopen a hidden sidebar mid-session.
+        guard !isFocusModeEnabled else { return }
+        let shouldShow = Preferences.shared.values.siblingSidebarVisible
+        if shouldShow, !navigationPinned {
+            if navigationWindow == nil { openNavigationOverlay(focusSearch: false) }
+            pinNavigationPanel()
+        } else if !shouldShow, navigationPinned {
+            closePinnedNavigation()
+        }
+    }
+
+    private func installFocusDimmingView(in container: MarkdownContainerView) {
+        guard !focusDimmingViews.contains(where: { $0.superview === container }) else { return }
+        let overlay = FocusDimmingView()
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(overlay, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: container.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        overlay.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
+        focusDimmingViews.append(overlay)
+        Motion.run(reduceMotion: activeStyleSheet.reduceMotion, duration: Motion.quick) { _ in
+            overlay.alphaValue = 1
+        }
+    }
+
+    private func removeFocusDimmingViews(animated: Bool) {
+        let views = focusDimmingViews
+        focusDimmingViews.removeAll()
+        let finish = {
+            views.forEach { $0.removeFromSuperview() }
+        }
+        guard animated, !activeStyleSheet.reduceMotion else {
+            finish()
+            return
+        }
+        Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+            views.forEach { $0.alphaValue = 0 }
+        } completion: {
+            finish()
+        }
+    }
+
+    func updateFocusDimmingViews() {
+        guard isFocusModeEnabled else { return }
+        for overlay in focusDimmingViews {
+            guard let container = overlay.superview else { continue }
+            let textView = container.subviews.compactMap { $0 as? NSScrollView }
+                .first?.documentView as? MarkdownTextView
+            guard let textView else { continue }
+            overlay.highlightRect = focusRect(for: textView, in: container)
+        }
+        focusDimmingViews.forEach { $0.needsDisplay = true }
+    }
+
+    private func focusRect(for textView: MarkdownTextView, in container: NSView) -> NSRect? {
+        let storage = markdownDocument.text as NSString
+        guard storage.length > 0 else { return nil }
+        let offset = min(max(0, textView.sourceSelectedRange.location), storage.length - 1)
+        let paragraph = storage.paragraphRange(for: NSRange(location: offset, length: 0))
+        guard let start = textView.rect(forOffset: paragraph.location) else { return nil }
+        let end = textView.rect(forOffset: max(paragraph.location, paragraph.upperBound - 1)) ?? start
+        return textView.convert(start.union(end).insetBy(dx: -8, dy: -4), to: container)
     }
 
     // MARK: - Window lifecycle
 
-    func documentWillClose() {
+    @discardableResult
+    func confirmPendingChangesBeforeClose(markDiscardForWindowClose: Bool) -> Bool {
+        discardChangesOnClose = false
+        guard markdownDocument.isDirty, markdownDocument.url != nil else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "Save changes to \(markdownDocument.displayName)?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return saveDocument()
+        case .alertSecondButtonReturn:
+            discardChangesOnClose = markDiscardForWindowClose
+            return true
+        default:
+            return false
+        }
+    }
+
+    @discardableResult
+    func documentWillClose() -> Bool {
+        guard discardChangesOnClose || !markdownDocument.isDirty || saveDocument() else { return false }
+        discardChangesOnClose = false
         stopNavigationDismissalObservers()
         closeNavigationOverlay()
+        removeFocusDimmingViews(animated: false)
         navigationPanel?.removeFromSuperview()
         navigationPanel = nil
         let selection = primaryContainer.textView.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
         markdownDocument.state.selectionLength = selection.length
         markdownDocument.state.splitViewEnabled = splitViewContainer != nil
-        markdownDocument.saveIfNeeded()
         markdownDocument.close()
         themeObservation?.cancel()
         NotificationCenter.default.removeObserver(self)
+        return true
     }
 
     var isWindowPinned: Bool { isPinned }
@@ -971,16 +1211,38 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func toggleFocusMode() {
-        isFocusMode.toggle()
-        window?.toolbar?.isVisible = !isFocusMode
-        densityGutterView.isHidden = isFocusMode
-        breadcrumbView.isHidden = isFocusMode
-        if isFocusMode {
+        Preferences.shared.update { $0.focusMode.toggle() }
+    }
+
+    func applyFocusMode(_ enabled: Bool, animated: Bool) {
+        if enabled {
+            if !focusModeApplied {
+                focusRestoreSidebar = !sidebarItem.isCollapsed
+                focusRestoreInspector = !inspectorItem.isCollapsed
+                focusModeApplied = true
+            }
             closeNavigationOverlay()
             sidebarItem.isCollapsed = true
             inspectorItem.isCollapsed = true
-        } else if markdownDocument.state.sidebarVisible {
-            sidebarItem.isCollapsed = false
+            window?.toolbar?.isVisible = false
+            densityGutterView.isHidden = true
+            breadcrumbView.isHidden = true
+            documentPanes.forEach { installFocusDimmingView(in: $0) }
+            updateFocusDimmingViews()
+        } else {
+            guard focusModeApplied else {
+                window?.toolbar?.isVisible = true
+                densityGutterView.isHidden = false
+                breadcrumbView.isHidden = false
+                return
+            }
+            removeFocusDimmingViews(animated: animated)
+            window?.toolbar?.isVisible = true
+            densityGutterView.isHidden = false
+            breadcrumbView.isHidden = false
+            sidebarItem.isCollapsed = !focusRestoreSidebar
+            inspectorItem.isCollapsed = !focusRestoreInspector
+            focusModeApplied = false
         }
         refreshToolbarSelectionState()
     }
@@ -999,6 +1261,7 @@ extension DocumentWindowController: NSWindowDelegate {
 
     func windowDidResize(_ notification: Notification) {
         repositionNavigationOverlay()
+        updateFocusDimmingViews()
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -1010,27 +1273,16 @@ extension DocumentWindowController: NSWindowDelegate {
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
-        guard !isFocusMode else { return }
+        guard !isFocusModeEnabled else { return }
         window?.toolbar?.isVisible = true
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard markdownDocument.isDirty, markdownDocument.url != nil else { return true }
-        let alert = NSAlert()
-        alert.messageText = "Save changes to \(markdownDocument.displayName)?"
-        alert.informativeText = "Your changes will be lost if you don't save them."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: try? markdownDocument.save(); return true
-        case .alertSecondButtonReturn: return true
-        default: return false
-        }
+        confirmPendingChangesBeforeClose(markDiscardForWindowClose: true)
     }
 
     func windowWillClose(_ notification: Notification) {
-        documentWillClose()
+        guard documentWillClose() else { return }
         onClose?()
     }
 
@@ -1038,4 +1290,31 @@ extension DocumentWindowController: NSWindowDelegate {
         guard window?.occlusionState.contains(.visible) == false else { return }
         markdownDocument.saveIfNeeded()
     }
+}
+
+@MainActor
+private final class FocusDimmingView: NSView {
+    var highlightRect: NSRect?
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(rect: bounds)
+        if let highlightRect {
+            let cutout = NSBezierPath(roundedRect: highlightRect, xRadius: 6, yRadius: 6)
+            path.append(cutout)
+            path.windingRule = .evenOdd
+        }
+        NSColor.black.withAlphaComponent(0.18).setFill()
+        path.fill()
+    }
+}
+
+/// Document chrome is laid out top-to-bottom.  Keeping the root flipped makes
+/// its frame coordinates agree with the flipped Markdown container and avoids
+/// inverted bar/document constraints.
+private final class DocumentRootView: NSView {
+    override var isFlipped: Bool { true }
 }

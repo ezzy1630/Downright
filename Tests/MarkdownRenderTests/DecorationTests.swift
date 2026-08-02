@@ -88,6 +88,40 @@ Trailing paragraph mentioning `src/auth/session.ts:42` and $a^2$ inline.
     }
 }
 
+@Test func rendererConfigurationIsBoundedAndIndependentOfTheAppLayer() {
+    var configuration = MarkdownRenderConfiguration(
+        showInvisibles: true,
+        revealPolicy: .never,
+        typewriterScrolling: true,
+        codeCollapseThreshold: 0
+    )
+    #expect(configuration.showInvisibles)
+    #expect(configuration.revealPolicy == .never)
+    #expect(configuration.typewriterScrolling)
+    #expect(configuration.codeCollapseThreshold == 1)
+
+    configuration.codeCollapseThreshold = 99_999
+    #expect(configuration.codeCollapseThreshold == 10_000)
+}
+
+@Test func hardWrappedParagraphsKeepPhysicalBreaksWithoutUnsafeReflow() {
+    let source = "A physical line\ncontinues here without a blank paragraph.\n"
+    let document = MarkdownParser.parse(source)
+    let storage = NSTextStorage(string: source)
+
+    engine(.live).decorate(storage, document: document, dirty: .wholesale)
+
+    #expect(storage.string == source)
+    guard let paragraph = document.root.children.first,
+          let style = storage.attribute(.paragraphStyle, at: paragraph.range.location, effectiveRange: nil)
+            as? NSParagraphStyle else {
+        Issue.record("the hard-wrapped paragraph did not receive a paragraph style")
+        return
+    }
+    #expect(style.lineBreakMode == .byWordWrapping)
+    #expect(style.paragraphSpacing == 0)
+}
+
 @Test func decorationAppliesRealAttributes() {
     let document = MarkdownParser.parse(sampleMarkdown)
     let storage = NSTextStorage(string: sampleMarkdown)
@@ -358,6 +392,36 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     }
 }
 
+@Test func allCursorRevealPolicyIncludesSecondaryInsertionCursors() {
+    let text = "Some **bold** and *italic* text.\n"
+    let ns = text as NSString
+    let document = MarkdownParser.parse(text)
+    var policy = RenderMode.live.policy
+    policy.revealsAtAllCursors = true
+
+    let primary = ns.range(of: "bold").location + 1
+    let secondary = ns.range(of: "italic").location + 1
+    let primaryOnly = MarkerPolicy.revealedMarkerRanges(
+        document: document, policy: policy, caret: primary, selections: []
+    )
+    let all = MarkerPolicy.revealedMarkerRanges(
+        document: document,
+        policy: policy,
+        caret: primary,
+        selections: [NSRange(location: primary, length: 0), NSRange(location: secondary, length: 0)]
+    )
+
+    #expect(all.count > primaryOnly.count)
+    #expect(MarkerPolicy.hiddenRanges(
+        document: document,
+        policy: policy,
+        caret: primary,
+        selections: [NSRange(location: primary, length: 0), NSRange(location: secondary, length: 0)]
+    ).count < MarkerPolicy.hiddenRanges(
+        document: document, policy: policy, caret: nil, selections: []
+    ).count)
+}
+
 @Test func blockMarkersAreNeverRevealedInline() {
     // §6.1a: `#` and `- [ ]` live in the gutter and stay there whatever the
     // caret does, which is what keeps line height and origin stable.
@@ -371,6 +435,27 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
         let hidden = engine.hiddenRanges(document: document, caret: caret, selections: [])
         #expect(hidden.contains { $0.location <= headingMarker.location && $0.upperBound >= 2 },
                 "the heading marker was revealed with the caret at \(caret)")
+    }
+}
+
+@Test func calloutBlockMarkersStayHiddenWithoutMovingSourceCoordinates() {
+    let text = "> [!WARNING] Build carefully\n> The source stays byte-identical.\n"
+    let document = MarkdownParser.parse(text)
+    let ns = text as NSString
+    guard let callout = document.root.children.first, let marker = callout.markerRange else {
+        Issue.record("the parser did not retain the callout marker range")
+        return
+    }
+
+    for mode in [RenderMode.read, .live] {
+        let hidden = engine(mode).hiddenRanges(document: document, caret: nil, selections: [])
+        #expect(hidden.contains(marker), "callout marker is visible in \(mode)")
+
+        let index = ParagraphIndex(text: ns)
+        let map = DisplayMap(paragraphs: index, hidden: hidden)
+        #expect(map.textKitOffset(forSource: marker.location) == map.textKitOffset(forSource: marker.upperBound))
+        #expect(ns.substring(with: marker) == "> [!WARNING] Build carefully")
+        #expect(map.sourceOffset(forTextKit: map.textKitOffset(forSource: marker.upperBound)) == marker.upperBound)
     }
 }
 
@@ -422,6 +507,34 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     let document = MarkdownParser.parse("1. one\n2. two\n")
     let texts = engine(.live).gutterMarkers(document: document).map(\.text)
     #expect(texts.contains { $0.hasSuffix(".") || $0 == "-" })
+}
+
+@Test func wideTablesStayInsideTheTextMeasureAndWrapCells() {
+    let source = "| Alpha | Beta | Gamma | Delta |\n| --- | --- | --- | --- |\n| A long value that must wrap | another long value | third value | fourth value |"
+    let document = MarkdownParser.parse(source)
+    guard let block = document.root.children.first, case .table(let data) = block.content else {
+        Issue.record("the parser did not produce a table")
+        return
+    }
+    let storage = NSAttributedString(string: source)
+    let layout = TableLayout.make(data: data, storage: storage, width: 220, style: styleSheet())
+    let gaps = RenderMetrics.tableColumnGap * CGFloat(data.columnCount - 1)
+
+    #expect(layout.totalWidth <= 220)
+    #expect(layout.columnWidths.reduce(0, +) + gaps <= 220.001)
+    #expect(layout.rowHeights.last ?? 0 > styleSheet().lineHeight)
+}
+
+@Test func unlabeledCodeFencesExposeTheSameCopyGeometryAsLabeledFences() {
+    let style = styleSheet()
+    let band = CGRect(x: 12, y: 4, width: 420, height: 30)
+    let unlabeled = CodeBlockFragment.copyButtonRect(in: band, style: style, language: "")
+    let labeled = CodeBlockFragment.copyButtonRect(in: band, style: style, language: "swift")
+
+    #expect(unlabeled.width > 0)
+    #expect(unlabeled.maxX <= band.maxX)
+    #expect(labeled.width == unlabeled.width)
+    #expect(labeled.maxX <= band.maxX)
 }
 
 // MARK: - §14 zoom × folding × find × hidden markers

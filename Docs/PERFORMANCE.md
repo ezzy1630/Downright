@@ -24,22 +24,22 @@ applies dirty decoration.
 ## Current local benchmark
 
 Measured with the release executable from `Sources/drbench/main.swift` on
-2026-08-01. Corpus: 120,825 characters and 4,885 lines of generated agent-like
+2026-08-02. Corpus: 120,825 characters and 4,885 lines of generated agent-like
 Markdown. The host machine is not recorded here, so use these numbers as a
 baseline, not a cross-machine claim.
 
 | Measurement | p50 | p95 | Result |
 |---|---:|---:|---|
-| cmark parse | 13.572 ms | 16.836 ms | Informational |
-| Full MarkdownParser.parse | 45.233 ms | 45.682 ms | Runs outside typing path |
-| AST dirty set, one-character edit | 0.037 ms | 0.040 ms | Runs outside typing path |
-| Text diff, external rewrite | 3.939 ms | 3.950 ms | Informational |
-| Incremental decoration | 0.096 ms | 0.106 ms | Under 8 ms budget |
-| Wholesale decoration | 96.105 ms | 160.470 ms | Informational |
-| Source edit and paragraph map | 0.146 ms | 0.149 ms | Under 8 ms budget |
-| End-to-end semantic convergence | 45.623 ms | 46.075 ms | Under 100 ms budget |
-| Parse 100 KB | 16.121 ms | 16.143 ms | Under 250 ms parse gate |
-| Syntax highlight, 10 KB Swift | 0.096 ms | 0.108 ms | Informational |
+| cmark parse | 13.290 ms | 14.566 ms | Informational |
+| Full MarkdownParser.parse | 45.209 ms | 46.562 ms | Runs outside typing path |
+| AST dirty set, one-character edit | 0.035 ms | 0.037 ms | Runs outside typing path |
+| Text diff, external rewrite | 3.981 ms | 4.077 ms | Informational |
+| Incremental decoration | 0.092 ms | 0.118 ms | Under 8 ms budget |
+| Wholesale decoration | 100.768 ms | 165.210 ms | Informational |
+| Source edit and paragraph map | 0.134 ms | 0.149 ms | Under 8 ms budget |
+| End-to-end semantic convergence | 46.349 ms | 46.726 ms | Under 100 ms budget |
+| Parse 100 KB | 16.268 ms | 16.413 ms | Under 250 ms parse gate |
+| Syntax highlight, 10 KB Swift | 0.093 ms | 0.095 ms | Informational |
 
 The synchronous typing work and incremental decoration now fit the 8 ms
 budget. The benchmark does not yet measure TextKit layout, scroll-frame

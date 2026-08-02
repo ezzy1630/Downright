@@ -115,7 +115,7 @@ extension DocumentWindowController: CommandResponder {
             return false  // multiple cursors live in the text view
 
         // MARK: Files
-        case .save: try? markdownDocument.save()
+        case .save: _ = saveDocument()
         case .saveAs: saveAs()
         case .close: window?.performClose(nil)
         case .revealInFinder:
@@ -161,9 +161,7 @@ extension DocumentWindowController: CommandResponder {
         // Headings hold their vertical position through the transition, so the
         // reader never loses their place (§5.2) — the text view anchors on the
         // nearest heading before relayout.
-        textView.zoomLevel = level
-        markdownDocument.state.zoomLevel = level
-        outlinePanel?.zoomLevel = level
+        setSharedZoom(level)
     }
 
     // MARK: - Navigation helpers
@@ -244,14 +242,14 @@ extension DocumentWindowController: CommandResponder {
         markdownDocument.ensureParsedCurrent()
         guard let index = currentHeadingIndex() else { return }
         let slug = markdownDocument.parsed.headings[index].slug
-        if fold { textView.foldedHeadingSlugs.insert(slug) } else { textView.foldedHeadingSlugs.remove(slug) }
-        markdownDocument.state.foldedHeadings = textView.foldedHeadingSlugs
+        var folds = textView.foldedHeadingSlugs
+        if fold { folds.insert(slug) } else { folds.remove(slug) }
+        setSharedFolds(folds, from: textView)
     }
 
     private func setAllFolds(folded: Bool) {
         markdownDocument.ensureParsedCurrent()
-        textView.foldedHeadingSlugs = folded ? Set(markdownDocument.parsed.headings.map(\.slug)) : []
-        markdownDocument.state.foldedHeadings = textView.foldedHeadingSlugs
+        setSharedFolds(folded ? Set(markdownDocument.parsed.headings.map(\.slug)) : [], from: textView)
     }
 
     private func showTidySheet() {

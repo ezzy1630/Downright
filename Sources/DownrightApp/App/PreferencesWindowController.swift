@@ -1,7 +1,6 @@
 import AppKit
 import MarkdownCore
 import MarkdownRender
-import SwiftUI
 
 /// Settings, including the keybinding editor §7.2 promises.
 ///
@@ -30,108 +29,6 @@ final class PreferencesWindowController: NSWindowController {
         window.styleMask.insert(.resizable)
         window.setContentSize(NSSize(width: 760, height: 600))
         self.init(window: window)
-    }
-}
-
-private struct SettingsRootView: View {
-    @State private var refresh = UUID()
-
-    var body: some View {
-        TabView {
-            Form {
-                Toggle("Restore previous documents", isOn: binding(\.restoreSession))
-                Toggle("Follow system appearance", isOn: binding(\.followsSystemAppearance))
-            }
-            .tabItem { Label("General", systemImage: "gearshape") }
-
-            Form {
-                Picker("Light theme", selection: binding(\.themeName)) {
-                    ForEach(ThemeStore.shared.themes.filter { $0.appearance != .dark }, id: \.name) { Text($0.name).tag($0.name) }
-                }
-                Picker("Dark theme", selection: binding(\.darkThemeName)) {
-                    ForEach(ThemeStore.shared.themes.filter { $0.appearance != .light }, id: \.name) { Text($0.name).tag($0.name) }
-                }
-                ThemePreview()
-            }
-            .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
-
-            Form {
-                Picker("Preset", selection: typographyBinding(\.preset)) {
-                    ForEach(TypographyConfig.BodyPreset.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Slider(value: typographyBinding(\.bodySize), in: 10...28, step: 1) { Text("Body size") }
-                Slider(value: typographyBinding(\.lineHeightMultiple), in: 1.2...1.9, step: 0.05) { Text("Line height") }
-                Slider(value: typographyBinding(\.measureCharacters), in: 64...74, step: 1) { Text("Measure") }
-                Toggle("Optical margins", isOn: typographyBinding(\.opticalMargins))
-                ThemePreview()
-            }
-            .tabItem { Label("Typography", systemImage: "textformat") }
-
-            Form {
-                Toggle("Typographic substitutions", isOn: binding(\.typographicSubstitution))
-                Toggle("Show invisibles", isOn: binding(\.showInvisibles))
-                Toggle("Typewriter scrolling", isOn: binding(\.typewriterScrolling))
-                Toggle("Resolve path tokens", isOn: binding(\.resolvePathTokens))
-                Stepper("Collapse code after \(Preferences.shared.values.codeBlockCollapseThreshold) lines",
-                        value: binding(\.codeBlockCollapseThreshold), in: 6...100)
-            }
-            .tabItem { Label("Editor", systemImage: "square.and.pencil") }
-
-            Form {
-                Toggle("Vim-style keys", isOn: binding(\.vimKeys))
-                Text("Keyboard shortcuts remain fully editable from the Keys pane command table.")
-                    .foregroundStyle(.secondary)
-            }
-            .tabItem { Label("Keys", systemImage: "keyboard") }
-
-            Form {
-                Toggle("Watch files for external changes", isOn: binding(\.watchFiles))
-                Stepper("History: \(Preferences.shared.values.historyMaximumDays) days",
-                        value: binding(\.historyMaximumDays), in: 1...365)
-                Stepper("Large-file threshold: \(Preferences.shared.values.largeFileThresholdMegabytes) MB",
-                        value: binding(\.largeFileThresholdMegabytes), in: 1...100)
-            }
-            .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
-        }
-        .id(refresh)
-        .padding(12)
-        .frame(minWidth: 720, minHeight: 520)
-    }
-
-    private func binding<Value>(_ keyPath: WritableKeyPath<Preferences.Values, Value>) -> Binding<Value> {
-        Binding(
-            get: { Preferences.shared.values[keyPath: keyPath] },
-            set: { value in
-                Preferences.shared.update { $0[keyPath: keyPath] = value }
-                refresh = UUID()
-            }
-        )
-    }
-
-    private func typographyBinding<Value>(_ keyPath: WritableKeyPath<TypographyConfig, Value>) -> Binding<Value> {
-        Binding(
-            get: { Preferences.shared.values.typography[keyPath: keyPath] },
-            set: { value in
-                Preferences.shared.update { $0.typography[keyPath: keyPath] = value }
-                refresh = UUID()
-            }
-        )
-    }
-}
-
-private struct ThemePreview: View {
-    var body: some View {
-        let sheet = StyleSheet.current
-        VStack(alignment: .leading, spacing: 8) {
-            Text("A Native Markdown Document").font(.system(size: 22, weight: .bold, design: .serif))
-            Text("Typography updates live so measure, rhythm, and hierarchy can be judged before closing Settings.")
-            Text("let result = render(markdown)").font(.system(.body, design: .monospaced)).padding(8)
-                .background(Color(nsColor: sheet.codeBackground), in: RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(16)
-        .foregroundStyle(Color(nsColor: sheet.text))
-        .background(Color(nsColor: sheet.background), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: sheet.rule)))
     }
 }
 
@@ -227,13 +124,26 @@ final class PreferencesPane: NSViewController {
             stepper.maxValue = range.upperBound
             stepper.increment = step
             stepper.doubleValue = get()
-            let handler = ActionHandler {
-                set(stepper.doubleValue)
-                field.stringValue = String(format: "%g", stepper.doubleValue)
+            let updateValue: (Double) -> Void = { value in
+                let value = min(range.upperBound, max(range.lowerBound, value))
+                stepper.doubleValue = value
+                field.stringValue = String(format: "%g", value)
+                set(value)
             }
-            stepper.target = handler
+            let stepperHandler = ActionHandler { updateValue(stepper.doubleValue) }
+            let fieldHandler = ActionHandler {
+                guard let value = Double(field.stringValue) else {
+                    field.stringValue = String(format: "%g", stepper.doubleValue)
+                    return
+                }
+                updateValue(value)
+            }
+            stepper.target = stepperHandler
             stepper.action = #selector(ActionHandler.run)
-            objc_setAssociatedObject(stepper, &PreferencesPane.handlerKey, handler, .OBJC_ASSOCIATION_RETAIN)
+            field.target = fieldHandler
+            field.action = #selector(ActionHandler.run)
+            objc_setAssociatedObject(stepper, &PreferencesPane.handlerKey, stepperHandler, .OBJC_ASSOCIATION_RETAIN)
+            objc_setAssociatedObject(field, &PreferencesPane.handlerKey, fieldHandler, .OBJC_ASSOCIATION_RETAIN)
 
             let row = NSStackView(views: [NSTextField(labelWithString: title), field, stepper])
             row.orientation = .horizontal
@@ -313,7 +223,10 @@ enum PreferencesForms {
                     help: nil,
                     options: ExternalEditor.allCases.map(\.title),
                     get: { ExternalEditor.allCases.firstIndex(of: Preferences.shared.values.externalEditor) ?? 0 },
-                    set: { index in Preferences.shared.update { $0.externalEditor = ExternalEditor.allCases[index] } }),
+                    set: { index in
+                        guard ExternalEditor.allCases.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.externalEditor = ExternalEditor.allCases[index] }
+                    }),
             .text("Extra sibling folders",
                   help: "Comma-separated, scanned one level down from the document (§8.7).",
                   get: { Preferences.shared.values.siblingScanDirectories.joined(separator: ", ") },
@@ -325,12 +238,17 @@ enum PreferencesForms {
                               .filter { !$0.isEmpty }
                       }
                   }),
+            .toggle("Keep the sibling sidebar open",
+                    help: "Pin the document's related files beside the editor.",
+                    get: { Preferences.shared.values.siblingSidebarVisible },
+                    set: { value in Preferences.shared.update { $0.siblingSidebarVisible = value } }),
         ]
     }
 
     static func typography() -> [PreferenceRow] {
         [
             .section("Body"),
+            .note("These values persist through Preferences.effectiveTypography. Applying them to open document surfaces is owned by the render/controller lane."),
             .choice("Preset", help: "Reading is New York, Working is SF Pro Text (§11.1).",
                     options: TypographyConfig.BodyPreset.allCases.map(\.title),
                     get: {
@@ -338,6 +256,7 @@ enum PreferencesForms {
                             .firstIndex(of: Preferences.shared.values.typography.preset) ?? 0
                     },
                     set: { index in
+                        guard TypographyConfig.BodyPreset.allCases.indices.contains(index) else { return }
                         Preferences.shared.update {
                             $0.typography.preset = TypographyConfig.BodyPreset.allCases[index]
                         }
@@ -345,6 +264,10 @@ enum PreferencesForms {
             .stepper("Size", help: nil, range: 11...24, step: 1,
                      get: { Double(Preferences.shared.values.typography.bodySize) },
                      set: { value in Preferences.shared.update { $0.typography.bodySize = CGFloat(value) } }),
+            .stepper("Text size adjustment", help: "A quick app-wide nudge, also available from the View menu.",
+                     range: -4...10, step: 1,
+                     get: { Double(Preferences.shared.values.textSizeAdjustment) },
+                     set: { value in Preferences.shared.update { $0.textSizeAdjustment = CGFloat(value) } }),
             .choice("Type scale", help: "One ratio drives every heading size (§11.1).",
                     options: ["1.200", "1.250", "1.333"],
                     get: {
@@ -352,8 +275,10 @@ enum PreferencesForms {
                         return ratio < 1.22 ? 0 : (ratio < 1.29 ? 1 : 2)
                     },
                     set: { index in
+                        let ratios: [CGFloat] = [1.2, 1.25, 1.333]
+                        guard ratios.indices.contains(index) else { return }
                         Preferences.shared.update {
-                            $0.typography.scaleRatio = [1.2, 1.25, 1.333][index]
+                            $0.typography.scaleRatio = ratios[index]
                         }
                     }),
             .stepper("Line height", help: nil, range: 1.2...2.0, step: 0.05,
@@ -417,26 +342,38 @@ enum PreferencesForms {
     static func editor() -> [PreferenceRow] {
         [
             .section("Typing"),
-            .toggle("Typographic substitution",
-                    help: "Off by default: agents and code hate smart quotes (§6.4).",
-                    get: { Preferences.shared.values.typographicSubstitution },
-                    set: { value in Preferences.shared.update { $0.typographicSubstitution = value } }),
-            .toggle("Reveal markers at every cursor",
-                    help: "Off follows §14's recommendation — primary caret only.",
-                    get: { Preferences.shared.values.revealMarkersAtAllCursors },
-                    set: { value in Preferences.shared.update { $0.revealMarkersAtAllCursors = value } }),
             .toggle("Typewriter scrolling", help: nil,
                     get: { Preferences.shared.values.typewriterScrolling },
                     set: { value in Preferences.shared.update { $0.typewriterScrolling = value } }),
-            .toggle("Focus mode", help: "Dims everything except the current paragraph.",
+            .toggle("Use typographic substitutions", help: "Convert smart quotes and dashes while typing. Off keeps Markdown source exact.",
+                    get: { Preferences.shared.values.typographicSubstitution },
+                    set: { value in Preferences.shared.update { $0.typographicSubstitution = value } }),
+            .section("Display"),
+            .toggle("Show spaces and tabs", help: "Draw whitespace markers in the visible viewport.",
+                    get: { Preferences.shared.values.showInvisibles },
+                    set: { value in Preferences.shared.update { $0.showInvisibles = value } }),
+            .toggle("Reveal syntax at every cursor", help: "Show inline markers for secondary insertion cursors too.",
+                    get: { Preferences.shared.values.revealMarkersAtAllCursors },
+                    set: { value in Preferences.shared.update { $0.revealMarkersAtAllCursors = value } }),
+            .toggle("Focus mode on open", help: "Hide surrounding chrome and panels for a single-column writing surface.",
                     get: { Preferences.shared.values.focusMode },
                     set: { value in Preferences.shared.update { $0.focusMode = value } }),
-
-            .section("Reading"),
-            .stepper("Collapse code blocks longer than", help: "Lines (§5.1).", range: 5...200, step: 5,
+            .choice("Default mode", help: "The presentation used when opening a document.",
+                    options: RenderMode.userFacingModes.map(\.title),
+                    get: {
+                        RenderMode.userFacingModes.firstIndex(of: Preferences.shared.values.defaultMode) ?? 0
+                    },
+                    set: { index in
+                        guard RenderMode.userFacingModes.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.defaultMode = RenderMode.userFacingModes[index] }
+                    }),
+            .section("Performance"),
+            .stepper("Collapse long code after", help: "Lines. Used when a document is opened in the reading projection.",
+                     range: 1...10_000, step: 1,
                      get: { Double(Preferences.shared.values.codeBlockCollapseThreshold) },
                      set: { value in Preferences.shared.update { $0.codeBlockCollapseThreshold = Int(value) } }),
-            .stepper("Windowed rendering above", help: "Megabytes (§15 Q4).", range: 1...50, step: 1,
+            .stepper("Large-file threshold", help: "Megabytes. Above this, layout uses a line-count estimate instead of eagerly laying out the whole file.",
+                     range: 1...1024, step: 1,
                      get: { Double(Preferences.shared.values.largeFileThresholdMegabytes) },
                      set: { value in Preferences.shared.update { $0.largeFileThresholdMegabytes = Int(value) } }),
         ]

@@ -24,10 +24,14 @@ public struct ContextTarget {
 
     public var kind: Kind
     public var sourceRange: NSRange
+    /// Source offset under the pointer when the menu was opened.  Actions
+    /// such as table edits must use this hit, not the current caret.
+    public var hitOffset: Int?
 
-    public init(kind: Kind, sourceRange: NSRange) {
+    public init(kind: Kind, sourceRange: NSRange, hitOffset: Int? = nil) {
         self.kind = kind
         self.sourceRange = sourceRange
+        self.hitOffset = hitOffset
     }
 }
 

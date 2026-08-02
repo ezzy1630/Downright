@@ -1,5 +1,17 @@
 import AppKit
 
+public struct ThemeContrastFailure: Equatable, Sendable {
+    public let path: String
+    public let ratio: CGFloat
+    public let minimum: CGFloat
+
+    public init(path: String, ratio: CGFloat, minimum: CGFloat) {
+        self.path = path
+        self.ratio = ratio
+        self.minimum = minimum
+    }
+}
+
 // `ThemeColor.resolved()` deliberately falls back to `.labelColor` so a typo in
 // a hand-edited theme degrades instead of crashing while the user is mid-edit
 // (§11.2 hot reload).  That is the right runtime behaviour and the wrong
@@ -34,10 +46,59 @@ extension Theme {
         allColors().filter { !$0.color.isValid }.map(\.path)
     }
 
+    /// Essential text roles are checked against the surfaces on which the
+    /// renderer actually draws them. Decorative accents and intentionally
+    /// faint rail ticks are excluded; failing this list means body content,
+    /// links, headings, or code can become unreadable.
+    public func semanticContrastFailures(appearance: NSAppearance? = nil) -> [ThemeContrastFailure] {
+        let appearance = appearance ?? (self.appearance == .dark
+            ? NSAppearance(named: .darkAqua)
+            : NSAppearance(named: .aqua))
+        guard let appearance else { return [] }
+        let resolver = ColorResolver(appearance: appearance)
+        let roles: [(String, ThemeColor, ThemeColor, CGFloat)] = [
+            ("palette.text", palette.text, palette.background, 4.5),
+            ("palette.textSecondary", palette.textSecondary, palette.background, 4.5),
+            ("palette.heading", palette.heading, palette.background, 4.5),
+            ("palette.link", palette.link, palette.background, 3.0),
+            ("palette.textOnCode", palette.text, palette.codeBackground, 4.5),
+            ("palette.textOnInlineCode", palette.text, palette.inlineCodeBackground, 4.5),
+        ]
+        return roles.compactMap { path, foreground, background, minimum in
+            guard foreground.isValid, background.isValid else { return nil }
+            let ratio = ThemeContrast.ratio(
+                foreground: resolver.resolve(foreground), background: resolver.resolve(background))
+            guard ratio < minimum else { return nil }
+            return ThemeContrastFailure(path: path, ratio: ratio, minimum: minimum)
+        }
+    }
+
     private static func colors(in subject: Any, prefix: String) -> [(path: String, color: ThemeColor)] {
         Mirror(reflecting: subject).children.compactMap { child in
             guard let color = child.value as? ThemeColor else { return nil }
             return ("\(prefix).\(child.label ?? "?")", color)
         }
+    }
+}
+
+private enum ThemeContrast {
+    static func ratio(foreground: NSColor, background: NSColor) -> CGFloat {
+        let foreground = relativeLuminance(foreground)
+        let background = relativeLuminance(background)
+        let lighter = max(foreground, background)
+        let darker = min(foreground, background)
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private static func relativeLuminance(_ color: NSColor) -> CGFloat {
+        let color = color.usingColorSpace(.sRGB) ?? color
+        func linear(_ component: CGFloat) -> CGFloat {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(color.redComponent)
+            + 0.7152 * linear(color.greenComponent)
+            + 0.0722 * linear(color.blueComponent)
     }
 }

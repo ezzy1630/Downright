@@ -47,12 +47,7 @@ public enum MarkerPolicy {
         // selections, so revealing syntax here would make the document move
         // under an ordinary selection gesture.  Only a real insertion caret
         // reveals inline markers.
-        let revealAnchors: [NSRange]
-        if policy.revealsAtCaret, let caret {
-            revealAnchors = [NSRange(location: caret, length: 0)]
-        } else {
-            revealAnchors = []
-        }
+        let revealAnchors = anchors(policy: policy, caret: caret, selections: selections)
 
         document.root.walk { block in
             if policy.hidesBlockMarkers, blockMarkersAreHidden(block) {
@@ -75,6 +70,11 @@ public enum MarkerPolicy {
         switch block.content {
         case .codeBlock, .mermaid, .frontMatter, .mathBlock, .table, .thematicBreak:
             return false
+        case .callout:
+            // Callout syntax is block chrome too.  The parser keeps the exact
+            // `> [!KIND]` range on the callout node, so hiding it here cannot
+            // change any source coordinate or the child ranges below it.
+            return true
         default:
             return true
         }
@@ -116,21 +116,21 @@ public enum MarkerPolicy {
         selections: [NSRange]
     ) -> [NSRange] {
         guard policy.hidesInlineMarkers, policy.revealsAtCaret else { return [] }
+        let anchors = anchors(policy: policy, caret: caret, selections: selections)
+        guard !anchors.isEmpty else { return [] }
 
         // A lone insertion caret can identify its deepest block directly.
         // The general walk below remains for block-boundary carets, where two
         // adjacent blocks may both touch the anchor and retain inclusive
         // boundary behaviour.
-        if let caret, selections.count <= 1,
-           let block = document.root.block(at: caret),
-           caret > block.range.location, caret < block.range.upperBound {
+        if anchors.count == 1,
+           let anchor = anchors.first,
+           let block = document.root.block(at: anchor.location),
+           anchor.location > block.range.location, anchor.location < block.range.upperBound {
             var out: [NSRange] = []
-            for span in block.inlines { collectRevealed(span, anchors: [NSRange(location: caret, length: 0)], into: &out) }
+            for span in block.inlines { collectRevealed(span, anchors: anchors, into: &out) }
             return RangeSet.normalized(out)
         }
-
-        guard let caret else { return [] }
-        let anchors = [NSRange(location: caret, length: 0)]
 
         var out: [NSRange] = []
         document.root.walkPruning { block in
@@ -139,6 +139,20 @@ public enum MarkerPolicy {
             return true
         }
         return RangeSet.normalized(out)
+    }
+
+    private static func anchors(
+        policy: DecorationPolicy, caret: Int?, selections: [NSRange]
+    ) -> [NSRange] {
+        guard policy.revealsAtCaret else { return [] }
+        if policy.revealsAtAllCursors {
+            var out = selections.filter { $0.length == 0 }
+            if let caret, !out.contains(where: { $0.location == caret }) {
+                out.append(NSRange(location: caret, length: 0))
+            }
+            return out
+        }
+        return caret.map { [NSRange(location: $0, length: 0)] } ?? []
     }
 
     private static func collectRevealed(

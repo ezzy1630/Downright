@@ -9,6 +9,7 @@ extension DocumentWindowController {
     /// ⌘-click is what opens a new one).  Persists the current document's
     /// state first so its reading position survives the hop.
     func openInPlace(_ url: URL) {
+        guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return }
         markdownDocument.close()
         do {
             try open(url, mode: mode)
@@ -27,8 +28,9 @@ extension DocumentWindowController {
         navigationPanel?.currentHeadingIndex = current
         let length = max(1, markdownDocument.parsed.length)
         let top = CGFloat(containerTextView.topVisibleOffset) / CGFloat(length)
-        let visibleHeight = primaryContainer.scrollView.contentView.bounds.height
-        let documentHeight = max(1, primaryContainer.scrollView.documentView?.bounds.height ?? 1)
+        let activeContainer = documentPanes.first { $0.textView === containerTextView } ?? primaryContainer!
+        let visibleHeight = activeContainer.scrollView.contentView.bounds.height
+        let documentHeight = max(1, activeContainer.scrollView.documentView?.bounds.height ?? 1)
         let span = min(1, visibleHeight / documentHeight)
         densityGutterView.visibleRange = top...min(1, top + span)
         densityGutterView.readProgress = max(densityGutterView.readProgress, min(1, top + span))
@@ -80,28 +82,57 @@ extension DocumentWindowController {
             let panel = NSSavePanel()
             panel.nameFieldStringValue = origin.lastPathComponent
             guard panel.runModal() == .OK, let destination = panel.url else { return }
-            try? FileManager.default.copyItem(at: origin, to: destination)
+            do {
+                try FileManager.default.copyItem(at: origin, to: destination)
+            } catch {
+                self.presentOperationError("Couldn’t save the image copy", error: error)
+            }
         }
     }
 
     // MARK: - Code blocks
 
+    private func codeBlockContents(for range: NSRange) -> String {
+        let source = markdownDocument.text as NSString
+        guard source.length > 0 else { return "" }
+        if let block = markdownDocument.parsed.root.block(at: range.location),
+           case .codeBlock(_, _, let contentRange) = block.content,
+           contentRange.location >= 0,
+           contentRange.upperBound <= source.length {
+            return source.substring(with: contentRange)
+        }
+
+        guard range.location >= 0, range.upperBound <= source.length else { return "" }
+        var lines = source.substring(with: range).components(separatedBy: "\n")
+        if lines.first?.trimmingCharacters(in: .whitespaces).hasPrefix("```") == true {
+            lines.removeFirst()
+        }
+        if lines.last?.trimmingCharacters(in: .whitespaces).hasPrefix("```") == true {
+            lines.removeLast()
+        }
+        if lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.joined(separator: "\n")
+    }
+
     func saveCodeBlock(range: NSRange) {
-        let code = (markdownDocument.text as NSString).substring(with: range)
+        let code = codeBlockContents(for: range)
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "snippet.txt"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? Data(code.utf8).write(to: url)
+        do {
+            try Data(code.utf8).write(to: url)
+        } catch {
+            presentOperationError("Couldn’t save the code block", error: error)
+        }
     }
 
     /// Fenced code has no file of its own, so "open in editor" writes it to a
     /// temp file first — the point is to get it into the user's editor, not to
     /// pretend it came from somewhere.
     func openCodeBlockInEditor(range: NSRange) {
-        let code = (markdownDocument.text as NSString).substring(with: range)
+        let code = codeBlockContents(for: range)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Downright", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         var name = "snippet.txt"
         if let block = markdownDocument.parsed.root.block(at: range.location),
@@ -110,7 +141,13 @@ extension DocumentWindowController {
             name = "snippet.\(CodeFileExtensions.extension(for: language))"
         }
         let url = directory.appendingPathComponent(name)
-        try? Data(code.utf8).write(to: url)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(code.utf8).write(to: url)
+        } catch {
+            presentOperationError("Couldn’t prepare the code block", error: error)
+            return
+        }
         authorizeLocalEffect(.launchPathOrEditor, target: url) {
             Preferences.shared.values.externalEditor.open(url, line: nil)
         }
@@ -118,27 +155,27 @@ extension DocumentWindowController {
 
     // MARK: - Tables (§6.3)
 
-    func tableInsertRow(_ tableRange: NSRange) {
+    func tableInsertRow(_ tableRange: NSRange, at hitOffset: Int? = nil) {
         markdownDocument.ensureParsedCurrent()
-        let row = rowIndex(in: tableRange)
+        let row = rowIndex(in: tableRange, at: hitOffset)
         markdownDocument.apply(
             Restructure.insertRow(markdownDocument.parsed, tableRange: tableRange, afterRow: row),
             actionName: "Insert Row"
         )
     }
 
-    func tableDeleteRow(_ tableRange: NSRange) {
+    func tableDeleteRow(_ tableRange: NSRange, at hitOffset: Int? = nil) {
         markdownDocument.ensureParsedCurrent()
-        let row = rowIndex(in: tableRange)
+        let row = rowIndex(in: tableRange, at: hitOffset)
         markdownDocument.apply(
             Restructure.deleteRow(markdownDocument.parsed, tableRange: tableRange, row: row),
             actionName: "Delete Row"
         )
     }
 
-    func tableSetAlignment(_ tableRange: NSRange, _ alignment: TableAlignment) {
+    func tableSetAlignment(_ tableRange: NSRange, _ alignment: TableAlignment, at hitOffset: Int? = nil) {
         markdownDocument.ensureParsedCurrent()
-        let column = columnIndex(in: tableRange)
+        let column = columnIndex(in: tableRange, at: hitOffset)
         markdownDocument.apply(
             Restructure.setColumnAlignment(
                 markdownDocument.parsed, tableRange: tableRange, column: column, alignment: alignment
@@ -147,21 +184,21 @@ extension DocumentWindowController {
         )
     }
 
-    private func rowIndex(in tableRange: NSRange) -> Int {
+    private func rowIndex(in tableRange: NSRange, at hitOffset: Int? = nil) -> Int {
         guard let block = markdownDocument.parsed.root.block(at: tableRange.location),
               case .table(let data) = block.content
         else { return 0 }
-        let caret = caretOffset()
-        return data.rows.firstIndex { $0.range.touches(offset: caret) } ?? 0
+        let offset = hitOffset ?? caretOffset()
+        return data.rows.firstIndex { $0.range.touches(offset: offset) } ?? 0
     }
 
-    private func columnIndex(in tableRange: NSRange) -> Int {
+    private func columnIndex(in tableRange: NSRange, at hitOffset: Int? = nil) -> Int {
         guard let block = markdownDocument.parsed.root.block(at: tableRange.location),
               case .table(let data) = block.content
         else { return 0 }
-        let caret = caretOffset()
+        let offset = hitOffset ?? caretOffset()
         for row in data.rows {
-            if let index = row.cells.firstIndex(where: { $0.range.touches(offset: caret) }) {
+            if let index = row.cells.firstIndex(where: { $0.range.touches(offset: offset) }) {
                 return index
             }
         }

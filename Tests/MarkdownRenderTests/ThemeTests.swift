@@ -69,6 +69,13 @@ final class ThemeTests {
         }
     }
 
+    @Test("Essential bundled text roles meet semantic contrast")
+    func essentialTextRolesMeetContrast() {
+        for theme in bundled() {
+            #expect(theme.semanticContrastFailures() == [], "\(theme.name) has low-contrast essential text")
+        }
+    }
+
     @Test("Bundled themes survive a JSON round trip")
     func bundledThemesRoundTrip() throws {
         let encoder = JSONEncoder()

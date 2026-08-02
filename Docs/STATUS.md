@@ -89,7 +89,7 @@ Share extension, or Sparkle.
 | **1. Name** | Downright. Bundle ID `com.ezzyrappeport.downright`, CLI verb `down` (with `md` as an alias, per §3.4). |
 | **2. Licence** | MIT. `MarkdownRender`'s value compounds through adoption; a fork has to keep pace with the original, and a licence that discourages contribution costs more than the fork it prevents. |
 | **3. `.mdx` / `.qmd`** | Open them. Render the markdown, grey out the JSX and executable chunks, never evaluate them (§2). Refusing a file is worse than rendering the 90% of it that is plain markdown. |
-| **4. Very large files** | 5MB, as suggested, configurable in Settings → Editor. |
+| **4. Very large files** | 5MB by default, configurable in Settings → Editor; files above it use a line-count height estimate instead of eager whole-document layout. |
 | **5. Editor integration** | One direction for 1.0: `file.ts:42` opens in your editor. The reverse is not implemented — per-editor protocol work for a use case nobody has asked for yet. |
 | **6. Version timeline placement** | Separate window. Scrubbing a month of rewrites is a comparison activity, and the document you are comparing against has to stay visible. |
 | **7. Theme format** | Hand-rolled JSON plus a **VS Code / Shiki importer**. Adopting a foreign schema would force the semantic palette into an editor's vocabulary; importing means people reuse existing work without the app inheriting someone else's model. |
@@ -136,13 +136,13 @@ Approximate:
   find still matches inside elided text, which keeps §14's four-way interaction
   (zoom × folding × find × hidden markers) simple rather than special-cased.
 - **Fences, front-matter delimiters, table rows and `$$` lines are not hidden**
-  — the fragments absorb them as chrome. This keeps `⌘C` on a code block
-  yielding a complete fenced block.
+  — the fragments absorb them as chrome. Code-block copy and export actions
+  use the parsed content range, so they return the body without fence lines.
 - **Inline math uses a positive-length substitution** (one attachment
   character), generalising the index map beyond pure hiding.
-- **Secondary-caret "thin markers"** (§14's suggestion) are not drawn; reveal is
-  primary-only as recommended, and `drMarker` is present on every marker range
-  for whoever implements it.
+- **Secondary-caret reveal** is opt-in in Settings → Editor. The default stays
+  primary-only to avoid N reflows, while the all-cursors policy uses the same
+  source/display map and remains byte-safe.
 - **IME suspends hiding in the composing paragraph** so AppKit's marked-text
   bookkeeping stays exact.
 - **Hard-wrapped markdown paragraphs suppress continuation spacing but retain
@@ -213,8 +213,8 @@ It prints p50/p95 for parse, AST diff, text diff, synchronous typing response,
 incremental decoration, end-to-end semantic convergence, and cold open. Parse
 and diff run outside the synchronous typing path.
 
-Latest release run: typing response p95 **0.148 ms**, semantic convergence p95
-**45.719 ms**, and cold parse p95 **16.049 ms**. All are inside the product
+Latest release run: typing response p95 **0.149 ms**, semantic convergence p95
+**46.726 ms**, and cold parse p95 **16.413 ms**. All are inside the product
 budget.
 
 See [PERFORMANCE.md](PERFORMANCE.md) for the measured numbers on this build and
@@ -222,7 +222,7 @@ what they mean for §13's P0 kill criterion.
 
 ## Test suites
 
-The full check currently runs **406 tests in 51 suites**.
+The full check currently runs **436 tests in 53 suites**.
 
 | Suite | Covers |
 |---|---|

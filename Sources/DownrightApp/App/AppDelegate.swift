@@ -29,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(preferencesDidChange),
             name: Preferences.didChange, object: nil
         )
+        Preferences.shared.onPersistenceFailure = { [weak self] error in
+            DispatchQueue.main.async {
+                self?.presentPreferenceWriteFailure(error)
+            }
+        }
         // History pruning at launch rather than on a timer: it touches the disk
         // and there is no reason to do it while the user is reading (§8.3).
         DispatchQueue.global(qos: .utility).async { SnapshotStore.shared.prune() }
@@ -73,6 +78,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in windowControllers { controller.documentWillClose() }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // A failed close-time write must cancel termination.  Otherwise macOS
+        // tears down the process after the alert and the unsaved buffer is lost.
+        for controller in windowControllers where controller.markdownDocument.isDirty {
+            guard controller.saveDocument() else { return .terminateCancel }
+        }
+        return .terminateNow
+    }
+
     private func parseLaunchArguments() {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--mode"), index + 1 < arguments.count else { return }
@@ -86,8 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
-        open(URL(fileURLWithPath: filename))
-        return true
+        open(URL(fileURLWithPath: filename)) != nil
     }
 
     @discardableResult
@@ -104,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try controller.open(url, mode: mode ?? launchMode ?? Preferences.shared.values.defaultMode)
         } catch {
             presentOpenFailure(error, url: url)
+            if windowControllers.isEmpty, startWindow == nil { showStartWindow() }
             return nil
         }
         adopt(controller)
@@ -136,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.allowedContentTypes = DocumentTypes.contentTypes
-        panel.message = "Open a markdown markdownDocument"
+        panel.message = "Open a Markdown document"
         guard panel.runModal() == .OK else { return }
         for url in panel.urls { open(url) }
     }
@@ -280,10 +294,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSSavePanel()
         panel.allowedContentTypes = DocumentTypes.contentTypes
         panel.nameFieldStringValue = "Untitled.md"
-        panel.message = "Create a markdown markdownDocument"
+        panel.message = "Create a Markdown document"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? Data("# \(url.deletingPathExtension().lastPathComponent)\n\n".utf8).write(to: url)
+        do {
+            try Data("# \(url.deletingPathExtension().lastPathComponent)\n\n".utf8)
+                .write(to: url, options: .atomic)
+        } catch {
+            presentWriteFailure(error, url: url)
+            return
+        }
         open(url, mode: .live)
+    }
+
+    private func presentWriteFailure(_ error: Error, url: URL) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't create \(url.lastPathComponent)"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
+    private func presentPreferenceWriteFailure(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't save Downright Settings"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     private func showComparePanel() {

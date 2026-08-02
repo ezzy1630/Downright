@@ -38,6 +38,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: "Results")
     private let statusLabel = NSTextField(labelWithString: "")
+    private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private let table = PanelList.makeTableView(identifier: "searchResults")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
@@ -74,6 +75,13 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(statusLabel)
 
+        emptyLabel.font = PanelFont.row
+        emptyLabel.alignment = .center
+        emptyLabel.textColor = styleSheet.textSecondary
+        emptyLabel.maximumNumberOfLines = 0
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(emptyLabel)
+
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
@@ -102,6 +110,9 @@ final class SearchResultsPanelView: NSView, PanelSurface {
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            emptyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            emptyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
         ])
 
         applyStyle()
@@ -147,11 +158,20 @@ final class SearchResultsPanelView: NSView, PanelSurface {
                 : "\(hits.count) in \(files) file\(files == 1 ? "" : "s")"
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
+        let hasResults = !rows.isEmpty
+        table.isHidden = !hasResults
+        emptyLabel.isHidden = hasResults
+        emptyLabel.stringValue = isSearching
+            ? "Searching nearby Markdown files…"
+            : "No matching files or lines."
+        emptyLabel.setAccessibilityLabel(emptyLabel.stringValue)
+        setAccessibilityValue(statusLabel.stringValue)
     }
 
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
         statusLabel.textColor = styleSheet.textFaint
+        emptyLabel.textColor = styleSheet.textSecondary
         table.reloadData()
     }
 
@@ -283,7 +303,9 @@ private final class SearchHitRowView: NSView {
         contextLabel.attributedStringValue = attributed
 
         var label = "Line \(hit.lineNumber): \(raw)"
+        label = "\(hit.displayName), \(label)"
         if let heading = hit.headingTitle { label += ", in \(heading)" }
+        setAccessibilityRole(.row)
         setAccessibilityLabel(label)
         toolTip = hit.headingTitle
     }

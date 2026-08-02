@@ -47,6 +47,9 @@ final class MarkdownDocument: NSObject {
     var onReparse: ((ParsedDocument, DirtySet) -> Void)?
     var onExternalEvent: ((ExternalEvent) -> Void)?
     var onDirtyChanged: ((Bool) -> Void)?
+    /// Called when a save reaches the disk boundary and fails.  The buffer and
+    /// dirty state remain untouched so the controller can offer recovery.
+    var onSaveFailure: ((Error) -> Void)?
     /// Asked for the source offset at the top of the viewport, so an external
     /// rewrite can restore the reader's place by heading anchor (§8.1).
     var currentTopOffsetProvider: (() -> Int)?
@@ -62,6 +65,7 @@ final class MarkdownDocument: NSObject {
     private var parseControlTask: Task<Void, Never>?
     private(set) var revision = MarkdownParseRevision.zero
     private var isClosed = false
+    private var preferencesObservation: NSObjectProtocol?
 
     // MARK: - Init
 
@@ -75,9 +79,19 @@ final class MarkdownDocument: NSObject {
         super.init()
         storage.delegate = self
         undoManager.groupsByEvent = false
+        preferencesObservation = NotificationCenter.default.addObserver(
+            forName: Preferences.didChange,
+            object: Preferences.shared,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.preferencesDidChange() }
+        }
     }
 
     deinit {
+        if let preferencesObservation {
+            NotificationCenter.default.removeObserver(preferencesObservation)
+        }
         parseTask?.cancel()
         let coordinator = parseCoordinator
         Task { await coordinator.shutdown() }
@@ -140,21 +154,37 @@ final class MarkdownDocument: NSObject {
     }
 
     func save() throws {
-        guard let url else { throw CocoaError(.fileNoSuchFile) }
-        let text = storage.string
-        watcher?.suppressOwnWrite()
-        try DocumentIO.write(text, to: url, fidelity: fidelity)
-        watcher?.acknowledgeOwnWrite()
+        do {
+            guard let url else { throw CocoaError(.fileNoSuchFile) }
+            let text = storage.string
+            watcher?.suppressOwnWrite()
+            defer { watcher?.acknowledgeOwnWrite() }
+            try DocumentIO.write(text, to: url, fidelity: fidelity)
 
-        diskHash = SnapshotStore.hash(text)
-        SnapshotStore.shared.record(text, for: url, kind: .local)
-        setDirty(false)
-        persistState()
+            diskHash = SnapshotStore.hash(text)
+            SnapshotStore.shared.record(text, for: url, kind: .local)
+            setDirty(false)
+            persistState()
+        } catch {
+            onSaveFailure?(error)
+            throw error
+        }
     }
 
-    func saveIfNeeded() {
-        guard isDirty, url != nil else { return }
-        try? save()
+    @discardableResult
+    func saveIfNeeded() -> Result<Void, Error> {
+        guard isDirty else { return .success(()) }
+        guard url != nil else {
+            let error = CocoaError(.fileNoSuchFile)
+            onSaveFailure?(error)
+            return .failure(error)
+        }
+        do {
+            try save()
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
     }
 
     func close() {
@@ -236,7 +266,7 @@ final class MarkdownDocument: NSObject {
         guard let edit = Restructure.toggleTask(parsed, atMarkOffset: offset) else { return }
         apply([edit], actionName: "Toggle Task")
         reparseNow()
-        if url != nil { try? save() }
+        if url != nil { _ = saveIfNeeded() }
     }
 
     private func setDirty(_ value: Bool) {
@@ -342,10 +372,25 @@ final class MarkdownDocument: NSObject {
     // MARK: - External changes (§8.1)
 
     private func startWatching(_ fileURL: URL) {
+        guard Preferences.shared.values.watchFiles else {
+            watcher?.stop()
+            watcher = nil
+            return
+        }
         watcher?.stop()
         watcher = FileWatcher(url: fileURL) { [weak self] event in
             MainActor.assumeIsolated { self?.handleWatchEvent(event) }
         }
+    }
+
+    private func preferencesDidChange() {
+        guard let url else { return }
+        guard !isClosed, Preferences.shared.values.watchFiles else {
+            watcher?.stop()
+            watcher = nil
+            return
+        }
+        startWatching(url)
     }
 
     private func handleWatchEvent(_ event: FileWatcher.Event) {
@@ -414,9 +459,11 @@ final class MarkdownDocument: NSObject {
     }
 
     /// Conflict resolution: keep the buffer and write it over the file.
-    func resolveConflictKeepingMine() {
-        try? save()
-        changes.clear()
+    @discardableResult
+    func resolveConflictKeepingMine() -> Result<Void, Error> {
+        let result = saveIfNeeded()
+        if case .success = result { changes.clear() }
+        return result
     }
 
     // MARK: - Time travel (§8.3)

@@ -67,6 +67,35 @@ struct WindowChromeTests {
     }
 
     @Test
+    func documentBarsReserveSpaceAboveTheDocument() throws {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+
+        controller.showChangeSummary("Updated on disk")
+        controller.showConflictBar("Changed on disk")
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+
+        #expect(controller.barStack.arrangedSubviews.count == 2)
+        #expect(controller.barStack.frame.height > 0)
+        #expect(controller.primaryContainer.frame.minY >= controller.barStack.frame.maxY - 0.5)
+    }
+
+    @Test
+    func splitViewMirrorsPresentationState() throws {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+
+        controller.toggleSplitView()
+        #expect(controller.perform(.sourceMode))
+        #expect(controller.primaryContainer.textView.mode == .source)
+        #expect(controller.splitContainer?.textView.mode == .source)
+
+        #expect(controller.perform(.zoomLevel1))
+        #expect(controller.primaryContainer.textView.zoomLevel == .h1)
+        #expect(controller.splitContainer?.textView.zoomLevel == .h1)
+    }
+
+    @Test
     func inspectorHostShowsExactlyOneOwnedSection() {
         let host = InspectorHostView()
         let search = NSView()

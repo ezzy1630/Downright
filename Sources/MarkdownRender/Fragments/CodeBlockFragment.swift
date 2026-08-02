@@ -91,10 +91,11 @@ final class CodeBlockFragment: DownrightFragment {
     }
 
     private func drawChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
-        guard !language.isEmpty else { return }
-        let chip = Self.chipRect(in: band, style: style, language: language)
-        cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.16), radius: 4)
-        cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
+        if !language.isEmpty {
+            let chip = Self.chipRect(in: band, style: style, language: language)
+            cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.16), radius: 4)
+            cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
+        }
 
         if context?.hoveredFragmentRange == payload.sourceRange {
             let copy = Self.copyButtonRect(in: band, style: style, language: language)

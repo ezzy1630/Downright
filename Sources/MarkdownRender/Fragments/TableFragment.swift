@@ -35,16 +35,27 @@ struct TableLayout {
         }
 
         let gaps = RenderMetrics.tableColumnGap * CGFloat(columns - 1)
-        let available = max(120, width - gaps)
+        // Tables are drawn inside the existing text container. A table may
+        // wrap aggressively, but it must never claim a wider layout fragment:
+        // doing so invites a second scroll surface inside TextKit.
+        let available = max(1, width - gaps)
         let total = natural.reduce(0, +)
         let scale = total > available ? available / max(1, total) : 1
-        var widths = natural.map { max(28, $0 * scale) }
+        let minimum = min(28, available / CGFloat(columns))
+        var widths = natural.map { max(minimum, $0 * scale) }
+        let usedBeforeSlack = widths.reduce(0, +)
+        if usedBeforeSlack > available {
+            let correction = available / usedBeforeSlack
+            widths = widths.map { $0 * correction }
+        }
         // Distribute any slack so the table fills the measure rather than
         // hugging the left edge.
         let used = widths.reduce(0, +)
         if used < available, total > 0 {
             let slack = available - used
             for i in widths.indices { widths[i] += slack * (natural[i] / total) }
+        } else if total == 0 {
+            widths = [CGFloat](repeating: available / CGFloat(columns), count: columns)
         }
 
         var xs: [CGFloat] = []
@@ -87,7 +98,8 @@ struct TableLayout {
                                                   grid: max(1, style.baselineGrid)))
         }
         return TableLayout(columnX: xs, columnWidths: widths, alignments: alignments,
-                           rowHeights: rowHeights, totalWidth: max(0, cursor - RenderMetrics.tableColumnGap))
+                           rowHeights: rowHeights,
+                           totalWidth: min(width, max(0, cursor - RenderMetrics.tableColumnGap)))
     }
 
     private static func substring(_ storage: NSAttributedString, _ range: NSRange) -> String {

@@ -84,10 +84,15 @@ final class Preferences {
             NotificationCenter.default.post(name: Preferences.didChange, object: self)
         }
     }
+    /// Last settings write failure, if any.  Settings changes remain available
+    /// in memory; callers can surface this without losing the new values.
+    private(set) var lastPersistenceError: Error?
+    var onPersistenceFailure: ((Error) -> Void)?
 
     static let didChange = Notification.Name("com.ezzyrappeport.downright.preferencesDidChange")
 
     private init() {
+        lastPersistenceError = nil
         if let data = try? Data(contentsOf: AppPaths.preferencesFile),
            let decoded = try? JSONDecoder().decode(Values.self, from: data) {
             values = decoded
@@ -117,8 +122,14 @@ final class Preferences {
         AppPaths.ensure(AppPaths.supportDirectory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(values) else { return }
-        try? data.write(to: AppPaths.preferencesFile, options: .atomic)
+        do {
+            let data = try encoder.encode(values)
+            try data.write(to: AppPaths.preferencesFile, options: .atomic)
+            lastPersistenceError = nil
+        } catch {
+            lastPersistenceError = error
+            onPersistenceFailure?(error)
+        }
     }
 
     // MARK: - Derived

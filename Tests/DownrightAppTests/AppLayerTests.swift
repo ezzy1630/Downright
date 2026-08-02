@@ -168,6 +168,93 @@ struct AppLayerTests {
         #expect(decoded.zoomLevel == .everything, "editable documents must reopen without hidden prose")
     }
 
+    @Test @MainActor
+    func failedSaveReturnsErrorAndPreservesBuffer() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-save-\(UUID().uuidString)", isDirectory: true)
+        let url = root.appendingPathComponent("note.md")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("before\n".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let document = MarkdownDocument()
+        try document.open(url)
+        #expect(document.replace(
+            NSRange(location: 0, length: document.storage.length),
+            with: "after\n",
+            actionName: nil
+        ))
+
+        var failureCount = 0
+        document.onSaveFailure = { _ in failureCount += 1 }
+        try FileManager.default.removeItem(at: root)
+
+        let result = document.saveIfNeeded()
+        guard case .failure = result else {
+            Issue.record("saveIfNeeded must report a failed disk write")
+            return
+        }
+        #expect(document.isDirty)
+        #expect(document.text == "after\n")
+        #expect(failureCount == 1)
+
+        document.changes.apply(hunks: [
+            ChangeHunk(
+                kind: .modified,
+                newRange: NSRange(location: 0, length: 5),
+                oldRange: NSRange(location: 0, length: 6)
+            ),
+        ])
+        let conflictResult = document.resolveConflictKeepingMine()
+        guard case .failure = conflictResult else {
+            Issue.record("conflict resolution must report a failed save")
+            return
+        }
+        #expect(document.changes.count == 1)
+        #expect(failureCount == 2)
+        document.close()
+    }
+
+    @Test
+    func preferencesValuesRoundTripEverySetting() throws {
+        var values = Preferences.Values()
+        values.themeName = "Light"
+        values.darkThemeName = "Dark"
+        values.followsSystemAppearance = false
+        values.typography.preset = .working
+        values.typography.bodySize = 18
+        values.typography.scaleRatio = 1.333
+        values.typography.lineHeightMultiple = 1.7
+        values.typography.measureCharacters = 72
+        values.typography.monoFamily = "Menlo"
+        values.typography.monoSizeAdjust = 1
+        values.typography.monoLigatures = true
+        values.typography.opticalMargins = false
+        values.typography.mathScale = 1.2
+        values.textSizeAdjustment = 2
+        values.typographicSubstitution = true
+        values.showInvisibles = true
+        values.typewriterScrolling = true
+        values.focusMode = true
+        values.codeBlockCollapseThreshold = 40
+        values.defaultMode = .source
+        values.restoreSession = false
+        values.externalEditor = .vscode
+        values.resolvePathTokens = false
+        values.siblingSidebarVisible = true
+        values.siblingScanDirectories = ["custom"]
+        values.historyMaximumDays = 90
+        values.historyMaximumMegabytes = 900
+        values.watchFiles = false
+        values.vimKeys = true
+        values.revealMarkersAtAllCursors = true
+        values.largeFileThresholdMegabytes = 20
+
+        let data = try JSONEncoder().encode(values)
+        let decoded = try JSONDecoder().decode(Preferences.Values.self, from: data)
+        #expect(decoded == values)
+    }
+
     // MARK: - Find (§9.4)
 
     @Test func findLiteralRegexAndWholeWord() {

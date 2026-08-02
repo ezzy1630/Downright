@@ -75,6 +75,7 @@ final class OutlinePanelView: NSView, PanelSurface {
 
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: "Contents")
+    private let filterStatusLabel = NSTextField(labelWithString: "")
     private let table = PanelList.makeTableView(identifier: "outline")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
 
@@ -82,6 +83,8 @@ final class OutlinePanelView: NSView, PanelSurface {
     /// descendants here exactly as it hides them in the document.
     private var visibleRows: [Int] = []
     var visibleRowCountForTesting: Int { visibleRows.count }
+    var filterMatchCountForTesting: Int { filterMatchCount }
+    private var filterMatchCount = 0
 
     // MARK: - Init
 
@@ -113,9 +116,19 @@ final class OutlinePanelView: NSView, PanelSurface {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
+        filterStatusLabel.font = PanelFont.secondary
+        filterStatusLabel.alignment = .right
+        filterStatusLabel.textColor = styleSheet.textFaint
+        filterStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        filterStatusLabel.setAccessibilityRole(.staticText)
+        addSubview(filterStatusLabel)
+
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            filterStatusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
+            filterStatusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            filterStatusLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
         ])
     }
 
@@ -133,6 +146,7 @@ final class OutlinePanelView: NSView, PanelSurface {
         table.setAccessibilityLabel("Document headings")
         table.onActivate = { [weak self] in
             guard let self, let index = self.selectedHeadingIndex() else { return }
+            self.revealFoldedAncestors(of: index)
             self.delegate?.outlinePanel(self, didSelectHeadingAt: index)
         }
         // ← / → fold and unfold the selected section, so the panel's two
@@ -186,23 +200,53 @@ final class OutlinePanelView: NSView, PanelSurface {
 
     private func rebuildVisibleRows() {
         visibleRows.removeAll(keepingCapacity: true)
-        var index = 0
-        while index < headings.count {
-            visibleRows.append(index)
-            if foldedIndices.contains(index) {
-                index = sectionEnd(of: index)
-            } else {
-                index += 1
-            }
-        }
         let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        if !query.isEmpty {
-            visibleRows = visibleRows.filter { index in
-                headings[index].title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                    .contains(query)
+        guard !query.isEmpty else {
+            filterMatchCount = 0
+            var index = 0
+            while index < headings.count {
+                visibleRows.append(index)
+                if foldedIndices.contains(index) {
+                    index = sectionEnd(of: index)
+                } else {
+                    index += 1
+                }
+            }
+            filterStatusLabel.stringValue = ""
+            filterStatusLabel.setAccessibilityLabel("")
+            return
+        }
+
+        let matches = headings.indices.filter { index in
+            headings[index].title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .contains(query)
+        }
+        filterMatchCount = matches.count
+
+        // Search is an explicit request to look through the document. Keep
+        // matching descendants visible even when their source section is
+        // folded, and include their heading path so the result has context.
+        var included = Set<Int>()
+        for match in matches {
+            included.insert(match)
+            var level = headings[match].level
+            var candidate = match - 1
+            while candidate >= 0 {
+                let candidateLevel = headings[candidate].level
+                if candidateLevel < level {
+                    included.insert(candidate)
+                    level = candidateLevel
+                }
+                if level == 1 { break }
+                candidate -= 1
             }
         }
+        visibleRows = included.sorted()
+        filterStatusLabel.stringValue = matches.isEmpty
+            ? "No matches"
+            : "\(matches.count) match\(matches.count == 1 ? "" : "es")"
+        filterStatusLabel.setAccessibilityLabel(filterStatusLabel.stringValue)
     }
 
     private func selectedHeadingIndex() -> Int? {
@@ -229,8 +273,29 @@ final class OutlinePanelView: NSView, PanelSurface {
         table.scrollRowToVisible(row)
     }
 
+    private func revealFoldedAncestors(of index: Int) {
+        var revealed = foldedIndices
+        var level = headings[index].level
+        var candidate = index - 1
+        while candidate >= 0 {
+            let candidateLevel = headings[candidate].level
+            if candidateLevel < level {
+                revealed.remove(candidate)
+                level = candidateLevel
+            }
+            if level == 1 { break }
+            candidate -= 1
+        }
+        guard revealed != foldedIndices else { return }
+        for foldedIndex in foldedIndices.subtracting(revealed) {
+            delegate?.outlinePanel(self, didToggleFoldAt: foldedIndex)
+        }
+        foldedIndices = revealed
+    }
+
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
+        filterStatusLabel.textColor = styleSheet.textFaint
         table.reloadData()
         needsDisplay = true
     }
@@ -283,7 +348,9 @@ extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
         let row = table.selectedRow
         guard row >= 0, row < visibleRows.count else { return }
         table.reloadData()
-        delegate?.outlinePanel(self, didSelectHeadingAt: visibleRows[row])
+        let index = visibleRows[row]
+        revealFoldedAncestors(of: index)
+        delegate?.outlinePanel(self, didSelectHeadingAt: index)
     }
 
     // MARK: Drag and drop (§7.1)

@@ -184,6 +184,7 @@ enum PanelList {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
+        scroll.setAccessibilityRole(.scrollArea)
         scroll.documentView = documentView
         scroll.translatesAutoresizingMaskIntoConstraints = false
         return scroll
@@ -204,6 +205,8 @@ enum PanelList {
         table.allowsMultipleSelection = false
         table.usesAlternatingRowBackgroundColors = false
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        table.setAccessibilityRole(.list)
+        table.focusRingType = .default
         return table
     }
 
@@ -239,6 +242,7 @@ final class PanelGroupRowView: NSView {
     func configure(text: String, color: NSColor) {
         label.stringValue = text
         label.textColor = color
+        setAccessibilityRole(.row)
         setAccessibilityLabel(text)
     }
 }
@@ -262,11 +266,13 @@ enum PanelButton {
         action: ButtonAction
     ) -> NSButton {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: label)
-        let button = NSButton(image: image ?? NSImage(), target: action, action: #selector(ButtonAction.fire(_:)))
+        let button = PanelSymbolButton(image: image ?? NSImage(), target: action, action: #selector(ButtonAction.fire(_:)))
         button.isBordered = false
         button.bezelStyle = .accessoryBarAction
         button.imagePosition = .imageOnly
+        button.focusRingType = .default
         button.setAccessibilityLabel(label)
+        button.setAccessibilityRole(.button)
         button.toolTip = label
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
@@ -278,6 +284,7 @@ enum PanelButton {
         button.controlSize = .small
         button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         if isDefault { button.keyEquivalent = "\r" }
+        button.focusRingType = .default
         button.setAccessibilityLabel(title)
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
@@ -291,11 +298,22 @@ enum PanelButton {
         button.bezelStyle = .rounded
         button.controlSize = .small
         button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.focusRingType = .default
         button.setAccessibilityLabel(label)
         button.setAccessibilityRole(.checkBox)
         button.toolTip = label
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
+    }
+}
+
+/// Keep the glyph visually small while giving keyboard and pointer users a
+/// comfortable target. Callers with an explicit compact layout can still
+/// constrain the button; normal panel chrome uses this intrinsic size.
+private final class PanelSymbolButton: NSButton {
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: max(28, size.width), height: max(28, size.height))
     }
 }
 
@@ -357,7 +375,7 @@ class MessageBarView: NSView {
             close.leadingAnchor.constraint(equalTo: actionStack.trailingAnchor, constant: 8),
             close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             close.centerYAnchor.constraint(equalTo: centerYAnchor),
-            close.widthAnchor.constraint(equalToConstant: 18),
+            close.widthAnchor.constraint(equalToConstant: 28),
         ])
 
         setAccessibilityRole(.group)
