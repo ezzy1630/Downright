@@ -389,6 +389,14 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - Document updates
 
+    private func sourceScopes(for dirty: DirtySet) -> [NSRange] {
+        guard !dirty.isWholesale, let storage = textStorage else { return [] }
+        let whole = NSRange(location: 0, length: storage.length)
+        return RangeSet.normalized(dirty.ranges.compactMap { range in
+            NSIntersectionRange(range, whole).length > 0 ? NSIntersectionRange(range, whole) : nil
+        })
+    }
+
     /// Re-decorates only what the AST diff says changed (§3.5).
     public func update(document: ParsedDocument, dirty: DirtySet) {
         let selection = sourceSelectedRanges
@@ -396,6 +404,8 @@ public final class MarkdownTextView: NSTextView {
         let currentMode = mode
         let isInitialUpdate = updateGeneration == 0
         let oldParagraphCount = paragraphIndex.starts.count
+        let isWholesaleUpdate = isInitialUpdate || dirty.isWholesale
+        let dirtyScopes = isWholesaleUpdate ? [] : sourceScopes(for: dirty)
         parsedDocument = document
         inlineCodeBandCache.removeAll(keepingCapacity: true)
         invisibleGlyphCache.removeAll(keepingCapacity: true)
@@ -411,13 +421,15 @@ public final class MarkdownTextView: NSTextView {
         applyInvisibles()
         rebuildBaseDisplayMap(document: document)
         refreshElision(rebuildingMap: false)
-        rebuildDisplayMap(fullRefresh: true)
+        rebuildDisplayMap(fullRefresh: isWholesaleUpdate, additionalScopes: dirtyScopes)
         applyOverlays()
         applyPathExistence()
-        invalidateAllFragments()
+        if isWholesaleUpdate {
+            invalidateAllFragments()
+        }
         gutterRail?.reload()
         let resizeRequest: ContentResizeRequest
-        if isInitialUpdate || dirty.isWholesale {
+        if isWholesaleUpdate {
             resizeRequest = .immediate
         } else if paragraphIndex.starts.count != oldParagraphCount {
             resizeRequest = .lineCount
@@ -455,7 +467,20 @@ public final class MarkdownTextView: NSTextView {
     /// files past 5MB to windowed rendering; below that the cost is tens of
     /// milliseconds once per structural change, not per keystroke.
     public func resizeToFitContent() {
+        resizeToFitContent(layoutScope: .document)
+    }
+
+    private enum ContentLayoutScope {
+        case viewport
+        case document
+    }
+
+    private func resizeToFitContent(layoutScope: ContentLayoutScope) {
         guard let layoutManager = textLayoutManager else { return }
+        if case .viewport = layoutScope {
+            repairContentHeightFromViewport(using: layoutManager)
+            return
+        }
         if let storage = textStorage,
            storage.length > configuration.largeFileThresholdMegabytes * 1024 * 1024 {
             let viewportHeight = enclosingScrollView?.contentView.bounds.height ?? 0
@@ -474,6 +499,34 @@ public final class MarkdownTextView: NSTextView {
         let viewportHeight = enclosingScrollView?.contentView.bounds.height ?? 0
         let height = max(used.maxY + textContainerInset.height + viewportHeight * 0.40, viewportHeight)
         guard abs(frame.height - height) > 0.5 else { return }
+        setFrameSize(NSSize(width: frame.width, height: height))
+    }
+
+    /// Layout only the visible viewport for semantic updates.  The usage
+    /// bounds are incomplete until TextKit has visited the whole document, so
+    /// this path may grow the frame but never shrinks it.  A later scroll near
+    /// the estimated end upgrades to the document-wide repair path.
+    private func repairContentHeightFromViewport(using layoutManager: NSTextLayoutManager) {
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        let viewportHeight = max(visible.height, enclosingScrollView?.contentView.bounds.height ?? 0)
+        guard viewportHeight > 0 else { return }
+
+        let origin = textContainerOrigin
+        let viewportBounds = NSRect(
+            x: max(0, visible.minX - origin.x),
+            y: max(0, visible.minY - origin.y),
+            width: max(1, visible.width),
+            height: viewportHeight
+        )
+        layoutManager.ensureLayout(for: viewportBounds)
+
+        let estimated = CGFloat(max(1, paragraphIndex.starts.count)) * styleSheet.lineHeight
+            + textContainerInset.height * 2 + viewportHeight * 0.40
+        let used = layoutManager.usageBoundsForTextContainer.maxY
+            + textContainerInset.height + viewportHeight * 0.40
+        let minimumVisibleHeight = visible.maxY + viewportHeight * 0.40
+        let height = max(frame.height, estimated, used, minimumVisibleHeight, viewportHeight)
+        guard height - frame.height > 0.5 else { return }
         setFrameSize(NSSize(width: frame.width, height: height))
     }
 
@@ -506,8 +559,9 @@ public final class MarkdownTextView: NSTextView {
             self.pendingResizeRequest = nil
             let anchor = self.pendingResizeAnchor
             self.pendingResizeAnchor = nil
-            self.resizeNeedsRepair = false
-            self.resizeToFitContent()
+            self.resizeNeedsRepair = pending == .semantic
+            self.resizeToFitContent(
+                layoutScope: pending == .semantic ? .viewport : .document)
             if let anchor {
                 self.scroll(toOffset: min(max(0, anchor), self.parsedDocument.length),
                             position: .top, animated: false)
@@ -628,7 +682,8 @@ public final class MarkdownTextView: NSTextView {
             oldHiddenRanges,
             edit: edit,
             insertedLength: insertedLength,
-            oldParagraphs: oldParagraphs
+            oldParagraphs: oldParagraphs,
+            inputIsNormalized: true
         )
         baseHiddenRanges = projected
         baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: projected)
@@ -670,7 +725,10 @@ public final class MarkdownTextView: NSTextView {
     /// from a set cached per document), and touch attributes or layout outside
     /// the paragraphs whose substitutions actually changed — which is only ever
     /// the caret's paragraph and the one it just left.
-    private func rebuildDisplayMap(fullRefresh: Bool = false) {
+    private func rebuildDisplayMap(
+        fullRefresh: Bool = false,
+        additionalScopes: [NSRange] = []
+    ) {
         let caret = suppressesCaretReveal ? nil : primarySourceCaret
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
@@ -735,7 +793,7 @@ public final class MarkdownTextView: NSTextView {
 
         let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
         let scope: NSRange?
-        if fullRefresh || requiresFullHiddenRefresh {
+        if fullRefresh || (requiresFullHiddenRefresh && additionalScopes.isEmpty) {
             scope = nil
         } else {
             switch (revealParagraph, current) {

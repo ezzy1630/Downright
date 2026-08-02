@@ -227,7 +227,8 @@ public enum RangeSet {
         _ ranges: [NSRange],
         edit: NSRange,
         insertedLength: Int,
-        oldParagraphs: ParagraphIndex
+        oldParagraphs: ParagraphIndex,
+        inputIsNormalized: Bool = false
     ) -> [NSRange] {
         let boundedLocation = Swift.max(0, Swift.min(edit.location, oldParagraphs.length))
         let boundedEnd = Swift.max(
@@ -240,13 +241,14 @@ public enum RangeSet {
         let affected = NSUnionRange(oldParagraphs.range(at: first), oldParagraphs.range(at: last))
         let delta = insertedLength - edit.length
 
-        return normalized(ranges.compactMap { range in
+        let projected = ranges.compactMap { range in
             if range.upperBound <= affected.location { return range }
             if range.location >= affected.upperBound {
                 return NSRange(location: range.location + delta, length: range.length)
             }
             return nil
-        })
+        }
+        return inputIsNormalized ? projected : normalized(projected)
     }
 }
 
@@ -351,6 +353,10 @@ public struct DisplayMap {
     /// top of the document's collapsed map instead.
     private let overrideParagraph: Int?
     private let overrideEntries: [DisplaySubstitution]
+    /// Hidden ranges from `base`, cached while the map is built. Edit
+    /// projection must not materialize all effective substitutions when a
+    /// transient paragraph override is active.
+    private let normalizedBaseHiddenRanges: [NSRange]
 
     public static let identity = DisplayMap(paragraphs: .empty, substitutions: [])
 
@@ -392,6 +398,9 @@ public struct DisplayMap {
             lastEnd = range.upperBound
         }
         self.base = kept
+        self.normalizedBaseHiddenRanges = kept.compactMap { sub in
+            sub.isHidden ? sub.sourceRange : nil
+        }
 
         // Paragraphs with nothing of their own point at the next paragraph's
         // first entry, so `entries(inParagraphAt:)` is defined everywhere.
@@ -410,13 +419,15 @@ public struct DisplayMap {
         base: [DisplaySubstitution],
         firstInParagraph: [Int],
         overrideParagraph: Int?,
-        overrideEntries: [DisplaySubstitution]
+        overrideEntries: [DisplaySubstitution],
+        normalizedBaseHiddenRanges: [NSRange]
     ) {
         self.paragraphs = paragraphs
         self.base = base
         self.firstInParagraph = firstInParagraph
         self.overrideParagraph = overrideParagraph
         self.overrideEntries = overrideEntries
+        self.normalizedBaseHiddenRanges = normalizedBaseHiddenRanges
     }
 
     /// A map identical to this one except that the entries of the paragraph
@@ -439,7 +450,8 @@ public struct DisplayMap {
             previousEnd = r.upperBound
         }
         return DisplayMap(paragraphs: paragraphs, base: base, firstInParagraph: firstInParagraph,
-                          overrideParagraph: p, overrideEntries: entries)
+                          overrideParagraph: p, overrideEntries: entries,
+                          normalizedBaseHiddenRanges: normalizedBaseHiddenRanges)
     }
 
     /// A paragraph-local reveal.  The base map already partitions its entries
@@ -520,9 +532,38 @@ public struct DisplayMap {
         return out
     }
 
+    /// Effective hidden ranges for edit projection. The base set is cached;
+    /// when a transient paragraph override exists, only that paragraph is
+    /// replaced in the cached sequence.
+    internal var hiddenRangesForEditProjection: [NSRange] {
+        guard let overrideParagraph else { return normalizedBaseHiddenRanges }
+
+        let overridden = paragraphs.range(at: overrideParagraph)
+        var result: [NSRange] = []
+        result.reserveCapacity(normalizedBaseHiddenRanges.count)
+        for range in normalizedBaseHiddenRanges where range.upperBound <= overridden.location {
+            result.append(range)
+        }
+        result.append(contentsOf: overrideEntries.lazy.compactMap { entry in
+            entry.isHidden ? entry.sourceRange : nil
+        })
+        for range in normalizedBaseHiddenRanges where range.location >= overridden.upperBound {
+            result.append(range)
+        }
+        return result
+    }
+
+    /// The cached base set is already normalized and does not include a
+    /// transient caret override. Source edits replace the affected paragraph
+    /// with identity presentation, so this is the only set needed for the
+    /// projection hot path.
+    internal var baseHiddenRangesForEditProjection: [NSRange] {
+        normalizedBaseHiddenRanges
+    }
+
     /// Ranges omitted entirely — what `drHidden` marks.
     public var hiddenRanges: [NSRange] {
-        substitutions.filter(\.isHidden).map(\.sourceRange)
+        hiddenRangesForEditProjection
     }
 
     /// The entries in force for a paragraph: its override if it has one, its

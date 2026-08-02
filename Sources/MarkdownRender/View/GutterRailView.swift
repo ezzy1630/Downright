@@ -99,7 +99,7 @@ public final class GutterRailView: NSView {
         guard textView.mode.policy.showsGutterMarkers || hoveredHeadingIsVisible else { return }
 
         let font = style.monoFont(size: max(9, style.bodyFont().pointSize * 0.62))
-        for marker in markers {
+        for marker in visibleMarkerSlice(in: textView) {
             if let focus = textView.sourceFocus.range,
                focus.contains(offset: marker.offset) { continue }
             guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView),
@@ -119,6 +119,54 @@ public final class GutterRailView: NSView {
         }
 
         drawHeadingAnchor(style: style, textView: textView)
+    }
+
+    private func visibleMarkerSlice(in textView: MarkdownTextView)
+        -> ArraySlice<(offset: Int, text: String, level: Int)> {
+        guard let visibleSourceRange = visibleSourceRange(in: textView) else {
+            return markers[...]
+        }
+
+        var lower = 0
+        var upper = markers.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if markers[middle].offset < visibleSourceRange.location {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        let start = lower
+
+        upper = markers.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if markers[middle].offset <= visibleSourceRange.upperBound {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return markers[start..<lower]
+    }
+
+    private func visibleSourceRange(in textView: MarkdownTextView) -> NSRange? {
+        guard let storage = textView.textStorage, storage.length > 0 else { return nil }
+        let visible = textView.visibleRect
+        guard visible.height > 0 else { return nil }
+
+        // Keep the same small draw-ahead band used by the row intersection
+        // below, while resolving the viewport in source coordinates once.
+        let sourceVisible = visible.insetBy(dx: 0, dy: -40)
+        let x = textView.textContainerOrigin.x
+        let start = textView.sourceOffset(at: NSPoint(x: x, y: sourceVisible.minY))
+        let end = textView.sourceOffset(at: NSPoint(x: x, y: sourceVisible.maxY))
+        guard (0...storage.length).contains(start),
+              (0...storage.length).contains(end) else { return nil }
+        let lower = min(start, end)
+        let upper = max(start, end)
+        return NSRange(location: lower, length: upper - lower)
     }
 
     private func drawLineNumbers(style: StyleSheet, textView: MarkdownTextView, visible: NSRect) {

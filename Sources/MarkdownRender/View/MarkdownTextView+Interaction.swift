@@ -368,7 +368,7 @@ extension MarkdownTextView {
         if zoomLevel != .everything { zoomLevel = .everything }
 
         let oldParagraphs = paragraphIndex
-        let oldHiddenRanges = currentDisplayMap.hiddenRanges
+        let oldHiddenRanges = currentDisplayMap.baseHiddenRangesForEditProjection
         beginSourceEdit()
         storage.replaceCharacters(in: clamped, with: replacement)
         let inserted = (replacement as NSString).length
