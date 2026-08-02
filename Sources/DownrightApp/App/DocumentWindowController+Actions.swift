@@ -32,6 +32,14 @@ extension DocumentWindowController {
         let span = min(1, visibleHeight / documentHeight)
         densityGutterView.visibleRange = top...min(1, top + span)
         densityGutterView.readProgress = max(densityGutterView.readProgress, min(1, top + span))
+        let current = markdownDocument.parsed.headings.lastIndex {
+            $0.range.location <= containerTextView.topVisibleOffset
+        }
+        densityGutterView.outlineEntries = densityGutterView.outlineEntries.enumerated().map { index, entry in
+            var updated = entry
+            updated.isCurrent = index == current
+            return updated
+        }
     }
 
     private func showTransientBreadcrumb() {

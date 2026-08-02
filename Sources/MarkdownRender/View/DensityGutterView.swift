@@ -42,11 +42,16 @@ public final class DensityGutterView: NSView {
     public var styleSheet: StyleSheet {
         didSet {
             preview.styleSheet = styleSheet
+            outline.styleSheet = styleSheet
             needsDisplay = true
         }
     }
 
     public var bands: [DensityBand] = [] { didSet { needsDisplay = true } }
+
+    public var outlineEntries: [DensityOutlineEntry] = [] {
+        didSet { outline.entries = outlineEntries }
+    }
 
     /// Visible viewport, drawn as the thumb.
     public var visibleRange: ClosedRange<CGFloat> = 0...1 { didSet { needsDisplay = true } }
@@ -76,8 +81,11 @@ public final class DensityGutterView: NSView {
     public static let minimumHostWidth: CGFloat = 360
 
     private let preview: DensityGutterPreviewWindow
+    private let outline: DensityOutlineWindow
     private var isScrubbing = false
     private var trackingArea: NSTrackingArea?
+    private var outlineShowWorkItem: DispatchWorkItem?
+    private var outlineHideWorkItem: DispatchWorkItem?
 
     private let horizontalMargin: CGFloat = 1
 
@@ -90,7 +98,21 @@ public final class DensityGutterView: NSView {
     public init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         self.preview = DensityGutterPreviewWindow(styleSheet: styleSheet)
+        self.outline = DensityOutlineWindow(styleSheet: styleSheet)
         super.init(frame: NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 100))
+
+        outline.onSelect = { [weak self] fraction in
+            guard let self else { return }
+            self.delegate?.densityGutter(self, didRequestScrollToFraction: fraction)
+        }
+        outline.onPointerPresence = { [weak self] isInside in
+            if isInside {
+                self?.cancelOutlineHide()
+                self?.outline.cancelDismissAnimation()
+            } else {
+                self?.scheduleOutlineHide()
+            }
+        }
 
         // Fully custom-drawn with no accessible subviews, so it has to declare
         // itself an element or VoiceOver never sees it (§11.4).
@@ -121,9 +143,38 @@ public final class DensityGutterView: NSView {
         guard height > 0 else { return }
         let contrast = styleSheet.increaseContrast
 
-        for band in bands.sorted(by: { Self.paintOrder($0.kind) < Self.paintOrder($1.kind) }) {
-            draw(band: band, height: height, contrast: contrast)
+        drawProgress(height: height, contrast: contrast)
+        drawThumb(height: height, contrast: contrast)
+        let currentHeading = currentHeadingFraction()
+
+        for band in bands.sorted(by: { Self.paintOrder($0.kind) < Self.paintOrder($1.kind) })
+            where Self.isVisibleAtRest(band.kind) {
+            draw(band: band, height: height, contrast: contrast, currentHeading: currentHeading)
         }
+    }
+
+    private func currentHeadingFraction() -> CGFloat? {
+        Self.currentHeadingFraction(in: bands, at: visibleRange)
+    }
+
+    static func currentHeadingFraction(
+        in bands: [DensityBand], at visibleRange: ClosedRange<CGFloat>
+    ) -> CGFloat? {
+        let headings = bands.filter {
+            if case .heading = $0.kind { return true }
+            return false
+        }
+        return headings.last(where: { $0.startFraction <= visibleRange.lowerBound })?.startFraction
+            ?? headings.first?.startFraction
+    }
+
+    private func drawProgress(height: CGFloat, contrast: Bool) {
+        let progress = min(1, max(0, readProgress))
+        guard progress > 0 else { return }
+        styleSheet.text.panelAlpha(0.025, increaseContrast: contrast).setFill()
+        NSBezierPath(
+            rect: NSRect(x: 0, y: 0, width: bounds.width, height: progress * height)
+        ).fill()
     }
 
     private func drawThumb(height: CGFloat, contrast: Bool) {
@@ -143,13 +194,18 @@ public final class DensityGutterView: NSView {
         path.stroke()
     }
 
-    private func draw(band: DensityBand, height: CGFloat, contrast: Bool) {
+    private func draw(
+        band: DensityBand,
+        height: CGFloat,
+        contrast: Bool,
+        currentHeading: CGFloat?
+    ) {
         let isHeading: Bool
         if case .heading = band.kind { isHeading = true } else { isHeading = false }
         guard isHeading || Self.paintOrder(band.kind) >= 2 else { return }
         var style = self.style(for: band.kind, contrast: contrast)
         if case .heading = band.kind {
-            let current = visibleRange.contains(band.startFraction)
+            let current = currentHeading == band.startFraction
             style.minHeight = current ? 2 : 1.5
             style.color = current
                 ? styleSheet.railTickCurrent.withAlphaComponent(0.9)
@@ -222,6 +278,18 @@ public final class DensityGutterView: NSView {
         }
     }
 
+    /// At rest, the rail carries navigation and review signals.  Body-shape
+    /// bands stay available to callers for previews, but do not become a
+    /// minimap of code, tables, or other large blocks.
+    static func isVisibleAtRest(_ kind: DensityBand.Kind) -> Bool {
+        switch kind {
+        case .heading, .taskList, .searchHit, .change:
+            return true
+        case .codeBlock, .table, .math, .image, .callout:
+            return false
+        }
+    }
+
     // MARK: - Pointer (§7.1 "click to jump, drag to scrub")
 
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -272,11 +340,53 @@ public final class DensityGutterView: NSView {
     public override func mouseMoved(with event: NSEvent) {
         guard !isScrubbing else { return }
         showPreview(at: convert(event.locationInWindow, from: nil), showsSnippet: false)
+        cancelOutlineHide()
+        scheduleOutlineShow()
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        cancelOutlineHide()
+        scheduleOutlineShow()
     }
 
     public override func mouseExited(with event: NSEvent) {
         guard !isScrubbing else { return }
         preview.hide()
+        scheduleOutlineHide()
+    }
+
+    public func presentOutlineForKeyboard() {
+        outlineShowWorkItem?.cancel()
+        guard let window else { return }
+        preview.hide()
+        outline.entries = outlineEntries
+        outline.show(leftOf: self, over: window, keyboard: true)
+    }
+
+    private func scheduleOutlineShow() {
+        guard !outline.isVisible, !outlineEntries.isEmpty else { return }
+        outlineShowWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let window = self.window else { return }
+            self.preview.hide()
+            self.outline.entries = self.outlineEntries
+            self.outline.show(leftOf: self, over: window, keyboard: false)
+        }
+        outlineShowWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + DensityOutlineWindow.showDwell, execute: work)
+    }
+
+    private func scheduleOutlineHide() {
+        outlineShowWorkItem?.cancel()
+        outlineHideWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.outline.dismiss() }
+        outlineHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + DensityOutlineWindow.hideDelay, execute: work)
+    }
+
+    private func cancelOutlineHide() {
+        outlineHideWorkItem?.cancel()
+        outlineHideWorkItem = nil
     }
 
     private func scrub(to event: NSEvent, showsSnippet: Bool) {
@@ -303,7 +413,7 @@ public final class DensityGutterView: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { preview.hide() }
+        if window == nil { preview.hide(); outline.dismiss() }
     }
 
     // MARK: - Band construction

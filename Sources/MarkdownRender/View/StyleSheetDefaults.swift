@@ -25,8 +25,13 @@ enum GutterChrome {
     static let bodyFont = NSFont.systemFont(ofSize: 10.5)
 
     /// Full respect for Reduce Motion (§11.4).
-    static func animate(reduceMotion: Bool, duration: TimeInterval, _ body: @escaping (NSAnimationContext) -> Void) {
-        Motion.run(reduceMotion: reduceMotion, duration: duration, changes: body)
+    static func animate(
+        reduceMotion: Bool,
+        duration: TimeInterval,
+        _ body: @escaping (NSAnimationContext) -> Void,
+        completion: (() -> Void)? = nil
+    ) {
+        Motion.run(reduceMotion: reduceMotion, duration: duration, changes: body, completion: completion)
     }
 }
 

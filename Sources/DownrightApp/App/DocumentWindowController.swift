@@ -381,10 +381,21 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func refreshDensityBands() {
+        let parsed = markdownDocument.parsed
         let changes = markdownDocument.changes.visibleMarks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
-            for: markdownDocument.parsed, changes: changes, searchHits: findSession.matches
+            for: parsed, changes: changes, searchHits: findSession.matches
         )
+        let length = CGFloat(max(1, parsed.length))
+        let current = parsed.headings.lastIndex { $0.range.location <= primaryContainer.textView.topVisibleOffset }
+        densityGutterView.outlineEntries = parsed.headings.enumerated().map { index, heading in
+            DensityOutlineEntry(
+                title: heading.title,
+                level: heading.level,
+                fraction: CGFloat(heading.range.location) / length,
+                isCurrent: index == current
+            )
+        }
         densityGutterView.needsDisplay = true
     }
 

@@ -167,16 +167,7 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func showOutlineQuickOpen() {
-        guard let window else { return }
-        let panel = OutlineQuickOpenPanel(
-            headings: markdownDocument.parsed.headings,
-            styleSheet: currentStyleSheet
-        ) { [weak self] index in
-            guard let self, index < self.markdownDocument.parsed.headings.count else { return }
-            let heading = self.markdownDocument.parsed.headings[index]
-            self.jump(to: heading.range.location, label: heading.title)
-        }
-        panel.present(over: window)
+        densityGutterView.presentOutlineForKeyboard()
     }
 
     private func showVersionTimeline() {
