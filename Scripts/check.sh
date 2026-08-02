@@ -33,12 +33,18 @@ fi
 echo "    ok"
 
 echo "==> Tests"
-swift test --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}" 2>&1 \
-    | grep -E "Test run|✘|Suite .* (passed|failed)|error:|failed after" \
-    | tail -40
+TEST_LOG=/tmp/downright-test.log
+if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
+    swift test --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}" > "$TEST_LOG" 2>&1
+else
+    swift test --no-parallel --scratch-path "$TEST_SCRATCH" > "$TEST_LOG" 2>&1
+fi
+TEST_STATUS=$?
+grep -aE "Test run|✘|Suite .* (passed|failed)|error:|failed after" "$TEST_LOG" | tail -40
 
 echo
 echo "==> Sanity: the runner must actually have run something"
-COUNT=$(swift test --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}" 2>&1 | grep -cE "^✔ Test |^✘ Test ")
+COUNT=$(grep -acE "^✔ Test |^✘ Test " "$TEST_LOG")
 echo "    $COUNT tests executed"
 [ "$COUNT" -gt 0 ] || { echo "    NO TESTS RAN — see the note at the top of this script"; exit 1; }
+[ "$TEST_STATUS" -eq 0 ] || { echo "    TESTS FAILED — see $TEST_LOG"; exit "$TEST_STATUS"; }
