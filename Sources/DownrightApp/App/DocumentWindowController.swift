@@ -35,7 +35,10 @@ final class DocumentWindowController: NSWindowController {
     var changeSummaryBar: ChangeSummaryBarView?
     var searchResults: SearchResultsPanelView?
     var inspectorHost: InspectorHostView?
+    var frontMatterEditor: FrontMatterEditorView?
+    var assetDoctorPanel: AssetDoctorView?
     var tidySheetWindow: NSWindow?
+    var tableEditorWindow: NSWindow?
     private var auxiliaryWindows: [NSWindowController] = []
 
     // Layout containers
@@ -330,6 +333,8 @@ final class DocumentWindowController: NSWindowController {
         conflictBar?.styleSheet = activeStyleSheet
         changeSummaryBar?.styleSheet = activeStyleSheet
         searchResults?.styleSheet = activeStyleSheet
+        frontMatterEditor?.styleSheet = activeStyleSheet
+        assetDoctorPanel?.styleSheet = activeStyleSheet
     }
 
     // MARK: - Modes (§3.2)
@@ -368,6 +373,8 @@ final class DocumentWindowController: NSWindowController {
         taskPanel?.tasks = parsed.tasks
         taskPanel?.headings = parsed.headings
         taskPanel?.reload()
+        frontMatterEditor?.document = parsed
+        if let assetDoctorPanel { configureAssetDoctor(assetDoctorPanel) }
         progressRing.progress = (
             done: parsed.tasks.filter(\.isChecked).count,
             total: parsed.tasks.count
@@ -585,6 +592,11 @@ final class DocumentWindowController: NSWindowController {
 
     func installTrailing(_ view: NSView) {
         showInInspector(view, segment: 1)
+    }
+
+    func dismissTrailing(_ view: NSView) {
+        inspectorHost?.removeContent(view, segment: 1)
+        if inspectorHost?.hasContent != true { inspectorItem.isCollapsed = true }
     }
 
     private func showInInspector(_ view: NSView, segment: Int) {

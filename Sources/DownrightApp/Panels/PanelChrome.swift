@@ -27,6 +27,7 @@ enum PanelMetrics {
 
 /// A transient side surface.  `preferredWidth` exists so a host can animate the
 /// panel in from zero without knowing what is inside it (§11.4).
+@MainActor
 protocol PanelSurface: NSView {
     var preferredWidth: CGFloat { get }
 }

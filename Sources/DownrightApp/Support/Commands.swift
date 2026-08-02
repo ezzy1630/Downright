@@ -11,6 +11,7 @@ enum Command: String, CaseIterable, Codable {
     // Modes and views
     case toggleReadLive, sourceMode, splitView, pinWindow, focusMode, typewriterScrolling
     case toggleSidebar, outlineQuickOpen, outlinePanel, taskPanel, versionTimeline, compareFiles
+    case frontMatterEditor, tableEditor, assetDoctor
 
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
@@ -58,6 +59,9 @@ enum Command: String, CaseIterable, Codable {
         case .taskPanel: return "Tasks"
         case .versionTimeline: return "Version Timeline"
         case .compareFiles: return "Compare Files…"
+        case .frontMatterEditor: return "Front Matter…"
+        case .tableEditor: return "Edit Table…"
+        case .assetDoctor: return "Asset Doctor"
         case .nextHeading: return "Next Heading"
         case .previousHeading: return "Previous Heading"
         case .nextChange: return "Next Change"
@@ -171,7 +175,8 @@ enum Command: String, CaseIterable, Codable {
             return .navigate
         case .promoteHeading, .demoteHeading, .moveBlockUp, .moveBlockDown, .foldSection,
              .unfoldSection, .foldAll, .unfoldAll, .sortListAlphabetically, .sortListByState,
-             .insertTableOfContents, .tidyDocument:
+             .insertTableOfContents, .tidyDocument, .frontMatterEditor, .tableEditor,
+             .assetDoctor:
             return .document
         case .splitView, .pinWindow:
             return .window

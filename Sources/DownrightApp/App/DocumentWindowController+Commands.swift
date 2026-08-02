@@ -35,6 +35,9 @@ extension DocumentWindowController: CommandResponder {
         case .toggleSidebar: toggleSiblingSidebar()
         case .outlineQuickOpen: showOutlineQuickOpen()
         case .versionTimeline: showVersionTimeline()
+        case .frontMatterEditor: showFrontMatterEditor()
+        case .tableEditor: presentTableEditor()
+        case .assetDoctor: toggleAssetDoctorPanel()
 
         // MARK: Navigation
         case .nextHeading: jumpHeading(forward: true)

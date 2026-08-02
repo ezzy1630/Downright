@@ -40,6 +40,13 @@ final class InspectorHostView: NSView {
         views.removeValue(forKey: segment)?.removeFromSuperview()
     }
 
+    func removeContent(_ view: NSView, segment: Int) {
+        guard views[segment] === view else { return }
+        removeContent(segment: segment)
+    }
+
+    var hasContent: Bool { !views.isEmpty }
+
     @objc private func selectionChanged(_ sender: NSSegmentedControl) {
         if sender.selectedSegment == 2 {
             onHistory?()
