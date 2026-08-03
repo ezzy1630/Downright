@@ -28,8 +28,8 @@ public final class MarkdownContainerView: NSView {
     /// Width reserved on the left for block markers in Live mode (§6.1a).
     public private(set) var gutterWidth: CGFloat = RenderMetrics.gutterWidth
 
-    /// Optional contents map. A density map floats in the document's left
-    /// whitespace; other accessories still reserve a normal leading column.
+    /// Optional contents map. A density map owns the quiet leading lane; its
+    /// preview opens inward only when the reader asks for it.
     public var leadingAccessory: NSView? {
         didSet {
             oldValue?.removeFromSuperview()
@@ -134,9 +134,9 @@ public final class MarkdownContainerView: NSView {
                                   width: contentWidth,
                                   height: bounds.height)
 
-        // The text column is centred in the measure (§11.1); the rail sits
-        // immediately to its left, so markers track the text rather than the
-        // window edge.
+        // The text column is centred in the measure (§11.1). The document map
+        // is intentionally kept in the quiet leading lane so it does not
+        // masquerade as a second scrollbar beside the text.
         // The inset is measured to where the *text* starts, not to where the
         // text view starts: the view carries `revealSlack` of its own lead-in
         // so a caret-anchored reveal can shift a line left (§6.1c).
@@ -167,13 +167,11 @@ public final class MarkdownContainerView: NSView {
                               width: gutterWidth, height: scrollView.frame.height)
 
         if isFloatingDensityMap, let leadingAccessory {
-            // The map belongs to the document column, not the window edge.
-            // Leave the block-marker gutter between it and the text so the
-            // two controls never visually merge.
-            let mapWidth = leadingWidth
-            let mapX = max(8, textOrigin - mapWidth - 16)
-            leadingAccessory.frame = NSRect(x: mapX, y: 0,
-                                            width: mapWidth, height: scrollView.frame.height)
+            // Keep the hit lane stable while the measure responds to the
+            // window. Preview cards open to the right of this lane, into the
+            // document's existing side space.
+            leadingAccessory.frame = NSRect(x: 0, y: 0,
+                                            width: leadingWidth, height: scrollView.frame.height)
         }
 
     }

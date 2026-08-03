@@ -44,16 +44,14 @@ public final class DensityGutterView: NSView {
         didSet {
             preview.styleSheet = styleSheet
             outline.styleSheet = styleSheet
-            activeMarkerLayer.backgroundColor = styleSheet.railTickCurrent.cgColor
-            hoverMarkerLayer.backgroundColor = styleSheet.railTickCurrent.withAlphaComponent(0.14).cgColor
-            needsDisplay = true
+            updateMarkLayers(animated: false)
         }
     }
 
     public var bands: [DensityBand] = [] {
         didSet {
-            needsDisplay = true
-            updateActiveMarker(animated: false)
+            hoveredBandIndex = nil
+            updateMarkLayers(animated: false)
         }
     }
 
@@ -64,8 +62,7 @@ public final class DensityGutterView: NSView {
     /// Visible viewport, used to move the active prompt mark.
     public var visibleRange: ClosedRange<CGFloat> = 0...1 {
         didSet {
-            needsDisplay = true
-            updateActiveMarker(animated: true)
+            updateMarkLayers(animated: true)
         }
     }
 
@@ -73,7 +70,7 @@ public final class DensityGutterView: NSView {
     public var readProgress: CGFloat = 0 {
         didSet {
             setAccessibilityValueDescription("\(Int((readProgress * 100).rounded())) percent read")
-            needsDisplay = true
+            updateMarkLayers(animated: false)
         }
     }
 
@@ -109,12 +106,11 @@ public final class DensityGutterView: NSView {
     /// becoming a second scrollbar.
     private let horizontalMargin: CGFloat = 14
     private let trackInset: CGFloat = 24
-    private let markGap: CGFloat = 11
+    private let markGap: CGFloat = 9
     private let hoverHitSlop: CGFloat = 14
-    private let activeMarkerLayer = CALayer()
-    private let hoverMarkerLayer = CALayer()
+    private var markLayers: [CALayer] = []
+    private var hoveredBandIndex: Int?
     private var didDrag = false
-    private var hoverHideWorkItem: DispatchWorkItem?
 
     // MARK: - Init
 
@@ -129,23 +125,6 @@ public final class DensityGutterView: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 100))
 
         wantsLayer = true
-        hoverMarkerLayer.cornerRadius = 5
-        hoverMarkerLayer.actions = [
-            "position": NSNull(),
-            "bounds": NSNull(),
-            "backgroundColor": NSNull(),
-            "opacity": NSNull(),
-        ]
-        activeMarkerLayer.actions = [
-            "position": NSNull(),
-            "bounds": NSNull(),
-            "backgroundColor": NSNull(),
-        ]
-        activeMarkerLayer.cornerRadius = 2
-        hoverMarkerLayer.backgroundColor = styleSheet.railTickCurrent.withAlphaComponent(0.14).cgColor
-        hoverMarkerLayer.isHidden = true
-        layer?.addSublayer(hoverMarkerLayer)
-        layer?.addSublayer(activeMarkerLayer)
 
         outline.onSelect = { [weak self] fraction in
             guard let self else { return }
@@ -173,7 +152,7 @@ public final class DensityGutterView: NSView {
                 return true
             },
         ])
-        updateActiveMarker(animated: false)
+        updateMarkLayers(animated: false)
     }
 
     public required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -187,28 +166,10 @@ public final class DensityGutterView: NSView {
 
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
+        updateMarkLayers(animated: false)
     }
 
     // MARK: - Drawing
-
-    public override func draw(_ dirtyRect: NSRect) {
-        let height = bounds.height
-        guard height > 0 else { return }
-        let contrast = styleSheet.increaseContrast
-        let entries = visualBands(height: height)
-
-        // This is a prompt index, not a second scrollbar. Keep the field
-        // quiet and group its marks into a short, scannable stack.
-        let currentHeading = currentHeadingFraction()
-
-        for entry in entries {
-            if case .heading = entry.band.kind, currentHeading == entry.band.startFraction {
-                continue
-            }
-            draw(band: entry.band, y: entry.y, contrast: contrast, currentHeading: currentHeading)
-        }
-    }
 
     private func currentHeadingFraction() -> CGFloat? {
         Self.currentHeadingFraction(in: bands, at: visibleRange)
@@ -223,32 +184,6 @@ public final class DensityGutterView: NSView {
         }
         return headings.last(where: { $0.startFraction <= visibleRange.lowerBound })?.startFraction
             ?? headings.first?.startFraction
-    }
-
-    private func draw(
-        band: DensityBand,
-        y: CGFloat,
-        contrast: Bool,
-        currentHeading: CGFloat?
-    ) {
-        let isHeading: Bool
-        if case .heading = band.kind { isHeading = true } else { isHeading = false }
-        guard isHeading || Self.paintOrder(band.kind) >= 2 else { return }
-        var style = self.style(for: band.kind, contrast: contrast)
-        if case .heading = band.kind {
-            let current = currentHeading == band.startFraction
-            style.minHeight = current ? 3 : 2
-            style.color = current
-                ? styleSheet.railTickCurrent.withAlphaComponent(0.9)
-                : styleSheet.railTick.withAlphaComponent(band.startFraction <= readProgress ? 0.5 : 0.3)
-        }
-        let available = max(1, bounds.width - horizontalMargin * 2)
-        let x = horizontalMargin + available * style.inset
-        let width = max(2, available * style.width)
-        let rect = NSRect(x: x, y: y, width: width, height: style.minHeight)
-
-        style.color.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
     }
 
     /// Keep the prompt marks close together, but anchor the group to the
@@ -329,99 +264,109 @@ public final class DensityGutterView: NSView {
         }
     }
 
-    private func updateActiveMarker(animated: Bool) {
-        guard bounds.height > 0,
-              let current = currentHeadingFraction(),
-              let entry = visualBands(height: bounds.height).first(where: {
-                  if case .heading = $0.band.kind { return $0.band.startFraction == current }
-                  return false
-              }) else {
-            activeMarkerLayer.isHidden = true
-            return
-        }
-
-        let width = min(36, bounds.width - horizontalMargin * 2)
-        let rect = CGRect(
-            x: (bounds.width - width) / 2,
-            y: entry.y,
-            width: width,
-            height: 3
-        )
-        let previous = activeMarkerLayer.presentation()?.frame ?? activeMarkerLayer.frame
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        activeMarkerLayer.frame = rect
-        activeMarkerLayer.backgroundColor = styleSheet.railTickCurrent.cgColor
-        activeMarkerLayer.isHidden = false
-        CATransaction.commit()
-
-        guard animated, !styleSheet.reduceMotion, previous != .zero else { return }
-        let position = CABasicAnimation(keyPath: "position")
-        position.fromValue = NSValue(point: CGPoint(x: previous.midX, y: previous.midY))
-        position.toValue = NSValue(point: CGPoint(x: rect.midX, y: rect.midY))
-        position.duration = Motion.quick
-        position.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        let boundsAnimation = CABasicAnimation(keyPath: "bounds")
-        boundsAnimation.fromValue = NSValue(rect: previous)
-        boundsAnimation.toValue = NSValue(rect: rect)
-        boundsAnimation.duration = Motion.quick
-        boundsAnimation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        activeMarkerLayer.add(position, forKey: "active-position")
-        activeMarkerLayer.add(boundsAnimation, forKey: "active-bounds")
-    }
-
-    private func updateHoverMarker(at point: NSPoint, animated: Bool) {
+    /// Renders one small layer per visible document mark. Hover changes only
+    /// that layer's width, weight, and colour; there is no floating capsule
+    /// that can be mistaken for a scrollbar thumb or cover the document.
+    private func updateMarkLayers(animated: Bool) {
         guard bounds.height > 0 else { return }
-        hoverHideWorkItem?.cancel()
-        hoverHideWorkItem = nil
-        let width = min(46, bounds.width - horizontalMargin * 2)
-        let top = max(0, min(bounds.height - 10, point.y - 5))
-        let rect = CGRect(
-            x: (bounds.width - width) / 2,
-            y: top,
-            width: width,
-            height: 10
-        )
-        let previous = hoverMarkerLayer.presentation()?.frame ?? hoverMarkerLayer.frame
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        hoverMarkerLayer.frame = rect
-        hoverMarkerLayer.isHidden = false
-        hoverMarkerLayer.opacity = 1
-        CATransaction.commit()
+        let entries = visualBands(height: bounds.height)
+        let current = currentHeadingFraction()
+        let available = max(1, bounds.width - horizontalMargin * 2)
 
-        guard animated, !styleSheet.reduceMotion, previous != .zero else { return }
-        let animation = CABasicAnimation(keyPath: "position")
-        animation.fromValue = NSValue(point: CGPoint(x: previous.midX, y: previous.midY))
-        animation.toValue = NSValue(point: CGPoint(x: rect.midX, y: rect.midY))
-        animation.duration = Motion.quick
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        hoverMarkerLayer.add(animation, forKey: "hover-position")
-    }
+        while markLayers.count < entries.count {
+            let mark = CALayer()
+            mark.cornerCurve = .continuous
+            mark.masksToBounds = true
+            layer?.addSublayer(mark)
+            markLayers.append(mark)
+        }
 
-    private func hideHoverMarker() {
-        guard !hoverMarkerLayer.isHidden else { return }
-        if styleSheet.reduceMotion {
-            hoverMarkerLayer.isHidden = true
-            return
+        for (index, entry) in entries.enumerated() {
+            var bandStyle = style(for: entry.band.kind, contrast: styleSheet.increaseContrast)
+            let isCurrent: Bool = {
+                guard let current else { return false }
+                if case .heading = entry.band.kind {
+                    return entry.band.startFraction == current
+                }
+                return false
+            }()
+            let isHovered = index == hoveredBandIndex
+
+            if isCurrent {
+                bandStyle.minHeight = 3
+                bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(0.9)
+            } else if case .heading = entry.band.kind {
+                bandStyle.minHeight = 2
+                bandStyle.color = styleSheet.railTick.withAlphaComponent(
+                    entry.band.startFraction <= readProgress ? 0.5 : 0.3
+                )
+            }
+
+            if isHovered {
+                bandStyle.minHeight = max(bandStyle.minHeight, 3)
+                bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(
+                    isCurrent ? 0.96 : 0.86
+                )
+            }
+
+            let baseWidth = max(2, available * bandStyle.width)
+            let markWidth = min(available, baseWidth + (isHovered ? 12 : 0))
+            let markHeight = max(bandStyle.minHeight, isHovered ? 4 : bandStyle.minHeight)
+            // Resolve every mark around the same optical spine. This keeps a
+            // hover expansion symmetric instead of making the line appear to
+            // slide sideways inside the lane.
+            let markCenter = bounds.midX
+                + available * (bandStyle.inset + bandStyle.width / 2 - 0.5)
+            let markX = markCenter - markWidth / 2
+            let frame = CGRect(x: markX, y: entry.y, width: markWidth, height: markHeight)
+            let mark = markLayers[index]
+            let previousPosition = mark.presentation()?.position ?? mark.position
+            let previousBounds = mark.presentation()?.bounds ?? mark.bounds
+            let previousColor = mark.presentation()?.backgroundColor ?? mark.backgroundColor
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            mark.frame = frame
+            mark.backgroundColor = bandStyle.color.cgColor
+            mark.isHidden = false
+            CATransaction.commit()
+
+            guard animated, !styleSheet.reduceMotion, previousBounds != .zero else { continue }
+            let timing = CAMediaTimingFunction(name: .easeOut)
+
+            let position = CABasicAnimation(keyPath: "position")
+            position.fromValue = NSValue(point: previousPosition)
+            position.toValue = NSValue(point: mark.position)
+            position.duration = Motion.quick
+            position.timingFunction = timing
+            mark.add(position, forKey: "mark-position")
+
+            let boundsAnimation = CABasicAnimation(keyPath: "bounds")
+            boundsAnimation.fromValue = NSValue(rect: previousBounds)
+            boundsAnimation.toValue = NSValue(rect: mark.bounds)
+            boundsAnimation.duration = Motion.quick
+            boundsAnimation.timingFunction = timing
+            mark.add(boundsAnimation, forKey: "mark-bounds")
+
+            if let previousColor {
+                let colorAnimation = CABasicAnimation(keyPath: "backgroundColor")
+                colorAnimation.fromValue = previousColor
+                colorAnimation.toValue = bandStyle.color.cgColor
+                colorAnimation.duration = Motion.quick
+                colorAnimation.timingFunction = timing
+                mark.add(colorAnimation, forKey: "mark-color")
+            }
         }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = Motion.quick
-        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        hoverMarkerLayer.add(fade, forKey: "hover-fade")
-        hoverMarkerLayer.opacity = 0
-        let work = DispatchWorkItem { [weak self] in
-            self?.hoverMarkerLayer.isHidden = true
+
+        for mark in markLayers.dropFirst(entries.count) {
+            mark.removeAllAnimations()
+            mark.isHidden = true
         }
-        hoverHideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.quick, execute: work)
     }
 
     public override func layout() {
         super.layout()
-        updateActiveMarker(animated: false)
+        updateMarkLayers(animated: false)
     }
 
 
@@ -482,6 +427,24 @@ public final class DensityGutterView: NSView {
         return min(1, max(0, (point.y - top) / max(1, bottom - top)))
     }
 
+    private func updateHoveredBand(at point: NSPoint?, animated: Bool) {
+        let nextIndex: Int?
+        if let point, bounds.height > 0 {
+            let entries = visualBands(height: bounds.height)
+            nextIndex = entries.enumerated().min(by: {
+                abs($0.element.y - point.y) < abs($1.element.y - point.y)
+            }).flatMap { nearest in
+                abs(nearest.element.y - point.y) <= hoverHitSlop ? nearest.offset : nil
+            }
+        } else {
+            nextIndex = nil
+        }
+
+        guard nextIndex != hoveredBandIndex else { return }
+        hoveredBandIndex = nextIndex
+        updateMarkLayers(animated: animated)
+    }
+
     public override func mouseDown(with event: NSEvent) {
         didDrag = false
         isScrubbing = false
@@ -507,7 +470,7 @@ public final class DensityGutterView: NSView {
             schedulePreview(at: point)
         } else {
             preview.hide()
-            hideHoverMarker()
+            updateHoveredBand(at: nil, animated: true)
         }
         if wasDragging { needsDisplay = true }
     }
@@ -515,13 +478,13 @@ public final class DensityGutterView: NSView {
     public override func mouseMoved(with event: NSEvent) {
         guard !isScrubbing else { return }
         let point = convert(event.locationInWindow, from: nil)
-        updateHoverMarker(at: point, animated: true)
+        updateHoveredBand(at: point, animated: true)
         schedulePreview(at: point)
     }
 
     public override func mouseEntered(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        updateHoverMarker(at: point, animated: false)
+        updateHoveredBand(at: point, animated: false)
         schedulePreview(at: point)
     }
 
@@ -530,7 +493,7 @@ public final class DensityGutterView: NSView {
         previewWorkItem?.cancel()
         previewWorkItem = nil
         preview.hide()
-        hideHoverMarker()
+        updateHoveredBand(at: nil, animated: true)
     }
 
     public func presentOutlineForKeyboard() {
@@ -544,7 +507,10 @@ public final class DensityGutterView: NSView {
         previewWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.window != nil else { return }
-            guard self.bounds.contains(point) else { return }
+            guard self.bounds.contains(point), self.hoveredBandIndex != nil else {
+                self.preview.hide()
+                return
+            }
             self.showPreview(at: point, showsSnippet: true)
         }
         previewWorkItem = work
@@ -565,7 +531,7 @@ public final class DensityGutterView: NSView {
 
     private func scrub(to event: NSEvent, showsSnippet: Bool) {
         let point = convert(event.locationInWindow, from: nil)
-        updateHoverMarker(at: point, animated: true)
+        updateHoveredBand(at: point, animated: true)
         delegate?.densityGutter(self, didRequestScrollToFraction: fraction(at: point))
         showPreview(at: point, showsSnippet: showsSnippet)
     }
@@ -592,6 +558,7 @@ public final class DensityGutterView: NSView {
             previewWorkItem?.cancel()
             previewWorkItem = nil
             preview.hide()
+            updateHoveredBand(at: nil, animated: false)
             outline.dismiss()
         }
     }

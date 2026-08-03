@@ -64,7 +64,8 @@ final class DensityGutterPreviewWindow: NSWindow {
             return
         }
 
-        setFrame(finalFrame, display: true)
+        let entranceFrame = finalFrame.offsetBy(dx: reduceMotion ? 0 : -4, dy: 0)
+        setFrame(entranceFrame, display: true)
 
         guard self.parent !== parent || !isVisible else {
             content.needsDisplay = true
@@ -76,6 +77,7 @@ final class DensityGutterPreviewWindow: NSWindow {
         guard !reduceMotion else { return }
         GutterChrome.animate(reduceMotion: false, duration: 0.10) { _ in
             self.animator().alphaValue = 1
+            self.animator().setFrame(finalFrame, display: true)
         }
     }
 
