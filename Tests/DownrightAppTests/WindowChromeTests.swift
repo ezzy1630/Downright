@@ -79,6 +79,25 @@ struct WindowChromeTests {
     }
 
     @Test
+    func breadcrumbKeepsItsLaneWhenTheHeadingListIsEmpty() {
+        let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
+        let crumb = BreadcrumbView()
+        container.topAccessory = crumb
+        container.setFrameSize(NSSize(width: 900, height: 600))
+        container.layout()
+        let occupiedLane = container.scrollView.frame.minY
+
+        crumb.trail = [(0, "Section", 1)]
+        container.layout()
+        #expect(container.scrollView.frame.minY == occupiedLane)
+
+        crumb.trail = []
+        container.layout()
+        #expect(container.scrollView.frame.minY == occupiedLane)
+        #expect(crumb.intrinsicContentSize.height == 28)
+    }
+
+    @Test
     func breadcrumbShowsOnlyTheCurrentSection() throws {
         let crumb = BreadcrumbView()
         crumb.trail = [(0, "Downright Design", 1), (1, "Typography and colour", 2)]

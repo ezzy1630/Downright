@@ -14,6 +14,16 @@ protocol BreadcrumbDelegate: AnyObject {
 /// control shows only the section the reader is in. The complete path remains
 /// one click away in a native menu.
 final class BreadcrumbView: NSView {
+    private enum Metrics {
+        /// Fixed chrome height. An empty or temporarily reparsing heading list
+        /// must never move the document under the reader's eyes.
+        static let height: CGFloat = 28
+        static let buttonHeight: CGFloat = 24
+        static let maximumButtonWidth: CGFloat = 360
+        static let horizontalContentAllowance: CGFloat = 26
+        static let sectionChangeDuration: CFTimeInterval = 0.12
+    }
+
     weak var delegate: BreadcrumbDelegate?
 
     var styleSheet: StyleSheet {
@@ -26,8 +36,10 @@ final class BreadcrumbView: NSView {
     var trail: [(index: Int, title: String, level: Int)] = [] {
         didSet {
             guard !Self.sameTrail(oldValue, trail) else { return }
-            invalidateIntrinsicContentSize()
-            rebuild()
+            let crossedSectionBoundary = oldValue.last?.index != nil
+                && trail.last?.index != nil
+                && oldValue.last?.index != trail.last?.index
+            rebuild(animated: crossedSectionBoundary)
         }
     }
 
@@ -82,18 +94,18 @@ final class BreadcrumbView: NSView {
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Current section")
-        rebuild()
+        rebuild(animated: false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 360, height: trail.isEmpty ? 0 : 28)
+        NSSize(width: Metrics.maximumButtonWidth, height: Metrics.height)
     }
 
     // MARK: - Building
 
-    private func rebuild() {
+    private func rebuild(animated: Bool = false) {
         guard let current = trail.last else {
             sectionButton.isHidden = true
             sectionButton.attributedTitle = NSAttributedString()
@@ -104,6 +116,7 @@ final class BreadcrumbView: NSView {
         }
 
         sectionButton.isHidden = false
+        prepareSectionChangeTransitionIfNeeded(animated)
         sectionButton.attributedTitle = styledTitle(current.title)
         sectionButton.image = NSImage(
             systemSymbolName: "chevron.down",
@@ -113,7 +126,8 @@ final class BreadcrumbView: NSView {
         sectionButton.toolTip = trail.map(\.title).joined(separator: " › ")
         sectionButton.setAccessibilityLabel("Current section: \(current.title)")
         sectionButton.setAccessibilityHelp(
-            "Show section path: " + trail.map(\.title).joined(separator: ", ")
+            "Jump to this section or an ancestor. Path: "
+                + trail.map(\.title).joined(separator: ", ")
         )
         setAccessibilityLabel("Current section: \(current.title)")
         needsLayout = true
@@ -121,9 +135,28 @@ final class BreadcrumbView: NSView {
 
     private func styledTitle(_ text: String) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [
-            .font: PanelFont.rowEmphasised,
-            .foregroundColor: styleSheet.text,
+            // Chrome should remain visibly distinct from the document heading
+            // it names. Medium system text reads as navigation, not content.
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: styleSheet.textSecondary,
         ])
+    }
+
+    /// A section boundary should register in peripheral vision without making
+    /// the title feel delayed or absent. Install the compositor transition
+    /// before the immediate title swap so old and new pixels crossfade.
+    private func prepareSectionChangeTransitionIfNeeded(_ animated: Bool) {
+        guard animated,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let layer = sectionButton.layer
+        else { return }
+
+        layer.removeAnimation(forKey: "section-change")
+        let transition = CATransition()
+        transition.type = .fade
+        transition.duration = Metrics.sectionChangeDuration
+        transition.timingFunction = ToolbarChromePolicy.timingFunction()
+        layer.add(transition, forKey: "section-change")
     }
 
     // MARK: - Layout
@@ -132,12 +165,13 @@ final class BreadcrumbView: NSView {
         super.layout()
         guard let current = trail.last else { return }
         let titleWidth = styledTitle(current.title).size().width
-        let width = min(bounds.width, titleWidth + 28)
+        let availableWidth = min(bounds.width, Metrics.maximumButtonWidth)
+        let width = min(availableWidth, titleWidth + Metrics.horizontalContentAllowance)
         sectionButton.frame = NSRect(
             x: 0,
-            y: (bounds.height - 22) / 2,
+            y: (bounds.height - Metrics.buttonHeight) / 2,
             width: max(44, width),
-            height: 22
+            height: Metrics.buttonHeight
         )
         // Borderless NSButton cells retain a small native content inset. Shift
         // the control, not its text, so the visible title shares the document's
@@ -185,6 +219,6 @@ final class BreadcrumbView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        rebuild()
+        rebuild(animated: false)
     }
 }

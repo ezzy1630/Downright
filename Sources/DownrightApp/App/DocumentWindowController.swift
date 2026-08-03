@@ -684,7 +684,6 @@ final class DocumentWindowController: NSWindowController {
             ?? headings.indices.first
         else {
             breadcrumbView.trail = []
-            primaryContainer.needsLayout = true
             return
         }
         var trail: [(index: Int, title: String, level: Int)] = []
@@ -695,7 +694,6 @@ final class DocumentWindowController: NSWindowController {
             index = parent
         }
         breadcrumbView.trail = trail
-        primaryContainer.needsLayout = true
     }
 
     func refreshChangeDecorations() {
