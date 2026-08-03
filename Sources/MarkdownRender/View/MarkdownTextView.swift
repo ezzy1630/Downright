@@ -329,6 +329,10 @@ public final class MarkdownTextView: NSTextView {
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: Int?
     private var resizeNeedsRepair = false
+    /// Presentation already applied to storage. Keeping this lifecycle explicit
+    /// prevents Document-mode parse commits from sweeping `.drSourceFocus`
+    /// across the entire document when no source presentation is active.
+    private var appliedSourceFocus: SourceFocus = .none
 
     private var effectivePolicy: DecorationPolicy {
         var policy = mode.policy
@@ -475,7 +479,7 @@ public final class MarkdownTextView: NSTextView {
 
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: document, dirty: dirty)
-        applySourcePresentation()
+        applySourcePresentation(scopes: isWholesaleUpdate ? nil : dirtyScopes)
         if configuration.showInvisibles || invisiblesApplied {
             applyInvisibles(scopes: isWholesaleUpdate ? nil : dirtyScopes)
         }
@@ -820,15 +824,18 @@ public final class MarkdownTextView: NSTextView {
     /// Decoration runs first so Markdown token colours remain intact; this
     /// pass owns only font, line geometry, and the source-focus marker used by
     /// background/chrome drawing.
-    private func applySourcePresentation() {
+    private func applySourcePresentation(scopes: [NSRange]? = nil) {
         guard let storage = textStorage, storage.length > 0 else { return }
         let whole = NSRange(location: 0, length: storage.length)
-        storage.removeAttribute(.drSourceFocus, range: whole)
 
         let target: NSRange
         let scoped: Bool
         switch sourceFocus {
         case .none:
+            guard appliedSourceFocus != .none else { return }
+            let previous = sourcePresentationRange(for: appliedSourceFocus, in: whole)
+            if let previous { storage.removeAttribute(.drSourceFocus, range: previous) }
+            appliedSourceFocus = .none
             return
         case .document:
             target = whole
@@ -841,30 +848,68 @@ public final class MarkdownTextView: NSTextView {
             scoped = true
         }
 
+        let focusChanged = appliedSourceFocus != sourceFocus
+        if focusChanged,
+           let previous = sourcePresentationRange(for: appliedSourceFocus, in: whole) {
+            storage.removeAttribute(.drSourceFocus, range: previous)
+        }
+        appliedSourceFocus = sourceFocus
+
+        let applicationRanges: [NSRange]
+        if focusChanged || scopes == nil {
+            applicationRanges = [target]
+        } else {
+            applicationRanges = RangeSet.normalized((scopes ?? []).compactMap {
+                $0.intersection(target)
+            })
+        }
+        guard !applicationRanges.isEmpty else { return }
+
         var attributes = styleSheet.monoFontAttributes()
         attributes[.drSourceFocus] = true
-        storage.addAttributes(attributes, range: target)
+        for range in applicationRanges {
+            storage.addAttributes(attributes, range: range)
+        }
 
         let source = storage.string as NSString
-        var cursor = target.location
-        while cursor < target.upperBound {
-            let paragraph = source.paragraphRange(for: NSRange(location: cursor, length: 0))
-                .intersection(target) ?? NSRange(location: cursor, length: 0)
-            guard paragraph.length > 0 else { break }
-            let style = NSMutableParagraphStyle()
-            style.minimumLineHeight = styleSheet.lineHeight
-            style.maximumLineHeight = styleSheet.lineHeight
-            style.lineBreakMode = .byWordWrapping
-            style.paragraphSpacingBefore = scoped && cursor == target.location ? 28 : 0
-            style.paragraphSpacing = scoped && paragraph.upperBound >= target.upperBound ? 8 : 0
-            style.tabStops = stride(from: 4, through: 80, by: 4).map {
-                NSTextTab(textAlignment: .left,
-                          location: CGFloat($0) * styleSheet.averageCharacterWidth,
-                          options: [:])
+        let paragraphs = RangeSet.normalized(applicationRanges.compactMap { range in
+            let lower = source.paragraphRange(for: NSRange(location: range.location, length: 0))
+            let upperOffset = max(range.location, range.upperBound - 1)
+            let upper = source.paragraphRange(for: NSRange(location: upperOffset, length: 0))
+            return lower.union(upper).intersection(target)
+        })
+        for paragraphsRange in paragraphs {
+            var cursor = paragraphsRange.location
+            while cursor < paragraphsRange.upperBound {
+                let paragraph = source.paragraphRange(for: NSRange(location: cursor, length: 0))
+                    .intersection(target) ?? NSRange(location: cursor, length: 0)
+                guard paragraph.length > 0 else { break }
+                let style = NSMutableParagraphStyle()
+                style.minimumLineHeight = styleSheet.lineHeight
+                style.maximumLineHeight = styleSheet.lineHeight
+                style.lineBreakMode = .byWordWrapping
+                style.paragraphSpacingBefore = scoped && cursor == target.location ? 28 : 0
+                style.paragraphSpacing = scoped && paragraph.upperBound >= target.upperBound ? 8 : 0
+                style.tabStops = stride(from: 4, through: 80, by: 4).map {
+                    NSTextTab(textAlignment: .left,
+                              location: CGFloat($0) * styleSheet.averageCharacterWidth,
+                              options: [:])
+                }
+                style.defaultTabInterval = styleSheet.averageCharacterWidth * 4
+                storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
+                cursor = paragraph.upperBound
             }
-            style.defaultTabInterval = styleSheet.averageCharacterWidth * 4
-            storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
-            cursor = paragraph.upperBound
+        }
+    }
+
+    private func sourcePresentationRange(for focus: SourceFocus, in whole: NSRange) -> NSRange? {
+        switch focus {
+        case .none:
+            return nil
+        case .document:
+            return whole
+        case .scoped(let range):
+            return range.intersection(whole)
         }
     }
 
