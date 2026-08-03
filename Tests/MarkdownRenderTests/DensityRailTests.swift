@@ -9,12 +9,58 @@ struct DensityRailTests {
     @Test("Outline geometry and dwell policy stay on spec")
     func outlineGeometryAndTiming() {
         #expect(DensityGutterView.width == 72)
-        #expect(DensityGutterView.hoverDwell == 0.04)
+        #expect(DensityGutterView.hoverDwell == 0.02)
+        #expect(DensityGutterView.hoverActivationSlop == 18)
+        #expect(DensityGutterView.hoverDismissalSlop == 3)
+        #expect(DensityGutterView.previewExitDelay == 0.06)
         #expect(DensityOutlineWindow.rowHeight == 44)
         #expect(DensityOutlineWindow.cornerRadius == 14)
         #expect(DensityOutlineWindow.showDwell == 0.25)
         #expect(DensityOutlineWindow.showDuration == 0.12)
         #expect(DensityOutlineWindow.hideDuration == 0.09)
+    }
+
+    @Test("Hover opens near a mark but dismisses outside its row")
+    func hoverHysteresis() {
+        let positions: [CGFloat] = [100, 200]
+        let activation = DensityGutterView.hoverActivationSlop
+        let dismissal = DensityGutterView.hoverDismissalSlop
+
+        #expect(DensityGutterView.nextHoveredBandIndex(
+            at: 117,
+            positions: positions,
+            currentIndex: nil,
+            activationSlop: activation,
+            dismissalSlop: dismissal
+        ) == 0)
+        #expect(DensityGutterView.nextHoveredBandIndex(
+            at: 119,
+            positions: positions,
+            currentIndex: nil,
+            activationSlop: activation,
+            dismissalSlop: dismissal
+        ) == nil)
+        #expect(DensityGutterView.nextHoveredBandIndex(
+            at: 103,
+            positions: positions,
+            currentIndex: 0,
+            activationSlop: activation,
+            dismissalSlop: dismissal
+        ) == 0)
+        #expect(DensityGutterView.nextHoveredBandIndex(
+            at: 110,
+            positions: positions,
+            currentIndex: 0,
+            activationSlop: activation,
+            dismissalSlop: dismissal
+        ) == nil)
+        #expect(DensityGutterView.nextHoveredBandIndex(
+            at: 185,
+            positions: positions,
+            currentIndex: 0,
+            activationSlop: activation,
+            dismissalSlop: dismissal
+        ) == 1)
     }
 
     @Test("At-rest bands carry navigation signals, not body minimap stripes")

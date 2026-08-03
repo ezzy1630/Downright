@@ -6,15 +6,18 @@ import MarkdownCore
 /// A borderless child window rather than an `NSPopover`: a popover animates,
 /// takes focus, and draws an anchor arrow, all of which are wrong for something
 /// that has to track a drag at 120fps.  It ignores mouse events entirely so it
-/// can never interrupt the scrub that summoned it.
+/// stays non-interactive during scrubbing, but can accept pointer presence
+/// during passive hover so the line-to-card path does not feel fragile.
 final class DensityGutterPreviewWindow: NSWindow {
     var styleSheet: StyleSheet {
         didSet { content.styleSheet = styleSheet }
     }
 
+    var onPointerPresence: ((Bool) -> Void)?
+
     private let content: PreviewContentView
     private let maximumWidth: CGFloat = 320
-    private let entranceDuration: TimeInterval = 0.10
+    private let entranceDuration: TimeInterval = 0.06
     private let exitDuration: TimeInterval = 0.08
     private var presentationGeneration = 0
 
@@ -33,6 +36,9 @@ final class DensityGutterPreviewWindow: NSWindow {
         isReleasedWhenClosed = false
         animationBehavior = .none
         contentView = content
+        content.onPointerPresence = { [weak self] isInside in
+            self?.onPointerPresence?(isInside)
+        }
     }
 
     /// `anchor` is the screen point at the gutter's trailing edge, level with
@@ -44,9 +50,11 @@ final class DensityGutterPreviewWindow: NSWindow {
         footer: String,
         rightOf anchor: NSPoint,
         over parent: NSWindow,
-        reduceMotion: Bool
+        reduceMotion: Bool,
+        interactive: Bool
     ) {
         presentationGeneration &+= 1
+        ignoresMouseEvents = !interactive
         let titleChanged = content.update(title: title, snippet: snippet, footer: footer)
         let alreadyPresented = isVisible && self.parent === parent
         // Pointer movement should not trigger a new text measurement on every
@@ -97,6 +105,7 @@ final class DensityGutterPreviewWindow: NSWindow {
         let generation = presentationGeneration
 
         guard !styleSheet.reduceMotion else {
+            ignoresMouseEvents = true
             parent?.removeChildWindow(self)
             orderOut(nil)
             alphaValue = 1
@@ -110,16 +119,25 @@ final class DensityGutterPreviewWindow: NSWindow {
             self.animator().alphaValue = 0
         }, completion: { [weak self] in
             guard let self, self.presentationGeneration == generation else { return }
+            self.ignoresMouseEvents = true
             self.parent?.removeChildWindow(self)
             self.orderOut(nil)
             self.alphaValue = 1
         })
+    }
+
+    func cancelHideAnimation() {
+        guard isVisible else { return }
+        presentationGeneration &+= 1
+        alphaValue = 1
     }
 }
 
 // MARK: - Content
 
 private final class PreviewContentView: NSView {
+    var onPointerPresence: ((Bool) -> Void)?
+
     var styleSheet: StyleSheet {
         didSet {
             layer?.backgroundColor = styleSheet.surface.withAlphaComponent(0.96).cgColor
@@ -135,6 +153,7 @@ private final class PreviewContentView: NSView {
     private let padding: CGFloat = 9
     /// Enough to recognise the section, not enough to read it here.
     private let snippetLimit = 220
+    private var trackingArea: NSTrackingArea?
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
@@ -150,6 +169,21 @@ private final class PreviewContentView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var isFlipped: Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onPointerPresence?(true) }
+    override func mouseExited(with event: NSEvent) { onPointerPresence?(false) }
 
     func update(title: String, snippet: String, footer: String) -> Bool {
         let titleChanged = title != self.title
