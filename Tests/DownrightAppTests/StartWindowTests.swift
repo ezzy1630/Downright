@@ -13,7 +13,7 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        #expect(window.minSize == NSSize(width: 660, height: 390))
+        #expect(window.minSize == NSSize(width: 720, height: 410))
         #expect(window.titleVisibility == .hidden)
         #expect(window.contentView?.accessibilityLabel() == "Downright start window")
         #expect(window.initialFirstResponder != nil)
@@ -51,6 +51,7 @@ struct StartWindowTests {
 
         #expect(abs(openCenter - createCenter) < 0.5)
         #expect(abs(open.frame.width - create.frame.width) < 0.5)
+        #expect(abs(open.frame.width - 196) < 0.5)
     }
 
     @Test

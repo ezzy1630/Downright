@@ -5,6 +5,16 @@ import QuickLookThumbnailing
 /// Six rows fit the compact start window without vertical scroll or dead space.
 private let startRecentDisplayLimit = 6
 
+private enum StartLayout {
+    static let windowSize = NSSize(width: 760, height: 450)
+    static let minimumWindowSize = NSSize(width: 720, height: 410)
+    static let horizontalInset: CGFloat = 48
+    static let bottomInset: CGFloat = 32
+    static let columnSpacing: CGFloat = 44
+    static let heroWidth: CGFloat = 252
+    static let recentWidth: CGFloat = 320
+}
+
 @MainActor
 final class StartWindowController: NSWindowController {
     static let recentDisplayLimit = startRecentDisplayLimit
@@ -18,7 +28,7 @@ final class StartWindowController: NSWindowController {
 
     convenience init(recents: [RecentDocument]) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 740, height: 430),
+            contentRect: NSRect(origin: .zero, size: StartLayout.windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -27,7 +37,7 @@ final class StartWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
-        window.minSize = NSSize(width: 660, height: 390)
+        window.minSize = StartLayout.minimumWindowSize
         window.backgroundColor = .windowBackgroundColor
         window.center()
         self.init(window: window)
@@ -144,7 +154,7 @@ private final class StartView: NSView {
         columns.orientation = .horizontal
         columns.alignment = .top
         columns.distribution = .fill
-        columns.spacing = 32
+        columns.spacing = StartLayout.columnSpacing
         canvas.addSubview(columns)
 
         hero.translatesAutoresizingMaskIntoConstraints = false
@@ -179,15 +189,24 @@ private final class StartView: NSView {
             canvas.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             canvas.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
 
-            columns.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor, constant: 32),
-            columns.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -32),
+            columns.leadingAnchor.constraint(
+                greaterThanOrEqualTo: canvas.leadingAnchor,
+                constant: StartLayout.horizontalInset
+            ),
+            columns.trailingAnchor.constraint(
+                lessThanOrEqualTo: canvas.trailingAnchor,
+                constant: -StartLayout.horizontalInset
+            ),
             columns.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
-            columns.bottomAnchor.constraint(lessThanOrEqualTo: canvas.bottomAnchor, constant: -24),
+            columns.bottomAnchor.constraint(
+                lessThanOrEqualTo: canvas.bottomAnchor,
+                constant: -StartLayout.bottomInset
+            ),
             centerX,
             centerY,
 
-            hero.widthAnchor.constraint(equalToConstant: 248),
-            recentPanel.widthAnchor.constraint(equalToConstant: 312),
+            hero.widthAnchor.constraint(equalToConstant: StartLayout.heroWidth),
+            recentPanel.widthAnchor.constraint(equalToConstant: StartLayout.recentWidth),
         ])
     }
 
@@ -305,11 +324,10 @@ private final class StartHeroView: NSView {
         subtitleLabel.preferredMaxLayoutWidth = 240
         configurePassiveLabel(subtitleLabel)
 
-        // Keep the actions on one optical axis. Their intrinsic widths differ,
-        // so leading or trailing alignment makes the group feel off-balance.
+        // Keep the reading path straight from headline to primary action.
         let actions = NSStackView(views: [openButton, newButton])
         actions.orientation = .vertical
-        actions.alignment = .centerX
+        actions.alignment = .leading
         actions.spacing = 8
         actions.distribution = .fillEqually
 
@@ -333,15 +351,14 @@ private final class StartHeroView: NSView {
         NSLayoutConstraint.activate([
             brand.widthAnchor.constraint(equalToConstant: 18),
             brand.heightAnchor.constraint(equalToConstant: 18),
-            openButton.heightAnchor.constraint(equalToConstant: 34),
-            newButton.heightAnchor.constraint(equalToConstant: 34),
-            openButton.widthAnchor.constraint(equalToConstant: 156),
+            openButton.heightAnchor.constraint(equalToConstant: 36),
+            newButton.heightAnchor.constraint(equalToConstant: 36),
+            openButton.widthAnchor.constraint(equalToConstant: 196),
             newButton.widthAnchor.constraint(equalTo: openButton.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 248),
-            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 240),
+            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.heroWidth),
+            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.heroWidth),
             dropSlot.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            dropHint.centerXAnchor.constraint(equalTo: dropSlot.centerXAnchor),
+            dropHint.leadingAnchor.constraint(equalTo: dropSlot.leadingAnchor),
             dropHint.topAnchor.constraint(equalTo: dropSlot.topAnchor),
             dropHint.bottomAnchor.constraint(equalTo: dropSlot.bottomAnchor),
 
@@ -351,10 +368,10 @@ private final class StartHeroView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        stack.setCustomSpacing(14, after: brandRow)
-        stack.setCustomSpacing(8, after: titleLabel)
-        stack.setCustomSpacing(18, after: subtitleLabel)
-        stack.setCustomSpacing(16, after: actions)
+        stack.setCustomSpacing(18, after: brandRow)
+        stack.setCustomSpacing(9, after: titleLabel)
+        stack.setCustomSpacing(22, after: subtitleLabel)
+        stack.setCustomSpacing(13, after: actions)
 
         applyTextColors()
         setAccessibilityRole(.group)
@@ -387,7 +404,7 @@ private final class StartHeroView: NSView {
 
     private func applyTextColors() {
         let titleParagraph = NSMutableParagraphStyle()
-        titleParagraph.lineSpacing = 1
+        titleParagraph.lineSpacing = 0
         brandLabel.attributedStringValue = NSAttributedString(
             string: "DOWNRIGHT",
             attributes: [
@@ -399,7 +416,7 @@ private final class StartHeroView: NSView {
         titleLabel.attributedStringValue = NSAttributedString(
             string: "Read deeply.\nWrite lightly.",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 24, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 25, weight: .semibold),
                 .foregroundColor: NSColor.labelColor,
                 .kern: -0.3,
                 .paragraphStyle: titleParagraph,
@@ -447,38 +464,38 @@ private final class RecentDocumentsPanel: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = 12
         layer?.masksToBounds = false
         layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.18
-        layer?.shadowRadius = 14
-        layer?.shadowOffset = NSSize(width: 0, height: -4)
+        layer?.shadowOpacity = 0.10
+        layer?.shadowRadius = 18
+        layer?.shadowOffset = NSSize(width: 0, height: -6)
         applySurface()
 
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        headerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        headerLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         headerLabel.textColor = .secondaryLabelColor
         configurePassiveLabel(headerLabel)
 
         list.translatesAutoresizingMaskIntoConstraints = false
         list.orientation = .vertical
         list.alignment = .width
-        list.spacing = 3
+        list.spacing = 2
 
         addSubview(headerLabel)
         addSubview(list)
 
         NSLayoutConstraint.activate([
-            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            headerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            headerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
 
-            list.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            list.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            list.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 8),
-            list.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            list.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            list.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            list.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 10),
+            list.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
 
-            widthAnchor.constraint(equalToConstant: 312),
+            widthAnchor.constraint(equalToConstant: StartLayout.recentWidth),
         ])
 
         setAccessibilityRole(.group)
@@ -505,10 +522,11 @@ private final class RecentDocumentsPanel: NSView {
         let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         // Keep the panel solid enough that secondary text stays readable over the
         // window backdrop — 0.45 was washing metadata into the background.
-        let alpha: CGFloat = (increaseContrast || reduceTransparency) ? 0.98 : 0.78
+        let alpha: CGFloat = (increaseContrast || reduceTransparency) ? 0.98 : 0.62
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(alpha).cgColor
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(increaseContrast ? 0.55 : 0.30).cgColor
+        layer?.borderColor = NSColor.separatorColor
+            .withAlphaComponent(increaseContrast ? 0.55 : 0.20).cgColor
     }
 
     private func rebuild(recents: [RecentDocument], animate: Bool) {
@@ -540,7 +558,7 @@ private final class RecentDocumentsPanel: NSView {
                     target: owner
                 )
                 card.translatesAutoresizingMaskIntoConstraints = false
-                card.heightAnchor.constraint(equalToConstant: 42).isActive = true
+                card.heightAnchor.constraint(equalToConstant: 40).isActive = true
                 list.addArrangedSubview(card)
                 card.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
                 recentCards.append(card)
