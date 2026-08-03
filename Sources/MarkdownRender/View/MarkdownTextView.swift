@@ -284,6 +284,7 @@ public final class MarkdownTextView: NSTextView {
     var paragraphIndex: ParagraphIndex = .empty
     private var displayMap: DisplayMap = .identity
     private var hardWrapRanges: [NSRange] = []
+    private var hardWrapSubstitutions: [DisplaySubstitution] = []
     private var elision: ElisionPlan = .none
 
     private var isApplyingSelection = false
@@ -794,11 +795,12 @@ public final class MarkdownTextView: NSTextView {
             enabled: configuration.reflowHardWrappedParagraphs
         )
         hardWrapRanges = plan.ranges
+        hardWrapSubstitutions = plan.substitutions.filter(\.isHardWrapReflow)
         baseDisplayMap = DisplayMap(
             paragraphs: paragraphIndex,
             substitutions: hidden.map(DisplaySubstitution.hide)
                 + mathSubstitutions
-                + plan.substitutions.filter { !$0.isHidden }
+                + hardWrapSubstitutions
         )
         // Selection / hit-testing speak TextKit coordinates from the layout map
         // (length-preserving joiners). Collapsed logical maps stay on the
@@ -976,20 +978,38 @@ public final class MarkdownTextView: NSTextView {
         oldParagraphs: ParagraphIndex,
         oldHiddenRanges: [NSRange]
     ) {
-        let projected = RangeSet.projectedAcrossEdit(
-            oldHiddenRanges,
+        let projection = SourceEditProjection(
             edit: edit,
             insertedLength: insertedLength,
-            oldParagraphs: oldParagraphs,
-            inputIsNormalized: true
+            oldParagraphs: oldParagraphs
         )
-        baseHiddenRanges = projected
-        baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: projected)
-        hardWrapRanges = []
+        let projectedHidden = oldHiddenRanges.compactMap(projection.project)
+        let projectedHardWrapRanges = RangeSet.normalized(
+            hardWrapRanges.compactMap(projection.project)
+        )
+        let projectedHardWrapSubstitutions = hardWrapSubstitutions.compactMap {
+            substitution -> DisplaySubstitution? in
+            guard let range = projection.project(substitution.sourceRange),
+                  RangeSet.covers(projectedHardWrapRanges, range.location) else {
+                return nil
+            }
+            var projected = substitution
+            projected.sourceRange = range
+            return projected
+        }
+
+        baseHiddenRanges = projectedHidden
+        hardWrapRanges = projectedHardWrapRanges
+        hardWrapSubstitutions = projectedHardWrapSubstitutions
+        baseDisplayMap = DisplayMap(
+            paragraphs: paragraphIndex,
+            substitutions: projectedHidden.map(DisplaySubstitution.hide)
+                + projectedHardWrapSubstitutions
+        )
         displayMap = layoutDisplayMap(from: baseDisplayMap)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
-            reflowRanges: [],
+            reflowRanges: projectedHardWrapRanges,
             displayMap: displayMap
         )
         // Physical fallback still collapses markers; layout map keeps TextKit

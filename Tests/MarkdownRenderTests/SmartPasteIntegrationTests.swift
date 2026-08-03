@@ -212,6 +212,66 @@ struct SmartPasteIntegrationTests {
         #expect(view.currentDisplayMap.paragraphs.length == view.textStorage?.length)
     }
 
+    @Test("an edit keeps unrelated hard-wrapped blocks reflowed until async parse commits")
+    func transientEditProjectionKeepsHardWrapReflow() throws {
+        let source = """
+        # Title
+
+        First prose line wraps in the source
+        but remains one rendered paragraph.
+
+        Second prose line also wraps in the source
+        and must not flash back to physical lines.
+        """
+        let view = view(for: source)
+        let oldBreak = (source as NSString).range(of: "source\nbut")
+        let laterBreak = (source as NSString).range(of: "source\nand")
+
+        #expect(view.currentDisplayMap.substitutions.contains {
+            $0.isHardWrapReflow && $0.sourceRange.location == oldBreak.location + 6
+        })
+        #expect(view.performSourceEdit(
+            range: NSRange(location: (source as NSString).range(of: "Title").upperBound, length: 0),
+            replacement: " grows"
+        ))
+
+        let delta = (" grows" as NSString).length
+        let projectedBreaks = view.currentDisplayMap.substitutions
+            .filter(\.isHardWrapReflow)
+            .map(\.sourceRange.location)
+        #expect(projectedBreaks.contains(oldBreak.location + 6 + delta))
+        #expect(projectedBreaks.contains(laterBreak.location + 6 + delta))
+    }
+
+    @Test("an edit invalidates only its own hard-wrapped block")
+    func transientEditProjectionDropsTouchedHardWrapBlock() throws {
+        let source = """
+        # Title
+
+        First prose line wraps in the source
+        but remains one rendered paragraph.
+
+        Second prose line also wraps in the source
+        and stays rendered while the first changes.
+        """
+        let view = view(for: source)
+        let firstBreak = (source as NSString).range(of: "source\nbut")
+        let secondBreak = (source as NSString).range(of: "source\nand")
+        let edit = (source as NSString).range(of: "First")
+
+        #expect(view.performSourceEdit(
+            range: NSRange(location: edit.upperBound, length: 0),
+            replacement: " edited"
+        ))
+
+        let delta = (" edited" as NSString).length
+        let projectedBreaks = view.currentDisplayMap.substitutions
+            .filter(\.isHardWrapReflow)
+            .map(\.sourceRange.location)
+        #expect(!projectedBreaks.contains(firstBreak.location + 6))
+        #expect(projectedBreaks.contains(secondBreak.location + 6 + delta))
+    }
+
     @Test("code, math, and front matter keep clipboard text literal")
     func literalContextsBypassTransforms() {
         let html = MarkdownPastePayload.html(

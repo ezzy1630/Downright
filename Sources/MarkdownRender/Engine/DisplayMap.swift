@@ -228,25 +228,41 @@ public enum RangeSet {
         oldParagraphs: ParagraphIndex,
         inputIsNormalized: Bool = false
     ) -> [NSRange] {
-        let boundedLocation = Swift.max(0, Swift.min(edit.location, oldParagraphs.length))
-        let boundedEnd = Swift.max(
-            boundedLocation,
-            Swift.min(edit.upperBound, oldParagraphs.length)
+        let projection = SourceEditProjection(
+            edit: edit,
+            insertedLength: insertedLength,
+            oldParagraphs: oldParagraphs
         )
-        let first = oldParagraphs.index(containing: boundedLocation)
-        let lastOffset = Swift.max(boundedLocation, boundedEnd - 1)
-        let last = oldParagraphs.index(containing: lastOffset)
-        let affected = NSUnionRange(oldParagraphs.range(at: first), oldParagraphs.range(at: last))
-        let delta = insertedLength - edit.length
-
-        let projected = ranges.compactMap { range in
-            if range.upperBound <= affected.location { return range }
-            if range.location >= affected.upperBound {
-                return NSRange(location: range.location + delta, length: range.length)
-            }
-            return nil
-        }
+        let projected = ranges.compactMap(projection.project)
         return inputIsNormalized ? projected : normalized(projected)
+    }
+}
+
+/// Immutable coordinate policy for the interval between a source edit and its
+/// asynchronous parse commit. Ranges outside the touched physical paragraphs
+/// remain valid; later ranges move by the edit delta; touched ranges expire.
+struct SourceEditProjection: Sendable {
+    let invalidatedRange: NSRange
+    let delta: Int
+
+    init(edit: NSRange, insertedLength: Int, oldParagraphs: ParagraphIndex) {
+        let location = Swift.max(0, Swift.min(edit.location, oldParagraphs.length))
+        let end = Swift.max(location, Swift.min(edit.upperBound, oldParagraphs.length))
+        let first = oldParagraphs.index(containing: location)
+        let last = oldParagraphs.index(containing: Swift.max(location, end - 1))
+        invalidatedRange = NSUnionRange(
+            oldParagraphs.range(at: first),
+            oldParagraphs.range(at: last)
+        )
+        delta = insertedLength - edit.length
+    }
+
+    func project(_ range: NSRange) -> NSRange? {
+        if range.upperBound <= invalidatedRange.location { return range }
+        if range.location >= invalidatedRange.upperBound {
+            return NSRange(location: range.location + delta, length: range.length)
+        }
+        return nil
     }
 }
 
