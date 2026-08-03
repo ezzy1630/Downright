@@ -28,8 +28,8 @@ public final class MarkdownContainerView: NSView {
     /// Width reserved on the left for block markers in Live mode (§6.1a).
     public private(set) var gutterWidth: CGFloat = RenderMetrics.gutterWidth
 
-    /// Optional contents map. It sits at the leading edge so it reads as
-    /// navigation, not as a second scrollbar.
+    /// Optional contents map. A density map floats in the document's left
+    /// whitespace; other accessories still reserve a normal leading column.
     public var leadingAccessory: NSView? {
         didSet {
             oldValue?.removeFromSuperview()
@@ -115,7 +115,10 @@ public final class MarkdownContainerView: NSView {
     public override func layout() {
         super.layout()
         let topHeight = topAccessory.map { $0.fittingSize.height > 0 ? $0.fittingSize.height : 28 } ?? 0
-        let leadingWidth = leadingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 24 } ?? 0
+        let isFloatingDensityMap = leadingAccessory is DensityGutterView
+        let leadingWidth = isFloatingDensityMap
+            ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
+            : (leadingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 24 } ?? 0)
         let trailingWidth = trailingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 14 } ?? 0
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
 
@@ -159,8 +162,19 @@ public final class MarkdownContainerView: NSView {
         textView.minSize = NSSize(width: measure + RenderMetrics.revealSlack * 2, height: 0)
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)
 
-        gutter.frame = NSRect(x: max(0, textLeft - gutterWidth), y: 0,
+        let textOrigin = scrollView.frame.minX + textLeft
+        gutter.frame = NSRect(x: max(0, textOrigin - gutterWidth), y: 0,
                               width: gutterWidth, height: scrollView.frame.height)
+
+        if isFloatingDensityMap, let leadingAccessory {
+            // The map belongs to the document column, not the window edge.
+            // Leave the block-marker gutter between it and the text so the
+            // two controls never visually merge.
+            let mapWidth = leadingWidth
+            let mapX = max(8, textOrigin - mapWidth - 16)
+            leadingAccessory.frame = NSRect(x: mapX, y: 0,
+                                            width: mapWidth, height: scrollView.frame.height)
+        }
 
     }
 

@@ -51,7 +51,20 @@ final class DensityGutterPreviewWindow: NSWindow {
             origin.x = min(max(visible.minX + 4, origin.x), visible.maxX - size.width - 4)
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
         }
-        setFrame(NSRect(origin: origin, size: size), display: true)
+        let finalFrame = NSRect(origin: origin, size: size)
+        let alreadyPresented = isVisible && self.parent === parent
+
+        if alreadyPresented {
+            // Hover moves should feel like one surface following the pointer,
+            // not a sequence of cards blinking in and out.
+            GutterChrome.animate(reduceMotion: reduceMotion, duration: 0.12) { _ in
+                self.animator().setFrame(finalFrame, display: true)
+            }
+            content.needsDisplay = true
+            return
+        }
+
+        setFrame(finalFrame, display: true)
 
         guard self.parent !== parent || !isVisible else {
             content.needsDisplay = true
