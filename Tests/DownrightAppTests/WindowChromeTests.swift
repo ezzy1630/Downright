@@ -6,6 +6,24 @@ import Testing
 @MainActor
 struct WindowChromeTests {
     @Test
+    func toolbarChromePolicyKeepsFeedbackSubtleAndContrastAware() {
+        #expect(ToolbarChromePolicy.feedbackOpacity(for: .idle, increaseContrast: false) == 0)
+        #expect(
+            ToolbarChromePolicy.feedbackOpacity(for: .hover, increaseContrast: false)
+                < ToolbarChromePolicy.feedbackOpacity(for: .pressed, increaseContrast: false)
+        )
+        #expect(
+            ToolbarChromePolicy.feedbackOpacity(for: .hover, increaseContrast: true)
+                > ToolbarChromePolicy.feedbackOpacity(for: .hover, increaseContrast: false)
+        )
+        #expect(
+            ToolbarChromePolicy.indicatorOpacity(isWindowActive: true, increaseContrast: false)
+                > ToolbarChromePolicy.indicatorOpacity(isWindowActive: false, increaseContrast: false)
+        )
+        #expect(ToolbarChromePolicy.selectionDuration < 0.2)
+    }
+
+    @Test
     func toolbarUsesNativeCenteredModeAndTrailingMenu() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }

@@ -1,5 +1,48 @@
 import AppKit
 
+/// One policy for toolbar motion and emphasis. Keeping these decisions pure
+/// prevents individual controls from drifting into different timings or tones.
+enum ToolbarChromePolicy {
+    enum InteractionState {
+        case idle
+        case hover
+        case pressed
+    }
+
+    static let hoverDuration: CFTimeInterval = 0.10
+    static let pressInDuration: CFTimeInterval = 0.07
+    static let pressOutDuration: CFTimeInterval = 0.11
+    static let selectionDuration: CFTimeInterval = 0.15
+    static let emphasisDuration: CFTimeInterval = 0.11
+    static let pressedScale: CGFloat = 0.985
+
+    static func timingFunction() -> CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+    }
+
+    static func feedbackOpacity(
+        for state: InteractionState,
+        increaseContrast: Bool
+    ) -> Float {
+        switch (state, increaseContrast) {
+        case (.idle, _): 0
+        case (.hover, false): 0.075
+        case (.hover, true): 0.11
+        case (.pressed, false): 0.14
+        case (.pressed, true): 0.19
+        }
+    }
+
+    static func indicatorOpacity(isWindowActive: Bool, increaseContrast: Bool) -> Float {
+        switch (isWindowActive, increaseContrast) {
+        case (true, false): 0.82
+        case (true, true): 1
+        case (false, false): 0.38
+        case (false, true): 0.56
+        }
+    }
+}
+
 /// Leading titlebar identity. It mirrors the window's document title while
 /// preserving a deliberate two-line hierarchy and the titlebar drag region.
 @MainActor
@@ -104,6 +147,7 @@ final class ToolbarPresentationControl: NSView {
     private let sourceButton: ToolbarModeButton
     private let selectionIndicator = CALayer()
     private var activationObservers: [NSObjectProtocol] = []
+    private var accessibilityObserver: NSObjectProtocol?
     private(set) var selectedSegment = -1
 
     let onChange: (Int) -> Void
@@ -160,6 +204,13 @@ final class ToolbarPresentationControl: NSView {
         setAccessibilityRole(.group)
         setAccessibilityLabel("Document presentation")
         setAccessibilityHelp("Switch between rendered Document and raw Source")
+        accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshWindowEmphasis(animated: false) }
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -167,6 +218,9 @@ final class ToolbarPresentationControl: NSView {
     deinit {
         for observer in activationObservers {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let accessibilityObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(accessibilityObserver)
         }
     }
 
@@ -236,8 +290,8 @@ final class ToolbarPresentationControl: NSView {
         let currentFrame = selectionIndicator.presentation()?.frame ?? selectionIndicator.frame
         let animation = CABasicAnimation(keyPath: "position")
         animation.fromValue = NSValue(point: NSPoint(x: currentFrame.midX, y: currentFrame.midY))
-        animation.duration = 0.14
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.duration = ToolbarChromePolicy.selectionDuration
+        animation.timingFunction = ToolbarChromePolicy.timingFunction()
         selectionIndicator.add(animation, forKey: "selection-change")
         selectionIndicator.frame = frame
     }
@@ -246,16 +300,20 @@ final class ToolbarPresentationControl: NSView {
         let active = window?.isKeyWindow == true
         documentButton.setWindowActive(active)
         sourceButton.setWindowActive(active)
-        let opacity: Float = active ? 0.82 : 0.38
+        let opacity = ToolbarChromePolicy.indicatorOpacity(
+            isWindowActive: active,
+            increaseContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        )
         guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            selectionIndicator.removeAnimation(forKey: "window-emphasis")
             selectionIndicator.opacity = opacity
             return
         }
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = selectionIndicator.presentation()?.opacity ?? selectionIndicator.opacity
         animation.toValue = opacity
-        animation.duration = 0.12
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.duration = ToolbarChromePolicy.emphasisDuration
+        animation.timingFunction = ToolbarChromePolicy.timingFunction()
         selectionIndicator.add(animation, forKey: "window-emphasis")
         selectionIndicator.opacity = opacity
     }
@@ -281,6 +339,7 @@ class ToolbarInteractiveButton: NSButton {
     private let feedbackLayer = CALayer()
     private var isPointerInside = false
     private var isPressedForFeedback = false
+    private var accessibilityObserver: NSObjectProtocol?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -288,9 +347,22 @@ class ToolbarInteractiveButton: NSButton {
         feedbackLayer.opacity = 0
         layer?.insertSublayer(feedbackLayer, at: 0)
         refreshFeedbackColor()
+        accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshInteractionFeedback(animated: false) }
+        }
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let accessibilityObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(accessibilityObserver)
+        }
+    }
 
     override func layout() {
         super.layout()
@@ -341,14 +413,17 @@ class ToolbarInteractiveButton: NSButton {
     }
 
     func refreshInteractionFeedback(animated: Bool) {
-        let targetOpacity: Float
-        if isPressedForFeedback {
-            targetOpacity = 0.14
+        let state: ToolbarChromePolicy.InteractionState = if isPressedForFeedback {
+            .pressed
         } else if isPointerInside, permitsHoverFeedback {
-            targetOpacity = 0.075
+            .hover
         } else {
-            targetOpacity = 0
+            .idle
         }
+        let targetOpacity = ToolbarChromePolicy.feedbackOpacity(
+            for: state,
+            increaseContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        )
         animateFeedbackOpacity(to: targetOpacity, animated: animated)
     }
 
@@ -366,14 +441,14 @@ class ToolbarInteractiveButton: NSButton {
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = feedbackLayer.presentation()?.opacity ?? feedbackLayer.opacity
         animation.toValue = opacity
-        animation.duration = 0.12
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.duration = ToolbarChromePolicy.hoverDuration
+        animation.timingFunction = ToolbarChromePolicy.timingFunction()
         feedbackLayer.add(animation, forKey: "feedback-opacity")
         feedbackLayer.opacity = opacity
     }
 
     private func updatePressTransform(animated: Bool) {
-        let scale: CGFloat = isPressedForFeedback ? 0.985 : 1
+        let scale = isPressedForFeedback ? ToolbarChromePolicy.pressedScale : 1
         let transform = CATransform3DMakeScale(scale, scale, 1)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         guard animated, !reduceMotion else {
@@ -383,8 +458,10 @@ class ToolbarInteractiveButton: NSButton {
         let animation = CABasicAnimation(keyPath: "transform")
         animation.fromValue = layer?.presentation()?.transform ?? layer?.transform
         animation.toValue = transform
-        animation.duration = isPressedForFeedback ? 0.08 : 0.12
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.duration = isPressedForFeedback
+            ? ToolbarChromePolicy.pressInDuration
+            : ToolbarChromePolicy.pressOutDuration
+        animation.timingFunction = ToolbarChromePolicy.timingFunction()
         layer?.add(animation, forKey: "press-transform")
         layer?.transform = transform
     }
@@ -450,10 +527,12 @@ private final class ToolbarModeButton: ToolbarInteractiveButton {
     }
 
     private var titleColor: NSColor {
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         switch (isWindowActive, isSelected) {
-        case (true, true): .labelColor
-        case (true, false), (false, true): .secondaryLabelColor
-        case (false, false): .tertiaryLabelColor
+        case (true, true): return .labelColor
+        case (true, false) where increaseContrast: return .labelColor
+        case (true, false), (false, true): return .secondaryLabelColor
+        case (false, false): return .tertiaryLabelColor
         }
     }
 
@@ -520,13 +599,17 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
     }
 
     override func mouseDown(with event: NSEvent) {
-        setPressedFeedback(true)
-        defer { setPressedFeedback(false) }
-        popupMenu.popUp(positioning: nil, at: NSPoint(x: bounds.maxX, y: bounds.minY), in: self)
+        presentMenu()
     }
 
     override func accessibilityPerformPress() -> Bool {
-        popupMenu.popUp(positioning: nil, at: NSPoint(x: bounds.maxX, y: bounds.minY), in: self)
+        presentMenu()
         return true
+    }
+
+    private func presentMenu() {
+        setPressedFeedback(true)
+        defer { setPressedFeedback(false) }
+        popupMenu.popUp(positioning: nil, at: NSPoint(x: bounds.maxX, y: bounds.minY), in: self)
     }
 }
