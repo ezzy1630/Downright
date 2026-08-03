@@ -101,6 +101,7 @@ public final class DensityGutterView: NSView {
     private var trackingArea: NSTrackingArea?
     private var previewWorkItem: DispatchWorkItem?
     private var outlineHideWorkItem: DispatchWorkItem?
+    private var pointerLocation: NSPoint?
 
     /// The bars sit on a quiet, centred spine. The spine is deliberately
     /// narrower than the hit area so the map feels easy to scrub without
@@ -466,12 +467,14 @@ public final class DensityGutterView: NSView {
     public override func mouseDown(with event: NSEvent) {
         didDrag = false
         isScrubbing = false
+        pointerLocation = convert(event.locationInWindow, from: nil)
         scrub(to: event, showsSnippet: true)
     }
 
     public override func mouseDragged(with event: NSEvent) {
         didDrag = true
         isScrubbing = true
+        pointerLocation = convert(event.locationInWindow, from: nil)
         scrub(to: event, showsSnippet: true)
     }
 
@@ -480,12 +483,13 @@ public final class DensityGutterView: NSView {
         isScrubbing = false
         didDrag = false
         let point = convert(event.locationInWindow, from: nil)
+        pointerLocation = point
         delegate?.densityGutter(self, didRequestScrollToFraction: fraction(at: point))
         // Stay open if the pointer is still over the rail: the reader is
         // probably about to scrub again.
         let inside = bounds.contains(point)
         if inside {
-            schedulePreview(at: point)
+            showPreview(at: point, showsSnippet: true)
         } else {
             preview.hide()
             updateHoveredBand(at: nil, animated: true)
@@ -496,12 +500,18 @@ public final class DensityGutterView: NSView {
     public override func mouseMoved(with event: NSEvent) {
         guard !isScrubbing else { return }
         let point = convert(event.locationInWindow, from: nil)
+        pointerLocation = point
         updateHoveredBand(at: point, animated: true)
-        schedulePreview(at: point)
+        if preview.isVisible {
+            showPreview(at: point, showsSnippet: true)
+        } else {
+            schedulePreview(at: point)
+        }
     }
 
     public override func mouseEntered(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        pointerLocation = point
         updateHoveredBand(at: point, animated: false)
         schedulePreview(at: point)
     }
@@ -510,6 +520,7 @@ public final class DensityGutterView: NSView {
         guard !isScrubbing else { return }
         previewWorkItem?.cancel()
         previewWorkItem = nil
+        pointerLocation = nil
         preview.hide()
         updateHoveredBand(at: nil, animated: true)
     }
@@ -525,6 +536,7 @@ public final class DensityGutterView: NSView {
         previewWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.window != nil else { return }
+            guard self.pointerLocation == point else { return }
             guard self.bounds.contains(point), !self.bands.isEmpty else {
                 self.preview.hide()
                 return
@@ -575,6 +587,7 @@ public final class DensityGutterView: NSView {
         if window == nil {
             previewWorkItem?.cancel()
             previewWorkItem = nil
+            pointerLocation = nil
             preview.hide()
             updateHoveredBand(at: nil, animated: false)
             outline.dismiss()

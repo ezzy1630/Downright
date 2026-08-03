@@ -14,6 +14,10 @@ final class DensityGutterPreviewWindow: NSWindow {
 
     private let content: PreviewContentView
     private let maximumWidth: CGFloat = 320
+    private let followDuration: TimeInterval = 0.08
+    private let entranceDuration: TimeInterval = 0.10
+    private let exitDuration: TimeInterval = 0.08
+    private var presentationGeneration = 0
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
@@ -43,7 +47,8 @@ final class DensityGutterPreviewWindow: NSWindow {
         over parent: NSWindow,
         reduceMotion: Bool
     ) {
-        content.update(title: title, snippet: snippet, footer: footer)
+        presentationGeneration &+= 1
+        let titleChanged = content.update(title: title, snippet: snippet, footer: footer)
         let size = content.fittingSize(maxWidth: maximumWidth)
 
         var origin = NSPoint(x: anchor.x + 8, y: anchor.y - size.height / 2)
@@ -55,11 +60,14 @@ final class DensityGutterPreviewWindow: NSWindow {
         let alreadyPresented = isVisible && self.parent === parent
 
         if alreadyPresented {
-            // Hover moves should feel like one surface following the pointer,
-            // not a sequence of cards blinking in and out.
-            GutterChrome.animate(reduceMotion: reduceMotion, duration: 0.12) { _ in
+            // Once visible, the preview follows the pointer on a short ease
+            // rather than restarting its entrance choreography. This keeps
+            // the card connected to the rail without chasing every event.
+            alphaValue = 1
+            GutterChrome.animate(reduceMotion: reduceMotion, duration: followDuration) { _ in
                 self.animator().setFrame(finalFrame, display: true)
             }
+            if titleChanged { content.animateContentChange(reduceMotion: reduceMotion) }
             content.needsDisplay = true
             return
         }
@@ -75,16 +83,35 @@ final class DensityGutterPreviewWindow: NSWindow {
         alphaValue = reduceMotion ? 1 : 0
         orderFront(nil)
         guard !reduceMotion else { return }
-        GutterChrome.animate(reduceMotion: false, duration: 0.10) { _ in
+        GutterChrome.animate(reduceMotion: false, duration: entranceDuration) { _ in
             self.animator().alphaValue = 1
             self.animator().setFrame(finalFrame, display: true)
         }
     }
 
     func hide() {
-        guard isVisible else { return }
-        parent?.removeChildWindow(self)
-        orderOut(nil)
+        guard isVisible || parent != nil else { return }
+        presentationGeneration &+= 1
+        let generation = presentationGeneration
+
+        guard !styleSheet.reduceMotion else {
+            parent?.removeChildWindow(self)
+            orderOut(nil)
+            alphaValue = 1
+            return
+        }
+
+        // Keep the child window attached during the short fade. A quick
+        // re-entry can then reverse the transition without tearing down and
+        // rebuilding the surface.
+        GutterChrome.animate(reduceMotion: false, duration: exitDuration, { _ in
+            self.animator().alphaValue = 0
+        }, completion: { [weak self] in
+            guard let self, self.presentationGeneration == generation else { return }
+            self.parent?.removeChildWindow(self)
+            self.orderOut(nil)
+            self.alphaValue = 1
+        })
     }
 }
 
@@ -122,13 +149,24 @@ private final class PreviewContentView: NSView {
 
     override var isFlipped: Bool { true }
 
-    func update(title: String, snippet: String, footer: String) {
-        guard title != self.title || snippet != self.snippet || footer != self.footer else { return }
+    func update(title: String, snippet: String, footer: String) -> Bool {
+        let titleChanged = title != self.title
+        guard titleChanged || snippet != self.snippet || footer != self.footer else { return false }
         self.title = title
         self.snippet = snippet
         self.footer = footer
         cached = nil
         needsDisplay = true
+        return titleChanged
+    }
+
+    func animateContentChange(reduceMotion: Bool) {
+        guard !reduceMotion, let layer else { return }
+        let transition = CATransition()
+        transition.type = .fade
+        transition.duration = 0.08
+        transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(transition, forKey: "preview-content-change")
     }
 
     func fittingSize(maxWidth: CGFloat) -> NSSize {
