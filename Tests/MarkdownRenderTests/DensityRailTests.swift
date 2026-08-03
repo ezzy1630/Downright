@@ -9,7 +9,7 @@ struct DensityRailTests {
     @Test("Outline geometry and dwell policy stay on spec")
     func outlineGeometryAndTiming() {
         #expect(DensityGutterView.width == 72)
-        #expect(DensityGutterView.hoverDwell == 0.08)
+        #expect(DensityGutterView.hoverDwell == 0.04)
         #expect(DensityOutlineWindow.rowHeight == 44)
         #expect(DensityOutlineWindow.cornerRadius == 14)
         #expect(DensityOutlineWindow.showDwell == 0.25)

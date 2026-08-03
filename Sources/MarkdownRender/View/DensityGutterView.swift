@@ -89,9 +89,9 @@ public final class DensityGutterView: NSView {
     /// Quick Look extension gets the same rail without importing the app.
     public static let width: CGFloat = 72
 
-    /// Small enough to avoid flicker while moving across the map, short enough
-    /// that the document still feels immediate.
-    public static let hoverDwell: TimeInterval = 0.08
+    /// A short dwell keeps the preview immediate without flashing while the
+    /// pointer crosses the rail.
+    public static let hoverDwell: TimeInterval = 0.04
 
     public static let minimumHostWidth: CGFloat = 360
 
@@ -108,7 +108,8 @@ public final class DensityGutterView: NSView {
     private let horizontalMargin: CGFloat = 14
     private let trackInset: CGFloat = 24
     private let markGap: CGFloat = 9
-    private let hoverHitSlop: CGFloat = 14
+    private let hoverHitSlop: CGFloat = 18
+    private let headingMarkWidth: CGFloat = 28
     private var markLayers: [CALayer] = []
     private var hoveredBandIndex: Int?
     private var didDrag = false
@@ -239,10 +240,12 @@ public final class DensityGutterView: NSView {
 
     private func style(for kind: DensityBand.Kind, contrast: Bool) -> BandStyle {
         switch kind {
-        case .heading(let level):
-            let lengths: [CGFloat] = [28, 24, 20, 16]
-            let width = min(lengths[min(3, max(0, level - 1))],
-                            bounds.width - horizontalMargin * 2)
+        case .heading:
+            // Keep the resting rail geometrically quiet. Heading depth still
+            // remains available to the outline preview, while the rail uses
+            // one optical language instead of making a random line look
+            // selected because it happens to be an H1 or H4.
+            let width = min(headingMarkWidth, bounds.width - horizontalMargin * 2)
             return BandStyle(
                 inset: max(0, (bounds.width - horizontalMargin * 2 - width)
                     / (2 * max(1, bounds.width - horizontalMargin * 2))),
@@ -304,7 +307,6 @@ public final class DensityGutterView: NSView {
             let isHovered = index == hoveredBandIndex
 
             if isCurrent {
-                bandStyle.minHeight = 3
                 bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(0.9)
             } else if case .heading = entry.band.kind {
                 bandStyle.minHeight = 2
@@ -331,9 +333,10 @@ public final class DensityGutterView: NSView {
             let markX = markCenter - markWidth / 2
             let frame = CGRect(x: markX, y: entry.y, width: markWidth, height: markHeight)
             let mark = markLayers[index]
-            let previousPosition = mark.presentation()?.position ?? mark.position
-            let previousBounds = mark.presentation()?.bounds ?? mark.bounds
+            let previousFrame = mark.presentation()?.frame ?? mark.frame
             let previousColor = mark.presentation()?.backgroundColor ?? mark.backgroundColor
+            let frameChanged = previousFrame != frame
+            let colorChanged = previousColor != bandStyle.color.cgColor
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -342,24 +345,28 @@ public final class DensityGutterView: NSView {
             mark.isHidden = false
             CATransaction.commit()
 
-            guard animated, !styleSheet.reduceMotion, previousBounds != .zero else { continue }
+            guard animated, !styleSheet.reduceMotion else { continue }
             let timing = CAMediaTimingFunction(name: .easeOut)
 
-            let position = CABasicAnimation(keyPath: "position")
-            position.fromValue = NSValue(point: previousPosition)
-            position.toValue = NSValue(point: mark.position)
-            position.duration = Motion.quick
-            position.timingFunction = timing
-            mark.add(position, forKey: "mark-position")
+            if frameChanged, previousFrame != .zero {
+                let position = CABasicAnimation(keyPath: "position")
+                position.fromValue = NSValue(
+                    point: NSPoint(x: previousFrame.midX, y: previousFrame.midY)
+                )
+                position.toValue = NSValue(point: mark.position)
+                position.duration = Motion.quick
+                position.timingFunction = timing
+                mark.add(position, forKey: "mark-position")
 
-            let boundsAnimation = CABasicAnimation(keyPath: "bounds")
-            boundsAnimation.fromValue = NSValue(rect: previousBounds)
-            boundsAnimation.toValue = NSValue(rect: mark.bounds)
-            boundsAnimation.duration = Motion.quick
-            boundsAnimation.timingFunction = timing
-            mark.add(boundsAnimation, forKey: "mark-bounds")
+                let boundsAnimation = CABasicAnimation(keyPath: "bounds")
+                boundsAnimation.fromValue = NSValue(rect: previousFrame.offsetBy(dx: -previousFrame.minX, dy: -previousFrame.minY))
+                boundsAnimation.toValue = NSValue(rect: mark.bounds)
+                boundsAnimation.duration = Motion.quick
+                boundsAnimation.timingFunction = timing
+                mark.add(boundsAnimation, forKey: "mark-bounds")
+            }
 
-            if let previousColor {
+            if colorChanged, let previousColor {
                 let colorAnimation = CABasicAnimation(keyPath: "backgroundColor")
                 colorAnimation.fromValue = previousColor
                 colorAnimation.toValue = bandStyle.color.cgColor
@@ -518,7 +525,7 @@ public final class DensityGutterView: NSView {
         previewWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.window != nil else { return }
-            guard self.bounds.contains(point), self.hoveredBandIndex != nil else {
+            guard self.bounds.contains(point), !self.bands.isEmpty else {
                 self.preview.hide()
                 return
             }
