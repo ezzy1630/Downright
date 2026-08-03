@@ -208,9 +208,11 @@ public final class GutterRailView: NSView {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         // Nearest marker row to the click, so a click anywhere on the row's
-        // band counts rather than only on the glyph.
+        // band counts rather than only on the glyph.  Hit-test only the
+        // markers currently in view: a 5k-line document has thousands of
+        // headings and most are nowhere near the pointer (§12).
         var best: (offset: Int, distance: CGFloat)?
-        for marker in markers {
+        for marker in visibleMarkerSlice(in: textView) {
             guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView) else { continue }
             guard point.y >= rect.minY - 2, point.y <= rect.maxY + 2 else { continue }
             let distance = abs(rect.midY - point.y)

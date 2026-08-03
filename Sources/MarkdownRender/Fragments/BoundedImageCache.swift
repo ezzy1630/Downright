@@ -39,6 +39,10 @@ final class BoundedImageCache<Key: Hashable> {
         lock.unlock()
 
         let image = create()
+        // A nil render (malformed formula, unparseable diagram) must not be
+        // cached: it costs nothing to reproduce and would otherwise pin the
+        // failure in memory while the document scrolls past it.
+        guard let image else { return nil }
         let cost = Self.cost(of: image) + max(1, keyCost)
         guard cost <= totalCostLimit else { return image }
 
@@ -90,22 +94,28 @@ final class BoundedImageCache<Key: Hashable> {
     }
 }
 
-struct MathFragmentCacheKey: Hashable {
+/// Identity of a typeset formula in the shared math cache.
+struct MathRendererCacheKey: Hashable {
     let source: String
-    let styleToken: Int
+    let display: Bool
     let pointSize: CGFloat
+    let colorToken: String
 }
 
-struct MermaidFragmentCacheKey: Hashable {
+/// Identity of a rendered diagram.  `scale` is the backing pixel scale the
+/// diagram was rasterised at, so the same source on a 1x and a 2x display
+/// does not serve the wrong-density image.
+struct MermaidCacheKey: Hashable {
     let source: String
     let styleToken: Int
+    let scale: Int
 }
 
 enum MarkdownFragmentImageCaches {
     static let images = ImageRenderCache()
-    static let math = BoundedImageCache<MathFragmentCacheKey>(
+    static let math = BoundedImageCache<MathRendererCacheKey>(
         countLimit: 128, totalCostLimit: 16 * 1024 * 1024)
-    static let mermaid = BoundedImageCache<MermaidFragmentCacheKey>(
+    static let mermaid = BoundedImageCache<MermaidCacheKey>(
         countLimit: 48, totalCostLimit: 24 * 1024 * 1024)
 }
 

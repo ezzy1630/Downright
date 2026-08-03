@@ -139,11 +139,14 @@ final class SiblingSidebarView: NSView, PanelSurface {
             let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
                 .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             if !query.isEmpty {
-                items = items.filter { sibling in
+                items = items.compactMap { sibling -> (SiblingScanner.Sibling, Int)? in
                     let haystack = "\(sibling.displayName) \(sibling.url.path)"
                         .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                    return haystack.contains(query)
+                    guard let match = FuzzyMatcher.match(needle: query, in: haystack) else { return nil }
+                    return (sibling, match.score)
                 }
+                .sorted { $0.1 > $1.1 }
+                .map(\.0)
             }
             guard !items.isEmpty else { continue }
             if groupOrder.count > 1 || group != nil {

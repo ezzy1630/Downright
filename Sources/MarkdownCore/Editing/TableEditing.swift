@@ -160,9 +160,7 @@ public enum TableEditing {
             let paddedCells = cells + [String](
                 repeating: "", count: data.columnCount - cells.count
             )
-            let line = renderRow(
-                cells: paddedCells, indent: indent, alignments: data.alignments
-            )
+            let line = renderRow(cells: paddedCells, indent: indent)
             return makeWhole(document, range: tableRange, records: records, replacementAt: insertionOffset, inserted: [line], summary: "Insert table row", expected: expected)
         case let .deleteRow(index):
             guard index > 0, index < rowIndices.count else { return fail(index == 0 ? .cannotDeleteHeader : .invalidRow) }
@@ -369,15 +367,11 @@ public enum TableEditing {
             + parts.joined(separator: "|") + (hasTrailingPipe ? "|" : "")
     }
 
-    private static func renderRow(cells: [String], indent: String, alignments: [TableAlignment]) -> String {
-        let values = cells.enumerated().map { index, value in
-            let alignment = index < alignments.count ? alignments[index] : .none
-            switch alignment {
-            case .right: return " " + escapeCell(value) + " |"
-            default: return " " + escapeCell(value) + " |"
-            }
-        }
-        return indent + "|" + values.joined()
+    /// A single inserted row has no column-width context, so alignment is not
+    /// padded here — the exit-time §6.3 realign applies it to the whole table.
+    /// Emits a structurally valid row.
+    private static func renderRow(cells: [String], indent: String) -> String {
+        indent + "|" + cells.map { " " + escapeCell($0) + " |" }.joined()
     }
 
     private static func delimiterToken(for alignment: TableAlignment, old: String) -> String {

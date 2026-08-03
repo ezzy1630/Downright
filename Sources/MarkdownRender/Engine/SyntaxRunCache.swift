@@ -22,11 +22,18 @@ final class SyntaxRunCache {
     private var entries: [Key: Entry] = [:]
     private var stamp: UInt64 = 0
     private let capacity: Int
+    /// Decoration normally runs on the main thread, but the cache outlives a
+    /// single decorate pass and the DR-bench exercises it standalone; a cheap
+    /// uncontended lock keeps a future off-main highlight from corrupting the
+    /// dict rather than trusting that invariant forever.
+    private let lock = NSLock()
 
     init(capacity: Int = 256) { self.capacity = capacity }
 
     func runs(for code: String, language: String?, highlighter: SyntaxHighlighter) -> [SyntaxRun] {
         let key = Key(language: language ?? "", length: (code as NSString).length, hash: code.hashValue)
+        lock.lock()
+        defer { lock.unlock() }
         stamp &+= 1
         // The stored code is compared, not trusted to the hash — a collision
         // would otherwise colour one block with another's grammar.
@@ -41,7 +48,11 @@ final class SyntaxRunCache {
         return runs
     }
 
-    func removeAll() { entries.removeAll(keepingCapacity: true) }
+    func removeAll() {
+        lock.lock()
+        entries.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
 
     private func evict() {
         // Drop the least recently used quarter in one pass; amortised cheaper

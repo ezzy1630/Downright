@@ -11,13 +11,23 @@ import MarkdownRender
 final class TaskProgressRing: NSView {
     var progress: (done: Int, total: Int) = (0, 0) {
         didSet {
-            isHidden = progress.total == 0
+            let shouldHide = progress.total == 0
+            if isHidden != shouldHide {
+                isHidden = shouldHide
+                invalidateIntrinsicContentSize()
+                onVisibilityChange?(shouldHide)
+            }
             updateAccessibility()
             needsDisplay = true
         }
     }
 
     var styleSheet: StyleSheet { didSet { needsDisplay = true } }
+
+    /// Fired when the reader clicks the ring — typically opens the task panel.
+    var onActivate: (() -> Void)?
+    /// Lets the toolbar hide the item entirely when there are no tasks.
+    var onVisibilityChange: ((Bool) -> Void)?
 
     private let lineWidth: CGFloat = 2.5
 
@@ -27,16 +37,18 @@ final class TaskProgressRing: NSView {
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
-        super.init(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
+        super.init(frame: NSRect(x: 0, y: 0, width: 22, height: 22))
         isHidden = true
         setAccessibilityElement(true)
-        setAccessibilityRole(.progressIndicator)
+        setAccessibilityRole(.button)
         updateAccessibility()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: 18, height: 18) }
+    override var intrinsicContentSize: NSSize {
+        isHidden ? .zero : NSSize(width: 22, height: 22)
+    }
 
     private var fraction: CGFloat {
         guard progress.total > 0 else { return 0 }
@@ -49,7 +61,21 @@ final class TaskProgressRing: NSView {
             : "No tasks"
         setAccessibilityLabel(label)
         setAccessibilityValueDescription(label)
-        toolTip = label
+        toolTip = progress.total > 0 ? "\(label) — Open Tasks" : label
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onActivate?()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        onActivate?()
+        return true
+    }
+
+    override func resetCursorRects() {
+        guard !isHidden else { return }
+        addCursorRect(bounds, cursor: .pointingHand)
     }
 
     override func draw(_ dirtyRect: NSRect) {

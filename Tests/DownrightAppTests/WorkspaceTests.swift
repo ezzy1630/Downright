@@ -109,7 +109,7 @@ struct WorkspaceTests {
         #expect(scanner.siblings.first(where: { $0.url.lastPathComponent == sibling.lastPathComponent })?.hasUnseenChanges == false)
 
         try Data("# Changed\n".utf8).write(to: sibling)
-        scanner.scan()
+        scanner.scan(synchronously: true)
         #expect(scanner.siblings.first(where: { $0.url.lastPathComponent == sibling.lastPathComponent })?.hasUnseenChanges == true)
     }
 

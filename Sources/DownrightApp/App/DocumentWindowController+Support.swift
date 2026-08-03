@@ -138,6 +138,8 @@ extension DocumentWindowController {
         panel.nameFieldStringValue = markdownDocument.displayName + ".html"
         panel.message = "Export a self-contained HTML file"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        beginActivity()
+        defer { endActivity() }
         do {
             try Data(exporter(forPrint: false).html().utf8).write(to: url)
         } catch {
@@ -150,6 +152,8 @@ extension DocumentWindowController {
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = markdownDocument.displayName + ".pdf"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        beginActivity()
+        defer { endActivity() }
         guard PrintRenderer.writePDF(html: exporter(forPrint: true).html(), to: url) else {
             let error = NSError(
                 domain: "Downright.Export", code: 1,
@@ -163,6 +167,8 @@ extension DocumentWindowController {
     func printDocument() {
         // A stylesheet designed for paper, not a screenshot of the screen
         // theme (§9.5).
+        beginActivity()
+        defer { endActivity() }
         PrintRenderer.print(html: exporter(forPrint: true).html(), jobTitle: markdownDocument.displayName)
     }
 

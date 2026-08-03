@@ -81,14 +81,20 @@ final class DensityOutlineWindow: NSPanel, NSTableViewDataSource, NSTableViewDel
 
     override var canBecomeKey: Bool { true }
 
-    func show(rightOf rail: NSView, over parent: NSWindow, keyboard: Bool) {
+    func show(rightOf rail: NSView, over parent: NSWindow, keyboard: Bool, anchorY: CGFloat? = nil) {
         guard !entries.isEmpty else { return }
         let railFrame = rail.convert(rail.bounds, to: nil)
         let railScreen = parent.convertToScreen(railFrame)
         let maximumHeight = max(160, floor(parent.frame.height * 0.70))
         let desiredHeight = min(maximumHeight, CGFloat(entries.count) * table.rowHeight + 12)
         let size = NSSize(width: 360, height: desiredHeight)
-        var origin = NSPoint(x: railScreen.maxX + 8, y: railScreen.midY - size.height / 2)
+        let focusY: CGFloat = {
+            guard let anchorY else { return railScreen.midY }
+            let local = NSPoint(x: rail.bounds.midX, y: anchorY)
+            let windowPoint = rail.convert(local, to: nil)
+            return parent.convertToScreen(NSRect(origin: windowPoint, size: .zero)).midY
+        }()
+        var origin = NSPoint(x: railScreen.maxX + 8, y: focusY - size.height / 2)
         if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = max(visible.minX + 4, origin.x)
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)

@@ -63,8 +63,28 @@ public final class MarkdownContainerView: NSView {
                 addSubview(topAccessory)
             }
             needsLayout = true
+            updateTopEdgeTracking()
         }
     }
+
+    /// When false, the top accessory floats over the document instead of
+    /// claiming a permanent lane — used while the breadcrumb is tucked away
+    /// so scrolling reclaims vertical space (§5.1).
+    public var topAccessoryReservesLane = true {
+        didSet {
+            guard topAccessoryReservesLane != oldValue else { return }
+            needsLayout = true
+            updateTopEdgeTracking()
+        }
+    }
+
+    /// Fired when the pointer enters or leaves the top reveal strip while the
+    /// accessory lane is collapsed. Lets the host fade the breadcrumb back in
+    /// when the reader reaches for it mid-scroll.
+    public var onTopEdgeHover: ((Bool) -> Void)?
+
+    private var topEdgeTrackingArea: NSTrackingArea?
+    private var topEdgeHovered = false
 
     public convenience init(storage: NSTextStorage) {
         self.init(storage: storage, styleSheet: MarkdownTextView.fallbackStyleSheet())
@@ -78,11 +98,14 @@ public final class MarkdownContainerView: NSView {
         super.init(frame: .zero)
 
         scrollView.documentView = textView
-        // The contents map is the document's only persistent scroll affordance.
-        // Keep native scrolling and keyboard navigation, but remove the second
-        // thumb that otherwise reads as an unrelated right-hand sidebar.
-        scrollView.hasVerticalScroller = false
+        // The contents map is the document's persistent scroll affordance, and
+        // an overlay thumb (invisible until the user scrolls) gives position
+        // feedback without a second, unrelated right-hand sidebar.  Overlay
+        // scrollers reserve no layout space, so the measure constraint below
+        // keeps the column out from under the thumb (§7).
+        scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
+        scrollView.scrollerStyle = .overlay
         // The text column's width is `layout()`'s decision; leaving the
         // automatic adjustment on silently discards the centring inset, and
         // the document view's autoresizing mask would stretch it to the clip
@@ -115,8 +138,15 @@ public final class MarkdownContainerView: NSView {
 
     public override func layout() {
         super.layout()
-        let topHeight = topAccessory.map { $0.fittingSize.height > 0 ? $0.fittingSize.height : 24 } ?? 0
-        let topLaneHeight = topHeight > 0 ? topHeight + 8 : 0
+        let accessoryFitting = topAccessory.map { accessory -> CGFloat in
+            guard !accessory.isHidden else { return 0 }
+            let height = accessory.fittingSize.height
+            return height > 0 ? height : 24
+        } ?? 0
+        let topHeight = accessoryFitting
+        // A tucked accessory still lays out as an overlay so fade-in has a
+        // frame, but the scroller reclaim the lane immediately.
+        let topLaneHeight = topAccessoryReservesLane && topHeight > 0 ? topHeight + 8 : 0
         let isFloatingDensityMap = leadingAccessory is DensityGutterView
         let leadingWidth = isFloatingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
@@ -126,7 +156,8 @@ public final class MarkdownContainerView: NSView {
 
         let accessoryWidth = min(max(160, textView.styleSheet.measureWidth), max(160, bounds.width - 80))
         topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 4,
-                                     width: accessoryWidth, height: topHeight)
+                                     width: accessoryWidth, height: max(topHeight, 0))
+        updateTopEdgeTracking()
         leadingAccessory?.frame = NSRect(x: 0, y: 0,
                                          width: leadingWidth, height: bounds.height)
         trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: 0,
@@ -142,14 +173,15 @@ public final class MarkdownContainerView: NSView {
         // The inset is measured to where the *text* starts, not to where the
         // text view starts: the view carries `revealSlack` of its own lead-in
         // so a caret-anchored reveal can shift a line left (§6.1c).
+        // Keep the same measure across Document and Source. Widening source to
+        // 90ch recenters the column and slides the left gutter rail, which
+        // reads as the leading chrome teleporting on every mode switch.
         let renderedTarget = min(
             72,
             max(68, textView.styleSheet.theme.typography.measureCharacters)
         )
         let responsiveCharacters: CGFloat
-        if textView.mode == .source {
-            responsiveCharacters = 90
-        } else if bounds.width < 900 {
+        if bounds.width < 900 {
             responsiveCharacters = 68
         } else if bounds.width > 1200 {
             responsiveCharacters = 72
@@ -157,7 +189,12 @@ public final class MarkdownContainerView: NSView {
             responsiveCharacters = renderedTarget
         }
         let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
-        let measure = min(preferredMeasure, max(240, contentWidth - RenderMetrics.revealSlack * 2))
+        // Keep the column out from under the overlay thumb when the measure is
+        // capped by a narrow window; a wide window's centring margin already
+        // clears it (§7).
+        let overlayThumbWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
+        let measure = min(preferredMeasure,
+                          max(240, contentWidth - RenderMetrics.revealSlack * 2 - overlayThumbWidth))
         textView.applyResponsiveMeasure(measure)
         let textLeft = max(gutterWidth + RenderMetrics.revealSlack, (scrollView.frame.width - measure) / 2)
         let columnOrigin = textLeft - RenderMetrics.revealSlack
@@ -169,11 +206,18 @@ public final class MarkdownContainerView: NSView {
                               width: gutterWidth, height: scrollView.frame.height)
 
         if isFloatingDensityMap, let leadingAccessory {
-            // Keep the hit lane stable while the measure responds to the
-            // window. Preview cards open to the right of this lane, into the
-            // document's existing side space.
-            leadingAccessory.frame = NSRect(x: 0, y: 0,
-                                            width: leadingWidth, height: scrollView.frame.height)
+            // Sticky full-height stick on the leading edge. The mark stack is
+            // centred in the window, not the scrolled document — so the map
+            // never rides with the text and never shrinks under the breadcrumb.
+            leadingAccessory.frame = NSRect(
+                x: 0,
+                y: 0,
+                width: leadingWidth,
+                height: bounds.height
+            )
+            // Keep the stick above the scroll view / marker rail so the left
+            // hit lane stays responsive.
+            addSubview(leadingAccessory, positioned: .above, relativeTo: nil)
         }
 
     }
@@ -188,5 +232,54 @@ public final class MarkdownContainerView: NSView {
         scrollView.backgroundColor = textView.styleSheet.background
         gutter.reload()
         needsLayout = true
+    }
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        updateTopEdgeTracking()
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        guard event.trackingArea === topEdgeTrackingArea else {
+            super.mouseEntered(with: event)
+            return
+        }
+        guard !topEdgeHovered else { return }
+        topEdgeHovered = true
+        onTopEdgeHover?(true)
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        guard event.trackingArea === topEdgeTrackingArea else {
+            super.mouseExited(with: event)
+            return
+        }
+        guard topEdgeHovered else { return }
+        topEdgeHovered = false
+        onTopEdgeHover?(false)
+    }
+
+    private func updateTopEdgeTracking() {
+        if let topEdgeTrackingArea {
+            removeTrackingArea(topEdgeTrackingArea)
+            self.topEdgeTrackingArea = nil
+        }
+        // Only while the lane is collapsed: a thin top strip lets the reader
+        // reach for the tucked breadcrumb without leaving an empty reservation.
+        guard topAccessory != nil, !topAccessoryReservesLane, bounds.width > 0 else {
+            if topEdgeHovered {
+                topEdgeHovered = false
+                onTopEdgeHover?(false)
+            }
+            return
+        }
+        let area = NSTrackingArea(
+            rect: NSRect(x: 0, y: 0, width: bounds.width, height: 28),
+            options: [.mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        topEdgeTrackingArea = area
     }
 }

@@ -168,6 +168,7 @@ struct CommandPaletteModel {
     }
 
     mutating func updateQuery(_ value: String) {
+        guard query != value else { return }
         query = value
         selectedIndex = 0
     }

@@ -107,6 +107,17 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         index.reroot(to: documentURL.deletingLastPathComponent())
     }
 
+    func cancelWorkspaceWork() {
+        workspaceSearch?.cancel()
+        workspaceIndex?.cancel()
+        workspaceSearch = nil
+        // Keep the sidebar/index objects only while the panel is open; cancel
+        // in-flight work on close so a dismissed window cannot keep scanning.
+        if workspaceSidebar == nil {
+            workspaceIndex = nil
+        }
+    }
+
     func workspaceSidebar(_ view: WorkspaceSidebarView, didSearch query: WorkspaceSearchQuery) {
         guard let index = workspaceIndex else { return }
         view.selectedTab = .search

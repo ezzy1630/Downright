@@ -289,6 +289,37 @@ Trailing paragraph mentioning `src/auth/session.ts:42` and $a^2$ inline.
     #expect(display?.string == "bold tail")
 }
 
+@Test func layoutPreservingHiddenMarkersStillSkipPastForTyping() {
+    // Grouped TextKit elements keep hidden markers as same-length joiners so
+    // element ranges stay source-aligned. Caret conversion must still resolve
+    // past those invisible runs, or click→type lands inside `**` / `# `.
+    let text = "**bold** tail"
+    let index = ParagraphIndex(text: text as NSString)
+    let joiners: (NSRange) -> DisplaySubstitution = { range in
+        DisplaySubstitution(
+            sourceRange: range,
+            displayLength: range.length,
+            replacement: NSAttributedString(string: String(repeating: "\u{2060}", count: range.length)),
+            isHidden: true,
+            preservesSourceOffsets: true
+        )
+    }
+    let map = DisplayMap(paragraphs: index, substitutions: [
+        joiners(NSRange(location: 0, length: 2)),
+        joiners(NSRange(location: 6, length: 2)),
+    ])
+
+    #expect(map.textKitOffset(forSource: 2) == 2)
+    #expect(map.textKitOffset(forSource: 8) == 8)
+    #expect(map.sourceOffset(forTextKit: 0) == 2)
+    #expect(map.sourceOffset(forTextKit: 1) == 2)
+    #expect(map.sourceOffset(forTextKit: 2) == 2)
+    #expect(map.sourceOffset(forTextKit: 6) == 8)
+    #expect(map.sourceRange(forTextKit: NSRange(location: 2, length: 4))
+            == NSRange(location: 2, length: 4))
+    #expect(map.sourceUpperBound(forTextKit: 7) == 6)
+}
+
 @Test func aSelectionCoversExactlyTheSourceItLooksLike() {
     // The end of a range resolves *backward* past a hidden run while a caret
     // resolves forward.  Without that, selecting the visible word `bold`

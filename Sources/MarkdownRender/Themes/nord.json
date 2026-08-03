@@ -6,7 +6,7 @@
     "surface": "#3b4252",
     "text": "#d8dee9",
     "textSecondary": "#aeb8c8",
-    "textFaint": "#6b7689",
+    "textFaint": "#747e90",
     "heading": "#eceff4",
     "marker": "#4c566a",
     "accent": "#88c0d0",
@@ -34,7 +34,7 @@
     "keyword": "#81a1c1",
     "string": "#a3be8c",
     "number": "#b48ead",
-    "comment": "#616e88",
+    "comment": "#6e7a91",
     "type": "#8fbcbb",
     "function": "#88c0d0",
     "variable": "#d8dee9",
@@ -43,7 +43,7 @@
     "punctuation": "#eceff4",
     "attribute": "#8fbcbb",
     "diffAdded": "#a3be8c",
-    "diffRemoved": "#bf616a",
+    "diffRemoved": "#cd848b",
     "diffHeader": "#88c0d0"
   },
   "typography": {

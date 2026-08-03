@@ -14,25 +14,18 @@ public enum MermaidRendererBridge {
     public static func image(source: String, styleSheet: StyleSheet) -> NSImage? {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let key = Key(source: trimmed, revision: StyleToken.of(styleSheet))
+        let scale = scale()
+        let key = MermaidCacheKey(
+            source: trimmed,
+            styleToken: StyleToken.of(styleSheet),
+            scale: Int((scale * 2).rounded()))
 
-        lock.lock()
-        if let hit = cache[key] {
-            lock.unlock()
-            return hit
+        return MarkdownFragmentImageCaches.mermaid.image(for: key, keyCost: key.source.utf8.count) {
+            let renderer = MermaidImageRenderer(theme: theme(from: styleSheet), config: LayoutConfig())
+            // A diagram that does not parse is agent output, not a crash: the
+            // fragment falls back to the highlighted source.
+            return (try? renderer.renderImage(from: trimmed, scale: scale)) ?? nil
         }
-        lock.unlock()
-
-        let renderer = MermaidImageRenderer(theme: theme(from: styleSheet), config: LayoutConfig())
-        // A diagram that does not parse is agent output, not a crash: the
-        // fragment falls back to the highlighted source.
-        let image = (try? renderer.renderImage(from: trimmed, scale: scale())) ?? nil
-
-        lock.lock()
-        cache[key] = image
-        if cache.count > capacity { cache.removeAll(keepingCapacity: true) }
-        lock.unlock()
-        return image
     }
 
     /// The stylesheet's palette expressed as a diagram theme.  Exposed so the
@@ -55,15 +48,6 @@ public enum MermaidRendererBridge {
             // box, and §11.3 wants restraint.
             transparent: true)
     }
-
-    private struct Key: Hashable {
-        var source: String
-        var revision: Int
-    }
-
-    private static let lock = NSLock()
-    private static var cache: [Key: NSImage?] = [:]
-    private static let capacity = 64
 
     private static func scale() -> CGFloat {
         NSScreen.main?.backingScaleFactor ?? 2

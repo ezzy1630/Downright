@@ -285,14 +285,17 @@ private struct HTMLToMarkdown {
     static func decodeEntities(_ text: String) -> String {
         guard text.contains("&") else { return text }
         var out = text
+        // `&amp;` must be decoded last so an escaped entity such as `&amp;lt;`
+        // resolves to the literal text `&lt;` rather than double-decoding to `<`.
         let named = [
-            "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'",
+            "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'",
             "&apos;": "'", "&nbsp;": " ", "&mdash;": "—", "&ndash;": "–", "&hellip;": "…",
             "&ldquo;": "\u{201C}", "&rdquo;": "\u{201D}", "&lsquo;": "\u{2018}", "&rsquo;": "\u{2019}",
         ]
         for (entity, replacement) in named {
             out = out.replacingOccurrences(of: entity, with: replacement)
         }
+        out = out.replacingOccurrences(of: "&amp;", with: "&")
         return out
     }
 }

@@ -45,6 +45,10 @@ final class MarkdownDocument: NSObject {
 
     /// Fires after every reparse with the set of blocks needing re-decoration.
     var onReparse: ((ParsedDocument, DirtySet) -> Void)?
+    /// Fired on the main actor when an async reparse becomes pending or
+    /// drains.  Drives the toolbar activity cue for sustained work — a parse
+    /// that runs past a second should not be silent.
+    var onParseActivity: ((Bool) -> Void)?
     var onExternalEvent: ((ExternalEvent) -> Void)?
     var onDirtyChanged: ((Bool) -> Void)?
     /// Called when a save reaches the disk boundary and fails.  The buffer and
@@ -66,6 +70,9 @@ final class MarkdownDocument: NSObject {
     private(set) var revision = MarkdownParseRevision.zero
     private var isClosed = false
     private var preferencesObservation: NSObjectProtocol?
+    /// After open's structure-only first paint, the next full async parse must
+    /// restyle wholesale — structure trees are not decoration-compatible.
+    private var forceNextDirtyWholesale = false
 
     // MARK: - Init
 
@@ -77,6 +84,9 @@ final class MarkdownDocument: NSObject {
         self.parseCoordinator = MarkdownParseCoordinator(worker: parseWorker)
         self.state = DocumentState(path: "")
         super.init()
+        parseCoordinator.onBusyChange = { [weak self] busy in
+            Task { @MainActor in self?.onParseActivity?(busy) }
+        }
         storage.delegate = self
         undoManager.groupsByEvent = false
         preferencesObservation = NotificationCenter.default.addObserver(
@@ -119,12 +129,17 @@ final class MarkdownDocument: NSObject {
         storage.endEditing()
         suppressReparse = false
 
-        diskHash = SnapshotStore.hash(text)
-        reparseSynchronously(notifying: true, wholesale: true)
+        diskHash = DocumentIO.contentHash(text)
         isDirty = false
 
+        // Structure-only first paint for outline/state. The controller paints
+        // decorations after applying zoom/folds; full decoration converges on
+        // the async parse lane.
+        let structure = MarkdownParser.parse(text, options: .structureOnly)
+        parsed = structure
+
         SnapshotStore.shared.record(text, for: fileURL, kind: .baseline)
-        DocumentStateStore.shared.noteOpened(fileURL, document: parsed)
+        DocumentStateStore.shared.noteOpened(fileURL, document: structure)
 
         // Unread-since-last-read (§8.2): if the bytes moved while the app was
         // closed, mark up what changed and offer to jump to the first one.
@@ -135,6 +150,8 @@ final class MarkdownDocument: NSObject {
         }
 
         startWatching(fileURL)
+        forceNextDirtyWholesale = true
+        startAsyncReparse()
     }
 
     /// Adopts text with no backing file — used by `Compare` windows and by the
@@ -161,8 +178,8 @@ final class MarkdownDocument: NSObject {
             defer { watcher?.acknowledgeOwnWrite() }
             try DocumentIO.write(text, to: url, fidelity: fidelity)
 
-            diskHash = SnapshotStore.hash(text)
-            SnapshotStore.shared.record(text, for: url, kind: .local)
+        diskHash = DocumentIO.contentHash(text)
+        SnapshotStore.shared.record(text, for: url, kind: .local)
             setDirty(false)
             persistState()
         } catch {
@@ -342,7 +359,9 @@ final class MarkdownDocument: NSObject {
               result.text == storage.string,
               result.document.text == result.text else { return }
         parsed = result.document
-        onReparse?(result.document, result.dirty)
+        let dirty = forceNextDirtyWholesale ? DirtySet.wholesale : result.dirty
+        forceNextDirtyWholesale = false
+        onReparse?(result.document, dirty)
     }
 
     private func cancelParseWork() {

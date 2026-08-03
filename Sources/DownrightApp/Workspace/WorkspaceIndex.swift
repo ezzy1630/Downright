@@ -307,11 +307,11 @@ final class WorkspaceIndex {
                 state.lock.unlock()
                 guard fitsBudget else { continue }
 
-                let document = MarkdownParser.parse(result.text)
+                let document = MarkdownParser.parse(result.text, options: .workspaceIndex)
                 let entry = Self.entry(
                     url: url,
                     rootURL: rootURL,
-                    text: result.text,
+                    text: "", // Search loads text on demand; keep the index lean.
                     document: document,
                     byteCount: result.byteCount
                 )

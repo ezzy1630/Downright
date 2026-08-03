@@ -45,11 +45,13 @@ final class SiblingScanner {
     private var contentHashCache: [ContentFingerprint: String] = [:]
     private var contentHashOrder: [ContentFingerprint] = []
     private let contentHashCacheLimit = 256
+    private let scanQueue = DispatchQueue(label: "com.ezzyrappeport.downright.sibling-scan", qos: .utility)
+    private var scanGeneration: UInt64 = 0
 
     init(documentURL: URL, extraDirectories: [String]) {
         self.documentURL = documentURL.resolvingSymlinksInPath()
         self.extraDirectories = extraDirectories
-        scan()
+        scan(synchronously: true)
         startWatching()
     }
 
@@ -57,29 +59,98 @@ final class SiblingScanner {
 
     // MARK: - Scanning
 
-    func scan() {
+    /// Directory listing + content hashing.  Watcher-driven rescans run off the
+    /// main thread; the initial open path stays synchronous so the sidebar has
+    /// rows before the first paint.
+    func scan(synchronously: Bool = false) {
+        if synchronously {
+            scanGeneration &+= 1
+            var cache = contentHashCache
+            var order = contentHashOrder
+            let found = buildSiblings(
+                documentURL: documentURL,
+                extraDirectories: extraDirectories,
+                markdownExtensions: markdownExtensions,
+                limit: limit,
+                cache: &cache,
+                order: &order
+            )
+            contentHashCache = cache
+            contentHashOrder = order
+            siblings = found
+            onChange?()
+            return
+        }
+
+        scanGeneration &+= 1
+        let generation = scanGeneration
+        let documentURL = documentURL
+        let extraDirectories = extraDirectories
+        let limit = limit
+        let markdownExtensions = markdownExtensions
+        var cache = contentHashCache
+        var order = contentHashOrder
+        scanQueue.async { [weak self] in
+            guard let self else { return }
+            let found = self.buildSiblings(
+                documentURL: documentURL,
+                extraDirectories: extraDirectories,
+                markdownExtensions: markdownExtensions,
+                limit: limit,
+                cache: &cache,
+                order: &order
+            )
+            DispatchQueue.main.async {
+                guard self.scanGeneration == generation else { return }
+                self.contentHashCache = cache
+                self.contentHashOrder = order
+                self.siblings = found
+                self.onChange?()
+            }
+        }
+    }
+
+    private func buildSiblings(
+        documentURL: URL,
+        extraDirectories: [String],
+        markdownExtensions: Set<String>,
+        limit: Int,
+        cache: inout [ContentFingerprint: String],
+        order: inout [ContentFingerprint]
+    ) -> [Sibling] {
         let directory = documentURL.deletingLastPathComponent()
         var found: [Sibling] = []
-        found.append(contentsOf: markdownFiles(in: directory, group: nil))
+        found.append(contentsOf: markdownFiles(
+            in: directory, group: nil, documentURL: documentURL,
+            markdownExtensions: markdownExtensions, cache: &cache, order: &order
+        ))
 
         for name in extraDirectories {
             let sub = directory.appendingPathComponent(name, isDirectory: true)
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: sub.path, isDirectory: &isDirectory),
                   isDirectory.boolValue else { continue }
-            found.append(contentsOf: markdownFiles(in: sub, group: name))
+            found.append(contentsOf: markdownFiles(
+                in: sub, group: name, documentURL: documentURL,
+                markdownExtensions: markdownExtensions, cache: &cache, order: &order
+            ))
         }
 
-        // Newest first: the file the agent just wrote is the one you want.
         found.sort { a, b in
             if a.isCurrent != b.isCurrent { return a.isCurrent }
             return a.modified > b.modified
         }
-        siblings = Array(found.prefix(limit))
-        onChange?()
+        return Array(found.prefix(limit))
     }
 
-    private func markdownFiles(in directory: URL, group: String?) -> [Sibling] {
+    private func markdownFiles(
+        in directory: URL,
+        group: String?,
+        documentURL: URL,
+        markdownExtensions: Set<String>,
+        cache: inout [ContentFingerprint: String],
+        order: inout [ContentFingerprint]
+    ) -> [Sibling] {
         let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: keys, options: [.skipsSubdirectoryDescendants]
@@ -92,14 +163,13 @@ final class SiblingScanner {
 
             let modified = values.contentModificationDate ?? .distantPast
             let state = DocumentStateStore.shared.state(for: url)
-            // "Changed since you last looked" is a comparison against the hash
-            // recorded when the document was last closed (§8.2), not against a
-            // timestamp — an agent that rewrites a file with identical content
-            // should not light up the sidebar.
             let unseen: Bool
             if state.lastSeenHash.isEmpty {
                 unseen = false
-            } else if let hash = contentHash(for: url, modified: modified, byteCount: values.fileSize ?? 0) {
+            } else if let hash = contentHash(
+                for: url, modified: modified, byteCount: values.fileSize ?? 0,
+                cache: &cache, order: &order
+            ) {
                 unseen = hash != state.lastSeenHash
             } else {
                 unseen = false
@@ -117,31 +187,34 @@ final class SiblingScanner {
         }
     }
 
-    private func contentHash(for url: URL, modified: Date, byteCount: Int) -> String? {
+    private func contentHash(
+        for url: URL,
+        modified: Date,
+        byteCount: Int,
+        cache: inout [ContentFingerprint: String],
+        order: inout [ContentFingerprint]
+    ) -> String? {
         let key = ContentFingerprint(
             path: url.standardizedFileURL.path,
             modified: modified,
             byteCount: byteCount
         )
-        if let cached = contentHashCache[key] {
-            touchContentHash(key)
+        if let cached = cache[key] {
+            order.removeAll { $0 == key }
+            order.append(key)
             return cached
         }
 
         guard let data = try? Data(contentsOf: url),
               String(data: data, encoding: .utf8) != nil else { return nil }
-        let hash = SnapshotStore.hash(data)
-        contentHashCache[key] = hash
-        touchContentHash(key)
-        while contentHashOrder.count > contentHashCacheLimit {
-            contentHashCache.removeValue(forKey: contentHashOrder.removeFirst())
+        let hash = DocumentIO.contentHash(data)
+        cache[key] = hash
+        order.removeAll { $0 == key }
+        order.append(key)
+        while order.count > contentHashCacheLimit {
+            cache.removeValue(forKey: order.removeFirst())
         }
         return hash
-    }
-
-    private func touchContentHash(_ key: ContentFingerprint) {
-        contentHashOrder.removeAll { $0 == key }
-        contentHashOrder.append(key)
     }
 
     // MARK: - Watching
@@ -159,7 +232,9 @@ final class SiblingScanner {
 
     func neighbour(after url: URL, forward: Bool) -> URL? {
         guard siblings.count > 1 else { return nil }
-        guard let index = siblings.firstIndex(where: { $0.url.path == url.path }) else {
+        guard let index = siblings.firstIndex(where: {
+            $0.url.resolvingSymlinksInPath() == url.resolvingSymlinksInPath()
+        }) else {
             return siblings.first?.url
         }
         let next = forward

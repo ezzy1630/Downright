@@ -4,13 +4,19 @@ import QuickLookThumbnailing
 
 @MainActor
 final class StartWindowController: NSWindowController {
+    static let recentDisplayLimit = 8
+
     var onOpen: ((URL) -> Void)?
     var onOpenPanel: (() -> Void)?
     var onNew: (() -> Void)?
 
+    private var startView: StartView? { window?.contentView as? StartView }
+    /// Prevents double-open while a handoff is already in flight.
+    private var isHandingOff = false
+
     convenience init(recents: [RecentDocument]) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -19,30 +25,86 @@ final class StartWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
-        window.minSize = NSSize(width: 860, height: 560)
+        window.minSize = NSSize(width: 840, height: 540)
         window.backgroundColor = .windowBackgroundColor
         window.center()
         self.init(window: window)
-        window.contentView = StartView(recents: recents, owner: self)
+        let content = StartView(recents: recents, owner: self)
+        window.contentView = content
+        window.initialFirstResponder = content.preferredFirstResponder
+    }
+
+    func reloadRecents(_ recents: [RecentDocument]) {
+        isHandingOff = false
+        startView?.reloadRecents(Array(recents.prefix(Self.recentDisplayLimit)))
+    }
+
+    /// Fades the start window out, then closes it. Reduce Motion callers pass `animated: false`.
+    func dismiss(animated: Bool, completion: (() -> Void)? = nil) {
+        guard let window else {
+            completion?()
+            return
+        }
+        let finish = {
+            window.alphaValue = 1
+            window.close()
+            completion?()
+        }
+        guard animated else {
+            finish()
+            return
+        }
+        Motion.run(
+            reduceMotion: false,
+            duration: Motion.quick,
+            curve: .easeOut,
+            changes: { _ in window.animator().alphaValue = 0 },
+            completion: finish
+        )
+    }
+
+    private func beginHandoff() -> Bool {
+        guard !isHandingOff else { return false }
+        isHandingOff = true
+        return true
     }
 
     @objc func openRecent(_ sender: NSButton) {
-        guard let path = sender.identifier?.rawValue else { return }
+        guard beginHandoff(), let path = sender.identifier?.rawValue else { return }
         onOpen?(URL(fileURLWithPath: path))
     }
 
-    @objc func openPanel(_ sender: Any?) { onOpenPanel?() }
-    @objc func newDocument(_ sender: Any?) { onNew?() }
+    @objc func openPanel(_ sender: Any?) {
+        guard beginHandoff() else { return }
+        onOpenPanel?()
+        // Open panel is modal; if the user cancels, allow another attempt.
+        isHandingOff = false
+    }
+
+    @objc func newDocument(_ sender: Any?) {
+        guard beginHandoff() else { return }
+        onNew?()
+        isHandingOff = false
+    }
 }
+
+// MARK: - Root
 
 private final class StartView: NSView {
     private weak var owner: StartWindowController?
-    private let dropZone: DropZoneView
+    private let dropZone = DropZoneView()
     private let background = StartBackgroundView()
+    private let recentPanel: RecentDocumentsPanel
+    private let hero: StartHeroView
+    /// Clear of traffic lights under `fullSizeContentView`.
+    private static let titlebarClearance: CGFloat = 56
+
+    var preferredFirstResponder: NSView { hero.openButton }
 
     init(recents: [RecentDocument], owner: StartWindowController) {
         self.owner = owner
-        self.dropZone = DropZoneView()
+        self.recentPanel = RecentDocumentsPanel(recents: recents, owner: owner)
+        self.hero = StartHeroView(owner: owner, dropZone: dropZone)
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -70,13 +132,11 @@ private final class StartView: NSView {
         let columns = NSStackView()
         columns.translatesAutoresizingMaskIntoConstraints = false
         columns.orientation = .horizontal
-        columns.alignment = .top
+        columns.alignment = .centerY
         columns.distribution = .fill
-        columns.spacing = 34
+        columns.spacing = 36
         canvas.addSubview(columns)
 
-        let hero = StartHeroView(owner: owner, dropZone: dropZone)
-        let recentPanel = RecentDocumentsPanel(recents: recents, owner: owner)
         hero.translatesAutoresizingMaskIntoConstraints = false
         recentPanel.translatesAutoresizingMaskIntoConstraints = false
         columns.addArrangedSubview(hero)
@@ -86,6 +146,9 @@ private final class StartView: NSView {
         hero.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         recentPanel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         recentPanel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let centerY = columns.centerYAnchor.constraint(equalTo: canvas.centerYAnchor)
+        centerY.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -106,15 +169,21 @@ private final class StartView: NSView {
 
             columns.leadingAnchor.constraint(equalTo: canvas.leadingAnchor, constant: 52),
             columns.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -52),
-            columns.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 34),
-            columns.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -42),
+            columns.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
+            columns.bottomAnchor.constraint(lessThanOrEqualTo: canvas.bottomAnchor, constant: -40),
+            centerY,
 
-            hero.widthAnchor.constraint(equalTo: columns.widthAnchor, multiplier: 0.54),
-            recentPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 340),
+            hero.widthAnchor.constraint(equalTo: columns.widthAnchor, multiplier: 0.5),
+            recentPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 352),
         ])
     }
 
     required init?(coder: NSCoder) { nil }
+
+    func reloadRecents(_ recents: [RecentDocument]) {
+        guard let owner else { return }
+        recentPanel.reload(recents: recents, owner: owner)
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -154,6 +223,8 @@ private final class StartView: NSView {
     }
 }
 
+// MARK: - Background
+
 private final class StartBackgroundView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -163,52 +234,30 @@ private final class StartBackgroundView: NSView {
     required init?(coder: NSCoder) { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let base = NSColor.windowBackgroundColor
-        base.setFill()
+        NSColor.windowBackgroundColor.setFill()
         dirtyRect.fill()
-
-        let accent = NSColor.controlAccentColor
-        let glow = NSGradient(colors: [
-            accent.withAlphaComponent(0.075),
-            accent.withAlphaComponent(0.03),
-            .clear,
-        ])
-        let glowRect = NSRect(
-            x: bounds.maxX - 360,
-            y: bounds.maxY - 280,
-            width: 460,
-            height: 420
-        )
-        glow?.draw(in: glowRect, relativeCenterPosition: NSPoint(x: 0.35, y: 0.55))
-
-        let hairline = NSBezierPath()
-        hairline.move(to: NSPoint(x: 52, y: bounds.maxY - 1))
-        hairline.line(to: NSPoint(x: bounds.maxX - 52, y: bounds.maxY - 1))
-        NSColor.separatorColor.withAlphaComponent(0.22).setStroke()
-        hairline.lineWidth = 1
-        hairline.stroke()
     }
 }
 
+// MARK: - Hero
+
 private final class StartHeroView: NSView {
-    private let openButton: StartActionButton
+    let openButton: StartActionButton
     private let newButton: StartActionButton
 
     init(owner: StartWindowController, dropZone: DropZoneView) {
         openButton = StartActionButton(
-            title: "Open file",
+            title: "Open…",
             shortcut: "⌘O",
-            symbolName: "arrow.up.right",
-            keyEquivalent: "o",
+            symbolName: "folder",
             kind: .primary,
             target: owner,
             action: #selector(StartWindowController.openPanel(_:))
         )
         newButton = StartActionButton(
-            title: "New document",
+            title: "New Document…",
             shortcut: "⌘N",
             symbolName: "plus",
-            keyEquivalent: "n",
             kind: .secondary,
             target: owner,
             action: #selector(StartWindowController.newDocument(_:))
@@ -217,65 +266,65 @@ private final class StartHeroView: NSView {
 
         let brand = BrandMarkView()
         brand.translatesAutoresizingMaskIntoConstraints = false
-        let brandLabel = NSTextField(labelWithString: "DOWNRIGHT")
+        let brandLabel = NSTextField(labelWithString: "")
         brandLabel.translatesAutoresizingMaskIntoConstraints = false
-        brandLabel.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
-        brandLabel.textColor = .secondaryLabelColor
+        brandLabel.attributedStringValue = NSAttributedString(
+            string: "DOWNRIGHT",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+                .kern: 1.2,
+            ]
+        )
         brandLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         let brandRow = NSStackView(views: [brand, brandLabel])
         brandRow.translatesAutoresizingMaskIntoConstraints = false
         brandRow.orientation = .horizontal
         brandRow.alignment = .centerY
-        brandRow.spacing = 10
+        brandRow.spacing = 8
+
+        let titleParagraph = NSMutableParagraphStyle()
+        titleParagraph.lineSpacing = 2
+        titleParagraph.maximumLineHeight = 38
+        titleParagraph.minimumLineHeight = 36
 
         let title = NSTextField(labelWithString: "Read deeply.\nWrite lightly.")
         title.translatesAutoresizingMaskIntoConstraints = false
-        title.font = .systemFont(ofSize: 40, weight: .bold)
-        title.textColor = .labelColor
         title.maximumNumberOfLines = 2
         title.lineBreakMode = .byWordWrapping
+        title.setContentHuggingPriority(.required, for: .vertical)
         title.attributedStringValue = NSAttributedString(
-            string: title.stringValue,
+            string: "Read deeply.\nWrite lightly.",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 40, weight: .bold),
+                .font: NSFont.systemFont(ofSize: 30, weight: .semibold),
                 .foregroundColor: NSColor.labelColor,
-                .kern: -1.3,
+                .kern: -0.4,
+                .paragraphStyle: titleParagraph,
             ]
         )
 
         let subtitle = NSTextField(
-            wrappingLabelWithString: "A native home for Markdown that stays out of the way."
+            wrappingLabelWithString: "Exact Markdown. Quiet chrome."
         )
         subtitle.translatesAutoresizingMaskIntoConstraints = false
-        subtitle.font = .systemFont(ofSize: 16, weight: .regular)
+        subtitle.font = .systemFont(ofSize: 14, weight: .regular)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.maximumNumberOfLines = 0
+        subtitle.maximumNumberOfLines = 2
         subtitle.lineBreakMode = .byWordWrapping
-        subtitle.preferredMaxLayoutWidth = 360
+        subtitle.preferredMaxLayoutWidth = 320
 
         let actions = NSStackView(views: [openButton, newButton])
         actions.translatesAutoresizingMaskIntoConstraints = false
         actions.orientation = .horizontal
         actions.alignment = .centerY
+        actions.distribution = .fillEqually
         actions.spacing = 10
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.heightAnchor.constraint(equalToConstant: 64).isActive = true
+        actions.setHuggingPriority(.required, for: .vertical)
 
         dropZone.translatesAutoresizingMaskIntoConstraints = false
 
-        let footer = NSTextField(
-            wrappingLabelWithString: "Drop .md or .markdown files anywhere in this window."
-        )
-        footer.translatesAutoresizingMaskIntoConstraints = false
-        footer.font = .systemFont(ofSize: 12, weight: .regular)
-        footer.textColor = .secondaryLabelColor
-        footer.maximumNumberOfLines = 2
-        footer.lineBreakMode = .byWordWrapping
-
-        let stack = NSStackView(views: [brandRow, title, subtitle, actions, spacer, dropZone, footer])
+        let stack = NSStackView(views: [brandRow, title, subtitle, actions, dropZone])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -283,127 +332,199 @@ private final class StartHeroView: NSView {
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            brand.widthAnchor.constraint(equalToConstant: 28),
-            brand.heightAnchor.constraint(equalToConstant: 28),
-            title.widthAnchor.constraint(lessThanOrEqualToConstant: 390),
-            subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 370),
-            openButton.widthAnchor.constraint(equalToConstant: 206),
-            openButton.heightAnchor.constraint(equalToConstant: 48),
-            newButton.widthAnchor.constraint(equalToConstant: 190),
-            newButton.heightAnchor.constraint(equalToConstant: 48),
-            actions.widthAnchor.constraint(equalToConstant: 406),
+            brand.widthAnchor.constraint(equalToConstant: 22),
+            brand.heightAnchor.constraint(equalToConstant: 22),
+            title.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+            openButton.heightAnchor.constraint(equalToConstant: 38),
+            newButton.heightAnchor.constraint(equalToConstant: 38),
+            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
             dropZone.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            dropZone.heightAnchor.constraint(equalToConstant: 96),
+            dropZone.heightAnchor.constraint(equalToConstant: 64),
 
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 22),
+            stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        stack.setCustomSpacing(30, after: brandRow)
-        stack.setCustomSpacing(14, after: title)
-        stack.setCustomSpacing(24, after: subtitle)
-        stack.setCustomSpacing(11, after: actions)
-        stack.setCustomSpacing(18, after: dropZone)
+        stack.setCustomSpacing(18, after: brandRow)
+        stack.setCustomSpacing(10, after: title)
+        stack.setCustomSpacing(18, after: subtitle)
+        stack.setCustomSpacing(24, after: actions)
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Downright welcome")
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        playArrivalIfNeeded()
+    }
+
+    private var didPlayArrival = false
+
+    private func playArrivalIfNeeded() {
+        guard !didPlayArrival else { return }
+        didPlayArrival = true
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard !reduceMotion else { return }
+        wantsLayer = true
+        alphaValue = 0
+        layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -5))
+        Motion.run(
+            reduceMotion: false,
+            duration: Motion.standard,
+            curve: .easeOut,
+            changes: { _ in
+                self.animator().alphaValue = 1
+                self.layer?.setAffineTransform(.identity)
+            }
+        )
+    }
 }
 
+// MARK: - Recents
+
 private final class RecentDocumentsPanel: NSView {
+    private weak var owner: StartWindowController?
+    private let headerLabel = NSTextField(labelWithString: "Recent")
+    private let countLabel = NSTextField(labelWithString: "")
+    private let list = NSStackView()
+    private let panel = SurfaceView()
     private var recentCards: [NSView] = []
+    private var displayedPaths: [String] = []
     private var didAnimateRecentCards = false
-    private let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    private var emptyFillConstraint: NSLayoutConstraint?
 
     init(recents: [RecentDocument], owner: StartWindowController) {
+        self.owner = owner
         super.init(frame: .zero)
 
-        let label = NSTextField(labelWithString: "Recent files")
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = .secondaryLabelColor
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        headerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        headerLabel.textColor = .secondaryLabelColor
 
-        let header = NSStackView(views: [label])
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = .tertiaryLabelColor
+        countLabel.alignment = .right
+
+        let header = NSStackView(views: [headerLabel, countLabel])
         header.translatesAutoresizingMaskIntoConstraints = false
-        header.orientation = .vertical
-        header.alignment = .leading
-        header.spacing = 0
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.distribution = .fill
+        header.spacing = 8
+        headerLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        let list = NSStackView()
         list.translatesAutoresizingMaskIntoConstraints = false
         list.orientation = .vertical
         list.alignment = .width
         list.distribution = .fill
-        list.spacing = 10
+        list.spacing = 2
+
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(header)
+        panel.addSubview(list)
+        addSubview(panel)
+
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
+            header.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16),
+            header.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14),
+
+            list.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
+            list.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -8),
+            list.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            list.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -10),
+
+            panel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            panel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            panel.topAnchor.constraint(equalTo: topAnchor),
+            panel.bottomAnchor.constraint(equalTo: bottomAnchor),
+            panel.widthAnchor.constraint(greaterThanOrEqualToConstant: 352),
+        ])
+
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Recent Markdown documents")
+        rebuild(recents: recents, animate: false)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func reload(recents: [RecentDocument], owner: StartWindowController) {
+        self.owner = owner
+        let paths = recents.map(\.path)
+        guard paths != displayedPaths else { return }
+        rebuild(recents: recents, animate: window != nil)
+    }
+
+    private func rebuild(recents: [RecentDocument], animate: Bool) {
+        for view in list.arrangedSubviews {
+            list.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        recentCards.removeAll()
+        emptyFillConstraint?.isActive = false
+        emptyFillConstraint = nil
+        displayedPaths = recents.map(\.path)
+        didAnimateRecentCards = false
+        countLabel.stringValue = recents.isEmpty ? "" : "\(min(recents.count, StartWindowController.recentDisplayLimit))"
+
+        guard let owner else { return }
 
         if recents.isEmpty {
             let empty = RecentEmptyState()
             empty.translatesAutoresizingMaskIntoConstraints = false
             list.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
-            empty.heightAnchor.constraint(equalToConstant: 224).isActive = true
+            let fill = empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 200)
+            fill.priority = .defaultHigh
+            fill.isActive = true
+            emptyFillConstraint = fill
             recentCards = [empty]
         } else {
-            for recent in recents.prefix(6) {
+            for recent in recents.prefix(StartWindowController.recentDisplayLimit) {
                 let card = RecentDocumentButton(recent: recent, target: owner)
                 card.translatesAutoresizingMaskIntoConstraints = false
-                card.heightAnchor.constraint(equalToConstant: 72).isActive = true
+                card.heightAnchor.constraint(equalToConstant: 52).isActive = true
                 list.addArrangedSubview(card)
                 card.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
                 recentCards.append(card)
             }
         }
 
-        let panel = SurfaceView()
-        panel.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(header)
-        panel.addSubview(list)
-
-        NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 24),
-            header.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -24),
-            header.topAnchor.constraint(equalTo: panel.topAnchor, constant: 24),
-
-            list.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
-            list.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16),
-            list.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
-            list.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -16),
-        ])
-
-        addSubview(panel)
-        NSLayoutConstraint.activate([
-            panel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            panel.trailingAnchor.constraint(equalTo: trailingAnchor),
-            panel.topAnchor.constraint(equalTo: topAnchor),
-            panel.bottomAnchor.constraint(equalTo: bottomAnchor),
-            panel.widthAnchor.constraint(greaterThanOrEqualToConstant: 340),
-        ])
-
-        setAccessibilityRole(.group)
-        setAccessibilityLabel("Recent Markdown documents")
+        if animate {
+            animateCardsIn()
+        }
     }
-
-    required init?(coder: NSCoder) { nil }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, !didAnimateRecentCards else { return }
+        guard window != nil else { return }
+        animateCardsIn()
+    }
+
+    private func animateCardsIn() {
+        guard !didAnimateRecentCards else { return }
         didAnimateRecentCards = true
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         guard !reduceMotion else { return }
 
         for (index, card) in recentCards.enumerated() {
             card.alphaValue = 0
-            let delay = 0.045 * Double(index)
+            let delay = 0.03 * Double(index)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak card] in
                 guard let card, card.window != nil else { return }
                 Motion.run(
                     reduceMotion: false,
                     duration: Motion.standard,
-                    curve: .spring,
+                    curve: .easeOut,
                     changes: { _ in card.animator().alphaValue = 1 }
                 )
             }
@@ -415,36 +536,42 @@ private final class RecentEmptyState: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        let icon = NSImageView(image: NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Markdown document")!)
+        let icon = NSImageView(
+            image: NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Markdown document")!
+        )
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.contentTintColor = .tertiaryLabelColor
 
-        let title = NSTextField(labelWithString: "Nothing here yet")
+        let title = NSTextField(labelWithString: "No recent files")
         title.translatesAutoresizingMaskIntoConstraints = false
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = .secondaryLabelColor
 
-        let detail = NSTextField(wrappingLabelWithString: "Open a Markdown file to build your desk.")
+        let detail = NSTextField(
+            wrappingLabelWithString: "Open… or drop a .md file anywhere in this window."
+        )
         detail.translatesAutoresizingMaskIntoConstraints = false
         detail.font = .systemFont(ofSize: 12)
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = .tertiaryLabelColor
         detail.alignment = .center
-        detail.maximumNumberOfLines = 2
+        detail.maximumNumberOfLines = 3
 
         let stack = NSStackView(views: [icon, title, detail])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 7
+        stack.spacing = 8
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: 28),
-            icon.heightAnchor.constraint(equalToConstant: 28),
-            detail.widthAnchor.constraint(lessThanOrEqualToConstant: 200),
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+            detail.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
         ])
     }
 
@@ -455,21 +582,29 @@ private final class SurfaceView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 20
+        layer?.cornerRadius = 12
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.24).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.16).cgColor
+        applyAppearance()
     }
 
     required init?(coder: NSCoder) { nil }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.24).cgColor
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.16).cgColor
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        let fillAlpha: CGFloat = (increaseContrast || reduceTransparency) ? 0.95 : 0.38
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(fillAlpha).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(increaseContrast ? 0.6 : 0.18).cgColor
     }
 }
+
+// MARK: - Actions
 
 private final class StartActionButton: NSButton {
     enum Kind { case primary, secondary }
@@ -485,14 +620,11 @@ private final class StartActionButton: NSButton {
     }
     private var isHovered = false
     private var isPressed = false
-    private var shortcutHopTimer: Timer?
-    private var isShortcutHoppingUp = false
 
     init(
         title: String,
         shortcut: String,
         symbolName: String,
-        keyEquivalent: String,
         kind: Kind,
         target: AnyObject,
         action: Selector
@@ -508,19 +640,23 @@ private final class StartActionButton: NSButton {
         setButtonType(.momentaryPushIn)
         isBordered = false
         self.title = ""
-        focusRingType = .default
-        self.keyEquivalent = keyEquivalent
-        keyEquivalentModifierMask = [.command]
+        focusRingType = .exterior
+        // Menus own ⌘O / ⌘N; badges are instructional only — avoids double-fire.
         setAccessibilityRole(.button)
-        setAccessibilityLabel(titleLabel.stringValue)
+        setAccessibilityLabel(title)
         setAccessibilityHelp(shortcut)
         wantsLayer = true
 
         shell.translatesAutoresizingMaskIntoConstraints = false
         shell.wantsLayer = true
-        shell.layer?.cornerRadius = 13
+        shell.layer?.cornerRadius = 9
         shell.layer?.masksToBounds = true
         addSubview(shell)
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = kind == .primary ? .white : .secondaryLabelColor
+        shell.addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -532,23 +668,16 @@ private final class StartActionButton: NSButton {
         shortcutLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
         shortcutLabel.alignment = .center
         shortcutLabel.textColor = kind == .primary
-            ? NSColor.white.withAlphaComponent(0.84)
+            ? NSColor.white.withAlphaComponent(0.86)
             : NSColor.secondaryLabelColor
         shortcutBadge.translatesAutoresizingMaskIntoConstraints = false
         shortcutBadge.wantsLayer = true
-        shortcutBadge.layer?.cornerRadius = 5
+        shortcutBadge.layer?.cornerRadius = 4
         shortcutBadge.layer?.masksToBounds = true
         shell.addSubview(shortcutBadge)
 
         shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
-        shortcutLabel.wantsLayer = true
         shortcutBadge.addSubview(shortcutLabel)
-
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.contentTintColor = kind == .primary ? .white : .labelColor
-        iconView.wantsLayer = true
-        shell.addSubview(iconView)
 
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -556,22 +685,27 @@ private final class StartActionButton: NSButton {
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            titleLabel.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 16),
+            iconView.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 12),
+            iconView.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 13),
+            iconView.heightAnchor.constraint(equalToConstant: 13),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            shortcutBadge.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 8),
+
+            shortcutBadge.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 10),
+            shortcutBadge.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -10),
             shortcutBadge.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            shortcutBadge.widthAnchor.constraint(equalToConstant: 32),
-            shortcutBadge.heightAnchor.constraint(equalToConstant: 20),
-            shortcutLabel.leadingAnchor.constraint(equalTo: shortcutBadge.leadingAnchor),
-            shortcutLabel.trailingAnchor.constraint(equalTo: shortcutBadge.trailingAnchor),
+            shortcutBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            shortcutBadge.heightAnchor.constraint(equalToConstant: 18),
+            shortcutLabel.leadingAnchor.constraint(equalTo: shortcutBadge.leadingAnchor, constant: 5),
+            shortcutLabel.trailingAnchor.constraint(equalTo: shortcutBadge.trailingAnchor, constant: -5),
             shortcutLabel.topAnchor.constraint(equalTo: shortcutBadge.topAnchor),
             shortcutLabel.bottomAnchor.constraint(equalTo: shortcutBadge.bottomAnchor),
-            iconView.leadingAnchor.constraint(equalTo: shortcutBadge.trailingAnchor, constant: 10),
-            iconView.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -15),
-            iconView.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
         ])
+
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
 
         updateSurface(animated: false)
         addTrackingArea(NSTrackingArea(
@@ -584,17 +718,19 @@ private final class StartActionButton: NSButton {
 
     required init?(coder: NSCoder) { nil }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 38)
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? { self }
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
         updateSurface(animated: true)
-        startShortcutHop()
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        stopShortcutHop()
         updateSurface(animated: true)
     }
 
@@ -605,106 +741,96 @@ private final class StartActionButton: NSButton {
         updateSurface(animated: true)
     }
 
-    deinit {
-        shortcutHopTimer?.invalidate()
-    }
-
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateSurface(animated: false)
     }
 
     private func updateSurface(animated: Bool) {
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         let changes = {
             let accent = NSColor.controlAccentColor
             let base: NSColor
             if self.kind == .primary {
                 base = self.isPressed
-                    ? accent.withAlphaComponent(0.76)
-                    : accent.withAlphaComponent(self.isHovered ? 0.92 : 0.82)
+                    ? (accent.blended(withFraction: 0.2, of: .black) ?? accent)
+                    : (self.isHovered ? accent : accent.withAlphaComponent(increaseContrast ? 1 : 0.94))
             } else {
-                base = NSColor.controlBackgroundColor.withAlphaComponent(self.isHovered ? 0.82 : 0.58)
+                let idleAlpha: CGFloat = increaseContrast ? 0.96 : 0.7
+                let hoverAlpha: CGFloat = increaseContrast ? 1 : 0.88
+                base = NSColor.controlBackgroundColor.withAlphaComponent(self.isHovered ? hoverAlpha : idleAlpha)
             }
             self.shell.layer?.backgroundColor = base.cgColor
             self.shell.layer?.borderWidth = self.kind == .secondary ? 1 : 0
-            self.shell.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.30).cgColor
+            self.shell.layer?.borderColor = NSColor.separatorColor
+                .withAlphaComponent(increaseContrast ? 0.55 : 0.26).cgColor
             self.shortcutBadge.layer?.backgroundColor = self.kind == .primary
-                ? NSColor.white.withAlphaComponent(0.13).cgColor
-                : NSColor.labelColor.withAlphaComponent(0.07).cgColor
-            self.shortcutLabel.layer?.setAffineTransform(
-                self.isShortcutHoppingUp && !self.isPressed
-                    ? CGAffineTransform(translationX: 0, y: 2)
-                    : .identity
-            )
+                ? NSColor.white.withAlphaComponent(0.14).cgColor
+                : NSColor.labelColor.withAlphaComponent(0.06).cgColor
             self.shell.layer?.setAffineTransform(
-                self.isPressed ? CGAffineTransform(scaleX: 0.98, y: 0.98) : .identity
+                self.isPressed ? CGAffineTransform(scaleX: 0.985, y: 0.985) : .identity
             )
-            self.iconView.alphaValue = self.isHovered ? 1 : 0.86
-            self.iconView.layer?.setAffineTransform(.identity)
+            self.iconView.alphaValue = self.isHovered ? 1 : 0.92
         }
 
         if animated {
             Motion.run(
                 reduceMotion: reduceMotion,
                 duration: Motion.quick,
-                curve: .spring,
+                curve: .easeOut,
                 changes: { _ in changes() }
             )
         } else {
             changes()
         }
     }
+}
 
-    private func startShortcutHop() {
-        guard !reduceMotion, shortcutHopTimer == nil else { return }
-        isShortcutHoppingUp = true
-        animateShortcutHop()
-        shortcutHopTimer = Timer.scheduledTimer(withTimeInterval: 0.34, repeats: true) { [weak self] _ in
-            guard let self, self.isHovered else { return }
-            self.isShortcutHoppingUp.toggle()
-            self.animateShortcutHop()
-        }
+// MARK: - Recent row
+
+private enum RecentRowCopy {
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    static func detail(for recent: RecentDocument) -> String {
+        let folder = URL(fileURLWithPath: recent.path)
+            .deletingLastPathComponent()
+            .lastPathComponent
+        let when = relativeFormatter.localizedString(for: recent.lastOpened, relativeTo: Date())
+        return "\(folder)  ·  \(when)"
     }
 
-    private func stopShortcutHop() {
-        shortcutHopTimer?.invalidate()
-        shortcutHopTimer = nil
-        isShortcutHoppingUp = false
-    }
-
-    private func animateShortcutHop() {
-        guard isHovered, !isPressed, !reduceMotion else { return }
-        let transform = isShortcutHoppingUp
-            ? CGAffineTransform(translationX: 0, y: 2)
-            : .identity
-        Motion.run(
-            reduceMotion: false,
-            duration: Motion.standard,
-            curve: .easeOut,
-            changes: { _ in self.shortcutLabel.layer?.setAffineTransform(transform) }
-        )
+    static func accessibilityDetail(for recent: RecentDocument) -> String {
+        let base = detail(for: recent)
+        if recent.firstHeading.isEmpty { return base }
+        return "\(recent.firstHeading). \(base)"
     }
 }
 
 private final class RecentDocumentButton: NSButton {
     private let recent: RecentDocument
     private let shell = NSView()
-    private let hoverSurface = NSView()
-    private let activeMarker = NSView()
     private let thumbnail = NSImageView()
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
-    private let arrow = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Open")!)
-    private let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    private let arrow = NSImageView(
+        image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Open")!
+    )
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
     private var isHovered = false
     private var isPressed = false
+    private var thumbnailRequest: QLThumbnailGenerator.Request?
 
     init(recent: RecentDocument, target: StartWindowController) {
         self.recent = recent
         titleLabel = NSTextField(labelWithString: recent.displayName)
-        let words = recent.wordCount == 1 ? "1 word" : "\(recent.wordCount) words"
-        let context = recent.firstHeading.isEmpty ? "Markdown document" : recent.firstHeading
-        detailLabel = NSTextField(labelWithString: "\(context)  ·  \(words)")
+        let detail = RecentRowCopy.detail(for: recent)
+        detailLabel = NSTextField(labelWithString: detail)
         super.init(frame: .zero)
 
         self.target = target
@@ -713,60 +839,55 @@ private final class RecentDocumentButton: NSButton {
         setButtonType(.momentaryPushIn)
         isBordered = false
         self.title = ""
-        focusRingType = .default
+        focusRingType = .exterior
         setAccessibilityRole(.button)
         setAccessibilityLabel("Open \(recent.displayName)")
-        setAccessibilityValue(detailLabel.stringValue)
+        setAccessibilityValue(RecentRowCopy.accessibilityDetail(for: recent))
         wantsLayer = true
 
         shell.translatesAutoresizingMaskIntoConstraints = false
         shell.wantsLayer = true
-        shell.layer?.cornerRadius = 14
+        shell.layer?.cornerRadius = 8
         shell.layer?.masksToBounds = true
         addSubview(shell)
 
-        hoverSurface.translatesAutoresizingMaskIntoConstraints = false
-        hoverSurface.wantsLayer = true
-        hoverSurface.layer?.cornerRadius = 14
-        hoverSurface.layer?.masksToBounds = true
-        hoverSurface.alphaValue = 0
-        shell.addSubview(hoverSurface)
-
-        activeMarker.translatesAutoresizingMaskIntoConstraints = false
-        activeMarker.wantsLayer = true
-        activeMarker.layer?.cornerRadius = 1
-        activeMarker.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        activeMarker.alphaValue = 0
-        shell.addSubview(activeMarker)
+        let thumbWell = NSView()
+        thumbWell.translatesAutoresizingMaskIntoConstraints = false
+        thumbWell.wantsLayer = true
+        thumbWell.layer?.cornerRadius = 6
+        thumbWell.layer?.masksToBounds = true
+        thumbWell.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05).cgColor
+        shell.addSubview(thumbWell)
 
         thumbnail.translatesAutoresizingMaskIntoConstraints = false
-        thumbnail.image = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: "Markdown document")
-        thumbnail.contentTintColor = .secondaryLabelColor
+        thumbnail.image = NSImage(
+            systemSymbolName: "doc.richtext",
+            accessibilityDescription: "Markdown document"
+        )
+        thumbnail.contentTintColor = .tertiaryLabelColor
         thumbnail.imageScaling = .scaleProportionallyUpOrDown
         thumbnail.wantsLayer = true
-        thumbnail.layer?.cornerRadius = 10
-        thumbnail.layer?.masksToBounds = true
-        shell.addSubview(thumbnail)
-        Self.loadThumbnail(for: URL(fileURLWithPath: recent.path), into: thumbnail, expectedPath: recent.path)
+        thumbWell.addSubview(thumbnail)
+        loadThumbnail()
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         shell.addSubview(titleLabel)
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .systemFont(ofSize: 12, weight: .regular)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        detailLabel.textColor = .tertiaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.maximumNumberOfLines = 1
         shell.addSubview(detailLabel)
 
         arrow.translatesAutoresizingMaskIntoConstraints = false
         arrow.imageScaling = .scaleProportionallyUpOrDown
         arrow.contentTintColor = .tertiaryLabelColor
-        arrow.alphaValue = 0.56
+        arrow.alphaValue = 0
         arrow.wantsLayer = true
         shell.addSubview(arrow)
 
@@ -776,33 +897,28 @@ private final class RecentDocumentButton: NSButton {
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            hoverSurface.leadingAnchor.constraint(equalTo: shell.leadingAnchor),
-            hoverSurface.trailingAnchor.constraint(equalTo: shell.trailingAnchor),
-            hoverSurface.topAnchor.constraint(equalTo: shell.topAnchor),
-            hoverSurface.bottomAnchor.constraint(equalTo: shell.bottomAnchor),
+            thumbWell.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 8),
+            thumbWell.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            thumbWell.widthAnchor.constraint(equalToConstant: 34),
+            thumbWell.heightAnchor.constraint(equalToConstant: 34),
 
-            activeMarker.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 18),
-            activeMarker.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -18),
-            activeMarker.bottomAnchor.constraint(equalTo: shell.bottomAnchor),
-            activeMarker.heightAnchor.constraint(equalToConstant: 2),
+            thumbnail.leadingAnchor.constraint(equalTo: thumbWell.leadingAnchor, constant: 5),
+            thumbnail.trailingAnchor.constraint(equalTo: thumbWell.trailingAnchor, constant: -5),
+            thumbnail.topAnchor.constraint(equalTo: thumbWell.topAnchor, constant: 5),
+            thumbnail.bottomAnchor.constraint(equalTo: thumbWell.bottomAnchor, constant: -5),
 
-            thumbnail.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 12),
-            thumbnail.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            thumbnail.widthAnchor.constraint(equalToConstant: 48),
-            thumbnail.heightAnchor.constraint(equalToConstant: 48),
-
-            titleLabel.leadingAnchor.constraint(equalTo: thumbnail.trailingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(equalTo: arrow.leadingAnchor, constant: -12),
-            titleLabel.topAnchor.constraint(equalTo: shell.topAnchor, constant: 17),
+            titleLabel.leadingAnchor.constraint(equalTo: thumbWell.trailingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(equalTo: arrow.leadingAnchor, constant: -8),
+            titleLabel.topAnchor.constraint(equalTo: shell.topAnchor, constant: 9),
 
             detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             detailLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
 
-            arrow.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -16),
+            arrow.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -10),
             arrow.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            arrow.widthAnchor.constraint(equalToConstant: 11),
-            arrow.heightAnchor.constraint(equalToConstant: 16),
+            arrow.widthAnchor.constraint(equalToConstant: 9),
+            arrow.heightAnchor.constraint(equalToConstant: 12),
         ])
 
         updateSurface(animated: false)
@@ -815,6 +931,12 @@ private final class RecentDocumentButton: NSButton {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let thumbnailRequest {
+            QLThumbnailGenerator.shared.cancel(thumbnailRequest)
+        }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? { self }
 
@@ -842,34 +964,28 @@ private final class RecentDocumentButton: NSButton {
     }
 
     private func updateSurface(animated: Bool) {
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         let changes = {
             let background: NSColor
             if self.isPressed {
-                background = NSColor.controlAccentColor.withAlphaComponent(0.12)
+                background = NSColor.controlAccentColor.withAlphaComponent(0.14)
+            } else if self.isHovered {
+                background = NSColor.controlAccentColor.withAlphaComponent(increaseContrast ? 0.12 : 0.08)
             } else {
-                background = NSColor.controlBackgroundColor.withAlphaComponent(0.30)
+                background = .clear
             }
             self.shell.layer?.backgroundColor = background.cgColor
-            self.shell.layer?.borderWidth = 1
-            self.shell.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(self.isHovered ? 0.38 : 0.14).cgColor
-            self.hoverSurface.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(
-                self.isPressed ? 0.16 : 0.08
-            ).cgColor
-            let hoverAlpha: CGFloat = self.isHovered ? 1 : 0
-            let arrowAlpha: CGFloat = self.isHovered ? 0.96 : 0.56
+            self.shell.layer?.borderWidth = 0
+            let arrowAlpha: CGFloat = self.isHovered ? 0.85 : 0
             if animated {
-                self.hoverSurface.animator().alphaValue = hoverAlpha
-                self.activeMarker.animator().alphaValue = hoverAlpha
                 self.arrow.animator().alphaValue = arrowAlpha
-                self.thumbnail.animator().alphaValue = self.isHovered ? 1 : 0.86
+                self.thumbnail.animator().alphaValue = self.isHovered ? 1 : 0.9
             } else {
-                self.hoverSurface.alphaValue = hoverAlpha
-                self.activeMarker.alphaValue = hoverAlpha
                 self.arrow.alphaValue = arrowAlpha
-                self.thumbnail.alphaValue = self.isHovered ? 1 : 0.86
+                self.thumbnail.alphaValue = self.isHovered ? 1 : 0.9
             }
             self.arrow.layer?.setAffineTransform(
-                CGAffineTransform(translationX: self.isHovered ? 3 : 0, y: 0)
+                CGAffineTransform(translationX: self.isHovered ? 2 : 0, y: 0)
             )
         }
 
@@ -877,7 +993,7 @@ private final class RecentDocumentButton: NSButton {
             Motion.run(
                 reduceMotion: reduceMotion,
                 duration: Motion.quick,
-                curve: .spring,
+                curve: .easeOut,
                 changes: { _ in changes() }
             )
         } else {
@@ -885,88 +1001,130 @@ private final class RecentDocumentButton: NSButton {
         }
     }
 
-    private static func loadThumbnail(for url: URL, into imageView: NSImageView, expectedPath: String) {
+    private func loadThumbnail() {
+        let url = URL(fileURLWithPath: recent.path)
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
             size: NSSize(width: 64, height: 64),
             scale: NSScreen.main?.backingScaleFactor ?? 2,
             representationTypes: .thumbnail
         )
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumbnail, _ in
+        thumbnailRequest = request
+        let expectedPath = recent.path
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
             DispatchQueue.main.async {
-                guard imageView.window != nil || imageView.superview != nil else { return }
+                guard let self else { return }
+                guard self.thumbnail.superview != nil else { return }
                 guard url.path == expectedPath, let image = thumbnail?.nsImage else { return }
-                imageView.image = image
-                imageView.contentTintColor = nil
+                let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                self.thumbnail.alphaValue = reduceMotion ? 1 : 0
+                self.thumbnail.image = image
+                self.thumbnail.contentTintColor = nil
+                guard !reduceMotion else { return }
+                Motion.run(
+                    reduceMotion: false,
+                    duration: Motion.quick,
+                    curve: .easeOut,
+                    changes: { _ in self.thumbnail.animator().alphaValue = 1 }
+                )
             }
         }
     }
 }
 
+// MARK: - Drop zone
+
 private final class DropZoneView: NSView {
-    var isActive = false { didSet { needsDisplay = true } }
+    private let iconView = NSImageView(
+        image: NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: "Drop files")!
+    )
+    private let titleLabel = NSTextField(labelWithString: "Drop a Markdown file")
+    private let detailLabel = NSTextField(labelWithString: "Anywhere in this window")
+
+    var isActive = false {
+        didSet {
+            guard isActive != oldValue else { return }
+            needsDisplay = true
+            applyLabelColors()
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         setAccessibilityRole(.group)
         setAccessibilityLabel("Markdown drop zone")
-        setAccessibilityValue("Drop Markdown files here")
+        setAccessibilityValue("Drop a Markdown file anywhere in this window")
 
-        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: "Drop files")!)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.contentTintColor = .secondaryLabelColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
 
-        let title = NSTextField(labelWithString: "Drop files here")
-        title.translatesAutoresizingMaskIntoConstraints = false
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = .labelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
 
-        let detail = NSTextField(labelWithString: "Markdown files open as native documents")
-        detail.translatesAutoresizingMaskIntoConstraints = false
-        detail.font = .systemFont(ofSize: 12)
-        detail.textColor = .secondaryLabelColor
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.font = .systemFont(ofSize: 11, weight: .regular)
 
-        let copy = NSStackView(views: [title, detail])
+        let copy = NSStackView(views: [titleLabel, detailLabel])
         copy.translatesAutoresizingMaskIntoConstraints = false
         copy.orientation = .vertical
         copy.alignment = .leading
-        copy.spacing = 3
+        copy.spacing = 1
 
-        addSubview(icon)
+        addSubview(iconView)
         addSubview(copy)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 24),
-            icon.heightAnchor.constraint(equalToConstant: 24),
-            copy.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+            copy.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
             copy.centerYAnchor.constraint(equalTo: centerYAnchor),
-            copy.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            copy.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
         ])
+        applyLabelColors()
     }
 
     required init?(coder: NSCoder) { nil }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+        applyLabelColors()
+    }
+
+    private func applyLabelColors() {
+        iconView.contentTintColor = isActive ? .controlAccentColor : .tertiaryLabelColor
+        titleLabel.textColor = isActive ? .labelColor : .secondaryLabelColor
+        detailLabel.textColor = isActive ? .controlAccentColor : .tertiaryLabelColor
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        let fill = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 14, yRadius: 14)
-        (isActive
-            ? NSColor.controlAccentColor.withAlphaComponent(0.13)
-            : NSColor.controlBackgroundColor.withAlphaComponent(0.32)
-        ).setFill()
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let fill = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        if isActive {
+            NSColor.controlAccentColor.withAlphaComponent(0.1).setFill()
+        } else {
+            NSColor.controlBackgroundColor
+                .withAlphaComponent(increaseContrast ? 0.88 : 0.22)
+                .setFill()
+        }
         fill.fill()
 
-        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 13, yRadius: 13)
-        outline.lineWidth = isActive ? 1.5 : 1
-        outline.setLineDash([5, 5], count: 2, phase: 0)
-        (isActive
-            ? NSColor.controlAccentColor
-            : NSColor.separatorColor.withAlphaComponent(0.58)
-        ).setStroke()
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7)
+        outline.lineWidth = isActive ? 1.25 : 1
+        if isActive {
+            outline.setLineDash([3.5, 3.5], count: 2, phase: 0)
+            NSColor.controlAccentColor.setStroke()
+        } else {
+            outline.setLineDash([3, 4], count: 2, phase: 0)
+            NSColor.separatorColor.withAlphaComponent(increaseContrast ? 0.55 : 0.32).setStroke()
+        }
         outline.stroke()
     }
 }
+
+// MARK: - Brand
 
 private final class BrandMarkView: NSView {
     override init(frame frameRect: NSRect) {
@@ -977,22 +1135,22 @@ private final class BrandMarkView: NSView {
     required init?(coder: NSCoder) { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 1, dy: 1)
-        let tile = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let tile = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
         NSColor.controlAccentColor.setFill()
         tile.fill()
 
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.setStrokeColor(NSColor.white.withAlphaComponent(0.96).cgColor)
-        context.setLineWidth(2.2)
+        context.setLineWidth(1.6)
         context.setLineCap(.round)
         context.setLineJoin(.round)
-        context.move(to: CGPoint(x: bounds.minX + 8, y: bounds.maxY - 9))
-        context.addLine(to: CGPoint(x: bounds.maxX - 8, y: bounds.minY + 9))
-        context.move(to: CGPoint(x: bounds.maxX - 13, y: bounds.minY + 9))
-        context.addLine(to: CGPoint(x: bounds.maxX - 8, y: bounds.minY + 9))
-        context.addLine(to: CGPoint(x: bounds.maxX - 8, y: bounds.minY + 14))
+        context.move(to: CGPoint(x: bounds.minX + 6, y: bounds.maxY - 7))
+        context.addLine(to: CGPoint(x: bounds.maxX - 6, y: bounds.minY + 7))
+        context.move(to: CGPoint(x: bounds.maxX - 10, y: bounds.minY + 7))
+        context.addLine(to: CGPoint(x: bounds.maxX - 6, y: bounds.minY + 7))
+        context.addLine(to: CGPoint(x: bounds.maxX - 6, y: bounds.minY + 11))
         context.strokePath()
         context.restoreGState()
     }

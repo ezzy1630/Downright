@@ -37,12 +37,21 @@ final class FileWatcher {
     private let queue = DispatchQueue(label: "com.ezzyrappeport.downright.filewatcher", qos: .utility)
 
     private var stream: FSEventStreamRef?
+    private var streamContext: StreamContext?
     private var pollTimer: DispatchSourceTimer?
     private var lastSnapshot: Snapshot
     private var coalesceWorkItem: DispatchWorkItem?
     /// Writes we made ourselves must not come back to us as external changes.
     private var suppressUntil: Date = .distantPast
     private var suppressedSnapshot: Snapshot?
+    /// Bumped on every `stop()` so in-flight coalesced work becomes a no-op.
+    private var generation: UInt64 = 0
+
+    /// Weak box so FSEvents callbacks never touch a deallocated watcher after
+    /// `stop()` — the stream may still deliver one last burst on its queue.
+    private final class StreamContext {
+        weak var watcher: FileWatcher?
+    }
 
     /// Agents often write a file two or three times in quick succession.
     /// Coalescing avoids re-parsing and re-diffing a document three times for
@@ -68,6 +77,9 @@ final class FileWatcher {
     }
 
     func stop() {
+        generation &+= 1
+        streamContext?.watcher = nil
+        streamContext = nil
         if let stream {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)
@@ -77,6 +89,7 @@ final class FileWatcher {
         pollTimer?.cancel()
         pollTimer = nil
         coalesceWorkItem?.cancel()
+        coalesceWorkItem = nil
     }
 
     /// Point the watcher at a different file (Save As, or following a rename).
@@ -111,15 +124,19 @@ final class FileWatcher {
 
     private func startStream() {
         let directory = (watchesDirectory ? url : url.deletingLastPathComponent()).path
+        let box = StreamContext()
+        box.watcher = self
+        streamContext = box
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
+            info: Unmanaged.passUnretained(box).toOpaque(),
             retain: nil, release: nil, copyDescription: nil
         )
 
         let callback: FSEventStreamCallback = { _, info, count, eventPaths, _, _ in
             guard let info else { return }
-            let watcher = Unmanaged<FileWatcher>.fromOpaque(info).takeUnretainedValue()
+            let box = Unmanaged<StreamContext>.fromOpaque(info).takeUnretainedValue()
+            guard let watcher = box.watcher else { return }
             // Without `kFSEventStreamCreateFlagUseCFTypes`, `eventPaths` is a
             // C array of UTF-8 path pointers. Bridging the raw pointer itself
             // as an NSArray is undefined behaviour and crashes in objc_msgSend.
@@ -171,8 +188,9 @@ final class FileWatcher {
 
     private func scheduleDirectoryChange() {
         coalesceWorkItem?.cancel()
+        let gen = generation
         let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+            guard let self, self.generation == gen else { return }
             DispatchQueue.main.async { [handler] in handler(.changed) }
         }
         coalesceWorkItem = item
@@ -193,7 +211,11 @@ final class FileWatcher {
 
     private func scheduleCheck() {
         coalesceWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.check() }
+        let gen = generation
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == gen else { return }
+            self.check()
+        }
         coalesceWorkItem = item
         queue.asyncAfter(deadline: .now() + coalesceInterval, execute: item)
     }

@@ -51,15 +51,33 @@ actor MarkdownParseCoordinator {
     private var wake: CheckedContinuation<Void, Never>?
     private var isSuspended = false
     private var isShutdown = false
+    private var inFlight = false
+    private var lastPublishedBusy = false
+    /// Published on transitions of the busy state — a snapshot queued or a
+    /// parse running.  Fired from the actor; the owner hops to the main actor.
+    /// `nonisolated(unsafe)` because it is written exactly once by the owning
+    /// document before any snapshot can be submitted, then only read here.
+    nonisolated(unsafe) var onBusyChange: (@Sendable (Bool) -> Void)?
 
     init(worker: MarkdownParseWorker) {
         self.worker = worker
+    }
+
+    /// `true` while a snapshot is queued or a parse is in flight.
+    private var isBusy: Bool { pending != nil || inFlight }
+
+    private func publishBusy() {
+        let busy = isBusy
+        guard busy != lastPublishedBusy else { return }
+        lastPublishedBusy = busy
+        onBusyChange?(busy)
     }
 
     func submit(_ request: MarkdownParseRequest) {
         guard !isSuspended, !isShutdown else { return }
         guard pending?.revision ?? .zero < request.revision else { return }
         pending = request
+        publishBusy()
         wake?.resume()
         wake = nil
     }
@@ -69,11 +87,13 @@ actor MarkdownParseCoordinator {
     /// spend parse time on a result that the document revision gate rejects.
     func discardPending() {
         pending = nil
+        publishBusy()
     }
 
     func suspend() {
         isSuspended = true
         pending = nil
+        publishBusy()
         wake?.resume()
         wake = nil
     }
@@ -88,6 +108,8 @@ actor MarkdownParseCoordinator {
     func shutdown() {
         isShutdown = true
         pending = nil
+        inFlight = false
+        publishBusy()
         wake?.resume()
         wake = nil
     }
@@ -98,11 +120,16 @@ actor MarkdownParseCoordinator {
         while true {
             if let request = pending {
                 pending = nil
-                return await worker.run(
+                inFlight = true
+                publishBusy()
+                let result = await worker.run(
                     text: request.text,
                     previous: request.previous,
                     revision: request.revision
                 )
+                inFlight = false
+                publishBusy()
+                return result
             }
             if isShutdown { return nil }
             await withCheckedContinuation { continuation in
@@ -137,7 +164,11 @@ struct MarkdownParseWorker: Sendable {
 
     private static let defaultOperation: Operation = { text, previous, revision in
         let document = MarkdownParser.parse(text)
-        let dirty = ASTDiff.dirtySet(old: previous, new: document)
+        // An empty previous tree means first paint / open — never try to
+        // reconcile block-by-block against nothing.
+        let dirty = previous.length == 0
+            ? DirtySet.wholesale
+            : ASTDiff.dirtySet(old: previous, new: document)
         return MarkdownParseResult(
             revision: revision, text: text, document: document, dirty: dirty
         )

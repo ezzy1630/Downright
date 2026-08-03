@@ -102,6 +102,15 @@ public enum Metrics {
         }
     }
 
+    /// Readable word count for the whole document, excluding code/math/HTML.
+    public static func documentWordCount(_ doc: ParsedDocument) -> Int {
+        wordCount(PlainText.prose(
+            in: doc.root,
+            range: NSRange(location: 0, length: doc.length),
+            text: doc.text as NSString
+        ))
+    }
+
     /// First sentence of the prose in `range`, as a source range.  Used by
     /// structural zoom level 4 (§5.2), where the first sentence of each section
     /// is what survives.
@@ -162,7 +171,7 @@ public enum Metrics {
         )
     }
 
-    static func wordCount(_ prose: String) -> Int {
+    public static func wordCount(_ prose: String) -> Int {
         var count = 0
         var inWord = false
         for scalar in prose.unicodeScalars {

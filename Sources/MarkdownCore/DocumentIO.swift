@@ -41,7 +41,13 @@ public enum DocumentIO {
     /// Hex SHA-256 of the text's UTF-8 bytes.  Content-addresses snapshots
     /// (§8.3) and answers "did the file change while I was away" (§8.2).
     public static func contentHash(_ text: String) -> String {
-        SHA256.hash(data: Data(text.utf8))
+        contentHash(Data(text.utf8))
+    }
+
+    /// Hex SHA-256 of raw bytes.  Shared by snapshot objects and sibling
+    /// fingerprinting so every content-addressed path uses one digester.
+    public static func contentHash(_ data: Data) -> String {
+        SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()
     }

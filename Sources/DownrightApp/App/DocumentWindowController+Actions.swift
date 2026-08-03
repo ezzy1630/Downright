@@ -10,6 +10,7 @@ extension DocumentWindowController {
     /// state first so its reading position survives the hop.
     func openInPlace(_ url: URL) {
         guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return }
+        resetTransientChrome()
         markdownDocument.close()
         do {
             try open(url, mode: mode)
@@ -39,6 +40,60 @@ extension DocumentWindowController {
             updated.isCurrent = index == current
             return updated
         }
+    }
+
+    // MARK: - Breadcrumb scroll-tuck (§5.1)
+
+    /// While the document moves the crumb strip folds away so it does not
+    /// fight the prose scrolling underneath it; it settles back a beat after
+    /// the scroll stops, or the instant the pointer reaches for it.
+    func tuckBreadcrumb() {
+        guard !breadcrumbHovered, !breadcrumbView.isHidden else { return }
+        breadcrumbRevealWorkItem?.cancel()
+        breadcrumbHiddenByScroll = true
+        setBreadcrumbCollapsed(true)
+        let reveal = DispatchWorkItem { [weak self] in self?.revealBreadcrumb() }
+        breadcrumbRevealWorkItem = reveal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: reveal)
+    }
+
+    func revealBreadcrumb() {
+        breadcrumbRevealWorkItem?.cancel()
+        breadcrumbRevealWorkItem = nil
+        breadcrumbHiddenByScroll = false
+        setBreadcrumbCollapsed(false)
+    }
+
+    private func setBreadcrumbCollapsed(_ collapsed: Bool) {
+        let targetAlpha: CGFloat = collapsed ? 0 : 1
+        let reserveLane = !collapsed
+        for container in documentPanes {
+            container.topAccessoryReservesLane = reserveLane
+            container.needsLayout = true
+            container.layoutSubtreeIfNeeded()
+        }
+        guard abs(breadcrumbView.alphaValue - targetAlpha) > 0.02 else { return }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            || activeStyleSheet.reduceMotion
+        if reduceMotion {
+            breadcrumbView.alphaValue = targetAlpha
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            breadcrumbView.animator().alphaValue = targetAlpha
+        }
+    }
+
+    // MARK: - Activity cue (§12)
+
+    func beginActivity() {
+        activityIndicator.begin()
+    }
+
+    func endActivity() {
+        activityIndicator.end()
     }
 
     // MARK: - Images
@@ -226,13 +281,16 @@ enum CodeFileExtensions {
 // MARK: - Toolbar
 //
 // The toolbar has three stable zones: document identity at the leading edge,
-// presentation at the optical centre, and a compact action menu at the
-// trailing edge. Find stays on its keyboard/menu path so the toolbar is quiet.
+// Source Focus at the optical centre (only while active), and a compact
+// trailing cluster — activity, task progress, overflow — that never nudges
+// the centre rail.
 
 extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     private static let identityItem = NSToolbarItem.Identifier("document-identity")
     static let modeItem = NSToolbarItem.Identifier("presentation-mode")
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
+    private static let activityItem = NSToolbarItem.Identifier("activity")
+    private static let tasksItem = NSToolbarItem.Identifier("tasks-progress")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
@@ -240,6 +298,8 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             .flexibleSpace,
             Self.modeItem,
             .flexibleSpace,
+            Self.activityItem,
+            Self.tasksItem,
             Self.overflowItem,
         ]
     }
@@ -271,9 +331,11 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.isBordered = false
-            item.label = "Presentation"
-            item.toolTip = "Choose rendered Document or raw Source"
+            item.label = "Source Focus"
+            item.toolTip = "Switch between rendered Document and Source Focus"
             item.visibilityPriority = .high
+            // Quiet by default — Source Focus chrome appears only while active.
+            control.isHidden = true
             return item
 
         case Self.overflowItem:
@@ -284,6 +346,33 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.toolTip = "More document actions"
             item.visibilityPriority = .high
             return item
+
+        case Self.activityItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = activityIndicator
+            item.isBordered = false
+            item.label = "Working"
+            item.visibilityPriority = .low
+            activityIndicator.onVisibilityChange = { [weak self] _ in
+                self?.window?.toolbar?.validateVisibleItems()
+            }
+            return item
+
+        case Self.tasksItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = progressRing
+            item.isBordered = false
+            item.label = "Tasks"
+            item.toolTip = "Open Tasks"
+            item.visibilityPriority = .low
+            progressRing.onActivate = { [weak self] in
+                self?.toolbarShowTasks(nil)
+            }
+            progressRing.onVisibilityChange = { [weak self] _ in
+                self?.window?.toolbar?.validateVisibleItems()
+            }
+            return item
+
         default:
             return nil
         }
@@ -298,12 +387,17 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
                 pane.textView.clearSourceFocus()
             }
         }
+        refreshSourceFocusToolbar()
     }
 
     func refreshSourceFocusToolbar() {
         let isActive = primaryContainer.textView.sourceFocus != .none
             || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)
         toolbarPresentationControl?.setSelectedSegment(isActive ? 1 : 0)
+        // Collapse via the view's intrinsic size so macOS 14 stays supported
+        // (NSToolbarItem.isHidden is 15+).
+        toolbarPresentationControl?.isHidden = !isActive
+        window?.toolbar?.validateVisibleItems()
     }
 
     @objc private func toolbarShowTasks(_ sender: Any?) {
@@ -319,12 +413,15 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     private func makeOverflowMenu() -> NSMenu {
         let menu = NSMenu(title: "More")
         menu.delegate = self
+
+        menu.addItem(sectionHeader("Panels"))
         menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
         menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
-        menu.addItem(.separator())
-        addCommands([.focusMode, .splitView, .pinWindow], to: menu)
 
-        menu.addItem(.separator())
+        menu.addItem(sectionHeader("View"))
+        addCommands([.sourceMode, .focusMode, .splitView, .pinWindow], to: menu)
+
+        menu.addItem(sectionHeader("Document"))
         let zoom = NSMenu(title: "Structural Zoom")
         addCommands([.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5], to: zoom)
         zoom.addItem(.separator())
@@ -333,10 +430,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         zoomItem.image = NSImage(systemSymbolName: "text.magnifyingglass", accessibilityDescription: nil)
         zoomItem.submenu = zoom
         menu.addItem(zoomItem)
-
-        menu.addItem(.separator())
         addCommands([.tidyDocument, .readerProfiles], to: menu)
 
+        menu.addItem(sectionHeader("Share"))
         let export = NSMenu(title: "Export")
         addCommands([.exportPDF, .exportHTML, .exportSelectionAsImage], to: export)
         let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
@@ -344,6 +440,15 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         exportItem.submenu = export
         menu.addItem(exportItem)
         return menu
+    }
+
+    private func sectionHeader(_ title: String) -> NSMenuItem {
+        if #available(macOS 14.0, *) {
+            return NSMenuItem.sectionHeader(title: title)
+        }
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
     }
 
     private func addCommands(_ commands: [Command], to menu: NSMenu) {
@@ -401,6 +506,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         case .splitView: return splitViewContainer != nil
         case .pinWindow: return isWindowPinned
         case .typewriterScrolling: return Preferences.shared.values.typewriterScrolling
+        case .sourceMode:
+            return primaryContainer.textView.sourceFocus != .none
+                || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)
         case .zoomLevel1: return containerTextView.zoomLevel == .h1
         case .zoomLevel2: return containerTextView.zoomLevel == .h2
         case .zoomLevel3: return containerTextView.zoomLevel == .headings

@@ -54,6 +54,10 @@ enum HardWrapReflow {
         return Plan(ranges: ranges.sorted { $0.location < $1.location }, substitutions: substitutions)
     }
 
+    /// Returns the paragraph's hard line breaks that may be softened, in
+    /// order.  A break inside an inline code, math, HTML or explicit-break
+    /// span is *skipped*, not fatal: one `inline code` spanning two lines must
+    /// not cost the whole paragraph its reflow.
     private static func softBreakRanges(
         in block: MDBlock,
         elementRange: NSRange,
@@ -70,8 +74,14 @@ enum HardWrapReflow {
             }
             let range = NSRange(location: cursor, length: length)
             guard range.upperBound < elementRange.upperBound else { break }
-            guard !isProtected(range, in: block.inlines) else { return nil }
-            guard !isExplicitBreak(range, in: text) else { return nil }
+            if isProtected(range, in: block.inlines) {
+                cursor = range.upperBound
+                continue
+            }
+            if isExplicitBreak(range, in: text) {
+                cursor = range.upperBound
+                continue
+            }
             result.append(range)
             cursor = range.upperBound
         }

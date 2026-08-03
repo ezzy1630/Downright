@@ -641,6 +641,10 @@ public struct DisplayMap {
             if remaining < visible { return cursor + remaining }
             remaining -= visible
             if remaining < sub.displayLength {
+                // Hidden runs may carry same-length joiners for layout safety.
+                // Resolve past them so typing never lands inside a marker the
+                // user cannot see (§6.1b).
+                if sub.isHidden { return sub.sourceRange.upperBound }
                 return sub.preservesSourceOffsets
                     ? sub.sourceRange.location + remaining
                     : sub.sourceRange.location
@@ -654,7 +658,7 @@ public struct DisplayMap {
         // spellings of the break agree, and so a caret at the visible start of
         // such a line sits after its marker rather than on it (§6.1a).
         var result = Swift.min(cursor + remaining, paragraphEnd)
-        while let next = substitutionStarting(at: result), next.displayLength == 0 {
+        while let next = substitutionStarting(at: result), next.isHidden {
             result = next.sourceRange.upperBound
         }
         return result
@@ -678,6 +682,9 @@ public struct DisplayMap {
             if remaining <= visible { return cursor + remaining }
             remaining -= visible
             if remaining <= sub.displayLength {
+                // Selection ends stop *before* a hidden run, including layout
+                // fillers, so ⌘C never picks up invisible marker characters.
+                if sub.isHidden { return sub.sourceRange.location }
                 return sub.preservesSourceOffsets
                     ? sub.sourceRange.location + remaining
                     : sub.sourceRange.upperBound

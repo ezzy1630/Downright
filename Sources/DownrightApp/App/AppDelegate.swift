@@ -107,9 +107,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func open(_ url: URL, mode: RenderMode? = nil) -> DocumentWindowController? {
         // One window per file: reopening a file you already have open should
         // raise it, not give you two buffers over the same bytes.
-        if let existing = windowControllers.first(where: { $0.markdownDocument.url?.path == url.path }) {
+        if let existing = windowControllers.first(where: {
+            $0.markdownDocument.url?.resolvingSymlinksInPath().standardizedFileURL
+                == url.resolvingSymlinksInPath().standardizedFileURL
+        }) {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
+            dismissStartWindow()
             return existing
         }
 
@@ -118,13 +122,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try controller.open(url, mode: mode ?? launchMode ?? Preferences.shared.values.defaultMode)
         } catch {
             presentOpenFailure(error, url: url)
-            if windowControllers.isEmpty, startWindow == nil { showStartWindow() }
+            // Keep or restore the start window when nothing else is open, including
+            // race-deleted recent files clicked while the start window was still up.
+            if windowControllers.isEmpty { showStartWindow() }
             return nil
         }
         adopt(controller)
         SpotlightIndexer.indexOpenedDocument(at: url)
-        startWindow?.close()
-        startWindow = nil
+        dismissStartWindow()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         return controller
@@ -136,6 +141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
             self.saveSession()
+            if self.windowControllers.isEmpty {
+                self.showStartWindow()
+            }
         }
     }
 
@@ -153,22 +161,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = DocumentTypes.contentTypes
         panel.message = "Open a Markdown document"
-        guard panel.runModal() == .OK else { return }
+        guard panel.runModal() == .OK else {
+            startWindow?.window?.makeKeyAndOrderFront(nil)
+            return
+        }
         for url in panel.urls { open(url) }
     }
 
     private func showStartWindow() {
+        let recents = DocumentStateStore.shared.recents(limit: StartWindowController.recentDisplayLimit)
         if let startWindow {
+            startWindow.reloadRecents(recents)
+            startWindow.window?.alphaValue = 1
             startWindow.showWindow(nil)
             startWindow.window?.makeKeyAndOrderFront(nil)
             return
         }
-        let controller = StartWindowController(recents: DocumentStateStore.shared.recents(limit: 8))
+        let controller = StartWindowController(recents: recents)
         controller.onOpen = { [weak self] url in self?.open(url) }
         controller.onOpenPanel = { [weak self] in self?.showOpenPanel() }
         controller.onNew = { [weak self] in self?.newDocument() }
         startWindow = controller
         controller.showWindow(nil)
+    }
+
+    /// Fades the start window out in parallel with the document content fade-up.
+    private func dismissStartWindow() {
+        guard let controller = startWindow else { return }
+        startWindow = nil
+        let animated = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        controller.dismiss(animated: animated)
     }
 
     // MARK: - Session restore (§9.3)
@@ -222,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func clearRecentDocuments(_ sender: Any?) {
         DocumentStateStore.shared.clearRecents()
+        startWindow?.reloadRecents([])
     }
 
     @objc func selectTheme(_ sender: NSMenuItem) {
@@ -297,12 +320,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowedContentTypes = DocumentTypes.contentTypes
         panel.nameFieldStringValue = "Untitled.md"
         panel.message = "Create a Markdown document"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        panel.prompt = "Create"
+        // Cancel leaves the start window key and unchanged — do not dismiss it.
+        guard panel.runModal() == .OK, let url = panel.url else {
+            startWindow?.window?.makeKeyAndOrderFront(nil)
+            return
+        }
         do {
             try Data("# \(url.deletingPathExtension().lastPathComponent)\n\n".utf8)
                 .write(to: url, options: .atomic)
         } catch {
             presentWriteFailure(error, url: url)
+            startWindow?.window?.makeKeyAndOrderFront(nil)
             return
         }
         open(url, mode: .live)

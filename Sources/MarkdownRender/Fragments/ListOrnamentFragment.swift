@@ -51,8 +51,26 @@ final class ListOrnamentFragment: DownrightFragment {
         in cg: CGContext
     ) {
         let side: CGFloat = 10
-        let box = CGRect(x: textEdge - side - style.bodyFont().pointSize * 0.5,
+        var box = CGRect(x: textEdge - side - style.bodyFont().pointSize * 0.5,
                          y: centreY - side / 2, width: side, height: side)
+
+        // Micro-feedback: the box pops and a ring fades out, so a toggle is
+        // answered in place even when the new state is a single dark tick (§7.1).
+        var ring: (radius: CGFloat, alpha: CGFloat)?
+        if let pulse = context?.checkboxPulses.first(where: { $0.sourceRange == payload.sourceRange }) {
+            let elapsed = CFAbsoluteTimeGetCurrent() - pulse.started
+            if elapsed < CheckboxPulse.duration {
+                let t = elapsed / CheckboxPulse.duration
+                let scale = 1.0 + 0.18 * sin(min(1, t * 2) * .pi)
+                let center = CGPoint(x: box.midX, y: box.midY)
+                box = CGRect(x: center.x - box.width * scale / 2,
+                             y: center.y - box.height * scale / 2,
+                             width: box.width * scale, height: box.height * scale)
+                let eased = 1 - pow(1 - t, 2)
+                ring = (side * (0.55 + 1.2 * eased), (1 - t) * 0.5)
+            }
+        }
+
         let path = CGPath(roundedRect: box, cornerWidth: 3, cornerHeight: 3, transform: nil)
         cg.addPath(path)
         if checked {
@@ -70,6 +88,14 @@ final class ListOrnamentFragment: DownrightFragment {
             cg.setStrokeColor(style.textFaint.cgColor)
             cg.setLineWidth(1.5)
             cg.strokePath()
+        }
+
+        if let ring {
+            let rect = CGRect(x: box.midX - ring.radius, y: box.midY - ring.radius,
+                              width: ring.radius * 2, height: ring.radius * 2)
+            cg.setStrokeColor(style.accent.withAlphaComponent(ring.alpha).cgColor)
+            cg.setLineWidth(1.5)
+            cg.strokeEllipse(in: rect)
         }
     }
 }

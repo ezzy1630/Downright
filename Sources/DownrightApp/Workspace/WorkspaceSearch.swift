@@ -77,20 +77,24 @@ enum WorkspaceSearch {
                 pattern: pattern,
                 options: query.caseSensitive ? [] : [.caseInsensitive]
               ) else { return [] }
-        return snapshot.entries.flatMap { entry in
-            let full = NSRange(location: 0, length: (entry.text as NSString).length)
-            return regex.matches(in: entry.text, options: [], range: full)
+        return snapshot.entries.flatMap { entry -> [WorkspaceSearchResult] in
+            guard let text = resolvedText(for: entry) else { return [] }
+            let ns = text as NSString
+            let lineStarts = lineStartOffsets(in: ns)
+            let full = NSRange(location: 0, length: ns.length)
+            return Array(regex.matches(in: text, options: [], range: full)
                 .prefix(limitPerFile)
                 .map { match in
-                    let context = contextRange(for: match.range, in: entry)
+                    let line = lineNumber(at: match.range.location, starts: lineStarts)
+                    let context = rangeOfLine(line, starts: lineStarts, length: ns.length)
                     let heading = entry.headings.last { $0.range.location <= match.range.location }?.title
                     return WorkspaceSearchResult(
                         fileID: entry.id, url: entry.url, relativePath: entry.relativePath,
                         range: match.range, contextRange: context,
-                        contextText: (entry.text as NSString).substring(with: context),
-                        line: line(at: match.range.location, in: entry.text), heading: heading
+                        contextText: ns.substring(with: context),
+                        line: line, heading: heading
                     )
-                }
+                })
         }
     }
 
@@ -107,52 +111,62 @@ enum WorkspaceSearch {
             links.compactMap { link in link.targetFile.map { "\(source)->\($0)" } }
         })
         var result: [String: [WorkspaceSearchMention]] = [:]
+        // Stem → files inverted index so mentions stay O(files · hits), not O(files²).
+        var stemToTargets: [String: [WorkspaceIndexEntry]] = [:]
         for target in snapshot.entries {
             let stem = URL(fileURLWithPath: target.relativePath).deletingPathExtension().lastPathComponent
             guard stem.count > 1 else { continue }
+            stemToTargets[stem, default: []].append(target)
+        }
+        for (stem, targets) in stemToTargets {
             let query = WorkspaceSearchQuery(text: stem, wholeWord: true)
-            for source in snapshot.entries
-            where source.id != target.id && !linkedPairs.contains("\(source.id)->\(target.id)") {
-                for hit in search(query, in: WorkspaceIndexSnapshot(
-                    rootURL: snapshot.rootURL, revision: snapshot.revision, entries: [source]
-                ), limitPerFile: 20) {
-                    result[target.id, default: []].append(WorkspaceSearchMention(
-                        fileID: source.id, range: hit.range, target: stem
-                    ))
+            for source in snapshot.entries {
+                for target in targets where source.id != target.id
+                    && !linkedPairs.contains("\(source.id)->\(target.id)") {
+                    for hit in search(query, in: WorkspaceIndexSnapshot(
+                        rootURL: snapshot.rootURL, revision: snapshot.revision, entries: [source]
+                    ), limitPerFile: 20) {
+                        result[target.id, default: []].append(WorkspaceSearchMention(
+                            fileID: source.id, range: hit.range, target: stem
+                        ))
+                    }
                 }
             }
         }
         return result
     }
 
-    private static func contextRange(for range: NSRange, in entry: WorkspaceIndexEntry) -> NSRange {
-        let line = line(at: range.location, in: entry.text)
-        return rangeOfLine(line, in: entry.text)
+    private static func resolvedText(for entry: WorkspaceIndexEntry) -> String? {
+        if !entry.text.isEmpty { return entry.text }
+        return try? String(contentsOf: entry.url, encoding: .utf8)
     }
 
-    private static func line(at offset: Int, in text: String) -> Int {
-        let ns = text as NSString
-        guard !text.isEmpty else { return 1 }
-        var line = 1
-        var index = 0
-        while index < min(offset, ns.length) {
-            if ns.character(at: index) == 0x0A { line += 1 }
-            index += 1
+    private static func lineStartOffsets(in text: NSString) -> [Int] {
+        var starts = [0]
+        for index in 0..<text.length where text.character(at: index) == 0x0A {
+            starts.append(index + 1)
         }
-        return line
+        return starts
     }
 
-    private static func rangeOfLine(_ line: Int, in text: String) -> NSRange {
-        let ns = text as NSString
-        var current = 1
-        var start = 0
-        var index = 0
-        while index < ns.length, current < line {
-            if ns.character(at: index) == 0x0A { current += 1; start = index + 1 }
-            index += 1
+    private static func lineNumber(at offset: Int, starts: [Int]) -> Int {
+        var low = 0
+        var high = starts.count - 1
+        while low <= high {
+            let mid = (low + high) / 2
+            if starts[mid] <= offset {
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
         }
-        var end = start
-        while end < ns.length, ns.character(at: end) != 0x0A { end += 1 }
+        return max(1, high + 1)
+    }
+
+    private static func rangeOfLine(_ line: Int, starts: [Int], length: Int) -> NSRange {
+        let index = max(0, min(starts.count - 1, line - 1))
+        let start = starts[index]
+        let end = index + 1 < starts.count ? starts[index + 1] - 1 : length
         return NSRange(location: start, length: max(0, end - start))
     }
 }

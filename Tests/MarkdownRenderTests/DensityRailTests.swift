@@ -10,9 +10,12 @@ struct DensityRailTests {
     func outlineGeometryAndTiming() {
         #expect(DensityGutterView.width == 72)
         #expect(DensityGutterView.hoverDwell == 0.02)
-        #expect(DensityGutterView.hoverActivationSlop == 18)
-        #expect(DensityGutterView.hoverDismissalSlop == 3)
+        #expect(DensityGutterView.hoverActivationSlop == 22)
+        #expect(DensityGutterView.hoverDismissalSlop == 4)
         #expect(DensityGutterView.previewExitDelay == 0.06)
+        #expect(DensityGutterView.proximityRadius == 36)
+        #expect(DensityGutterView.magneticPull == 1.5)
+        #expect(DensityGutterView.stackCompression == 0.08)
         #expect(DensityOutlineWindow.rowHeight == 44)
         #expect(DensityOutlineWindow.cornerRadius == 14)
         #expect(DensityOutlineWindow.showDwell == 0.25)
@@ -27,40 +30,69 @@ struct DensityRailTests {
         let dismissal = DensityGutterView.hoverDismissalSlop
 
         #expect(DensityGutterView.nextHoveredBandIndex(
-            at: 117,
+            at: 100 + activation - 1,
             positions: positions,
             currentIndex: nil,
             activationSlop: activation,
             dismissalSlop: dismissal
         ) == 0)
         #expect(DensityGutterView.nextHoveredBandIndex(
-            at: 119,
+            at: 100 + activation + 1,
             positions: positions,
             currentIndex: nil,
             activationSlop: activation,
             dismissalSlop: dismissal
         ) == nil)
         #expect(DensityGutterView.nextHoveredBandIndex(
-            at: 103,
+            at: 100 + dismissal,
             positions: positions,
             currentIndex: 0,
             activationSlop: activation,
             dismissalSlop: dismissal
         ) == 0)
         #expect(DensityGutterView.nextHoveredBandIndex(
-            at: 110,
+            at: 100 + dismissal + 1,
             positions: positions,
             currentIndex: 0,
             activationSlop: activation,
             dismissalSlop: dismissal
         ) == nil)
         #expect(DensityGutterView.nextHoveredBandIndex(
-            at: 185,
+            at: 200 - activation + 1,
             positions: positions,
             currentIndex: 0,
             activationSlop: activation,
             dismissalSlop: dismissal
         ) == 1)
+    }
+
+    @Test("Proximity falloff is smooth and level widths encode depth")
+    func proximityAndHeadingWidths() {
+        #expect(DensityGutterView.proximityInfluence(distance: 0) == 1)
+        #expect(DensityGutterView.proximityInfluence(distance: 36) == 0)
+        let mid = DensityGutterView.proximityInfluence(distance: 18)
+        #expect(mid > 0.4 && mid < 0.6)
+
+        #expect(DensityGutterView.headingMarkWidth(level: 1) == 26)
+        #expect(DensityGutterView.headingMarkWidth(level: 2) == 20)
+        #expect(DensityGutterView.headingMarkWidth(level: 3) == 14)
+        #expect(DensityGutterView.headingMarkWidth(level: 4) == 10)
+    }
+
+    @Test("Stack compression tightens gaps near the pointer")
+    func stackCompressionNearPointer() {
+        let resting = DensityGutterView.centeredBandYPositions(height: 800, count: 4)
+        let compressed = DensityGutterView.centeredBandYPositions(
+            height: 800,
+            count: 4,
+            pointerY: resting[1]
+        )
+        #expect(resting.count == 4)
+        #expect(compressed.count == 4)
+        let restGap = resting[2] - resting[1]
+        let nearGap = compressed[2] - compressed[1]
+        #expect(nearGap < restGap)
+        #expect((compressed.first! + compressed.last!) / 2 == 400)
     }
 
     @Test("At-rest bands carry navigation signals, not body minimap stripes")
@@ -114,7 +146,7 @@ struct DensityRailTests {
         let positions = DensityGutterView.centeredBandYPositions(height: 800, count: 4)
 
         #expect(positions.count == 4)
-        #expect(positions == [386.5, 395.5, 404.5, 413.5])
+        #expect(positions == [385, 395, 405, 415])
         #expect((positions.first! + positions.last!) / 2 == 400)
     }
 

@@ -101,6 +101,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         synchronizePanes(from: view)
         updateBreadcrumbAndGutter()
         updateFocusDimmingViews()
+        tuckBreadcrumb()
     }
 
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {
@@ -116,6 +117,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         // The document owns reparsing; the storage delegate already scheduled
         // it.  Change marks shift here so they keep pointing at the same text.
         markdownDocument.changes.adjust(forEditIn: range, delta: delta)
+        scheduleFindRefresh()
     }
 
     // MARK: Context menus (§7.1)
@@ -430,6 +432,24 @@ extension DocumentWindowController: BreadcrumbDelegate {
     func breadcrumb(_ view: BreadcrumbView, didSelectHeadingAt index: Int) {
         guard index < markdownDocument.parsed.headings.count else { return }
         jump(to: markdownDocument.parsed.headings[index].range.location, label: markdownDocument.parsed.headings[index].title)
+    }
+
+    func breadcrumb(_ view: BreadcrumbView, hoverChanged hovered: Bool) {
+        breadcrumbHovered = hovered
+        if hovered {
+            revealBreadcrumb()
+        } else if breadcrumbHiddenByScroll {
+            tuckBreadcrumb()
+        }
+    }
+
+    func handleTopEdgeHover(_ hovered: Bool) {
+        breadcrumbHovered = hovered
+        if hovered {
+            revealBreadcrumb()
+        } else if breadcrumbHiddenByScroll {
+            tuckBreadcrumb()
+        }
     }
 }
 

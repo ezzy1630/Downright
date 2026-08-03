@@ -110,6 +110,52 @@ struct RenderSmokeTests {
         #expect(map.frame.minY == container.bounds.minY)
         #expect(map.frame.height == container.bounds.height)
         #expect(map.frame.midY == container.bounds.midY)
+        #expect(map.frame.minX == 0)
+        #expect(map.frame.width == DensityGutterView.width)
+    }
+
+    @Test("Document map stays full-height beside the breadcrumb lane")
+    func densityMapStaysFullHeightWithBreadcrumb() {
+        let container = MarkdownContainerView(storage: NSTextStorage(string: "# Heading\n\nText"))
+        let map = DensityGutterView(styleSheet: container.textView.styleSheet)
+        let breadcrumb = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        container.leadingAccessory = map
+        container.topAccessory = breadcrumb
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        container.layoutSubtreeIfNeeded()
+
+        #expect(map.frame == NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 700))
+        #expect(container.scrollView.frame.minY > 0)
+        #expect(map.frame.midX == DensityGutterView.width / 2)
+    }
+
+    @Test("Document and Source keep the same left column geometry")
+    func presentationModeKeepsLeadingChromeSticky() {
+        let text = "# Heading\n\nA paragraph that is long enough to wrap across modes."
+        let container = MarkdownContainerView(storage: NSTextStorage(string: text))
+        let map = DensityGutterView(styleSheet: container.textView.styleSheet)
+        container.leadingAccessory = map
+        container.frame = NSRect(x: 0, y: 0, width: 1100, height: 700)
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.layoutSubtreeIfNeeded()
+
+        let documentInsets = container.scrollView.contentInsets
+        let documentMap = map.frame
+        let documentMeasure = container.textView.textContainer?.size.width ?? 0
+
+        container.textView.mode = .source
+        container.layoutSubtreeIfNeeded()
+
+        #expect(container.scrollView.contentInsets.left == documentInsets.left)
+        #expect(map.frame == documentMap)
+        #expect(container.textView.textContainer?.size.width == documentMeasure)
+
+        container.textView.mode = .live
+        container.layoutSubtreeIfNeeded()
+
+        #expect(container.scrollView.contentInsets.left == documentInsets.left)
+        #expect(map.frame == documentMap)
+        #expect(container.textView.textContainer?.size.width == documentMeasure)
     }
 
     @Test("Breadcrumb owns a lane and never overlays document text")

@@ -51,11 +51,6 @@ final class MermaidFragment: DownrightFragment {
 
     private func renderedImage() -> NSImage? {
         guard let style = styleSheet else { return nil }
-        let key = MermaidFragmentCacheKey(
-            source: payload.detail.trimmingCharacters(in: .whitespacesAndNewlines),
-            styleToken: styleToken)
-        return MarkdownFragmentImageCaches.mermaid.image(for: key, keyCost: key.source.utf8.count) {
-            MermaidRendererBridge.image(source: key.source, styleSheet: style)
-        }
+        return MermaidRendererBridge.image(source: payload.detail, styleSheet: style)
     }
 }

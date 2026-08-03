@@ -41,6 +41,12 @@ public struct ParseOptions: Sendable {
         detectFrontMatter: true, detectMath: false, detectCallouts: true,
         detectWikilinks: false, detectPathTokens: false, detectMermaid: false
     )
+    /// Lean parse for the optional workspace index: headings, front matter,
+    /// and both markdown / wiki links — no math, mermaid, or path tokens.
+    public static let workspaceIndex = ParseOptions(
+        detectFrontMatter: true, detectMath: false, detectCallouts: false,
+        detectWikilinks: true, detectPathTokens: false, detectMermaid: false
+    )
 }
 
 // MARK: - AST diff (§3.5)
@@ -140,7 +146,8 @@ public struct TextEdit: Sendable, Identifiable {
 
 extension Array where Element == TextEdit {
     /// Applies edits to `text`, back to front so earlier offsets stay valid.
-    /// Overlapping edits are resolved by dropping the later one.
+    /// Overlapping edits are resolved by keeping the later-located one and
+    /// dropping the edit that precedes it.
     public func applied(to text: String) -> String {
         let ns = NSMutableString(string: text)
         var lastStart = Int.max

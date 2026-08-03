@@ -20,6 +20,10 @@ struct Budget {
     var milliseconds: Double
 }
 
+/// Set when a measured p95 misses its budget.  Release runs exit non-zero so a
+/// CI gate can treat the budget as a promise, not a wish (§12).
+var budgetViolated = false
+
 @discardableResult
 func measure(_ label: String, budget: Double? = nil, runs: Int = 25, _ body: () -> Void) -> Double {
     // One warm-up so first-call lazy initialisation isn't charged to the p50.
@@ -40,6 +44,7 @@ func measure(_ label: String, budget: Double? = nil, runs: Int = 25, _ body: () 
         line += p95 <= budget
             ? String(format: "   ✓ under %.0f ms", budget)
             : String(format: "   ✗ BUDGET %.0f ms", budget)
+        if p95 > budget { budgetViolated = true }
     }
     print(line)
     return p95
@@ -264,3 +269,10 @@ print("""
 Typing response p95: \(String(format: "%.2f", typingP95)) ms against an 8 ms budget.
 End-to-end semantic convergence p95: \(String(format: "%.2f", convergenceP95)) ms against a 100 ms budget.
 """)
+
+// Debug numbers are not the product promise — the banner above already says so —
+// but a release run that misses a budget should fail loudly.
+if budgetViolated && !isDebugBuild {
+    print("\n❌ One or more budgets were missed. The performance budget is the product promise (§12).")
+    exit(1)
+}

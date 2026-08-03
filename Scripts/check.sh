@@ -48,3 +48,31 @@ COUNT=$(awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { 
 echo "    $COUNT tests executed"
 [ "$COUNT" -gt 0 ] || { echo "    NO TESTS RAN — see the note at the top of this script"; exit 1; }
 [ "$TEST_STATUS" -eq 0 ] || { echo "    TESTS FAILED — see $TEST_LOG"; exit "$TEST_STATUS"; }
+
+echo
+echo "==> Bench (debug, informational — exercises drbench and catches crashes)"
+BENCH_LOG=/tmp/downright-bench.log
+if ! swift run --scratch-path "$SCRATCH" drbench > "$BENCH_LOG" 2>&1; then
+    echo "    FAILED"
+    tail -30 "$BENCH_LOG"
+    exit 1
+fi
+grep -aE "Typing response p95|End-to-end semantic convergence" "$BENCH_LOG" || true
+echo "    ok"
+
+# `RUN_DRBENCH=1 Scripts/check.sh` builds release and treats the budget as a
+# gate, the way §12 intends it to be used in CI.  Debug numbers are not the
+# product promise, so the default run above only checks that the tool runs.
+if [ "${RUN_DRBENCH:-0}" = "1" ]; then
+    echo "==> Bench (release, budgets enforced)"
+    BENCH_RELEASE_LOG=/tmp/downright-bench-release.log
+    if ! swift run -c release --scratch-path .build-bench drbench > "$BENCH_RELEASE_LOG" 2>&1; then
+        echo "    FAILED — a performance budget was violated (or the build failed)"
+        grep -aE "✗|❌|error:" "$BENCH_RELEASE_LOG" | sort -u | head -40
+        exit 1
+    fi
+    grep -aE "Typing response p95|End-to-end semantic convergence" "$BENCH_RELEASE_LOG" || true
+    echo "    ok"
+fi
+
+exit 0

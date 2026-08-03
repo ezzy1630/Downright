@@ -5,6 +5,9 @@ import MarkdownRender
 @MainActor
 protocol BreadcrumbDelegate: AnyObject {
     func breadcrumb(_ view: BreadcrumbView, didSelectHeadingAt index: Int)
+    /// The pointer entered or left the crumb strip.  Used to reveal the
+    /// breadcrumb mid-scroll when the reader reaches for it (§5.1).
+    func breadcrumb(_ view: BreadcrumbView, hoverChanged hovered: Bool)
 }
 
 /// Sticky heading breadcrumb (§5.1).
@@ -28,7 +31,10 @@ final class BreadcrumbView: NSView {
 
     /// Ancestor chain, root first.  Indices are into the document's headings.
     var trail: [(index: Int, title: String, level: Int)] = [] {
-        didSet { rebuild() }
+        didSet {
+            invalidateIntrinsicContentSize()
+            rebuild()
+        }
     }
 
     private let backdrop: PanelBackdrop
@@ -76,12 +82,37 @@ final class BreadcrumbView: NSView {
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Heading breadcrumb")
+
+        // The crumb strip is small and pinned to the top edge, so the pointer
+        // rarely travels through it — but when it does the reader is reaching
+        // for the crumbs, and a mid-scroll tuck must not swallow that.
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    override func mouseEntered(with event: NSEvent) {
+        guard alphaValue > 0.05 else { return }
+        delegate?.breadcrumb(self, hoverChanged: true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        delegate?.breadcrumb(self, hoverChanged: false)
+    }
+
+    /// A tucked crumb strip must not steal clicks from the prose underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard alphaValue > 0.05, !isHidden else { return nil }
+        return super.hitTest(point)
+    }
+
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 360, height: 28)
+        NSSize(width: 360, height: trail.isEmpty ? 0 : 28)
     }
 
     // MARK: - Building

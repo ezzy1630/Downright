@@ -167,10 +167,15 @@ final class TableRowFragment: DownrightFragment {
 
     private func layout() -> TableLayout? {
         guard let context, let style = styleSheet, let storage = context.storage else { return nil }
-        let key = payload.sourceRange.location
+        let width = contentWidth - RenderMetrics.tableColumnGap
+        let key = TableLayoutKey(
+            location: payload.sourceRange.location,
+            width: Int((width * 4).rounded()),
+            textRevision: context.textRevision
+        )
         if let cached = context.tableLayouts[key] { return cached }
         let made = TableLayout.make(data: data, storage: storage,
-                                    width: contentWidth - RenderMetrics.tableColumnGap, style: style)
+                                    width: width, style: style)
         context.tableLayouts[key] = made
         return made
     }

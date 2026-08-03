@@ -1,5 +1,5 @@
-import CryptoKit
 import Foundation
+import MarkdownCore
 
 /// Local time-travel (§8.3).
 ///
@@ -298,12 +298,11 @@ final class SnapshotStore {
     // MARK: - Hashing
 
     static func hash(_ text: String) -> String {
-        hash(Data(text.utf8))
+        DocumentIO.contentHash(text)
     }
 
     static func hash(_ data: Data) -> String {
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
+        DocumentIO.contentHash(data)
     }
 
     static func documentKey(for url: URL) -> String {

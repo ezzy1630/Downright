@@ -49,13 +49,8 @@ final class MathFragment: DownrightFragment {
     private func renderedImage() -> NSImage? {
         guard let style = styleSheet else { return nil }
         let pointSize = style.mathPointSize * 1.25
-        let key = MathFragmentCacheKey(
-            source: payload.detail.trimmingCharacters(in: .whitespacesAndNewlines),
-            styleToken: styleToken, pointSize: pointSize)
-        return MarkdownFragmentImageCaches.math.image(for: key, keyCost: key.source.utf8.count) {
-            MathRenderer.image(latex: key.source, display: true,
-                               pointSize: pointSize, color: style.text)
-        }
+        return MathRenderer.image(latex: payload.detail, display: true,
+                                  pointSize: pointSize, color: style.text)
     }
 }
 

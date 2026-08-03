@@ -26,6 +26,16 @@ final class DocumentWindowController: NSWindowController {
     // Persistent chrome
     let breadcrumbView = BreadcrumbView()
     let densityGutterView = DensityGutterView()
+    /// Activity cue for sustained work (parses and exports past a second).
+    let activityIndicator = ActivityIndicatorView()
+
+    /// The crumb strip folded away because the document is scrolling.  It
+    /// settles back on its own; only a scroll keeps it down (§5.1).
+    var breadcrumbHiddenByScroll = false
+    /// Pointer is over the crumb strip, so scroll-tucking stands aside.
+    var breadcrumbHovered = false
+    /// Debounce handle for the scroll-stop reveal.
+    var breadcrumbRevealWorkItem: DispatchWorkItem?
 
     // Transient panels (§11.4)
     var outlinePanel: OutlinePanelView?
@@ -83,6 +93,14 @@ final class DocumentWindowController: NSWindowController {
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
 
+    /// Coalesces panel/metrics refresh so typing does not rebuild outline,
+    /// density bands, and diagnostics on every parse commit.
+    private var derivedUIRefreshWorkItem: DispatchWorkItem?
+    private var findRefreshWorkItem: DispatchWorkItem?
+    private var cachedMetricsDocumentID: ObjectIdentifier?
+    private var cachedSectionMetrics: [ReadingMetrics] = []
+    private var cachedWordCount = 0
+
     // MARK: - Construction
 
     private static func makeStyleSheet(theme: Theme, appearance: NSAppearance) -> StyleSheet {
@@ -128,6 +146,7 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Opening
 
     func open(_ url: URL, mode: RenderMode) throws {
+        resetTransientChrome()
         try markdownDocument.open(url)
         let requestedMode = mode.normalizedForEditing
         self.mode = requestedMode
@@ -146,6 +165,7 @@ final class DocumentWindowController: NSWindowController {
         applyRenderConfiguration()
         primaryContainer.textView.zoomLevel = markdownDocument.state.zoomLevel
         primaryContainer.textView.foldedHeadingSlugs = markdownDocument.state.foldedHeadings
+        // Structure-only tree is ready; full decoration follows via onReparse.
         primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
 
         primaryContainer.wantsLayer = true
@@ -160,7 +180,7 @@ final class DocumentWindowController: NSWindowController {
             }
         )
 
-        refreshDerivedUI()
+        scheduleDerivedUIRefresh(immediate: true)
         if markdownDocument.state.sidebarVisible || Preferences.shared.values.siblingSidebarVisible {
             openNavigationOverlay(focusSearch: false)
             pinNavigationPanel()
@@ -177,6 +197,24 @@ final class DocumentWindowController: NSWindowController {
         DispatchQueue.main.async { [weak self] in
             self?.restoreInitialReadingPositionIfReady()
         }
+    }
+
+    /// Clears find / conflict / change chrome that must not survive a document hop.
+    func resetTransientChrome() {
+        derivedUIRefreshWorkItem?.cancel()
+        findRefreshWorkItem?.cancel()
+        cachedMetricsDocumentID = nil
+        cachedSectionMetrics = []
+        cachedWordCount = 0
+
+        findSession.clear()
+        for pane in documentPanes {
+            pane.textView.searchHits = []
+            pane.textView.currentSearchHit = nil
+        }
+        findBar?.statusText = ""
+        dismissConflictBar()
+        dismissChangeSummary()
     }
 
     private func restoreInitialReadingPositionIfReady() {
@@ -318,6 +356,9 @@ final class DocumentWindowController: NSWindowController {
         // It reads as Contents there; on the trailing edge it looks like an
         // unexplained second scrollbar.
         primaryContainer.leadingAccessory = densityGutterView
+        primaryContainer.onTopEdgeHover = { [weak self] hovered in
+            self?.handleTopEdgeHover(hovered)
+        }
 
         breadcrumbView.delegate = self
         breadcrumbView.styleSheet = activeStyleSheet
@@ -385,7 +426,7 @@ final class DocumentWindowController: NSWindowController {
         // Keep the document switch in the optical centre with explicit flexible
         // spaces. AppKit then owns hit testing and the layout stays stable when
         // a toolbar item is hidden or the window gets narrower.
-        let toolbar = NSToolbar(identifier: "DownrightToolbar.v8")
+        let toolbar = NSToolbar(identifier: "DownrightToolbar.v9")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.sizeMode = .regular
@@ -403,7 +444,11 @@ final class DocumentWindowController: NSWindowController {
             self.primaryContainer.textView.update(document: parsed, dirty: dirty)
             self.splitContainer?.textView.update(document: parsed, dirty: dirty)
             self.synchronizePanes(from: self.primaryContainer.textView)
-            self.refreshDerivedUI()
+            self.scheduleDerivedUIRefresh()
+            self.scheduleFindRefresh()
+        }
+        markdownDocument.onParseActivity = { [weak self] busy in
+            busy ? self?.activityIndicator.begin() : self?.activityIndicator.end()
         }
         markdownDocument.onExternalEvent = { [weak self] event in self?.handleExternalEvent(event) }
         markdownDocument.onDirtyChanged = { [weak self] dirty in
@@ -539,25 +584,53 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: - Derived UI
 
+    func scheduleDerivedUIRefresh(immediate: Bool = false) {
+        derivedUIRefreshWorkItem?.cancel()
+        if immediate {
+            refreshDerivedUI()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in self?.refreshDerivedUI() }
+        derivedUIRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    func scheduleFindRefresh() {
+        guard !currentFindQuery.isEmpty else { return }
+        findRefreshWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.currentFindQuery.isEmpty else { return }
+            self.runFind(self.currentFindQuery)
+        }
+        findRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: work)
+    }
+
     func refreshDerivedUI() {
         let parsed = markdownDocument.parsed
         let source = containerTextView
-        let sectionMetrics = Metrics.sectionMetrics(parsed)
+        let metrics = sectionMetrics(for: parsed)
         let foldedIndices = Set(parsed.headings.indices.filter {
             source.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
         })
-        outlinePanel?.headings = parsed.headings
-        outlinePanel?.sectionMetrics = sectionMetrics
-        outlinePanel?.foldedIndices = foldedIndices
-        outlinePanel?.reload()
-        navigationPanel?.headings = parsed.headings
-        navigationPanel?.sectionMetrics = sectionMetrics
-        navigationPanel?.foldedIndices = foldedIndices
-        navigationPanel?.reload()
+        if let outlinePanel {
+            outlinePanel.headings = parsed.headings
+            outlinePanel.sectionMetrics = metrics
+            outlinePanel.foldedIndices = foldedIndices
+            outlinePanel.reload()
+        }
+        if let navigationPanel {
+            navigationPanel.headings = parsed.headings
+            navigationPanel.sectionMetrics = metrics
+            navigationPanel.foldedIndices = foldedIndices
+            navigationPanel.reload()
+        }
 
-        taskPanel?.tasks = parsed.tasks
-        taskPanel?.headings = parsed.headings
-        taskPanel?.reload()
+        if let taskPanel {
+            taskPanel.tasks = parsed.tasks
+            taskPanel.headings = parsed.headings
+            taskPanel.reload()
+        }
         frontMatterEditor?.document = parsed
         if let assetDoctorPanel { configureAssetDoctor(assetDoctorPanel) }
         refreshDocumentLensIfVisible()
@@ -570,18 +643,32 @@ final class DocumentWindowController: NSWindowController {
         progressRing.progress = (done: completedTasks, total: parsed.tasks.count)
         refreshToolbarSelectionState()
 
-        pathResolver?.invalidate()
-        refreshDensityBands()
+        // Path existence is stable across local edits; wipe only on external
+        // writes and document hops (see handleExternalEvent / open).
+        refreshDensityBands(metrics: metrics)
         refreshBreadcrumb()
         markdownDocument.state.zoomLevel = source.zoomLevel
         markdownDocument.state.foldedHeadings = source.foldedHeadingSlugs
         updateFocusDimmingViews()
     }
 
-    func refreshDensityBands() {
+    private func sectionMetrics(for parsed: ParsedDocument) -> [ReadingMetrics] {
+        let id = ObjectIdentifier(parsed.root)
+        if cachedMetricsDocumentID == id { return cachedSectionMetrics }
+        let metrics = Metrics.sectionMetrics(parsed)
+        cachedMetricsDocumentID = id
+        cachedSectionMetrics = metrics
+        cachedWordCount = metrics.reduce(0) { $0 + $1.words }
+        if cachedWordCount == 0, parsed.length > 0 {
+            cachedWordCount = markdownDocument.text.split(whereSeparator: { $0.isWhitespace }).count
+        }
+        return metrics
+    }
+
+    func refreshDensityBands(metrics: [ReadingMetrics]? = nil) {
         let parsed = markdownDocument.parsed
-        let source = containerTextView
-        let wordCount = markdownDocument.text.split(whereSeparator: { $0.isWhitespace }).count
+        _ = metrics ?? sectionMetrics(for: parsed)
+        let wordCount = cachedWordCount
         let readMinutes = max(1, (wordCount + 199) / 200)
         densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
         let changes = markdownDocument.changes.visibleMarks.map { ($0.kind, $0.range) }
@@ -589,6 +676,7 @@ final class DocumentWindowController: NSWindowController {
             for: parsed, changes: changes, searchHits: findSession.matches
         )
         let length = CGFloat(max(1, parsed.length))
+        let source = containerTextView
         let current = parsed.headings.lastIndex { $0.range.location <= source.topVisibleOffset }
         densityGutterView.outlineEntries = parsed.headings.enumerated().map { index, heading in
             DensityOutlineEntry(
@@ -606,6 +694,7 @@ final class DocumentWindowController: NSWindowController {
         let headings = markdownDocument.parsed.headings
         guard var index = headings.lastIndex(where: { $0.range.location <= offset }) else {
             breadcrumbView.trail = []
+            primaryContainer.needsLayout = true
             return
         }
         var trail: [(index: Int, title: String, level: Int)] = []
@@ -616,6 +705,7 @@ final class DocumentWindowController: NSWindowController {
             index = parent
         }
         breadcrumbView.trail = trail
+        primaryContainer.needsLayout = true
     }
 
     func refreshChangeDecorations() {
@@ -641,6 +731,7 @@ final class DocumentWindowController: NSWindowController {
         case .applied(let hunks):
             refreshChangeDecorations()
             pathResolver?.invalidate()
+            scheduleFindRefresh()
             guard !hunks.isEmpty else { return }
             showChangeSummary("Updated on disk — \(hunks.count) block\(hunks.count == 1 ? "" : "s") changed")
 
@@ -1047,7 +1138,8 @@ final class DocumentWindowController: NSWindowController {
 
     func applyFindQuery(_ query: FindQuery) { runFind(query) }
 
-    func runFind(_ query: FindQuery) {
+    func runFind(_ query: FindQuery, scrollToMatch: Bool = true) {
+        findRefreshWorkItem?.cancel()
         let source = containerTextView
         findSession.update(query: query, in: markdownDocument.text, caret: source.topVisibleOffset)
         // A hit inside a folded or elided range forces that range visible; the
@@ -1059,7 +1151,7 @@ final class DocumentWindowController: NSWindowController {
         findBar?.statusText = findSession.statusText
         findBar?.isQueryValid = FindEngine.isValid(query)
         refreshDensityBands()
-        if let match = findSession.currentMatch {
+        if scrollToMatch, let match = findSession.currentMatch {
             source.scroll(toOffset: match.location, position: .center, animated: false)
             synchronizePanes(from: source)
         }
@@ -1276,6 +1368,8 @@ final class DocumentWindowController: NSWindowController {
     func documentWillClose() -> Bool {
         guard discardChangesOnClose || !markdownDocument.isDirty || saveDocument() else { return false }
         discardChangesOnClose = false
+        derivedUIRefreshWorkItem?.cancel()
+        findRefreshWorkItem?.cancel()
         stopNavigationDismissalObservers()
         closeNavigationOverlay()
         removeFocusDimmingViews(animated: false)
@@ -1315,6 +1409,9 @@ final class DocumentWindowController: NSWindowController {
             window?.toolbar?.isVisible = false
             densityGutterView.isHidden = true
             breadcrumbView.isHidden = true
+            breadcrumbRevealWorkItem?.cancel()
+            breadcrumbHiddenByScroll = false
+            breadcrumbHovered = false
             documentPanes.forEach { installFocusDimmingView(in: $0) }
             updateFocusDimmingViews()
         } else {
@@ -1322,12 +1419,14 @@ final class DocumentWindowController: NSWindowController {
                 window?.toolbar?.isVisible = true
                 densityGutterView.isHidden = false
                 breadcrumbView.isHidden = false
+                revealBreadcrumb()
                 return
             }
             removeFocusDimmingViews(animated: animated)
             window?.toolbar?.isVisible = true
             densityGutterView.isHidden = false
             breadcrumbView.isHidden = false
+            revealBreadcrumb()
             sidebarItem.isCollapsed = !focusRestoreSidebar
             inspectorItem.isCollapsed = !focusRestoreInspector
             focusModeApplied = false

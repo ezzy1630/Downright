@@ -41,6 +41,28 @@ public enum StyleToken {
     }
 }
 
+/// A checkbox toggle that is still confirming itself on screen (§7.1).
+public struct CheckboxPulse {
+    /// Total animation time, short enough to feel like an answer, not a scene.
+    public static let duration: CFTimeInterval = 0.4
+    /// The list block that holds the box, stable across a toggle because
+    /// `- [ ]` and `- [x]` are the same length.
+    public let sourceRange: NSRange
+    public let started: CFAbsoluteTime
+    /// The state the box just entered.
+    public let checked: Bool
+}
+
+/// Identity of a table geometry cache entry: which table, at what measure,
+/// against which text revision.  Editing a cell must not reuse a layout
+/// computed for its old contents, and a resize must not reuse a layout
+/// computed for another width.
+struct TableLayoutKey: Hashable {
+    var location: Int
+    var width: Int
+    var textRevision: Int
+}
+
 /// View-side state the fragments read while drawing.  A class so a fragment
 /// can hold it weakly and never keep the view alive.
 public final class FragmentContext {
@@ -60,6 +82,8 @@ public final class FragmentContext {
     public var copiedCodeRange: NSRange?
     /// Row the pointer is over inside a hovered table.
     public var hoveredTableRow: NSRange?
+    /// A checkbox the user just toggled, for the brief confirm pop (§7.1).
+    public var checkboxPulses: [CheckboxPulse] = []
     /// Primary caret in source coordinates, or `nil` in Read mode.
     public var caret: Int?
     /// Width of the text column, for objects that fill the measure.
@@ -77,8 +101,14 @@ public final class FragmentContext {
     /// Front matter fields, so the metadata card does not re-parse YAML.
     var frontMatterFields: [(key: String, value: String)] = []
     var documentHasH1 = false
-    /// Column geometry per table, keyed by the table's start offset.
-    var tableLayouts: [Int: TableLayout] = [:]
+    /// Column geometry per table, keyed by the table's start offset, the
+    /// measure it was laid out for, and the text revision.  The revision
+    /// matters because a table keeps its start offset across a cell edit —
+    /// only the payload moves.  See `TableLayoutKey`.
+    var tableLayouts: [TableLayoutKey: TableLayout] = [:]
+    /// Monotonic counter bumped every time the text storage changes, so the
+    /// table geometry cache cannot serve a stale layout for the same offset.
+    var textRevision: Int = 0
 
     public init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
@@ -86,7 +116,16 @@ public final class FragmentContext {
     }
 
     func invalidateDerivedLayout() {
+        textRevision &+= 1
         tableLayouts.removeAll(keepingCapacity: true)
+    }
+
+    /// Register a toggle and drop any pulse that has already finished, so a
+    /// quick re-click does not stack stale ghosts.
+    func beginCheckboxPulse(_ range: NSRange, checked: Bool) {
+        let now = CFAbsoluteTimeGetCurrent()
+        checkboxPulses.removeAll { now - $0.started > CheckboxPulse.duration }
+        checkboxPulses.append(CheckboxPulse(sourceRange: range, started: now, checked: checked))
     }
 
     var storage: NSTextStorage? { textView?.textStorage }

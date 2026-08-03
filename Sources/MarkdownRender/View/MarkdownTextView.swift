@@ -80,7 +80,9 @@ public final class MarkdownTextView: NSTextView {
             fragmentContext.mode = mode
             fragmentContext.sourceFocusRange = sourceFocus.range
             applyModeChrome()
-            applyMeasure()
+            // Leave the responsive measure alone. `applyMeasure()` would snap
+            // back to the theme width and the container would re-centre on the
+            // next layout, which makes the left rail jump on Document↔Source.
             rebuildEverything()
             requestContentResize(.viewport, anchor: anchor)
             setSourceSelectedRanges(selection)
@@ -91,13 +93,25 @@ public final class MarkdownTextView: NSTextView {
 
     public var configuration = MarkdownRenderConfiguration() {
         didSet {
+            guard configuration != oldValue else { return }
             let anchor = topVisibleOffset
             let selection = sourceSelectedRanges
             engine.policy = effectivePolicy
             engine.codeCollapseLineCount = configuration.codeCollapseThreshold
             applyTypographicSubstitution()
-            rebuildEverything()
-            applyInvisibles()
+            let invisiblesOnly = configuration.showInvisibles != oldValue.showInvisibles
+                && configuration.revealPolicy == oldValue.revealPolicy
+                && configuration.typographicSubstitution == oldValue.typographicSubstitution
+                && configuration.typewriterScrolling == oldValue.typewriterScrolling
+                && configuration.reflowHardWrappedParagraphs == oldValue.reflowHardWrappedParagraphs
+                && configuration.codeCollapseThreshold == oldValue.codeCollapseThreshold
+                && configuration.largeFileThresholdMegabytes == oldValue.largeFileThresholdMegabytes
+            if invisiblesOnly {
+                applyInvisibles()
+            } else {
+                rebuildEverything()
+                applyInvisibles()
+            }
             requestContentResize(.viewport, anchor: anchor)
             setSourceSelectedRanges(selection)
             scroll(toOffset: anchor, position: .top, animated: false)
@@ -118,7 +132,18 @@ public final class MarkdownTextView: NSTextView {
             fragmentContext.invalidateDerivedLayout()
             applyMeasure()
             applyModeChrome()
-            rebuildEverything()
+            // Font / measure changes need a full geometry rebuild. Colour-only
+            // theme swaps only need attributes and fragment restyles.
+            let geometryChanged =
+                oldValue.lineHeight != styleSheet.lineHeight
+                || oldValue.measureWidth != styleSheet.measureWidth
+                || oldValue.baselineGrid != styleSheet.baselineGrid
+                || oldValue.mathPointSize != styleSheet.mathPointSize
+            if geometryChanged {
+                rebuildEverything()
+            } else {
+                restyleAttributesPreservingGeometry()
+            }
             requestContentResize(.viewport, anchor: anchor)
         }
     }
@@ -127,7 +152,13 @@ public final class MarkdownTextView: NSTextView {
     public var zoomLevel: ZoomLevel = .everything {
         didSet {
             guard zoomLevel != oldValue else { return }
+            let previousHeight = frame.height
             refreshElision()
+            // The display map has changed and TextKit 2 only lays out lazily.
+            // Resolve the new document height *now* so the frame is not left
+            // stale until the first scroll, and so the transition can spring
+            // from the old extent to the new one (§5.2).
+            animateStructuralZoomHeight(from: previousHeight)
         }
     }
 
@@ -152,7 +183,7 @@ public final class MarkdownTextView: NSTextView {
             overlayRanges = searchHits
             unfoldHeadingsContaining(searchHits)
             refreshElision()
-            reapplyOverlays(invalidating: previous + searchHits)
+            reapplyOverlays(invalidating: previous + searchHits, invalidateFragments: false)
         }
     }
 
@@ -286,11 +317,15 @@ public final class MarkdownTextView: NSTextView {
     /// repaint.
     private var inlineCodeBandCache: [NSRange: [CGRect]] = [:]
     private var invisibleGlyphCache: [Int: NSRect] = [:]
+    private var invisiblesApplied = false
     private var hoverTracking: NSTrackingArea?
     private var scrollObserver: NSObjectProtocol?
     private var pendingResizeRequest: ContentResizeRequest?
     private var resizeWorkItem: DispatchWorkItem?
     var copiedCodeFeedbackWorkItem: DispatchWorkItem?
+    /// Drives the short checkbox confirm pop (§7.1) at a fixed cadence until
+    /// every pulse has finished.
+    var checkboxPulseTimer: Timer?
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: Int?
     private var resizeNeedsRepair = false
@@ -307,6 +342,11 @@ public final class MarkdownTextView: NSTextView {
     var pendingResizeRequestForTesting: ContentResizeRequest? { pendingResizeRequest }
     /// Heading under the pointer, for the gutter's anchor glyph (§7.1).
     var hoveredHeadingIndex: Int?
+    /// Link span under the pointer.  Drawn as a transient underline in
+    /// `draw(_:)` rather than a storage attribute, because the decoration pass
+    /// wipes attributes on every reflow and an underline that vanishes while
+    /// the pointer is still sitting on it reads as a bug (§7.1).
+    var hoveredLinkRange: NSRange?
     /// Set while an input method is composing.  Substitutions are suspended in
     /// that paragraph so the hybrid and source spaces coincide and AppKit's own
     /// marked-text machinery stays correct.
@@ -420,18 +460,24 @@ public final class MarkdownTextView: NSTextView {
         let isWholesaleUpdate = isInitialUpdate || dirty.isWholesale
         let dirtyScopes = isWholesaleUpdate ? [] : sourceScopes(for: dirty)
         parsedDocument = document
+        hoveredLinkRange = nil
         inlineCodeBandCache.removeAll(keepingCapacity: true)
         invisibleGlyphCache.removeAll(keepingCapacity: true)
         updateGeneration &+= 1
         pathExistence.removeAll(keepingCapacity: true)
         fragmentContext.frontMatterFields = (document.frontMatter?.fields ?? []).map { ($0.key, $0.value) }
         fragmentContext.documentHasH1 = document.headings.contains { $0.level == 1 }
+        // Text changed, so any table geometry cached for a previous revision
+        // is stale even when the table's start offset is unchanged (§11.3).
+        fragmentContext.invalidateDerivedLayout()
         rebuildParagraphIndex()
 
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: document, dirty: dirty)
         applySourcePresentation()
-        applyInvisibles()
+        if configuration.showInvisibles || invisiblesApplied {
+            applyInvisibles(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+        }
         rebuildBaseDisplayMap(document: document)
         refreshElision(rebuildingMap: false)
         rebuildDisplayMap(fullRefresh: isWholesaleUpdate, additionalScopes: dirtyScopes)
@@ -548,6 +594,28 @@ public final class MarkdownTextView: NSTextView {
         setFrameSize(NSSize(width: frame.width, height: height))
     }
 
+    /// Structural zoom (§5.2): the document's extent changes as sections join
+    /// or leave the projection.  The new height is resolved synchronously and
+    /// then sprung into place on the layer, so the projection does not snap —
+    /// it settles, the way a document opening or closing a drawer does.
+    private func animateStructuralZoomHeight(from previousHeight: CGFloat) {
+        resizeToFitContent(layoutScope: .document)
+        let targetHeight = frame.height
+        guard abs(targetHeight - previousHeight) > 0.5 else { return }
+        wantsLayer = true
+        guard let animationLayer = self.layer else { return }
+        animationLayer.removeAnimation(forKey: "downrightStructuralZoom")
+        let spring = CASpringAnimation(keyPath: "bounds.size.height")
+        spring.fromValue = previousHeight
+        spring.toValue = targetHeight
+        spring.mass = 1
+        spring.stiffness = 190
+        spring.damping = 18
+        spring.initialVelocity = 0
+        spring.duration = spring.settlingDuration
+        animationLayer.add(spring, forKey: "downrightStructuralZoom")
+    }
+
     /// Layout only the visible viewport for semantic updates.  The usage
     /// bounds are incomplete until TextKit has visited the whole document, so
     /// this path may grow the frame but never shrinks it.  A later scroll near
@@ -636,6 +704,18 @@ public final class MarkdownTextView: NSTextView {
         gutterRail?.reload()
     }
 
+    /// Theme colour / accent swaps that do not change typography.
+    private func restyleAttributesPreservingGeometry() {
+        guard let storage = textStorage else { return }
+        engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
+        applySourcePresentation()
+        applyOverlays()
+        applyPathExistence()
+        invalidateAllFragments()
+        gutterRail?.reload()
+        needsDisplay = true
+    }
+
     private func rebuildBaseDisplayMap(document: ParsedDocument) {
         var hidden = engine.hiddenRanges(document: document, caret: nil, selections: [])
         if let focus = sourceFocus.range {
@@ -673,11 +753,14 @@ public final class MarkdownTextView: NSTextView {
                 + mathSubstitutions
                 + plan.substitutions.filter { !$0.isHidden }
         )
-        displayMap = baseDisplayMap
+        // Selection / hit-testing speak TextKit coordinates from the layout map
+        // (length-preserving joiners). Collapsed logical maps stay on the
+        // substitution fallback path only.
+        displayMap = layoutDisplayMap(from: baseDisplayMap)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: hardWrapRanges,
-            displayMap: layoutDisplayMap(from: baseDisplayMap)
+            displayMap: displayMap
         )
     }
 
@@ -815,12 +898,14 @@ public final class MarkdownTextView: NSTextView {
         baseHiddenRanges = projected
         baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: projected)
         hardWrapRanges = []
-        displayMap = baseDisplayMap
+        displayMap = layoutDisplayMap(from: baseDisplayMap)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: [],
-            displayMap: layoutDisplayMap(from: baseDisplayMap)
+            displayMap: displayMap
         )
+        // Physical fallback still collapses markers; layout map keeps TextKit
+        // selection arithmetic aligned with content storage.
         substitution.displayMap = baseDisplayMap
         revealParagraph = nil
 
@@ -928,11 +1013,11 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         substitution.displayMap = logicalDisplayMap
-        displayMap = logicalDisplayMap
+        displayMap = layoutDisplayMap(from: logicalDisplayMap)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: hardWrapRanges,
-            displayMap: layoutDisplayMap(from: logicalDisplayMap)
+            displayMap: displayMap
         )
 
         let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
@@ -1088,7 +1173,7 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - Overlays: search, changes, paths
 
-    private func reapplyOverlays(invalidating ranges: [NSRange]) {
+    private func reapplyOverlays(invalidating ranges: [NSRange], invalidateFragments: Bool = true) {
         guard let storage = textStorage, !ranges.isEmpty || !overlayRanges.isEmpty else { return }
         let blocks = RangeSet.normalized(ranges.compactMap { clampToStorage($0) })
         if !blocks.isEmpty {
@@ -1096,7 +1181,9 @@ public final class MarkdownTextView: NSTextView {
         }
         applyOverlays()
         applyPathExistence()
-        invalidateAllFragments()
+        if invalidateFragments {
+            invalidateAllFragments()
+        }
     }
 
     private func applyOverlays() {
@@ -1371,6 +1458,41 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - Layout plumbing
 
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawHoveredLinkUnderline(in: dirtyRect)
+    }
+
+    /// Underlines the link under the pointer.  Drawn after the text so it sits
+    /// right on the baseline, with a hair of gap so descenders stay legible —
+    /// the classic affordance for "this is interactive" (§7.1).
+    private func drawHoveredLinkUnderline(in dirtyRect: NSRect) {
+        guard textStorage != nil,
+              let range = hoveredLinkRange,
+              let clamped = clampToStorage(range), clamped.length > 0 else { return }
+        let textKitRange = displayMap.textKitRange(forSource: clamped)
+        guard textKitRange.length > 0 else { return }
+        let origin = contentStorage.documentRange.location
+        guard let start = contentStorage.location(origin, offsetBy: textKitRange.location),
+              let end = contentStorage.location(origin, offsetBy: textKitRange.upperBound),
+              let textRange = NSTextRange(location: start, end: end) else { return }
+        markdownLayoutManager.ensureLayout(for: textRange)
+
+        let path = NSBezierPath()
+        path.lineWidth = 1
+        markdownLayoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) {
+            _, segmentRect, _, _ in
+            let origin = self.textContainerOrigin
+            let y = segmentRect.minY + origin.y - 1.5
+            path.move(to: NSPoint(x: segmentRect.minX + origin.x, y: y))
+            path.line(to: NSPoint(x: segmentRect.maxX + origin.x, y: y))
+            return true
+        }
+        guard path.elementCount > 0 else { return }
+        styleSheet.link.setStroke()
+        path.stroke()
+    }
+
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard let storage = textStorage, storage.length > 0 else { return }
@@ -1401,19 +1523,37 @@ public final class MarkdownTextView: NSTextView {
         drawInvisibles(in: visibleSourceRange ?? NSRange(location: 0, length: 0), dirtyRect: rect)
     }
 
-    private func applyInvisibles() {
-        guard let storage = textStorage, storage.length > 0 else { return }
-        let whole = NSRange(location: 0, length: storage.length)
-        storage.removeAttribute(.drInvisible, range: whole)
-        guard configuration.showInvisibles else { return }
-        let text = storage.string as NSString
+    private func applyInvisibles(scopes: [NSRange]? = nil) {
+        guard let storage = textStorage else { return }
+        if !configuration.showInvisibles {
+            guard invisiblesApplied, storage.length > 0 else { return }
+            storage.removeAttribute(.drInvisible, range: NSRange(location: 0, length: storage.length))
+            invisiblesApplied = false
+            return
+        }
+        guard storage.length > 0 else { return }
+        let ranges: [NSRange]
+        if let scopes, !scopes.isEmpty {
+            ranges = scopes
+        } else {
+            ranges = [NSRange(location: 0, length: storage.length)]
+        }
         storage.beginEditing()
-        for offset in 0..<text.length {
-            let value = text.character(at: offset)
-            guard value == 0x20 || value == 0x09 else { continue }
-            storage.addAttribute(.drInvisible, value: true, range: NSRange(location: offset, length: 1))
+        for range in ranges {
+            storage.removeAttribute(.drInvisible, range: range)
+            let text = storage.string as NSString
+            let end = min(range.upperBound, text.length)
+            var offset = max(0, range.location)
+            while offset < end {
+                let value = text.character(at: offset)
+                if value == 0x20 || value == 0x09 {
+                    storage.addAttribute(.drInvisible, value: true, range: NSRange(location: offset, length: 1))
+                }
+                offset += 1
+            }
         }
         storage.endEditing()
+        invisiblesApplied = true
     }
 
     private func drawInvisibles(in sourceRange: NSRange, dirtyRect: NSRect) {

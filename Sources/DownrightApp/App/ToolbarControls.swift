@@ -71,22 +71,36 @@ enum ToolbarScrubPhase {
 
 /// Leading titlebar identity. It mirrors the window's document title while
 /// preserving a deliberate two-line hierarchy and the titlebar drag region.
+/// A quiet proxy opens the path menu; an edited dot marks unsaved work.
 @MainActor
 final class ToolbarDocumentIdentityView: NSView {
     private enum Metrics {
         static let width: CGFloat = 214
         static let height: CGFloat = 36
+        static let proxySize: CGFloat = 14
+        static let dirtySize: CGFloat = 6
     }
 
     private weak var hostWindow: NSWindow?
+    private let proxyButton = ToolbarInteractiveButton(frame: .zero)
+    private let dirtyDot = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let contextLabel = NSTextField(labelWithString: "")
+    private let titleRow = NSStackView()
     private var titleObservation: NSKeyValueObservation?
     private var subtitleObservation: NSKeyValueObservation?
+    private var editedObservation: NSKeyValueObservation?
     private var activationObservers: [NSObjectProtocol] = []
 
     var displayedTitle: String { titleLabel.stringValue }
     var displayedContext: String { contextLabel.stringValue }
+    var isEdited: Bool = false {
+        didSet {
+            guard isEdited != oldValue else { return }
+            dirtyDot.isHidden = !isEdited
+            refreshAccessibility()
+        }
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Metrics.width, height: Metrics.height)
@@ -96,26 +110,75 @@ final class ToolbarDocumentIdentityView: NSView {
         hostWindow = window
         super.init(frame: .zero)
 
-        for label in [titleLabel, contextLabel] {
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.lineBreakMode = .byTruncatingMiddle
-            label.maximumNumberOfLines = 1
-            addSubview(label)
-        }
+        proxyButton.feedbackInsetX = 1
+        proxyButton.feedbackInsetY = 1
+        proxyButton.feedbackCornerRadius = 3
+        proxyButton.image = NSImage(
+            systemSymbolName: "doc.text",
+            accessibilityDescription: "Document path"
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium))
+        proxyButton.imagePosition = .imageOnly
+        proxyButton.imageScaling = .scaleProportionallyDown
+        proxyButton.isBordered = false
+        proxyButton.bezelStyle = .inline
+        proxyButton.focusRingType = .default
+        proxyButton.setAccessibilityRole(.button)
+        proxyButton.setAccessibilityLabel("Document path")
+        proxyButton.toolTip = "Show document path"
+        proxyButton.target = self
+        proxyButton.action = #selector(showPathMenu(_:))
+
+        dirtyDot.wantsLayer = true
+        dirtyDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        dirtyDot.layer?.cornerRadius = Metrics.dirtySize / 2
+        dirtyDot.isHidden = true
+        dirtyDot.setContentHuggingPriority(.required, for: .horizontal)
+        dirtyDot.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.maximumNumberOfLines = 1
         titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        contextLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
-        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        setContentHuggingPriority(.defaultLow, for: .horizontal)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        contextLabel.lineBreakMode = .byTruncatingMiddle
+        contextLabel.maximumNumberOfLines = 1
+        contextLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
         contextLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 5
+        titleRow.detachesHiddenViews = true
+        titleRow.addArrangedSubview(dirtyDot)
+        titleRow.addArrangedSubview(titleLabel)
+
+        proxyButton.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
+        contextLabel.translatesAutoresizingMaskIntoConstraints = false
+        dirtyDot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(proxyButton)
+        addSubview(titleRow)
+        addSubview(contextLabel)
+
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            proxyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            proxyButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            proxyButton.widthAnchor.constraint(equalToConstant: Metrics.proxySize + 4),
+            proxyButton.heightAnchor.constraint(equalToConstant: Metrics.proxySize + 4),
+
+            dirtyDot.widthAnchor.constraint(equalToConstant: Metrics.dirtySize),
+            dirtyDot.heightAnchor.constraint(equalToConstant: Metrics.dirtySize),
+
+            titleRow.leadingAnchor.constraint(equalTo: proxyButton.trailingAnchor, constant: 4),
+            titleRow.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            titleRow.centerYAnchor.constraint(equalTo: proxyButton.centerYAnchor),
+
             contextLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             contextLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            contextLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: -1),
+            contextLabel.topAnchor.constraint(equalTo: titleRow.bottomAnchor, constant: -1),
         ])
 
         titleObservation = window.observe(\.title, options: [.initial, .new]) { [weak self] window, _ in
@@ -123,6 +186,9 @@ final class ToolbarDocumentIdentityView: NSView {
         }
         subtitleObservation = window.observe(\.subtitle, options: [.initial, .new]) { [weak self] window, _ in
             MainActor.assumeIsolated { self?.update(title: window.title, context: window.subtitle) }
+        }
+        editedObservation = window.observe(\.isDocumentEdited, options: [.initial, .new]) { [weak self] window, _ in
+            MainActor.assumeIsolated { self?.isEdited = window.isDocumentEdited }
         }
         activationObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
             NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
@@ -142,18 +208,91 @@ final class ToolbarDocumentIdentityView: NSView {
 
     override var mouseDownCanMoveWindow: Bool { true }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // `point` is in the superview's coordinate space.
+        let pointInSelf = convert(point, from: superview)
+        if proxyButton.frame.insetBy(dx: -2, dy: -2).contains(pointInSelf) {
+            return proxyButton
+        }
+        return self
+    }
+
+    @objc private func showPathMenu(_ sender: Any?) {
+        guard let window = hostWindow, let url = window.representedURL else {
+            NSSound.beep()
+            return
+        }
+        let menu = NSMenu(title: "Document Path")
+        var current = url.absoluteURL
+        var urls: [URL] = []
+        while current.path != "/" {
+            urls.append(current)
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { break }
+            current = parent
+        }
+        for pathURL in urls {
+            let item = NSMenuItem(
+                title: pathURL.lastPathComponent,
+                action: #selector(openPathComponent(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = pathURL
+            item.image = NSWorkspace.shared.icon(forFile: pathURL.path)
+            item.image?.size = NSSize(width: 16, height: 16)
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let reveal = NSMenuItem(
+            title: "Reveal in Finder",
+            action: #selector(revealInFinder(_:)),
+            keyEquivalent: ""
+        )
+        reveal.target = self
+        reveal.representedObject = url
+        menu.addItem(reveal)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.minY), in: self)
+    }
+
+    @objc private func openPathComponent(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        if url == hostWindow?.representedURL {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+        }
+    }
+
+    @objc private func revealInFinder(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL ?? hostWindow?.representedURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     private func update(title: String, context: String) {
         titleLabel.stringValue = title
         contextLabel.stringValue = context
         contextLabel.isHidden = context.isEmpty
-        toolTip = context.isEmpty ? title : "\(title) - \(context)"
-        setAccessibilityRole(.staticText)
-        setAccessibilityLabel(context.isEmpty ? title : "\(title), \(context)")
+        toolTip = context.isEmpty ? title : "\(title) — \(context)"
+        refreshAccessibility()
+    }
+
+    private func refreshAccessibility() {
+        let base = contextLabel.stringValue.isEmpty
+            ? titleLabel.stringValue
+            : "\(titleLabel.stringValue), \(contextLabel.stringValue)"
+        let label = isEdited ? "\(base), edited" : base
+        setAccessibilityRole(.group)
+        setAccessibilityLabel(label)
     }
 
     private func refreshEmphasis() {
         titleLabel.textColor = hostWindow?.isKeyWindow == true ? .labelColor : .secondaryLabelColor
         contextLabel.textColor = .tertiaryLabelColor
+        dirtyDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        proxyButton.contentTintColor = hostWindow?.isKeyWindow == true
+            ? .secondaryLabelColor
+            : .tertiaryLabelColor
     }
 }
 
@@ -181,7 +320,11 @@ final class ToolbarPresentationControl: NSView {
     let performHapticFeedback: () -> Void
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: Metrics.width, height: Metrics.height)
+        isHidden ? .zero : NSSize(width: Metrics.width, height: Metrics.height)
+    }
+
+    override var isHidden: Bool {
+        didSet { invalidateIntrinsicContentSize() }
     }
 
     var segmentTitles: [String] {
@@ -195,10 +338,14 @@ final class ToolbarPresentationControl: NSView {
         }
     ) {
         documentButton = ToolbarModeButton(
-            title: "Document", typography: .document, accessibilityLabel: "Document"
+            title: "Document",
+            typography: .document,
+            accessibilityLabel: "Rendered document"
         )
         sourceButton = ToolbarModeButton(
-            title: "Source", typography: .source, accessibilityLabel: "Source"
+            title: "Source",
+            typography: .source,
+            accessibilityLabel: "Source Focus"
         )
         self.onChange = onChange
         self.performHapticFeedback = performHapticFeedback
@@ -237,8 +384,10 @@ final class ToolbarPresentationControl: NSView {
 
         setSelectedSegment(0)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Document presentation")
-        setAccessibilityHelp("Click, drag, or use the arrow keys to switch presentation")
+        setAccessibilityLabel("Source Focus")
+        setAccessibilityHelp("Switch between rendered Document and Source Focus")
+        documentButton.toolTip = "Rendered document"
+        sourceButton.toolTip = "Source Focus — show raw Markdown"
         accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil,

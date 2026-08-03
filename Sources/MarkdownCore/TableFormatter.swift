@@ -19,11 +19,14 @@ enum TableFormatter {
     }
 
     static func model(of table: TableData, in text: NSString) -> Model {
+        // A table inside a blockquote carries its `>` markers before the row
+        // range; they must survive a realign or the table silently leaves the
+        // quote.  Mirrors `TableEditing.indentation`.
         let indent = table.rows.first.map { row -> String in
             String(text.substring(with: NSRange(
                 location: text.lineStart(before: row.range.location),
                 length: row.range.location - text.lineStart(before: row.range.location)
-            )).prefix { $0 == " " || $0 == "\t" })
+            )).prefix { $0 == " " || $0 == "\t" || $0 == ">" })
         } ?? ""
         let rows = table.rows.map { row in
             row.cells.map { text.substring(with: $0.range).trimmingCharacters(in: .whitespaces) }

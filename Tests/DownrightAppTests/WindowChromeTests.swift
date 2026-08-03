@@ -1,4 +1,5 @@
 import AppKit
+import MarkdownRender
 import Testing
 @testable import DownrightApp
 
@@ -66,6 +67,26 @@ struct WindowChromeTests {
     }
 
     @Test
+    func breadcrumbScrollTuckReclaimsDocumentLane() {
+        let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
+        let crumb = BreadcrumbView()
+        crumb.trail = [(0, "Root", 1), (1, "Section", 2)]
+        container.topAccessory = crumb
+        container.setFrameSize(NSSize(width: 900, height: 600))
+        container.topAccessoryReservesLane = true
+        container.layout()
+        #expect(container.scrollView.frame.minY > 20)
+
+        container.topAccessoryReservesLane = false
+        container.layout()
+        #expect(container.scrollView.frame.minY == 0)
+
+        container.topAccessoryReservesLane = true
+        container.layout()
+        #expect(container.scrollView.frame.minY > 20)
+    }
+
+    @Test
     func toolbarUsesNativeCenteredModeAndTrailingMenu() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }
@@ -78,12 +99,13 @@ struct WindowChromeTests {
         #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
         #expect(controller.primaryContainer.trailingAccessory == nil)
         #expect(toolbar.displayMode == .iconOnly)
-        #expect(toolbar.identifier == "DownrightToolbar.v8")
+        #expect(toolbar.identifier == "DownrightToolbar.v9")
         #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             "document-identity", flexibleSpace,
-            "presentation-mode", flexibleSpace, "overflow",
+            "presentation-mode", flexibleSpace,
+            "activity", "tasks-progress", "overflow",
         ])
 
         let identity = try #require(
@@ -94,18 +116,23 @@ struct WindowChromeTests {
         #expect(identity.intrinsicContentSize.height == 36)
         #expect(controller.window?.titleVisibility == .hidden)
 
-        let mode = try #require(
-            toolbar.items.first { $0.itemIdentifier.rawValue == "presentation-mode" }?.view as? ToolbarPresentationControl
+        let modeItem = try #require(
+            toolbar.items.first { $0.itemIdentifier.rawValue == "presentation-mode" }
         )
+        let mode = try #require(modeItem.view as? ToolbarPresentationControl)
+        #expect(mode.isHidden)
         #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.intrinsicContentSize.width == 176)
-        #expect(mode.intrinsicContentSize.height == 32)
+        #expect(mode.intrinsicContentSize == .zero)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
+        #expect(!mode.isHidden)
         #expect(mode.selectedSegment == 1)
+        #expect(mode.intrinsicContentSize.width == 176)
         controller.primaryContainer.textView.clearSourceFocus()
+        controller.refreshSourceFocusToolbar()
+        #expect(mode.isHidden)
         #expect(mode.selectedSegment == 0)
 
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
@@ -117,6 +144,9 @@ struct WindowChromeTests {
         #expect(overflow.intrinsicContentSize.width == 30)
         #expect(overflow.intrinsicContentSize.height == 30)
         #expect(overflow.popupMenuItems.contains { $0.title == "Structural Zoom" })
+        #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
+        #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "activity" })
+        #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "tasks-progress" })
     }
 
     @Test

@@ -180,10 +180,6 @@ final class OutlinePanelView: NSView, PanelSurface {
         invalidateIntrinsicContentSize()
         revealCurrentHeading()
         needsDisplay = true
-        scroll.needsDisplay = true
-        scroll.contentView.needsDisplay = true
-        table.needsDisplay = true
-        table.displayIfNeeded()
     }
 
     override func viewDidMoveToWindow() {
@@ -218,10 +214,18 @@ final class OutlinePanelView: NSView, PanelSurface {
             return
         }
 
-        let matches = headings.indices.filter { index in
-            headings[index].title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                .contains(query)
+        let matches = headings.indices.compactMap { index -> (Int, Int)? in
+            let title = headings[index].title.folding(
+                options: [.caseInsensitive, .diacriticInsensitive], locale: .current
+            )
+            guard let match = FuzzyMatcher.match(needle: query, in: title) else { return nil }
+            return (index, match.score)
         }
+        .sorted { lhs, rhs in
+            if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+            return lhs.0 < rhs.0
+        }
+        .map(\.0)
         filterMatchCount = matches.count
 
         // Search is an explicit request to look through the document. Keep

@@ -345,7 +345,9 @@ struct BlockBuilder {
             let span = NSRange(location: start, length: max(0, children[index].range.location - start))
             if text.substring(with: span).hasSuffix("\n\n") { return false }
         }
-        if children.count == 1, children[0].children.count > 1 { return false }
+        // CommonMark: a list is loose when any item directly contains two
+        // block-level elements, not only when a single item happens to.
+        if children.contains(where: { $0.children.count > 1 }) { return false }
         return true
     }
 
@@ -414,10 +416,14 @@ struct BlockBuilder {
             marker = NSRange(location: range.location, length: max(0, openEnd - range.location))
             let endLine = map.line(containing: max(range.location, range.upperBound - 1))
             let closeStart = endLine > startLine ? map.lineStarts[endLine] : range.upperBound
+            // A closing fence must match the opening fence's character, not a
+            // mixture of both, or a `~~~` code block could be terminated by a
+            // backtick fence and vice versa.
+            let fenceChar: Character = fenceCharacters.hasPrefix("~~~") ? "~" : "`"
+            let closeLine = map.string(ofLine: endLine).trimmingCharacters(in: .whitespaces)
             let hasClosingFence = endLine > startLine
-                && map.string(ofLine: endLine).trimmingCharacters(in: .whitespaces)
-                    .allSatisfy { $0 == "`" || $0 == "~" }
-                && !map.string(ofLine: endLine).trimmingCharacters(in: .whitespaces).isEmpty
+                && !closeLine.isEmpty
+                && closeLine.allSatisfy { $0 == fenceChar }
             let contentEnd = hasClosingFence ? closeStart : range.upperBound
             content = NSRange(location: openEnd, length: max(0, contentEnd - openEnd))
             if hasClosingFence {

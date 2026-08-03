@@ -89,16 +89,21 @@ public final class DensityGutterView: NSView {
     /// Quick Look extension gets the same rail without importing the app.
     public static let width: CGFloat = 72
 
-    /// A short dwell keeps the preview immediate without flashing while the
-    /// pointer crosses the rail.
+    /// Scrub preview appears almost immediately; outline bloom waits longer.
     public static let hoverDwell: TimeInterval = 0.02
     /// Passive hover may begin before the pointer reaches a mark, but it must
     /// never activate from an arbitrary point in the rail.
-    static let hoverActivationSlop: CGFloat = 18
-    /// Once a mark owns the preview, leaving its row dismisses the preview.
-    static let hoverDismissalSlop: CGFloat = 3
+    static let hoverActivationSlop: CGFloat = 22
+    /// Once a mark owns the hover, leaving its row dismisses chrome.
+    static let hoverDismissalSlop: CGFloat = 4
     /// Small bridge only for the physical gap between a mark and its preview.
     static let previewExitDelay: TimeInterval = 0.06
+    /// Distance over which mark size / brightness fall off from the pointer.
+    static let proximityRadius: CGFloat = 36
+    /// Maximum magnetic pull of a mark toward the pointer (points).
+    static let magneticPull: CGFloat = 1.5
+    /// Maximum fractional compression of the centred stack near the pointer.
+    static let stackCompression: CGFloat = 0.08
 
     public static let minimumHostWidth: CGFloat = 360
 
@@ -108,20 +113,23 @@ public final class DensityGutterView: NSView {
     private var trackingArea: NSTrackingArea?
     private var previewWorkItem: DispatchWorkItem?
     private var previewHideWorkItem: DispatchWorkItem?
+    private var outlineWorkItem: DispatchWorkItem?
     private var outlineHideWorkItem: DispatchWorkItem?
     private var pointerLocation: NSPoint?
     private var pointerIsInPreview = false
+    private var pointerIsInOutline = false
 
     /// The bars sit on a quiet, centred spine. The spine is deliberately
     /// narrower than the hit area so the map feels easy to scrub without
     /// becoming a second scrollbar.
-    private let horizontalMargin: CGFloat = 14
-    private let trackInset: CGFloat = 24
-    private let markGap: CGFloat = 9
-    private let headingMarkWidth: CGFloat = 28
+    private let horizontalMargin: CGFloat = 16
+    private let trackInset: CGFloat = 28
+    private let markGap: CGFloat = 10
+    private let spineLayer = CALayer()
     private var markLayers: [CALayer] = []
     private var hoveredBandIndex: Int?
     private var didDrag = false
+    private var isEngaged = false
 
     // MARK: - Init
 
@@ -136,6 +144,10 @@ public final class DensityGutterView: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 100))
 
         wantsLayer = true
+        spineLayer.cornerCurve = .continuous
+        spineLayer.masksToBounds = true
+        spineLayer.opacity = 0
+        layer?.addSublayer(spineLayer)
 
         preview.onPointerPresence = { [weak self] isInside in
             guard let self else { return }
@@ -153,11 +165,13 @@ public final class DensityGutterView: NSView {
             self.delegate?.densityGutter(self, didRequestScrollToFraction: fraction)
         }
         outline.onPointerPresence = { [weak self] isInside in
+            guard let self else { return }
+            self.pointerIsInOutline = isInside
             if isInside {
-                self?.cancelOutlineHide()
-                self?.outline.cancelDismissAnimation()
-            } else {
-                self?.scheduleOutlineHide()
+                self.cancelOutlineHide()
+                self.outline.cancelDismissAnimation()
+            } else if !self.isScrubbing {
+                self.scheduleOutlineHide()
             }
         }
 
@@ -214,8 +228,11 @@ public final class DensityGutterView: NSView {
     static func centeredBandYPositions(
         height: CGFloat,
         count: Int,
-        trackInset: CGFloat = 24,
-        markGap: CGFloat = 9
+        trackInset: CGFloat = 28,
+        markGap: CGFloat = 10,
+        pointerY: CGFloat? = nil,
+        compression: CGFloat = DensityGutterView.stackCompression,
+        proximityRadius: CGFloat = DensityGutterView.proximityRadius
     ) -> [CGFloat] {
         guard count > 0 else { return [] }
 
@@ -225,8 +242,42 @@ public final class DensityGutterView: NSView {
         let gap = min(markGap, trackHeight / CGFloat(max(1, count - 1)))
         let groupHeight = CGFloat(max(0, count - 1)) * gap
         let start = top + max(0, (trackHeight - groupHeight) / 2)
+        let base = (0..<count).map { start + CGFloat($0) * gap }
 
-        return (0..<count).map { start + CGFloat($0) * gap }
+        guard let pointerY, count > 1, compression > 0 else { return base }
+
+        // Soft Dock-like compression: gaps near the pointer shrink a little so
+        // the stack feels magnetic without rearranging reading order.
+        var compressed: [CGFloat] = [base[0]]
+        for index in 1..<count {
+            let mid = (base[index - 1] + base[index]) / 2
+            let influence = proximityInfluence(
+                distance: abs(mid - pointerY),
+                radius: proximityRadius
+            )
+            let localGap = gap * (1 - compression * influence)
+            compressed.append(compressed[index - 1] + localGap)
+        }
+        let compressedSpan = (compressed.last ?? 0) - compressed[0]
+        let recenter = start + max(0, (groupHeight - compressedSpan) / 2) - compressed[0]
+        return compressed.map { $0 + recenter }
+    }
+
+    /// Ease-out falloff in 0…1 for pointer distance.
+    static func proximityInfluence(distance: CGFloat, radius: CGFloat = proximityRadius) -> CGFloat {
+        guard radius > 0 else { return distance <= 0 ? 1 : 0 }
+        let t = min(1, max(0, 1 - distance / radius))
+        return t * t * (3 - 2 * t) // smoothstep
+    }
+
+    /// Resting tick length encodes heading level.
+    static func headingMarkWidth(level: Int) -> CGFloat {
+        switch max(1, level) {
+        case 1: return 26
+        case 2: return 20
+        case 3: return 14
+        default: return 10
+        }
     }
 
     private func visualBands(height: CGFloat) -> [(band: DensityBand, y: CGFloat)] {
@@ -244,7 +295,8 @@ public final class DensityGutterView: NSView {
             height: height,
             count: visible.count,
             trackInset: trackInset,
-            markGap: markGap
+            markGap: markGap,
+            pointerY: pointerLocation?.y
         )
         return visible.enumerated().map { index, band in
             (band: band, y: positions[index])
@@ -252,60 +304,53 @@ public final class DensityGutterView: NSView {
     }
 
     private struct BandStyle {
-        var inset: CGFloat      // fraction of the track from the leading edge
-        var width: CGFloat      // fraction of the track
+        var widthPoints: CGFloat
         var minHeight: CGFloat
         var color: NSColor
     }
 
     private func style(for kind: DensityBand.Kind, contrast: Bool) -> BandStyle {
+        let maxWidth = max(2, bounds.width - horizontalMargin * 2)
         switch kind {
-        case .heading:
-            // Keep the resting rail geometrically quiet. Heading depth still
-            // remains available to the outline preview, while the rail uses
-            // one optical language instead of making a random line look
-            // selected because it happens to be an H1 or H4.
-            let width = min(headingMarkWidth, bounds.width - horizontalMargin * 2)
+        case .heading(let level):
             return BandStyle(
-                inset: max(0, (bounds.width - horizontalMargin * 2 - width)
-                    / (2 * max(1, bounds.width - horizontalMargin * 2))),
-                width: width / max(1, bounds.width - horizontalMargin * 2),
-                minHeight: 2,
+                widthPoints: min(Self.headingMarkWidth(level: level), maxWidth),
+                minHeight: level <= 1 ? 2.5 : 2,
                 color: styleSheet.railTick
             )
-        case .codeBlock:
-            return BandStyle(inset: 0.25, width: 0.5, minHeight: 3,
-                             color: styleSheet.textSecondary.panelAlpha(0.5, increaseContrast: contrast))
-        case .table:
-            return BandStyle(inset: 0.25, width: 0.5, minHeight: 3,
-                             color: styleSheet.textSecondary.panelAlpha(0.32, increaseContrast: contrast))
-        case .math:
-            return BandStyle(inset: 0.32, width: 0.36, minHeight: 3,
-                             color: styleSheet.accent.panelAlpha(0.42, increaseContrast: contrast))
-        case .taskList:
-            return BandStyle(inset: 0.32, width: 0.36, minHeight: 3,
-                             color: styleSheet.accent.panelAlpha(0.6, increaseContrast: contrast))
-        case .image:
-            return BandStyle(inset: 0.38, width: 0.24, minHeight: 3,
-                             color: styleSheet.textSecondary.panelAlpha(0.62, increaseContrast: contrast))
-        case .callout:
-            return BandStyle(inset: 0.2, width: 0.6, minHeight: 3,
-                             color: styleSheet.accent.panelAlpha(0.28, increaseContrast: contrast))
         case .searchHit:
-            return BandStyle(inset: 0.18, width: 0.64, minHeight: 2, color: styleSheet.searchHit)
+            return BandStyle(
+                widthPoints: min(10, maxWidth),
+                minHeight: 2,
+                color: styleSheet.searchHit
+            )
         case .change(let changeKind):
-            return BandStyle(inset: 0.08, width: 0.84, minHeight: 3, color: styleSheet.changeColor(changeKind))
+            return BandStyle(
+                widthPoints: min(12, maxWidth),
+                minHeight: 2.5,
+                color: styleSheet.changeColor(changeKind)
+            )
+        case .codeBlock, .table, .math, .taskList, .image, .callout:
+            // Body-shape bands stay in the data model but are not drawn at rest.
+            return BandStyle(
+                widthPoints: min(8, maxWidth),
+                minHeight: 2,
+                color: styleSheet.textSecondary.panelAlpha(0.4, increaseContrast: contrast)
+            )
         }
     }
 
-    /// Renders one small layer per visible document mark. Hover changes only
-    /// that layer's width, weight, and colour; there is no floating capsule
-    /// that can be mistaken for a scrollbar thumb or cover the document.
+    /// Renders one small layer per visible document mark. Every mark shares the
+    /// same optical spine so the rail reads as one centred stick; proximity
+    /// only changes length, weight, and brightness.
     private func updateMarkLayers(animated: Bool) {
         guard bounds.height > 0 else { return }
         let entries = visualBands(height: bounds.height)
         let current = currentHeadingFraction()
         let available = max(1, bounds.width - horizontalMargin * 2)
+        let pointerY = pointerLocation?.y
+        let engaged = pointerLocation != nil || isScrubbing || outline.isVisible
+        updateSpine(engaged: engaged)
 
         while markLayers.count < entries.count {
             let mark = CALayer()
@@ -324,34 +369,40 @@ public final class DensityGutterView: NSView {
                 }
                 return false
             }()
-            let isHovered = index == hoveredBandIndex
+            let distance = pointerY.map { abs(entry.y - $0) }
+            let influence = distance.map {
+                Self.proximityInfluence(distance: $0, radius: Self.proximityRadius)
+            } ?? 0
+            let isPrimary = index == hoveredBandIndex
+            let focus = isPrimary ? max(influence, 0.78) : influence * 0.72
 
             if isCurrent {
-                bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(0.9)
-            } else if case .heading = entry.band.kind {
-                bandStyle.minHeight = 2
-                bandStyle.color = styleSheet.railTick.withAlphaComponent(
-                    entry.band.startFraction <= readProgress ? 0.5 : 0.3
-                )
-            }
-
-            if isHovered {
+                bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(0.92)
                 bandStyle.minHeight = max(bandStyle.minHeight, 3)
-                bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(
-                    isCurrent ? 0.96 : 0.86
+            } else if case .heading = entry.band.kind {
+                bandStyle.color = styleSheet.railTick.withAlphaComponent(
+                    entry.band.startFraction <= readProgress ? 0.48 : 0.28
                 )
             }
 
-            let baseWidth = max(2, available * bandStyle.width)
-            let markWidth = min(available, baseWidth + (isHovered ? 12 : 0))
-            let markHeight = max(bandStyle.minHeight, isHovered ? 4 : bandStyle.minHeight)
-            // Resolve every mark around the same optical spine. This keeps a
-            // hover expansion symmetric instead of making the line appear to
-            // slide sideways inside the lane.
-            let markCenter = bounds.midX
-                + available * (bandStyle.inset + bandStyle.width / 2 - 0.5)
-            let markX = markCenter - markWidth / 2
-            let frame = CGRect(x: markX, y: entry.y, width: markWidth, height: markHeight)
+            if focus > 0.02 {
+                let alpha = (isCurrent ? 0.92 : 0.52) + focus * (isCurrent ? 0.06 : 0.42)
+                bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(min(0.98, alpha))
+            }
+
+            let markWidth = min(available, bandStyle.widthPoints + focus * 12)
+            let markHeight = bandStyle.minHeight + focus * 2.2
+            let magnetic = (pointerY.map { ($0 - entry.y) } ?? 0)
+                * focus * (Self.magneticPull / max(1, Self.proximityRadius))
+            let markY = entry.y + max(-Self.magneticPull, min(Self.magneticPull, magnetic))
+            // One optical spine: every mark grows symmetrically from midX.
+            let markX = bounds.midX - markWidth / 2
+            let frame = CGRect(
+                x: markX,
+                y: markY - markHeight / 2,
+                width: markWidth,
+                height: markHeight
+            )
             let mark = markLayers[index]
             let previousFrame = mark.presentation()?.frame ?? mark.frame
             let previousColor = mark.presentation()?.backgroundColor ?? mark.backgroundColor
@@ -360,6 +411,7 @@ public final class DensityGutterView: NSView {
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            mark.cornerRadius = min(markHeight / 2, 2)
             mark.frame = frame
             mark.backgroundColor = bandStyle.color.cgColor
             mark.isHidden = false
@@ -379,7 +431,9 @@ public final class DensityGutterView: NSView {
                 mark.add(position, forKey: "mark-position")
 
                 let boundsAnimation = CABasicAnimation(keyPath: "bounds")
-                boundsAnimation.fromValue = NSValue(rect: previousFrame.offsetBy(dx: -previousFrame.minX, dy: -previousFrame.minY))
+                boundsAnimation.fromValue = NSValue(
+                    rect: previousFrame.offsetBy(dx: -previousFrame.minX, dy: -previousFrame.minY)
+                )
                 boundsAnimation.toValue = NSValue(rect: mark.bounds)
                 boundsAnimation.duration = Motion.quick
                 boundsAnimation.timingFunction = timing
@@ -400,6 +454,39 @@ public final class DensityGutterView: NSView {
             mark.removeAllAnimations()
             mark.isHidden = true
         }
+    }
+
+    private func updateSpine(engaged: Bool) {
+        let top = min(trackInset, max(0, bounds.height / 2))
+        let bottom = max(top, bounds.height - trackInset)
+        let width: CGFloat = 1
+        let frame = CGRect(
+            x: bounds.midX - width / 2,
+            y: top,
+            width: width,
+            height: max(0, bottom - top)
+        )
+        let targetOpacity: Float = engaged ? 0.14 : 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        spineLayer.cornerRadius = 0.5
+        spineLayer.frame = frame
+        spineLayer.backgroundColor = styleSheet.railTick.withAlphaComponent(1).cgColor
+        CATransaction.commit()
+
+        guard isEngaged != engaged || abs(spineLayer.opacity - targetOpacity) > 0.001 else { return }
+        isEngaged = engaged
+        if styleSheet.reduceMotion {
+            spineLayer.opacity = targetOpacity
+            return
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = spineLayer.presentation()?.opacity ?? spineLayer.opacity
+        fade.toValue = targetOpacity
+        fade.duration = Motion.quick
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        spineLayer.opacity = targetOpacity
+        spineLayer.add(fade, forKey: "spine-opacity")
     }
 
     public override func layout() {
@@ -480,9 +567,13 @@ public final class DensityGutterView: NSView {
             nextIndex = nil
         }
 
-        guard nextIndex != hoveredBandIndex else { return }
+        let indexChanged = nextIndex != hoveredBandIndex
         hoveredBandIndex = nextIndex
-        updateMarkLayers(animated: animated)
+        // Continuous proximity must track the pointer without CA lag; only
+        // animate when the primary mark changes (enter / leave / switch).
+        if indexChanged || point != nil || pointerLocation != nil {
+            updateMarkLayers(animated: animated && indexChanged)
+        }
     }
 
     static func nextHoveredBandIndex(
@@ -507,7 +598,11 @@ public final class DensityGutterView: NSView {
 
     public override func mouseDown(with event: NSEvent) {
         cancelPreviewHide()
+        cancelOutlineShow()
+        cancelOutlineHide()
         pointerIsInPreview = false
+        pointerIsInOutline = false
+        outline.dismiss()
         didDrag = false
         isScrubbing = false
         pointerLocation = convert(event.locationInWindow, from: nil)
@@ -516,7 +611,10 @@ public final class DensityGutterView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         cancelPreviewHide()
+        cancelOutlineShow()
         pointerIsInPreview = false
+        pointerIsInOutline = false
+        if outline.isVisible { outline.dismiss() }
         didDrag = true
         isScrubbing = true
         pointerLocation = convert(event.locationInWindow, from: nil)
@@ -532,11 +630,16 @@ public final class DensityGutterView: NSView {
         updateHoveredBand(at: point, animated: true)
         delegate?.densityGutter(self, didRequestScrollToFraction: fraction(at: point))
         if bounds.contains(point), hoveredBandIndex != nil {
-            showPreview(at: point, showsSnippet: true)
+            // A click settles into outline bloom rather than a sticky tooltip.
+            preview.hide()
+            scheduleOutline(at: point, dwell: 0)
         } else {
             cancelPreviewHide()
             preview.hide()
+            cancelOutlineShow()
+            outline.dismiss()
             updateHoveredBand(at: nil, animated: true)
+            pointerLocation = nil
         }
         if wasDragging { needsDisplay = true }
     }
@@ -551,24 +654,29 @@ public final class DensityGutterView: NSView {
         guard hoveredBandIndex != nil else {
             previewWorkItem?.cancel()
             previewWorkItem = nil
+            cancelOutlineShow()
             preview.hide()
+            if !pointerIsInOutline { scheduleOutlineHide() }
             return
         }
-        if preview.isVisible {
-            showPreview(at: point, showsSnippet: true)
+        // Deliberate hover → outline bloom. Scrub keeps the lightweight preview.
+        preview.hide()
+        if outline.isVisible {
+            cancelOutlineHide()
         } else {
-            schedulePreview(at: point)
+            scheduleOutline(at: point)
         }
     }
 
     public override func mouseEntered(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         cancelPreviewHide()
+        cancelOutlineHide()
         pointerIsInPreview = false
         pointerLocation = point
         updateHoveredBand(at: point, animated: false)
         if hoveredBandIndex != nil {
-            schedulePreview(at: point)
+            scheduleOutline(at: point)
         }
     }
 
@@ -576,21 +684,32 @@ public final class DensityGutterView: NSView {
         guard !isScrubbing else { return }
         previewWorkItem?.cancel()
         previewWorkItem = nil
+        cancelOutlineShow()
         pointerLocation = nil
-        guard preview.isVisible else {
+        updateMarkLayers(animated: true)
+        guard preview.isVisible || outline.isVisible else {
             updateHoveredBand(at: nil, animated: true)
             return
         }
-        schedulePreviewHide()
+        if preview.isVisible { schedulePreviewHide() }
+        if outline.isVisible, !pointerIsInOutline { scheduleOutlineHide() }
+        if !preview.isVisible, !outline.isVisible {
+            updateHoveredBand(at: nil, animated: true)
+        }
     }
 
     public func presentOutlineForKeyboard() {
         guard let window else { return }
         cancelPreviewHide()
+        cancelOutlineShow()
         pointerIsInPreview = false
         preview.hide()
         outline.entries = outlineEntries
-        outline.show(rightOf: self, over: window, keyboard: true)
+        let anchorY = hoveredBandIndex.flatMap { index in
+            let entries = visualBands(height: bounds.height)
+            return entries.indices.contains(index) ? entries[index].y : nil
+        }
+        outline.show(rightOf: self, over: window, keyboard: true, anchorY: anchorY)
     }
 
     private func schedulePreview(at point: NSPoint) {
@@ -610,12 +729,47 @@ public final class DensityGutterView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDwell, execute: work)
     }
 
+    private func scheduleOutline(at point: NSPoint, dwell: TimeInterval = DensityOutlineWindow.showDwell) {
+        outlineWorkItem?.cancel()
+        cancelOutlineHide()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let window = self.window else { return }
+            guard self.pointerLocation == point || dwell == 0 else { return }
+            guard !self.isScrubbing, self.hoveredBandIndex != nil,
+                  !self.outlineEntries.isEmpty else { return }
+            self.preview.hide()
+            self.outline.entries = self.outlineEntries
+            let entries = self.visualBands(height: self.bounds.height)
+            let anchorY: CGFloat? = {
+                guard let index = self.hoveredBandIndex,
+                      entries.indices.contains(index) else { return point.y }
+                return entries[index].y
+            }()
+            self.outline.show(rightOf: self, over: window, keyboard: false, anchorY: anchorY)
+            self.updateMarkLayers(animated: true)
+        }
+        outlineWorkItem = work
+        if dwell <= 0 {
+            DispatchQueue.main.async(execute: work)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + dwell, execute: work)
+        }
+    }
+
+    private func cancelOutlineShow() {
+        outlineWorkItem?.cancel()
+        outlineWorkItem = nil
+    }
+
     private func schedulePreviewHide() {
         previewHideWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.pointerIsInPreview else { return }
             self.preview.hide()
-            self.updateHoveredBand(at: nil, animated: true)
+            if !self.outline.isVisible, !self.pointerIsInOutline {
+                self.updateHoveredBand(at: nil, animated: true)
+                self.pointerLocation = nil
+            }
         }
         previewHideWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.previewExitDelay, execute: work)
@@ -628,7 +782,13 @@ public final class DensityGutterView: NSView {
 
     private func scheduleOutlineHide() {
         outlineHideWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.outline.dismiss() }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.pointerIsInOutline else { return }
+            self.outline.dismiss()
+            if self.pointerLocation == nil {
+                self.updateHoveredBand(at: nil, animated: true)
+            }
+        }
         outlineHideWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + DensityOutlineWindow.hideDelay, execute: work)
     }
@@ -676,11 +836,14 @@ public final class DensityGutterView: NSView {
             previewWorkItem?.cancel()
             previewWorkItem = nil
             cancelPreviewHide()
+            cancelOutlineShow()
+            cancelOutlineHide()
             pointerLocation = nil
             pointerIsInPreview = false
+            pointerIsInOutline = false
             preview.hide()
-            updateHoveredBand(at: nil, animated: false)
             outline.dismiss()
+            updateHoveredBand(at: nil, animated: false)
         }
     }
 

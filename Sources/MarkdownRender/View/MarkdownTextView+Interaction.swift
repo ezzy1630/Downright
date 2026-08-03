@@ -85,6 +85,19 @@ extension MarkdownTextView {
             || attribute(.drCheckbox, at: point) != nil
         setPointerCursor(interactive: hasInteractiveTarget)
 
+        // Links underline under the pointer (§7.1).  Images carry `.drLink`
+        // for their source too, but an image has no text to underline.
+        var linkRange: NSRange?
+        if let hit = attribute(.drLink, at: point),
+           hit.range.length > 0,
+           fragmentPayload(at: point)?.payload.kind != .image {
+            linkRange = hit.range
+        }
+        if linkRange != hoveredLinkRange {
+            hoveredLinkRange = linkRange
+            needsDisplay = true
+        }
+
         let nextToolTip: String?
         if payload?.kind != .image,
            let hit = attribute(.drReference, at: point),
@@ -106,6 +119,7 @@ extension MarkdownTextView {
         fragmentContext.hoveredFragmentRange = nil
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
+        hoveredLinkRange = nil
         toolTip = nil
         setPointerCursor(interactive: false)
         needsDisplay = true
@@ -120,6 +134,28 @@ extension MarkdownTextView {
         } else {
             NSCursor.arrow.set()
         }
+    }
+
+    /// Keeps redrawing while any checkbox pulse is live, then stops.  The pop
+    /// is drawn by the fragment, not stored as text attributes, so the only
+    /// thing this has to do is ask for frames.
+    private func driveCheckboxPulseRedraw() {
+        checkboxPulseTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            let active = self.fragmentContext.checkboxPulses.contains {
+                now - $0.started < CheckboxPulse.duration
+            }
+            guard active else {
+                self.checkboxPulseTimer?.invalidate()
+                self.checkboxPulseTimer = nil
+                return
+            }
+            self.needsDisplay = true
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        checkboxPulseTimer = timer
     }
 
     public override func cursorUpdate(with event: NSEvent) {
@@ -147,7 +183,12 @@ extension MarkdownTextView {
         // Clicking a checkbox toggles it and the file is written immediately —
         // §7.1 and §8.5.  Works in every mode, including Read.
         if let hit = attribute(.drCheckbox, at: point) {
+            let wasChecked = (hit.value as? Bool) ?? false
             markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.range.location)
+            if let blockRange = fragmentPayload(at: point)?.payload.sourceRange {
+                fragmentContext.beginCheckboxPulse(blockRange, checked: !wasChecked)
+                driveCheckboxPulseRedraw()
+            }
             return
         }
 
@@ -372,6 +413,13 @@ extension MarkdownTextView {
         guard isEditable, let storage = textStorage else { return false }
         let clamped = NSRange(location: max(0, min(range.location, storage.length)),
                               length: max(0, min(range.length, storage.length - min(range.location, storage.length))))
+        // AppKit's `shouldChangeText` coalesces into the undo manager. Synthetic
+        // key events (and a few edge focus paths) can arrive with no open group;
+        // open one so typing never traps on `NSUndoManager` state.
+        let undo = undoManager
+        let openedUndoGroup = undo.map { $0.groupingLevel == 0 } ?? false
+        if openedUndoGroup { undo?.beginUndoGrouping() }
+        defer { if openedUndoGroup { undo?.endUndoGrouping() } }
         guard shouldChangeText(in: clamped, replacementString: replacement) else { return false }
         // Structural zoom is a reading projection. Editing through an elided
         // projection makes nearby paragraphs appear and disappear around the
@@ -523,14 +571,16 @@ extension MarkdownTextView {
     /// A hidden marker is deleted whole.  Deleting half of `**` would leave
     /// the document in a state the user did not ask for and cannot see.
     private func deletionRange(before caret: Int, in storage: NSTextStorage) -> NSRange {
-        if let hidden = currentDisplayMap.substitutionEnding(at: caret), hidden.displayLength == 0 {
+        // Layout maps keep hidden markers as same-length joiners (`displayLength`
+        // > 0); semantic hiding is still `isHidden`.
+        if let hidden = currentDisplayMap.substitutionEnding(at: caret), hidden.isHidden {
             return hidden.sourceRange
         }
         return (storage.string as NSString).rangeOfComposedCharacterSequence(at: caret - 1)
     }
 
     private func deletionRange(after caret: Int, in storage: NSTextStorage) -> NSRange {
-        if let hidden = currentDisplayMap.substitutionStarting(at: caret), hidden.displayLength == 0 {
+        if let hidden = currentDisplayMap.substitutionStarting(at: caret), hidden.isHidden {
             return hidden.sourceRange
         }
         return (storage.string as NSString).rangeOfComposedCharacterSequence(at: caret)
@@ -593,7 +643,7 @@ extension MarkdownTextView {
         while changed {
             changed = false
             if let leading = currentDisplayMap.substitutions.last(where: {
-                $0.replacement == nil && $0.sourceRange.upperBound == result.location
+                $0.isHidden && $0.sourceRange.upperBound == result.location
             }) {
                 result = NSRange(
                     location: leading.sourceRange.location,
@@ -602,7 +652,7 @@ extension MarkdownTextView {
                 changed = true
             }
             if let trailing = currentDisplayMap.substitutions.first(where: {
-                $0.replacement == nil && $0.sourceRange.location == result.upperBound
+                $0.isHidden && $0.sourceRange.location == result.upperBound
             }) {
                 result.length = trailing.sourceRange.upperBound - result.location
                 changed = true
@@ -656,17 +706,48 @@ extension MarkdownTextView {
     /// Text spoken by the native speech service. It uses the same substitutions
     /// as rich-text copy, so hidden Markdown markers are not read aloud.
     public func renderedStringForSpeech(sourceRange: NSRange) -> String {
-        attributedStringForRichTextCopy(range: sourceRange).string
+        speechProjection(sourceRange: sourceRange).text
     }
 
     /// Convert a range reported by `NSSpeechSynthesizer` back to source space.
     public func sourceRangeForSpeechRange(_ renderedRange: NSRange, within sourceRange: NSRange) -> NSRange? {
         guard renderedRange.location >= 0, renderedRange.length >= 0 else { return nil }
-        let start = currentDisplayMap.textKitOffset(forSource: sourceRange.location)
-        let textKitRange = NSRange(location: start + renderedRange.location, length: renderedRange.length)
+        let projection = speechProjection(sourceRange: sourceRange)
+        guard renderedRange.upperBound <= projection.speechToTextKit.count else { return nil }
+        let base = currentDisplayMap.textKitOffset(forSource: sourceRange.location)
+        let textKitStart: Int
+        let textKitEnd: Int
+        if renderedRange.length == 0 {
+            textKitStart = renderedRange.location < projection.speechToTextKit.count
+                ? projection.speechToTextKit[renderedRange.location]
+                : (projection.speechToTextKit.last.map { $0 + 1 } ?? 0)
+            textKitEnd = textKitStart
+        } else {
+            textKitStart = projection.speechToTextKit[renderedRange.location]
+            textKitEnd = projection.speechToTextKit[renderedRange.upperBound - 1] + 1
+        }
+        let textKitRange = NSRange(location: base + textKitStart, length: textKitEnd - textKitStart)
         let mapped = currentDisplayMap.sourceRange(forTextKit: textKitRange)
         guard mapped.location >= sourceRange.location, mapped.upperBound <= sourceRange.upperBound else { return nil }
         return mapped
+    }
+
+    /// Drop DisplayMap geometry fillers from speech text while remembering how
+    /// each spoken UTF-16 unit maps back into the rich-text (TextKit) string.
+    private func speechProjection(sourceRange: NSRange) -> (text: String, speechToTextKit: [Int]) {
+        let attributed = attributedStringForRichTextCopy(range: sourceRange)
+        let ns = attributed.string as NSString
+        var scalars: [UniChar] = []
+        var map: [Int] = []
+        scalars.reserveCapacity(ns.length)
+        map.reserveCapacity(ns.length)
+        for index in 0..<ns.length {
+            let unit = ns.character(at: index)
+            if unit == 0x2060 || unit == 0x200B || unit == 0xFEFF { continue }
+            scalars.append(unit)
+            map.append(index)
+        }
+        return (String(utf16CodeUnits: scalars, count: scalars.count), map)
     }
 
     /// §9.5: export the selection as an image, for pasting a rendered table or

@@ -67,7 +67,10 @@ enum FenceLanguage {
            contains(body, any: ["<html", "<div", "<span", "<p>", "<!DOCTYPE", "</"]) {
             return "html"
         }
-        if body.hasPrefix("{") || body.hasPrefix("["),
+        // Leading whitespace is legal in JSON documents, so trim before
+        // sniffing an opening brace or bracket.
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedBody.hasPrefix("{") || trimmedBody.hasPrefix("["),
            contains(body, any: ["\": ", "\":"]) {
             return "json"
         }

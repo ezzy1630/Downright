@@ -21,56 +21,23 @@ public enum MathRenderer {
     public static func image(latex: String, display: Bool, pointSize: CGFloat, color: NSColor) -> NSImage? {
         let trimmed = latex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let key = Key(latex: trimmed, display: display,
-                      pointSize: (pointSize * 4).rounded() / 4,
-                      color: colorToken(color))
-
-        lock.lock()
-        if let hit = cache[key] {
-            lock.unlock()
-            return hit.image
+        let key = MathRendererCacheKey(
+            source: trimmed,
+            display: display,
+            pointSize: (pointSize * 4).rounded() / 4,
+            colorToken: colorToken(color))
+        return MarkdownFragmentImageCaches.math.image(for: key, keyCost: key.source.utf8.count) {
+            let renderer = MTMathImage(
+                latex: trimmed,
+                fontSize: key.pointSize,
+                textColor: color,
+                labelMode: display ? .display : .text,
+                textAlignment: display ? .center : .left)
+            let (error, image) = renderer.asImage()
+            // A malformed formula is agent output, not a crash: it falls back
+            // to its source text in the fragment.
+            return error == nil ? image : nil
         }
-        lock.unlock()
-
-        let renderer = MTMathImage(
-            latex: trimmed,
-            fontSize: key.pointSize,
-            textColor: color,
-            labelMode: display ? .display : .text,
-            textAlignment: display ? .center : .left)
-        let (error, image) = renderer.asImage()
-        // A malformed formula is agent output, not a crash: it falls back to
-        // its source text in the fragment.
-        let result = error == nil ? image : nil
-
-        lock.lock()
-        cache[key] = Entry(image: result)
-        if cache.count > capacity { evictLocked() }
-        lock.unlock()
-        return result
-    }
-
-    // MARK: Cache
-
-    private struct Key: Hashable {
-        var latex: String
-        var display: Bool
-        var pointSize: CGFloat
-        var color: String
-    }
-
-    private struct Entry {
-        var image: NSImage?
-    }
-
-    private static let lock = NSLock()
-    private static var cache: [Key: Entry] = [:]
-    private static let capacity = 512
-
-    private static func evictLocked() {
-        // Formula caches are small and long-lived; a full clear at the cap is
-        // cheaper and more predictable than tracking recency per entry.
-        cache.removeAll(keepingCapacity: true)
     }
 
     private static func colorToken(_ color: NSColor) -> String {
