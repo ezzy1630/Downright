@@ -167,6 +167,10 @@ struct RenderSmokeTests {
         container.layoutSubtreeIfNeeded()
 
         #expect(breadcrumb.frame.maxY <= container.scrollView.frame.minY)
+        let textOrigin = container.scrollView.frame.minX
+            + container.scrollView.contentInsets.left
+            + RenderMetrics.revealSlack
+        #expect(abs(breadcrumb.frame.minX - textOrigin) < 0.5)
         #expect(container.scrollView.frame.minY > 0)
         #expect(container.scrollView.frame.maxY == container.bounds.maxY)
     }

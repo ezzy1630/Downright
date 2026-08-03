@@ -132,9 +132,6 @@ public final class MarkdownContainerView: NSView {
         let trailingWidth = trailingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 14 } ?? 0
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
 
-        let accessoryWidth = min(max(160, textView.styleSheet.measureWidth), max(160, bounds.width - 80))
-        topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 4,
-                                     width: accessoryWidth, height: max(topHeight, 0))
         leadingAccessory?.frame = NSRect(x: 0, y: 0,
                                          width: leadingWidth, height: bounds.height)
         trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: 0,
@@ -179,6 +176,12 @@ public final class MarkdownContainerView: NSView {
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)
 
         let textOrigin = scrollView.frame.minX + textLeft
+        topAccessory?.frame = NSRect(
+            x: textOrigin,
+            y: 4,
+            width: min(measure, max(0, bounds.width - textOrigin - trailingWidth)),
+            height: max(topHeight, 0)
+        )
         gutter.frame = NSRect(x: max(0, textOrigin - gutterWidth), y: topLaneHeight,
                               width: gutterWidth, height: scrollView.frame.height)
 

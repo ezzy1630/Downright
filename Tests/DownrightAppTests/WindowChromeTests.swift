@@ -79,6 +79,36 @@ struct WindowChromeTests {
     }
 
     @Test
+    func breadcrumbShowsOnlyTheCurrentSection() throws {
+        let crumb = BreadcrumbView()
+        crumb.trail = [(0, "Downright Design", 1), (1, "Typography and colour", 2)]
+        crumb.setFrameSize(NSSize(width: 720, height: 28))
+        crumb.layout()
+
+        let button = try #require(crumb.subviews.compactMap { $0 as? NSButton }.first)
+        #expect(button.attributedTitle.string == "Typography and colour")
+        #expect(button.accessibilityLabel() == "Current section: Typography and colour")
+        #expect(!button.isHidden)
+        #expect(abs(crumb.currentTitleOrigin) < 0.5)
+
+        let menu = crumb.makePathMenu()
+        #expect(menu.items.map(\.title) == ["Downright Design", "Typography and colour"])
+        #expect(menu.items.map(\.indentationLevel) == [0, 1])
+        #expect(menu.items.map(\.state) == [.off, .on])
+    }
+
+    @Test
+    func breadcrumbPathComparisonAvoidsScrollTimeRebuilds() {
+        let path = [(index: 0, title: "Root", level: 1), (index: 4, title: "Section", level: 2)]
+        #expect(BreadcrumbView.sameTrail(path, path))
+        #expect(!BreadcrumbView.sameTrail(path, [(index: 0, title: "Root", level: 1)]))
+        #expect(!BreadcrumbView.sameTrail(
+            path,
+            [(index: 0, title: "Root", level: 1), (index: 5, title: "Next", level: 2)]
+        ))
+    }
+
+    @Test
     func toolbarUsesNativeCenteredModeAndTrailingMenu() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }

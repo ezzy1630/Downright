@@ -680,7 +680,9 @@ final class DocumentWindowController: NSWindowController {
     func refreshBreadcrumb() {
         let offset = containerTextView.topVisibleOffset
         let headings = markdownDocument.parsed.headings
-        guard var index = headings.lastIndex(where: { $0.range.location <= offset }) else {
+        guard var index = headings.lastIndex(where: { $0.range.location <= offset })
+            ?? headings.indices.first
+        else {
             breadcrumbView.trail = []
             primaryContainer.needsLayout = true
             return
