@@ -394,7 +394,7 @@ final class DocumentWindowController: NSWindowController {
         toolbar.autosavesConfiguration = false
         toolbar.isVisible = true
         window?.toolbar = toolbar
-        window?.toolbarStyle = .unifiedCompact
+        window?.toolbarStyle = .unified
     }
 
     private func wireDocument() {

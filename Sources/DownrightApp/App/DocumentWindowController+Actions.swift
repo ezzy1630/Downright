@@ -225,16 +225,18 @@ enum CodeFileExtensions {
 
 // MARK: - Toolbar
 //
-// The toolbar has two stable zones: document/source presentation at the
-// optical centre and a compact action menu at the trailing edge. Find stays
-// on its keyboard/menu path so the toolbar remains quiet.
+// The toolbar has three stable zones: document identity at the leading edge,
+// presentation at the optical centre, and a compact action menu at the
+// trailing edge. Find stays on its keyboard/menu path so the toolbar is quiet.
 
 extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
+    private static let identityItem = NSToolbarItem.Identifier("document-identity")
     static let modeItem = NSToolbarItem.Identifier("presentation-mode")
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
+            Self.identityItem,
             .flexibleSpace,
             Self.modeItem,
             .flexibleSpace,
@@ -251,6 +253,16 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         switch identifier {
+        case Self.identityItem:
+            guard let window else { return nil }
+            window.titleVisibility = .hidden
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = ToolbarDocumentIdentityView(window: window)
+            item.isBordered = false
+            item.label = "Document"
+            item.visibilityPriority = .high
+            return item
+
         case Self.modeItem:
             let control = ToolbarPresentationControl { [weak self] selectedSegment in
                 self?.toolbarModeChanged(selectedSegment)
@@ -258,6 +270,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             toolbarPresentationControl = control
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
+            item.isBordered = false
             item.label = "Presentation"
             item.toolTip = "Choose rendered Document or raw Source"
             item.visibilityPriority = .high
@@ -266,6 +279,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         case Self.overflowItem:
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = ToolbarMenuButton(menu: makeOverflowMenu())
+            item.isBordered = false
             item.label = "More"
             item.toolTip = "More document actions"
             item.visibilityPriority = .high

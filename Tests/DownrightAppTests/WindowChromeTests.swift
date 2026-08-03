@@ -14,7 +14,7 @@ struct WindowChromeTests {
         #expect(controller.window?.isRestorable == false)
         #expect(controller.window?.delegate === controller)
         #expect(controller.window?.titlebarAppearsTransparent == false)
-        #expect(controller.window?.toolbarStyle == .unifiedCompact)
+        #expect(controller.window?.toolbarStyle == .unified)
         #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
         #expect(controller.primaryContainer.trailingAccessory == nil)
         #expect(toolbar.displayMode == .iconOnly)
@@ -22,17 +22,25 @@ struct WindowChromeTests {
         #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
-            flexibleSpace,
+            "document-identity", flexibleSpace,
             "presentation-mode", flexibleSpace, "overflow",
         ])
+
+        let identity = try #require(
+            toolbar.items.first { $0.itemIdentifier.rawValue == "document-identity" }?.view
+                as? ToolbarDocumentIdentityView
+        )
+        #expect(identity.intrinsicContentSize.width == 214)
+        #expect(identity.intrinsicContentSize.height == 36)
+        #expect(controller.window?.titleVisibility == .hidden)
 
         let mode = try #require(
             toolbar.items.first { $0.itemIdentifier.rawValue == "presentation-mode" }?.view as? ToolbarPresentationControl
         )
         #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.intrinsicContentSize.width == 164)
-        #expect(mode.intrinsicContentSize.height == 26)
+        #expect(mode.intrinsicContentSize.width == 176)
+        #expect(mode.intrinsicContentSize.height == 32)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
@@ -47,7 +55,7 @@ struct WindowChromeTests {
             toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" }?.view as? ToolbarMenuButton
         )
         #expect(overflow.intrinsicContentSize.width == 30)
-        #expect(overflow.intrinsicContentSize.height == 28)
+        #expect(overflow.intrinsicContentSize.height == 30)
         #expect(overflow.popupMenuItems.contains { $0.title == "Structural Zoom" })
     }
 
