@@ -24,6 +24,48 @@ struct WindowChromeTests {
     }
 
     @Test
+    func toolbarScrubPolicyClampsMovementAndCrossesAtTheMidpoint() {
+        #expect(
+            ToolbarChromePolicy.scrubState(pointerX: -20, leftCenterX: 44, rightCenterX: 132)
+                == .init(indicatorCenterX: 44, segment: 0)
+        )
+        #expect(
+            ToolbarChromePolicy.scrubState(pointerX: 87, leftCenterX: 44, rightCenterX: 132)
+                == .init(indicatorCenterX: 87, segment: 0)
+        )
+        #expect(
+            ToolbarChromePolicy.scrubState(pointerX: 88, leftCenterX: 44, rightCenterX: 132)
+                == .init(indicatorCenterX: 88, segment: 1)
+        )
+        #expect(
+            ToolbarChromePolicy.scrubState(pointerX: 240, leftCenterX: 44, rightCenterX: 132)
+                == .init(indicatorCenterX: 132, segment: 1)
+        )
+    }
+
+    @Test
+    func toolbarScrubCommitsOnceOnRelease() {
+        var changes: [Int] = []
+        var hapticCount = 0
+        let control = ToolbarPresentationControl(
+            onChange: { changes.append($0) },
+            performHapticFeedback: { hapticCount += 1 }
+        )
+        control.frame = NSRect(x: 0, y: 0, width: 176, height: 32)
+        control.layoutSubtreeIfNeeded()
+
+        control.updateScrub(at: 44, phase: .began)
+        control.updateScrub(at: 132, phase: .changed)
+        #expect(control.selectedSegment == 0)
+        #expect(changes.isEmpty)
+        #expect(hapticCount == 1)
+
+        control.updateScrub(at: 132, phase: .ended)
+        #expect(control.selectedSegment == 1)
+        #expect(changes == [1])
+    }
+
+    @Test
     func toolbarUsesNativeCenteredModeAndTrailingMenu() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }

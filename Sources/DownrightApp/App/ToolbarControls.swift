@@ -9,6 +9,11 @@ enum ToolbarChromePolicy {
         case pressed
     }
 
+    struct ScrubState: Equatable {
+        let indicatorCenterX: CGFloat
+        let segment: Int
+    }
+
     static let hoverDuration: CFTimeInterval = 0.10
     static let pressInDuration: CFTimeInterval = 0.07
     static let pressOutDuration: CFTimeInterval = 0.11
@@ -41,6 +46,27 @@ enum ToolbarChromePolicy {
         case (false, true): 0.56
         }
     }
+
+    static func scrubState(
+        pointerX: CGFloat,
+        leftCenterX: CGFloat,
+        rightCenterX: CGFloat
+    ) -> ScrubState {
+        let lowerBound = min(leftCenterX, rightCenterX)
+        let upperBound = max(leftCenterX, rightCenterX)
+        let centerX = min(max(pointerX, lowerBound), upperBound)
+        return ScrubState(
+            indicatorCenterX: centerX,
+            segment: centerX < ((lowerBound + upperBound) / 2) ? 0 : 1
+        )
+    }
+}
+
+enum ToolbarScrubPhase {
+    case began
+    case changed
+    case ended
+    case cancelled
 }
 
 /// Leading titlebar identity. It mirrors the window's document title while
@@ -148,9 +174,11 @@ final class ToolbarPresentationControl: NSView {
     private let selectionIndicator = CALayer()
     private var activationObservers: [NSObjectProtocol] = []
     private var accessibilityObserver: NSObjectProtocol?
+    private var scrubbedSegment: Int?
     private(set) var selectedSegment = -1
 
     let onChange: (Int) -> Void
+    let performHapticFeedback: () -> Void
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Metrics.width, height: Metrics.height)
@@ -160,7 +188,12 @@ final class ToolbarPresentationControl: NSView {
         [documentButton.displayTitle, sourceButton.displayTitle]
     }
 
-    init(onChange: @escaping (Int) -> Void) {
+    init(
+        onChange: @escaping (Int) -> Void,
+        performHapticFeedback: @escaping () -> Void = {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+    ) {
         documentButton = ToolbarModeButton(
             title: "Document", typography: .document, accessibilityLabel: "Document"
         )
@@ -168,6 +201,7 @@ final class ToolbarPresentationControl: NSView {
             title: "Source", typography: .source, accessibilityLabel: "Source"
         )
         self.onChange = onChange
+        self.performHapticFeedback = performHapticFeedback
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -182,6 +216,7 @@ final class ToolbarPresentationControl: NSView {
         sourceButton.action = #selector(segmentPressed(_:))
         documentButton.onNavigate = { [weak self] target in self?.selectFromKeyboard(target) }
         sourceButton.onNavigate = { [weak self] target in self?.selectFromKeyboard(target) }
+        addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(scrubSelection(_:))))
 
         for button in [documentButton, sourceButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
@@ -203,7 +238,7 @@ final class ToolbarPresentationControl: NSView {
         setSelectedSegment(0)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Document presentation")
-        setAccessibilityHelp("Switch between rendered Document and raw Source")
+        setAccessibilityHelp("Click, drag, or use the arrow keys to switch presentation")
         accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil,
@@ -238,7 +273,9 @@ final class ToolbarPresentationControl: NSView {
 
     override func layout() {
         super.layout()
-        updateSelectionIndicator(animated: false)
+        if scrubbedSegment == nil {
+            updateSelectionIndicator(animated: false)
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -251,8 +288,7 @@ final class ToolbarPresentationControl: NSView {
         let normalized = min(max(segment, 0), 1)
         guard normalized != selectedSegment else { return }
         selectedSegment = normalized
-        documentButton.isSelected = normalized == 0
-        sourceButton.isSelected = normalized == 1
+        applyVisualSelection(normalized)
         setAccessibilityValue(segmentTitles[normalized])
         updateSelectionIndicator(animated: window != nil)
     }
@@ -268,6 +304,77 @@ final class ToolbarPresentationControl: NSView {
         setSelectedSegment(target)
         onChange(target)
         window?.makeFirstResponder(target == 0 ? documentButton : sourceButton)
+    }
+
+    @objc private func scrubSelection(_ recognizer: NSPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            updateScrub(at: recognizer.location(in: self).x, phase: .began)
+        case .changed:
+            updateScrub(at: recognizer.location(in: self).x, phase: .changed)
+        case .ended:
+            updateScrub(at: recognizer.location(in: self).x, phase: .ended)
+        case .cancelled, .failed:
+            updateScrub(at: recognizer.location(in: self).x, phase: .cancelled)
+        case .possible:
+            break
+        @unknown default:
+            updateScrub(at: recognizer.location(in: self).x, phase: .cancelled)
+        }
+    }
+
+    func updateScrub(at pointerX: CGFloat, phase: ToolbarScrubPhase) {
+        let state = ToolbarChromePolicy.scrubState(
+            pointerX: pointerX,
+            leftCenterX: documentButton.frame.midX,
+            rightCenterX: sourceButton.frame.midX
+        )
+
+        switch phase {
+        case .began, .changed:
+            let previousSegment = scrubbedSegment
+            scrubbedSegment = state.segment
+            applyVisualSelection(state.segment)
+            updateSelectionIndicator(centerX: state.indicatorCenterX)
+            if let previousSegment, previousSegment != state.segment {
+                performHapticFeedback()
+            }
+        case .ended:
+            scrubbedSegment = nil
+            commitScrubbedSegment(state.segment)
+        case .cancelled:
+            scrubbedSegment = nil
+            applyVisualSelection(selectedSegment)
+            updateSelectionIndicator(animated: true)
+        }
+    }
+
+    private func applyVisualSelection(_ segment: Int) {
+        documentButton.isSelected = segment == 0
+        sourceButton.isSelected = segment == 1
+    }
+
+    private func commitScrubbedSegment(_ segment: Int) {
+        guard segment != selectedSegment else {
+            applyVisualSelection(selectedSegment)
+            updateSelectionIndicator(animated: true)
+            return
+        }
+        setSelectedSegment(segment)
+        onChange(segment)
+    }
+
+    private func updateSelectionIndicator(centerX: CGFloat) {
+        selectionIndicator.removeAnimation(forKey: "selection-change")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        selectionIndicator.frame = NSRect(
+            x: centerX - (Metrics.indicatorWidth / 2),
+            y: 2,
+            width: Metrics.indicatorWidth,
+            height: Metrics.indicatorHeight
+        )
+        CATransaction.commit()
     }
 
     private func updateSelectionIndicator(animated: Bool) {
