@@ -14,7 +14,6 @@ final class DensityGutterPreviewWindow: NSWindow {
 
     private let content: PreviewContentView
     private let maximumWidth: CGFloat = 320
-    private let followDuration: TimeInterval = 0.08
     private let entranceDuration: TimeInterval = 0.10
     private let exitDuration: TimeInterval = 0.08
     private var presentationGeneration = 0
@@ -60,13 +59,11 @@ final class DensityGutterPreviewWindow: NSWindow {
         let alreadyPresented = isVisible && self.parent === parent
 
         if alreadyPresented {
-            // Once visible, the preview follows the pointer on a short ease
-            // rather than restarting its entrance choreography. This keeps
-            // the card connected to the rail without chasing every event.
+            // Once visible, the preview tracks the pointer directly. An
+            // easing animation here makes rapid line-to-line movement lag
+            // behind the rail; entrance and exit carry the intentional motion.
             alphaValue = 1
-            GutterChrome.animate(reduceMotion: reduceMotion, duration: followDuration) { _ in
-                self.animator().setFrame(finalFrame, display: true)
-            }
+            setFrame(finalFrame, display: true)
             if titleChanged { content.animateContentChange(reduceMotion: reduceMotion) }
             content.needsDisplay = true
             return
