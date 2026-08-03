@@ -97,6 +97,7 @@ final class DocumentWindowController: NSWindowController {
             revealPolicy: Preferences.shared.values.revealMarkersAtAllCursors ? .allCursors : .primaryCaret,
             typographicSubstitution: Preferences.shared.values.typographicSubstitution,
             typewriterScrolling: Preferences.shared.values.typewriterScrolling,
+            reflowHardWrappedParagraphs: Preferences.shared.values.reflowHardWrappedParagraphs,
             codeCollapseThreshold: Preferences.shared.values.codeBlockCollapseThreshold,
             largeFileThresholdMegabytes: Preferences.shared.values.largeFileThresholdMegabytes
         )

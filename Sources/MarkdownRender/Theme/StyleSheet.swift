@@ -100,11 +100,15 @@ public struct StyleSheet {
         )
         body = bodyFont
         headings = (1...6).map { level in
-            StyleSheet.systemFont(
+            let weight: NSFont.Weight = level <= 3
+                ? .bold
+                : (level == 6 ? .medium : .semibold)
+            let font = StyleSheet.systemFont(
                 preset: typography.preset,
                 size: StyleSheet.headingSize(level: level, typography: typography),
-                weight: level <= 3 ? .bold : .semibold
+                weight: weight
             )
+            return level == 6 ? StyleSheet.applying(bold: false, italic: true, to: font) : font
         }
         mono = StyleSheet.monoFont(
             family: typography.monoFamily,
@@ -200,11 +204,10 @@ public struct StyleSheet {
         emphasis[(bold ? 1 : 0) + (italic ? 2 : 0)]
     }
 
-    /// Whole steps of the modular scale for H1–H4, half steps below the body
-    /// size for H5–H6.  A pure power law would put H6 at `body · ratio⁻²` —
-    /// 10pt against a 16pt body — which is unreadable; half steps keep the six
-    /// levels strictly ordered without dropping off a cliff (§11.1).
-    private static let headingExponents: [CGFloat] = [3, 2, 1.25, 0.5, 0, 0]
+    /// Whole steps of the modular scale for H1–H4, then compact steps below the
+    /// body size for H5–H6. This keeps deep headings distinct without letting
+    /// them collapse into indistinguishable body text (§11.1).
+    private static let headingExponents: [CGFloat] = [3, 2, 1.25, 0.5, -0.5, -0.75]
 
     static func headingSize(level: Int, typography: TypographyConfig) -> CGFloat {
         let exponent = headingExponents[clampLevel(level) - 1]

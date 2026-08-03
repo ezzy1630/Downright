@@ -63,6 +63,15 @@ extension Theme {
             ("palette.link", palette.link, palette.background, 3.0),
             ("palette.textOnCode", palette.text, palette.codeBackground, 4.5),
             ("palette.textOnInlineCode", palette.text, palette.inlineCodeBackground, 4.5),
+            ("palette.textOnSelection", palette.text, palette.selection, 4.0),
+            // Comments and markers are intentionally quiet chrome, but they
+            // still need a measurable floor against their actual surfaces.
+            ("code.commentOnCode", code.comment, palette.codeBackground, 2.0),
+            ("palette.markerOnBackground", palette.marker, palette.background, 1.5),
+            ("palette.calloutNoteOnBackground", palette.calloutNote, palette.background, 2.0),
+            ("palette.calloutWarningOnBackground", palette.calloutWarning, palette.background, 2.0),
+            ("palette.calloutSuccessOnBackground", palette.calloutSuccess, palette.background, 2.0),
+            ("palette.calloutDangerOnBackground", palette.calloutDanger, palette.background, 2.0),
         ]
         return roles.compactMap { path, foreground, background, minimum in
             guard foreground.isValid, background.isValid else { return nil }

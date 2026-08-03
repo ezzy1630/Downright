@@ -236,12 +236,6 @@ private final class StartHeroView: NSView {
         brandRow.alignment = .centerY
         brandRow.spacing = 10
 
-        let eyebrow = NSTextField(labelWithString: "YOUR MARKDOWN DESK")
-        eyebrow.translatesAutoresizingMaskIntoConstraints = false
-        eyebrow.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
-        eyebrow.textColor = NSColor.controlAccentColor
-        eyebrow.setContentHuggingPriority(.required, for: .vertical)
-
         let title = NSTextField(labelWithString: "Read deeply.\nWrite lightly.")
         title.translatesAutoresizingMaskIntoConstraints = false
         title.font = .systemFont(ofSize: 40, weight: .bold)
@@ -273,12 +267,6 @@ private final class StartHeroView: NSView {
         actions.alignment = .centerY
         actions.spacing = 10
 
-        let hint = NSTextField(labelWithString: "Open with ⌘ O  ·  New with ⌘ N")
-        hint.translatesAutoresizingMaskIntoConstraints = false
-        hint.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        hint.textColor = .tertiaryLabelColor
-        hint.lineBreakMode = .byTruncatingTail
-
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.heightAnchor.constraint(equalToConstant: 64).isActive = true
@@ -289,12 +277,12 @@ private final class StartHeroView: NSView {
             wrappingLabelWithString: "Drop .md or .markdown files anywhere in this window."
         )
         footer.translatesAutoresizingMaskIntoConstraints = false
-        footer.font = .systemFont(ofSize: 11, weight: .regular)
-        footer.textColor = .tertiaryLabelColor
+        footer.font = .systemFont(ofSize: 12, weight: .regular)
+        footer.textColor = .secondaryLabelColor
         footer.maximumNumberOfLines = 2
         footer.lineBreakMode = .byWordWrapping
 
-        let stack = NSStackView(views: [brandRow, eyebrow, title, subtitle, actions, hint, spacer, dropZone, footer])
+        let stack = NSStackView(views: [brandRow, title, subtitle, actions, spacer, dropZone, footer])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -321,11 +309,9 @@ private final class StartHeroView: NSView {
         ])
 
         stack.setCustomSpacing(30, after: brandRow)
-        stack.setCustomSpacing(16, after: eyebrow)
         stack.setCustomSpacing(14, after: title)
         stack.setCustomSpacing(24, after: subtitle)
         stack.setCustomSpacing(11, after: actions)
-        stack.setCustomSpacing(4, after: hint)
         stack.setCustomSpacing(18, after: dropZone)
 
         setAccessibilityRole(.group)
@@ -343,43 +329,12 @@ private final class RecentDocumentsPanel: NSView {
     init(recents: [RecentDocument], owner: StartWindowController) {
         super.init(frame: .zero)
 
-        let overline = NSTextField(labelWithString: "RECENT")
-        overline.translatesAutoresizingMaskIntoConstraints = false
-        overline.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
-        overline.textColor = NSColor.controlAccentColor
+        let label = NSTextField(labelWithString: "Recent files")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .secondaryLabelColor
 
-        let visibleCount = min(recents.count, 6)
-        let countLabel = NSTextField(labelWithString: visibleCount == 1 ? "1 note" : "\(visibleCount) notes")
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        countLabel.textColor = .tertiaryLabelColor
-        countLabel.alignment = .right
-
-        let overlineRow = NSStackView(views: [overline, countLabel])
-        overlineRow.translatesAutoresizingMaskIntoConstraints = false
-        overlineRow.orientation = .horizontal
-        overlineRow.alignment = .centerY
-        overlineRow.distribution = .fill
-
-        let heading = NSTextField(labelWithString: recents.isEmpty ? "Start with a blank page" : "Continue where you left off")
-        heading.translatesAutoresizingMaskIntoConstraints = false
-        heading.font = .systemFont(ofSize: 20, weight: .semibold)
-        heading.textColor = .labelColor
-        heading.maximumNumberOfLines = 2
-        heading.lineBreakMode = .byWordWrapping
-
-        let detail = NSTextField(
-            wrappingLabelWithString: recents.isEmpty
-                ? "Your recent Markdown files will appear here."
-                : "Your latest Markdown files, one click away."
-        )
-        detail.translatesAutoresizingMaskIntoConstraints = false
-        detail.font = .systemFont(ofSize: 12, weight: .regular)
-        detail.textColor = .secondaryLabelColor
-        detail.maximumNumberOfLines = 2
-        detail.lineBreakMode = .byWordWrapping
-
-        let header = NSStackView(views: [overlineRow, heading, detail])
+        let header = NSStackView(views: [label])
         header.translatesAutoresizingMaskIntoConstraints = false
         header.orientation = .vertical
         header.alignment = .leading
@@ -422,7 +377,7 @@ private final class RecentDocumentsPanel: NSView {
 
             list.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
             list.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16),
-            list.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 20),
+            list.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
             list.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -16),
         ])
 
@@ -479,8 +434,8 @@ private final class RecentEmptyState: NSView {
 
         let detail = NSTextField(wrappingLabelWithString: "Open a Markdown file to build your desk.")
         detail.translatesAutoresizingMaskIntoConstraints = false
-        detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .tertiaryLabelColor
+        detail.font = .systemFont(ofSize: 12)
+        detail.textColor = .secondaryLabelColor
         detail.alignment = .center
         detail.maximumNumberOfLines = 2
 
@@ -750,7 +705,7 @@ private final class RecentDocumentButton: NSButton {
         shell.addSubview(titleLabel)
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        detailLabel.font = .systemFont(ofSize: 12, weight: .regular)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.maximumNumberOfLines = 1
@@ -918,7 +873,7 @@ private final class DropZoneView: NSView {
 
         let detail = NSTextField(labelWithString: "Markdown files open as native documents")
         detail.translatesAutoresizingMaskIntoConstraints = false
-        detail.font = .systemFont(ofSize: 11)
+        detail.font = .systemFont(ofSize: 12)
         detail.textColor = .secondaryLabelColor
 
         let copy = NSStackView(views: [title, detail])

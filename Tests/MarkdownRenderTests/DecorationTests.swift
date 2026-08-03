@@ -615,6 +615,57 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(texts.contains { $0.hasSuffix(".") || $0 == "-" })
 }
 
+@Test func listOrnamentsAndHangingIndentsPreserveMarkdownStructure() {
+    let source = "- [ ] a task with enough text to wrap under its text edge\n10. an ordered item\n"
+    let document = MarkdownParser.parse(source)
+    let storage = NSTextStorage(string: source)
+    let renderer = engine(.live)
+    renderer.decorate(storage, document: document, dirty: .wholesale)
+
+    guard let list = document.root.children.first,
+          let task = list.children.first,
+          let orderedList = document.root.children.last,
+          let ordered = orderedList.children.first,
+          let taskStyle = storage.attribute(.paragraphStyle, at: task.contentRange.location,
+                                            effectiveRange: nil) as? NSParagraphStyle,
+          let orderedStyle = storage.attribute(.paragraphStyle, at: ordered.contentRange.location,
+                                               effectiveRange: nil) as? NSParagraphStyle else {
+        Issue.record("list items did not receive paragraph styles")
+        return
+    }
+
+    #expect(taskStyle.headIndent > taskStyle.firstLineHeadIndent)
+    #expect(orderedStyle.headIndent > orderedStyle.firstLineHeadIndent)
+    #expect((storage.attribute(.drFragment, at: task.range.location, effectiveRange: nil)
+             as? FragmentPayload)?.detail == "task:unchecked")
+    #expect(storage.string == source)
+}
+
+@Test @MainActor func blockContentStorageGroupsSourceWrappedParagraphs() {
+    let source = "first physical line\nsecond physical line\n"
+    let document = MarkdownParser.parse(source)
+    let index = ParagraphIndex(text: source as NSString)
+    let storage = NSTextStorage(string: source)
+    let plan = HardWrapReflow.plan(
+        document: document, text: source as NSString, hiddenRanges: [], enabled: true
+    )
+    let map = DisplayMap(paragraphs: index, substitutions: plan.substitutions)
+    let contentStorage = MarkdownContentStorage()
+    contentStorage.textStorage = storage
+    contentStorage.configure(paragraphIndex: index, reflowRanges: plan.ranges, displayMap: map)
+
+    var elements: [NSTextElement] = []
+    _ = contentStorage.enumerateTextElements(from: nil, options: []) { element in
+        elements.append(element)
+        return true
+    }
+
+    let grouped = elements.compactMap { $0 as? NSTextParagraph }
+        .first { $0.attributedString.string.contains("first physical line second physical line") }
+    #expect(grouped != nil)
+    #expect(storage.string == source)
+}
+
 @Test func wideTablesStayInsideTheTextMeasureAndWrapCells() {
     let source = "| Alpha | Beta | Gamma | Delta |\n| --- | --- | --- | --- |\n| A long value that must wrap | another long value | third value | fourth value |"
     let document = MarkdownParser.parse(source)

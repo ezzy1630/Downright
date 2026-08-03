@@ -387,7 +387,7 @@ public final class DecorationEngine {
 
         case .listItem(let ordinal, let checkbox):
             childContext.ordinal = ordinal
-            applyBase(block, context: context, state: &state)
+            applyBase(block, context: childContext, state: &state)
             applyBlockMarker(block, context: childContext, state: &state)
             let ornament: String
             if let checkbox { ornament = checkbox.isChecked ? "task:checked" : "task:unchecked" }

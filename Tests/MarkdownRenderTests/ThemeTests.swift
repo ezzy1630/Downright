@@ -184,8 +184,14 @@ final class ThemeTests {
             expectClose(sizes[1], theme.typography.bodySize * pow(ratio, 2), within: 0.001, "\(theme.name): H2")
             expectClose(sizes[2], theme.typography.bodySize * pow(ratio, 1.25), within: 0.001, "\(theme.name): H3")
             expectClose(sizes[3], theme.typography.bodySize * pow(ratio, 0.5), within: 0.001, "\(theme.name): H4")
-            expectClose(sizes[4], theme.typography.bodySize, within: 0.001, "\(theme.name): H5")
-            expectClose(sizes[5], theme.typography.bodySize, within: 0.001, "\(theme.name): H6")
+            expectClose(
+                sizes[4], theme.typography.bodySize * pow(ratio, -0.5), within: 0.001,
+                "\(theme.name): H5"
+            )
+            expectClose(
+                sizes[5], theme.typography.bodySize * pow(ratio, -0.75), within: 0.001,
+                "\(theme.name): H6"
+            )
         }
     }
 
@@ -273,6 +279,17 @@ final class ThemeTests {
         let both = sheet.emphasisFont(bold: true, italic: true).fontDescriptor.symbolicTraits
         #expect(both.contains(.bold) && both.contains(.italic))
         #expect(sheet.emphasisFont(bold: false, italic: false) == sheet.bodyFont())
+    }
+
+    @Test("H5 and H6 have distinct compact treatments")
+    func deepHeadingsHaveDistinctTreatments() throws {
+        let theme = try #require(bundled().first)
+        let sheet = StyleSheet(theme: theme, appearance: aqua)
+        let h5 = sheet.headingFont(level: 5)
+        let h6 = sheet.headingFont(level: 6)
+        #expect(h5.pointSize > h6.pointSize)
+        #expect(h6.fontDescriptor.symbolicTraits.contains(.italic))
+        #expect(h5 != h6)
     }
 
     /// §11.3 — the point of sizing math against the x-height is that it lands

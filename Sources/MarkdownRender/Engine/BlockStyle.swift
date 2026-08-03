@@ -44,6 +44,7 @@ final class BlockStyleFactory {
         var level: Int
         var listDepth: Int
         var quoteDepth: Int
+        var ordinalDigits: Int
     }
 
     /// Stable discriminator per block kind, so the cache never confuses a
@@ -78,7 +79,8 @@ final class BlockStyleFactory {
             kind: Self.kindCode(block.content),
             level: Self.level(block.content),
             listDepth: min(context.listDepth, 8),
-            quoteDepth: min(context.quoteDepth, 6)
+            quoteDepth: min(context.quoteDepth, 6),
+            ordinalDigits: context.ordinal.map { max(1, String(abs($0)).count) } ?? 0
         )
     }
 
@@ -154,6 +156,10 @@ final class BlockStyleFactory {
         case .listItem:
             style.paragraphSpacingBefore = 0
             style.paragraphSpacing = 0
+            if context.listDepth > 0 {
+                style.firstLineHeadIndent = indent
+                style.headIndent = indent + markerColumn(context: context)
+            }
         case .table, .thematicBreak:
             style.paragraphSpacingBefore = 0
             style.paragraphSpacing = 0
@@ -171,9 +177,8 @@ final class BlockStyleFactory {
             // sequence of essays.
             style.paragraphSpacing = RenderMetrics.snap(h * (context.listDepth > 0 ? 0.15 : 0.45), grid: grid)
             if context.listDepth > 0 {
-                let markerColumn = styleSheet.bodyFont().pointSize * 1.1
                 style.firstLineHeadIndent = indent
-                style.headIndent = indent + markerColumn
+                style.headIndent = indent + markerColumn(context: context)
             }
         }
 
@@ -197,13 +202,32 @@ final class BlockStyleFactory {
             let pointSize = font(for: block.content).pointSize
             if pointSize > 28 { attrs[.kern] = pointSize * -0.022 }
             else if pointSize >= 20 { attrs[.kern] = pointSize * -0.014 }
-            else if level >= 5 { attrs[.kern] = pointSize * 0.08 }
+            else if level == 5 { attrs[.kern] = pointSize * 0.04 }
+            else if level == 6 { attrs[.kern] = pointSize * 0.06 }
         }
         if styleSheet.theme.typography.monoLigatures == false, isMono(block.content) {
             attrs[.ligature] = 0
         }
         attributeCache[k] = attrs
         return attrs
+    }
+
+    /// Width reserved for the visual list ornament plus a half-em gap. The
+    /// source marker is hidden, so wrapped lines must start at this text edge,
+    /// not at the ornament's left edge.
+    private func markerColumn(context: BlockContext) -> CGFloat {
+        let bodySize = styleSheet.bodyFont().pointSize
+        let gap = bodySize * 0.5
+        guard let ordinal = context.ordinal else {
+            return max(bodySize * 1.1, bodySize * 0.625 + gap)
+        }
+        let digits = max(1, String(abs(ordinal)).count)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: bodySize * 0.92, weight: .regular)
+        let marker = NSAttributedString(
+            string: String(repeating: "8", count: digits) + ".",
+            attributes: [.font: font]
+        )
+        return marker.size().width + gap
     }
 
     private func isMono(_ content: BlockContent) -> Bool {

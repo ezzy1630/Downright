@@ -331,9 +331,39 @@ struct HTMLExporter {
             return String(format: "#%02x%02x%02x", r, g, b)
         }
 
+        func hex(_ color: NSColor) -> String {
+            let resolved = color.usingColorSpace(.sRGB) ?? color
+            let r = Int((resolved.redComponent * 255).rounded())
+            let g = Int((resolved.greenComponent * 255).rounded())
+            let b = Int((resolved.blueComponent * 255).rounded())
+            return String(format: "#%02x%02x%02x", r, g, b)
+        }
+
         func size(_ steps: Int) -> String {
             String(format: "%.3frem", pow(scale, CGFloat(steps)))
         }
+
+        func size(exponent: CGFloat) -> String {
+            String(format: "%.3frem", pow(scale, exponent))
+        }
+
+        func blend(_ first: NSColor, _ second: NSColor, amount: CGFloat) -> NSColor {
+            guard let lhs = first.usingColorSpace(.sRGB),
+                  let rhs = second.usingColorSpace(.sRGB) else { return first }
+            let t = min(max(amount, 0), 1)
+            return NSColor(
+                srgbRed: lhs.redComponent + (rhs.redComponent - lhs.redComponent) * t,
+                green: lhs.greenComponent + (rhs.greenComponent - lhs.greenComponent) * t,
+                blue: lhs.blueComponent + (rhs.blueComponent - lhs.blueComponent) * t,
+                alpha: lhs.alphaComponent + (rhs.alphaComponent - lhs.alphaComponent) * t
+            )
+        }
+
+        let headingColor = hex(palette.heading)
+        let headingSecondary = palette.textSecondary.resolved()
+        let heading4Color = hex(blend(palette.heading.resolved(), headingSecondary, amount: 0.25))
+        let heading5Color = hex(blend(palette.heading.resolved(), headingSecondary, amount: 0.5))
+        let heading6Color = hex(blend(palette.heading.resolved(), headingSecondary, amount: 0.75))
 
         let pageRule = forPrint ? """
         @page { margin: 20mm 18mm; }
@@ -365,17 +395,21 @@ struct HTMLExporter {
           hanging-punctuation: first last;
         }
         h1, h2, h3, h4, h5, h6 {
-          color: \(hex(palette.heading));
           line-height: 1.2;
           margin: 1.8em 0 0.6em;
-          font-weight: 600;
-          letter-spacing: -0.011em;
         }
-        h1 { font-size: \(size(4)); margin-top: 0; letter-spacing: -0.02em; }
-        h2 { font-size: \(size(3)); }
-        h3 { font-size: \(size(2)); }
-        h4 { font-size: \(size(1)); }
-        h5, h6 { font-size: 1rem; color: \(hex(palette.textSecondary)); }
+        h1 { color: \(headingColor); font-size: \(size(3)); margin-top: 0; font-weight: 700; letter-spacing: -0.022em; }
+        h2 { color: \(headingColor); font-size: \(size(2)); font-weight: 700; letter-spacing: -0.014em; }
+        h3 { color: \(headingColor); font-size: \(size(exponent: 1.25)); font-weight: 700; letter-spacing: -0.014em; }
+        h4 { color: \(heading4Color); font-size: \(size(exponent: 0.5)); font-weight: 600; letter-spacing: normal; }
+        h5 {
+          color: \(heading5Color); font-size: \(size(exponent: -0.5));
+          font-weight: 600; letter-spacing: 0.04em;
+        }
+        h6 {
+          color: \(heading6Color); font-size: \(size(exponent: -0.75));
+          font-weight: 500; font-style: italic; letter-spacing: 0.06em;
+        }
         p { margin: 0 0 1.1em; }
         a { color: \(hex(palette.link)); text-decoration-thickness: 1px; text-underline-offset: 2px; }
         strong { font-weight: 640; }

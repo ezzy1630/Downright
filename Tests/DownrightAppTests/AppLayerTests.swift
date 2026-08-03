@@ -448,6 +448,22 @@ struct AppLayerTests {
         #expect(html.contains("href=\"https://example.com\""), "absolute links are untouched")
     }
 
+    @Test @MainActor func htmlExportKeepsDeepHeadingHierarchy() {
+        let markdown = "# H1\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6\n"
+        let html = HTMLExporter(
+            document: MarkdownParser.parse(markdown),
+            theme: ThemeStore.shared.current,
+            title: "T", baseDirectory: nil, imageProvider: nil
+        ).html()
+
+        #expect(html.contains("h1 { color:") && html.contains("font-weight: 700; letter-spacing: -0.022em"))
+        #expect(html.contains("h2 { color:") && html.contains("font-weight: 700; letter-spacing: -0.014em"))
+        #expect(html.contains("h3 { color:") && html.contains("font-weight: 700; letter-spacing: -0.014em"))
+        #expect(html.contains("font-weight: 600; letter-spacing: normal"))
+        #expect(html.contains("font-weight: 600; letter-spacing: 0.04em"))
+        #expect(html.contains("font-weight: 500; font-style: italic; letter-spacing: 0.06em"))
+    }
+
     @Test func plainTextRenderingStripsMarkup() {
         let markdown = "# Heading\n\nSome **bold** and `code` and a [link](https://x.test).\n"
         let document = MarkdownParser.parse(markdown)

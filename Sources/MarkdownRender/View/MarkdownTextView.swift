@@ -240,7 +240,7 @@ public final class MarkdownTextView: NSTextView {
     let fragmentContext: FragmentContext
     private let substitution = ParagraphSubstitution()
     private var fragmentProvider: FragmentProvider!
-    private let contentStorage: NSTextContentStorage
+    private let contentStorage: MarkdownContentStorage
     private let markdownLayoutManager: NSTextLayoutManager
 
     /// Fully collapsed hidden set for the current document and policy, from
@@ -252,6 +252,7 @@ public final class MarkdownTextView: NSTextView {
     private var baseDisplayMap: DisplayMap = .identity
     var paragraphIndex: ParagraphIndex = .empty
     private var displayMap: DisplayMap = .identity
+    private var hardWrapRanges: [NSRange] = []
     private var elision: ElisionPlan = .none
 
     private var isApplyingSelection = false
@@ -329,7 +330,7 @@ public final class MarkdownTextView: NSTextView {
         self.engine = DecorationEngine(styleSheet: styleSheet)
         self.fragmentContext = FragmentContext(styleSheet: styleSheet)
 
-        contentStorage = NSTextContentStorage()
+        contentStorage = MarkdownContentStorage()
         markdownLayoutManager = NSTextLayoutManager()
         let container = NSTextContainer(size: CGSize(width: styleSheet.measureWidth,
                                                      height: CGFloat.greatestFiniteMagnitude))
@@ -338,10 +339,10 @@ public final class MarkdownTextView: NSTextView {
         markdownLayoutManager.textContainer = container
         contentStorage.addTextLayoutManager(markdownLayoutManager)
         contentStorage.textStorage = storage
+        contentStorage.delegate = substitution
 
         super.init(frame: frame, textContainer: container)
 
-        contentStorage.delegate = substitution
         fragmentProvider = FragmentProvider(context: fragmentContext)
         markdownLayoutManager.delegate = fragmentProvider
         fragmentContext.textView = self
@@ -642,7 +643,50 @@ public final class MarkdownTextView: NSTextView {
         }
 
         baseHiddenRanges = hidden
-        baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: hidden)
+        let plan = HardWrapReflow.plan(
+            document: document,
+            text: (textStorage?.string ?? "") as NSString,
+            hiddenRanges: hidden,
+            enabled: configuration.reflowHardWrappedParagraphs
+        )
+        hardWrapRanges = plan.ranges
+        baseDisplayMap = DisplayMap(
+            paragraphs: paragraphIndex,
+            substitutions: hidden.map(DisplaySubstitution.hide)
+                + plan.substitutions.filter { !$0.isHidden }
+        )
+        displayMap = baseDisplayMap
+        contentStorage.configure(
+            paragraphIndex: paragraphIndex,
+            reflowRanges: hardWrapRanges,
+            displayMap: layoutDisplayMap(from: baseDisplayMap)
+        )
+    }
+
+    /// TextKit 2 elements keep source-length ranges even when Markdown syntax
+    /// is visually omitted. Hidden runs become zero-width word joiners here;
+    /// the logical map used by marker policy still collapses them for semantic
+    /// selection and reveal decisions.
+    private func layoutDisplayMap(from logical: DisplayMap) -> DisplayMap {
+        let substitutions = logical.substitutions.map { substitution in
+            guard substitution.isHidden else { return substitution }
+            let length = substitution.sourceRange.length
+            let replacement = NSAttributedString(
+                string: String(repeating: "\u{2060}", count: length),
+                attributes: textStorage?.attributes(
+                    at: substitution.sourceRange.location,
+                    effectiveRange: nil
+                ) ?? [:]
+            )
+            return DisplaySubstitution(
+                sourceRange: substitution.sourceRange,
+                displayLength: length,
+                replacement: replacement,
+                isHidden: true,
+                preservesSourceOffsets: true
+            )
+        }
+        return DisplayMap(paragraphs: paragraphIndex, substitutions: substitutions)
     }
 
     /// Source Focus changes typography and local material, never characters.
@@ -732,8 +776,14 @@ public final class MarkdownTextView: NSTextView {
         )
         baseHiddenRanges = projected
         baseDisplayMap = DisplayMap(paragraphs: paragraphIndex, hidden: projected)
+        hardWrapRanges = []
         displayMap = baseDisplayMap
-        substitution.displayMap = displayMap
+        contentStorage.configure(
+            paragraphIndex: paragraphIndex,
+            reflowRanges: [],
+            displayMap: layoutDisplayMap(from: baseDisplayMap)
+        )
+        substitution.displayMap = baseDisplayMap
         revealParagraph = nil
 
         guard let storage = textStorage, storage.length > 0 else { return }
@@ -755,6 +805,7 @@ public final class MarkdownTextView: NSTextView {
         // The map is about to describe a string that no longer exists.  Drop it
         // rather than let the substitution delegate act on it mid-edit.
         substitution.displayMap = .identity
+        contentStorage.suspendCustomLayout()
     }
 
     func endSourceEdit() {
@@ -778,7 +829,7 @@ public final class MarkdownTextView: NSTextView {
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
         var requiresFullHiddenRefresh = false
-        displayMap = baseDisplayMap
+        var logicalDisplayMap = baseDisplayMap
 
         if let composing = composingParagraph {
             // Composition suspends hiding in its paragraph so the hybrid and
@@ -788,7 +839,7 @@ public final class MarkdownTextView: NSTextView {
             let entries = baseDisplayMap.substitutions(inParagraphContaining: composing.location).filter { entry in
                 !baseHiddenRanges.contains { hiddenRange in hiddenRange == entry.sourceRange }
             }
-            displayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: entries)
+            logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: entries)
             requiresFullHiddenRefresh = caret == nil
         } else if effectivePolicy.revealsAtCaret {
             let revealed = MarkerPolicy.revealedMarkerRanges(
@@ -807,8 +858,8 @@ public final class MarkdownTextView: NSTextView {
             } ?? false
             if let paragraph, singleCaret {
                 if !revealed.isEmpty {
-                    displayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
-                                                                    excluding: revealed)
+                    logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
+                                                                           excluding: revealed)
                     // Keep the cached document-wide set intact.  The display
                     // map and this exclusion list together describe the one
                     // paragraph that is currently revealed; no global filter
@@ -826,7 +877,7 @@ public final class MarkdownTextView: NSTextView {
                 let revealedMapEntries = baseDisplayMap.substitutions.filter { entry in
                     !revealed.contains { $0 == entry.sourceRange }
                 }
-                displayMap = DisplayMap(paragraphs: paragraphIndex, substitutions: revealedMapEntries)
+                logicalDisplayMap = DisplayMap(paragraphs: paragraphIndex, substitutions: revealedMapEntries)
                 // A selection can span any number of paragraphs. The map was
                 // rebuilt for the whole document, so its mirrored attributes
                 // must use the same scope. This path is gesture-driven and is
@@ -834,7 +885,13 @@ public final class MarkdownTextView: NSTextView {
                 requiresFullHiddenRefresh = true
             }
         }
-        substitution.displayMap = displayMap
+        substitution.displayMap = logicalDisplayMap
+        displayMap = logicalDisplayMap
+        contentStorage.configure(
+            paragraphIndex: paragraphIndex,
+            reflowRanges: hardWrapRanges,
+            displayMap: layoutDisplayMap(from: logicalDisplayMap)
+        )
 
         let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
         let scope: NSRange?
@@ -1435,7 +1492,7 @@ public final class MarkdownTextView: NSTextView {
         maxSize = NSSize(width: styleSheet.measureWidth + RenderMetrics.revealSlack * 2,
                          height: CGFloat.greatestFiniteMagnitude)
         backgroundColor = styleSheet.background
-        insertionPointColor = styleSheet.accent
+        insertionPointColor = mode.policy.showsInsertionPoint ? styleSheet.accent : styleSheet.text
         selectedTextAttributes = [.backgroundColor: styleSheet.selection]
     }
 
@@ -1461,7 +1518,7 @@ public final class MarkdownTextView: NSTextView {
     private func applyModeChrome() {
         isEditable = mode.policy.showsInsertionPoint
         isSelectable = true
-        insertionPointColor = styleSheet.accent
+        insertionPointColor = mode.policy.showsInsertionPoint ? styleSheet.accent : styleSheet.text
         typingAttributes = [
             .font: mode == .source ? styleSheet.monoFont() : styleSheet.bodyFont(),
             .foregroundColor: styleSheet.text,

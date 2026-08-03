@@ -3,13 +3,11 @@ import Foundation
 // The single highest-risk piece of arithmetic in the app (§6.1).
 //
 // §3.1 forbids ever mutating characters, so hiding a marker cannot mean
-// deleting it.  It means handing TextKit 2 a *different attributed string* for
-// the paragraph that contains it, via
-// `NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:)`.
-// That is the documented substitution hook, and it is the only hiding
-// mechanism used here — §6.1 rules out zero-width fonts and transparent
-// foreground colours precisely because they leave caret arithmetic subtly
-// wrong.
+// deleting it. It means handing TextKit 2 a *different attributed string* for
+// the paragraph that contains it. The physical fallback uses
+// `NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:)`,
+// while grouped prose uses `MarkdownContentStorage` to vend source-length
+// elements. Both keep the backing source untouched and coordinate-safe.
 //
 // Substitution creates two coordinate spaces that must never be confused:
 //

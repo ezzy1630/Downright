@@ -46,14 +46,13 @@ This is where "basic and plain" actually lives. Ordered by visual impact.
 
 ### 1.1 List ornaments — **Replace** (highest impact)
 
-**Today:** `MarkerPolicy.hiddenRanges` hides block markers whenever
-`policy.hidesBlockMarkers` is true — which is Read *and* Live — and only Live
-puts them back, in the far-left `GutterRailView`. Read mode therefore has **no
-bullets, no ordinals, and no checkboxes at all.** A bulleted list renders as a
-stack of naked sentences. This is verified in the capture.
+**Implemented:** `MarkerPolicy.hiddenRanges` still hides Markdown source
+markers in Read and Live, but `ListOrnamentFragment` now supplies the visible
+bullet, ordinal, and checkbox treatment in the hanging indent. Live mode keeps
+the source affordance in `GutterRailView` as well.
 
-`RenderContracts.swift:24` — Read: `hidesBlockMarkers: true`,
-`showsGutterMarkers: false`.
+`RenderContracts.swift` keeps Read's `hidesBlockMarkers: true` and
+`showsGutterMarkers: false`; the list remains legible without exposing syntax.
 
 **The distinction the current design missed:** a `-` is *markdown syntax*; a
 bullet is *typography*. Read mode should hide the syntax and draw the
@@ -91,46 +90,26 @@ other.
 **Risk:** low. Additive fragment plus a paragraph-style change, both covered by
 `DecorationTests` byte-identity assertions.
 
-### 1.2 Hard-wrapped paragraph reflow — **Modify** (highest cost)
+### 1.2 Hard-wrapped paragraph reflow — **Implemented**
 
-**Today:** TextKit 2 makes one element per `\n`-terminated run, so a paragraph
-hard-wrapped at 80 columns becomes N elements, each carrying the block's
-`paragraphSpacing`. Verified in the capture: `Docs/sample.md`'s prose renders
-double-spaced with ragged short lines mid-paragraph.
+`MarkdownContentStorage` now groups the physical paragraphs belonging to a
+Markdown paragraph into one source-length `NSTextParagraph`. Soft source
+newlines become display-only spaces through `HardWrapReflow`; the backing
+`NSTextStorage` and all source offsets remain unchanged.
 
-Agent output is usually one long line per paragraph, so this is invisible on the
-files you look at most. It is very visible on every hand-wrapped `README.md`,
-`CHANGELOG.md`, and repo doc — which is a large fraction of what this app will
-be pointed at.
-
-**Two steps, ship them in order:**
-
-**Step 1 — cheap, immediate (half a day).** In `BlockStyleFactory`, a paragraph
-that is a *continuation* of the same markdown block gets
-`paragraphSpacingBefore = 0` and its predecessor gets `paragraphSpacing = 0`.
-The double-spacing disappears; the ragged line ends remain. This is a real
-improvement on its own and is worth shipping before step 2 exists.
-
-**Step 2 — correct (1–2 weeks, the single largest item in this plan).**
-Subclass `NSTextContentStorage` to vend one `NSTextParagraph` per *markdown
-block*, with intra-block newlines displayed as a single space:
-
-- Override `enumerateTextElements(from:options:using:)` and
-  `textElements(for:)` to group storage paragraphs by `MDBlock` range.
-- `ParagraphSubstitution` becomes an *element* provider; the newline→space
-  swap is just another `DisplaySubstitution` in the existing `DisplayMap`.
-  `DisplayMap` already does exactly this kind of mapping — the change is that
-  its unit becomes the block rather than the `\n`-run.
-- `ParagraphIndex` gains a block-boundary index alongside its paragraph index.
-- Keep the existing per-paragraph path as a live fallback: the
-  `displayMap.paragraphs.length == storage.length` guard at
-  `ParagraphSubstitution.swift:27` is the right instinct and gets a sibling
-  guard for block shape. A frame of unmerged paragraphs beats a broken caret.
-- Ship behind `Settings → Editor → Reflow hard-wrapped paragraphs`, default on,
-  so there is an escape hatch during dogfooding.
-
-**Do not** rewrite the source text. §3.1 byte-identity is non-negotiable and the
-`MarkdownCoreTests` round-trip corpus enforces it.
+- The custom content storage overrides `enumerateTextElements` and caches
+  source-length paragraph elements. Its `NSTextParagraph` subclass supplies
+  valid content and separator ranges to TextKit.
+- Marker hiding remains source-coordinate safe by carrying invisible,
+  same-length word joiners inside grouped elements. `ParagraphSubstitution`
+  remains the physical fallback while edits or stale ranges suspend custom
+  layout.
+- Explicit Markdown breaks, inline-protected spans, code, tables, and other
+  non-prose blocks retain their source line behavior.
+- `Settings → Editor → Reflow wrapped paragraphs` defaults on and provides the
+  escape hatch for documents that rely on physical line boundaries.
+- Byte identity and runtime layout are covered by `DecorationTests`, including
+  grouped paragraphs, source-preserving edits, marker hiding, and selections.
 
 ### 1.3 Code blocks — **Modify**
 
@@ -206,11 +185,9 @@ slack distribution). Three changes:
 
 ### 1.6 Headings — **Modify**
 
-- **Scale.** Exponents `[3, 2, 1, 0, −0.5, −1]` at ratio 1.25 put H4 at exactly
-  the body size, differing only by weight — no hierarchy. Change to
-  `[3, 2, 1.25, 0.5, 0, 0]` and differentiate H5/H6 by *treatment* instead:
-  uppercase, +0.08 em tracking, `textSecondary`, body size. That is the native
-  macOS idiom (Settings section headers, Xcode inspector groups).
+- **Scale.** H1–H4 retain the existing hierarchy. H5 is a compact semibold
+  label with positive tracking; H6 is smaller, medium, secondary, italic, and
+  more widely tracked. Native and exported HTML use the same treatment.
 - **Tracking.** Large serif headings need negative tracking. Add `.kern` per
   size band: −0.022 em above 28pt, −0.014 em 20–28pt, 0 below.
 - **First-block suppression.** A document's first heading gets no
@@ -513,9 +490,9 @@ one-liners and should land before any redesign work starts.
 
 | # | Defect | Where |
 |---|---|---|
-| 1 | Read mode draws no bullets, ordinals, or checkboxes | `MarkerPolicy.swift:74`, `RenderContracts.swift:24` |
-| 2 | Hard-wrapped paragraphs render double-spaced | `DisplayMap.swift:39` |
-| 3 | Wrapped list lines align under the bullet, not the text | `BlockStyle.swift:134` |
+| 1 | Read mode draws no bullets, ordinals, or checkboxes | Fixed in `ListOrnamentFragment.swift` |
+| 2 | Hard-wrapped paragraphs render double-spaced | Fixed in `MarkdownContentStorage.swift` |
+| 3 | Wrapped list lines align under the bullet, not the text | Fixed in `BlockStyle.swift` |
 | 4 | Code text collides with the left rule | `CodeBlockFragment.swift:88` |
 | 5 | Code band overhangs the measure on the right | `CodeBlockFragment.swift:123` |
 | 6 | Language chip costs a blank 24pt line above every fence | `CodeBlockFragment.swift:54` |
@@ -565,9 +542,9 @@ and retiring `OutlineQuickOpenPanel`.
 
 **Phase G — Themes, Preferences, launch state (≈1 week).** §4.4, §2.6, §2.7.
 
-**Phase H — Paragraph reflow (1–2 weeks, parallelisable from Phase C onward).**
-§1.2 step 2. Highest risk, highest architectural cost, and the only item that
-touches the text engine's core. Step 1 ships in Phase A.
+**Phase H — Paragraph reflow.** Implemented in `MarkdownContentStorage` with a
+source-preserving fallback and an Editor preference for disabling visual
+reflow.
 
 Roughly 8–10 weeks of focused work, with the app visibly improving at every
 phase boundary rather than at the end.

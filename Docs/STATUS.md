@@ -145,13 +145,13 @@ Approximate:
   source/display map and remains byte-safe.
 - **IME suspends hiding in the composing paragraph** so AppKit's marked-text
   bookkeeping stays exact.
-- **Hard-wrapped markdown paragraphs suppress continuation spacing but retain
-  physical line breaks.** The UI plan's grouped-element step cannot safely
-  compose with marker hiding on current AppKit: custom `NSTextParagraph`
-  strings must match their source range length. A prototype that shortened the
-  string was runtime-tested, trapped in `NSTextContentStorage`, and was removed.
-  Correct reflow therefore needs a custom `NSTextContentManager` coordinate
-  store, not a risky override shipped behind a toggle.
+- **Hard-wrapped markdown paragraphs are visually reflowed.**
+  `MarkdownContentStorage` vends source-length grouped `NSTextParagraph`
+  elements, while `HardWrapReflow` swaps soft source breaks for display-only
+  spaces. Marker hiding uses same-length invisible replacements, so selection,
+  editing, and byte identity stay safe. The physical delegate path remains the
+  fallback during edits and stale-map windows; the feature is user-toggleable
+  in Settings → Editor and defaults on.
 
 ## Core-layer semantics worth knowing
 

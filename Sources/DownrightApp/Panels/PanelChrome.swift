@@ -40,11 +40,11 @@ protocol PanelSurface: NSView {
 /// before/after) borrows the theme's faces.  Colour always comes from the
 /// `StyleSheet`.
 enum PanelFont {
-    static let row = NSFont.systemFont(ofSize: 12)
-    static let rowEmphasised = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    static let secondary = NSFont.systemFont(ofSize: 10.5)
-    static let header = NSFont.systemFont(ofSize: 11, weight: .semibold)
-    static let group = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+    static let row = NSFont.systemFont(ofSize: 12.5)
+    static let rowEmphasised = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+    static let secondary = NSFont.systemFont(ofSize: 11.5)
+    static let header = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    static let group = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
     static let title = NSFont.systemFont(ofSize: 13, weight: .semibold)
 }
 
@@ -282,7 +282,7 @@ enum PanelButton {
         let button = NSButton(title: title, target: action, action: #selector(ButtonAction.fire(_:)))
         button.bezelStyle = .rounded
         button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.font = NSFont.systemFont(ofSize: 12)
         if isDefault { button.keyEquivalent = "\r" }
         button.focusRingType = .default
         button.setAccessibilityLabel(title)
@@ -297,7 +297,7 @@ enum PanelButton {
         button.setButtonType(.pushOnPushOff)
         button.bezelStyle = .rounded
         button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.font = NSFont.systemFont(ofSize: 12)
         button.focusRingType = .default
         button.setAccessibilityLabel(label)
         button.setAccessibilityRole(.checkBox)

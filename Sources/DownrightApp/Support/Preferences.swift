@@ -20,6 +20,8 @@ final class Preferences {
         /// Defaults **off**: agents and code hate smart quotes (§6.4).
         var typographicSubstitution: Bool = false
         var showInvisibles: Bool = false
+        /// Source-wrapped prose reads as one paragraph while source bytes stay intact.
+        var reflowHardWrappedParagraphs: Bool = true
         var typewriterScrolling: Bool = false
         var focusMode: Bool = false
 
@@ -59,6 +61,7 @@ final class Preferences {
             textSizeAdjustment = get(.textSizeAdjustment, 0)
             typographicSubstitution = get(.typographicSubstitution, false)
             showInvisibles = get(.showInvisibles, false)
+            reflowHardWrappedParagraphs = get(.reflowHardWrappedParagraphs, true)
             typewriterScrolling = get(.typewriterScrolling, false)
             focusMode = get(.focusMode, false)
             codeBlockCollapseThreshold = get(.codeBlockCollapseThreshold, 20)

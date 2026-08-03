@@ -1,15 +1,15 @@
 import AppKit
 
-/// The marker-hiding mechanism (§6.1), and the only one.
+/// Marker hiding for the physical-paragraph fallback (§6.1).
 ///
 /// `NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:)` is
-/// TextKit 2's documented substitution hook: return an `NSTextParagraph` whose
-/// attributed string differs from the storage's and the layout manager lays
-/// out what you returned while the storage keeps every byte (§3.1).
+/// the documented substitution hook. Grouped prose is handled by
+/// `MarkdownContentStorage`; this delegate keeps marker hiding safe while the
+/// custom layout is suspended during edits (§3.1).
 ///
 /// Everything downstream of this — caret placement, hit testing, selection,
 /// scroll anchoring, editing — goes through `DisplayMap`, never through raw
-/// offsets.  See `DisplayMap.swift` for why that is not optional.
+/// offsets. See `DisplayMap.swift` for why that is not optional.
 final class ParagraphSubstitution: NSObject, NSTextContentStorageDelegate {
     /// Replaced wholesale whenever the caret moves or the mode changes.
     var displayMap: DisplayMap = .identity

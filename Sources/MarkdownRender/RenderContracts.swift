@@ -117,6 +117,10 @@ public struct MarkdownRenderConfiguration: Codable, Sendable, Equatable {
     public var revealPolicy: MarkdownRevealPolicy
     public var typographicSubstitution: Bool
     public var typewriterScrolling: Bool
+    /// Presents source-wrapped prose as one visual paragraph without changing
+    /// the Markdown bytes. Kept as a renderer setting so dogfooding has an
+    /// escape hatch if a document relies on physical line boundaries.
+    public var reflowHardWrappedParagraphs: Bool
     public var largeFileThresholdMegabytes: Int {
         didSet { largeFileThresholdMegabytes = min(1024, max(1, largeFileThresholdMegabytes)) }
     }
@@ -129,6 +133,7 @@ public struct MarkdownRenderConfiguration: Codable, Sendable, Equatable {
         revealPolicy: MarkdownRevealPolicy = .primaryCaret,
         typographicSubstitution: Bool = false,
         typewriterScrolling: Bool = false,
+        reflowHardWrappedParagraphs: Bool = true,
         codeCollapseThreshold: Int = RenderMetrics.codeCollapseLineCount,
         largeFileThresholdMegabytes: Int = 5
     ) {
@@ -136,6 +141,7 @@ public struct MarkdownRenderConfiguration: Codable, Sendable, Equatable {
         self.revealPolicy = revealPolicy
         self.typographicSubstitution = typographicSubstitution
         self.typewriterScrolling = typewriterScrolling
+        self.reflowHardWrappedParagraphs = reflowHardWrappedParagraphs
         self.codeCollapseThreshold = min(10_000, max(1, codeCollapseThreshold))
         self.largeFileThresholdMegabytes = min(1024, max(1, largeFileThresholdMegabytes))
     }
