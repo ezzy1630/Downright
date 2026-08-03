@@ -242,21 +242,19 @@ enum CodeFileExtensions {
 // MARK: - Toolbar
 //
 // The toolbar has two stable zones: document/source presentation at the
-// optical centre and small document tools at the trailing edge. The always-
-// present prompt rail owns navigation; there is no duplicate Contents button.
+// optical centre and a compact action menu at the trailing edge. Find stays
+// on its keyboard/menu path so the toolbar remains quiet.
 
 extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     static let modeItem = NSToolbarItem.Identifier("presentation-mode")
-    private static let findItem = NSToolbarItem.Identifier("find")
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
             Self.modeItem,
-            Self.findItem,
-            Self.overflowItem,
             .flexibleSpace,
+            Self.overflowItem,
         ]
     }
 
@@ -278,11 +276,14 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             )
             control.segmentStyle = .capsule
             control.controlSize = .regular
+            control.font = NSFont.systemFont(ofSize: 13, weight: .medium)
             control.selectedSegment = 0
-            control.setWidth(112, forSegment: 0)
-            control.setWidth(96, forSegment: 1)
+            // Equal segments give both presentation modes the same visual
+            // weight even though their labels have different lengths.
+            control.setWidth(108, forSegment: 0)
+            control.setWidth(108, forSegment: 1)
             control.setImage(
-                NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: "Document"),
+                NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Document"),
                 forSegment: 0
             )
             control.setImage(
@@ -304,23 +305,13 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.visibilityPriority = .high
             return item
 
-        case Self.findItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Find")
-            item.label = "Find"
-            item.toolTip = "Find in Document (⌘F)"
-            item.target = self
-            item.action = #selector(toolbarFind(_:))
-            item.isBordered = false
-            item.visibilityPriority = .high
-            return item
-
         case Self.overflowItem:
             let item = NSMenuToolbarItem(itemIdentifier: identifier)
             item.label = "More"
-            item.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "More")
+            item.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "More")
             item.toolTip = "More document actions"
             item.menu = makeOverflowMenu()
+            item.visibilityPriority = .high
             return item
         default:
             return nil
@@ -344,15 +335,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
               let control = item.view as? NSSegmentedControl
         else { return }
         control.selectedSegment = isActive ? 1 : 0
-    }
-
-    @objc private func toolbarFind(_ sender: Any?) {
-        if findBar != nil || (inspectorHost?.selectedSection == .search && !inspectorItem.isCollapsed) {
-            dismissFindBar()
-        } else {
-            if !navigationPinned { closeNavigationOverlay() }
-            showFindBar(replace: false)
-        }
     }
 
     @objc private func toolbarShowTasks(_ sender: Any?) {
@@ -421,9 +403,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     }
 
     func refreshToolbarSelectionState() {
-        guard let toolbar = window?.toolbar else { return }
-        let searchOpen = findBar != nil
-        toolbar.items.first(where: { $0.itemIdentifier == Self.findItem })?.isBordered = searchOpen
         refreshSourceFocusToolbar()
     }
 

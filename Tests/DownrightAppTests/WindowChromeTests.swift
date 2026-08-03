@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct WindowChromeTests {
     @Test
-    func toolbarUsesNativeQuietThreeZoneLayout() throws {
+    func toolbarUsesNativeCenteredModeAndTrailingMenu() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }
         let toolbar = try #require(controller.window?.toolbar)
@@ -22,8 +22,7 @@ struct WindowChromeTests {
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             flexibleSpace,
-            "presentation-mode", "find", "overflow",
-            flexibleSpace,
+            "presentation-mode", flexibleSpace, "overflow",
         ])
 
         let mode = try #require(
@@ -33,6 +32,7 @@ struct WindowChromeTests {
         #expect(mode.label(forSegment: 0) == "Document")
         #expect(mode.label(forSegment: 1) == "Source")
         #expect(mode.selectedSegment == 0)
+        #expect(mode.width(forSegment: 0) == mode.width(forSegment: 1))
         #expect(mode.constraints.contains {
             $0.firstAttribute == .width && $0.relation == .equal && $0.constant == mode.fittingSize.width
         })
@@ -43,7 +43,7 @@ struct WindowChromeTests {
         controller.primaryContainer.textView.clearSourceFocus()
         #expect(mode.selectedSegment == 0)
 
-        #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
+        #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "contents" })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
         let overflow = try #require(
