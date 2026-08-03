@@ -63,6 +63,15 @@ struct DensityRailTests {
         #expect(entry != DensityOutlineEntry(title: "Section", level: 2, fraction: 0.4, isCurrent: false))
     }
 
+    @Test("Document-map marks stay centered in the viewport")
+    func centeredBandPositions() {
+        let positions = DensityGutterView.centeredBandYPositions(height: 800, count: 4)
+
+        #expect(positions.count == 4)
+        #expect(positions == [386.5, 395.5, 404.5, 413.5])
+        #expect((positions.first! + positions.last!) / 2 == 400)
+    }
+
     @Test("Current heading is the nearest heading at the viewport top")
     func currentHeadingPolicy() {
         let bands = [

@@ -97,6 +97,21 @@ struct RenderSmokeTests {
         try? png.write(to: url)
     }
 
+    @Test("Document map stays in the container viewport while the text scrolls")
+    func densityMapIsSticky() {
+        let container = MarkdownContainerView(storage: NSTextStorage(string: "# Heading\n\nText"))
+        let map = DensityGutterView(styleSheet: container.textView.styleSheet)
+        container.leadingAccessory = map
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        container.layoutSubtreeIfNeeded()
+
+        #expect(map.superview === container)
+        #expect(map.superview !== container.scrollView)
+        #expect(map.frame.minY == container.bounds.minY)
+        #expect(map.frame.height == container.bounds.height)
+        #expect(map.frame.midY == container.bounds.midY)
+    }
+
     // MARK: - Tests
 
     @Test func sampleDocumentDrawsInEveryMode() throws {

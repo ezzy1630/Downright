@@ -59,7 +59,8 @@ public final class DensityGutterView: NSView {
         didSet { outline.entries = outlineEntries }
     }
 
-    /// Visible viewport, used to move the active prompt mark.
+    /// Visible viewport, used to style the active prompt mark. The mark group
+    /// stays centred in the viewport so scrolling never moves the rail itself.
     public var visibleRange: ClosedRange<CGFloat> = 0...1 {
         didSet {
             updateMarkLayers(animated: true)
@@ -186,10 +187,27 @@ public final class DensityGutterView: NSView {
             ?? headings.first?.startFraction
     }
 
-    /// Keep the prompt marks close together, but anchor the group to the
-    /// current section's real document position. This is a prompt index, not
-    /// a miniature scrollbar: the marks are easy to scan and each one still
-    /// jumps to its own source fraction.
+    /// Calculate a centered stack for the visible document marks. This is a
+    /// prompt index, not a miniature scrollbar: the marks stay easy to scan
+    /// while the active heading changes by appearance rather than movement.
+    static func centeredBandYPositions(
+        height: CGFloat,
+        count: Int,
+        trackInset: CGFloat = 24,
+        markGap: CGFloat = 9
+    ) -> [CGFloat] {
+        guard count > 0 else { return [] }
+
+        let top = min(trackInset, max(0, height / 2))
+        let bottom = max(top, height - trackInset)
+        let trackHeight = max(1, bottom - top)
+        let gap = min(markGap, trackHeight / CGFloat(max(1, count - 1)))
+        let groupHeight = CGFloat(max(0, count - 1)) * gap
+        let start = top + max(0, (trackHeight - groupHeight) / 2)
+
+        return (0..<count).map { start + CGFloat($0) * gap }
+    }
+
     private func visualBands(height: CGFloat) -> [(band: DensityBand, y: CGFloat)] {
         let visible = bands
             .filter { Self.isVisibleAtRest($0.kind) }
@@ -201,21 +219,14 @@ public final class DensityGutterView: NSView {
             }
         guard !visible.isEmpty else { return [] }
 
-        let top = min(trackInset, max(0, height / 2))
-        let bottom = max(top, height - trackInset)
-        let trackHeight = max(1, bottom - top)
-        let anchorFraction = currentHeadingFraction() ?? visible.first?.startFraction ?? 0
-        let anchorY = top + min(1, max(0, anchorFraction)) * trackHeight
-        let gap = min(markGap, trackHeight / CGFloat(max(1, visible.count - 1)))
-        let groupHeight = CGFloat(max(0, visible.count - 1)) * gap
-        let anchorIndex = visible.lastIndex(where: { $0.startFraction <= anchorFraction })
-            ?? min(visible.count - 1, visible.count / 2)
-        let start = min(
-            max(top, anchorY - CGFloat(anchorIndex) * gap),
-            max(top, bottom - groupHeight)
+        let positions = Self.centeredBandYPositions(
+            height: height,
+            count: visible.count,
+            trackInset: trackInset,
+            markGap: markGap
         )
         return visible.enumerated().map { index, band in
-            (band: band, y: start + CGFloat(index) * gap)
+            (band: band, y: positions[index])
         }
     }
 
