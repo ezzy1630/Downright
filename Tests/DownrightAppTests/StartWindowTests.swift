@@ -13,24 +13,54 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        #expect(window.minSize == NSSize(width: 840, height: 540))
+        #expect(window.minSize == NSSize(width: 660, height: 390))
         #expect(window.titleVisibility == .hidden)
         #expect(window.contentView?.accessibilityLabel() == "Downright start window")
         #expect(window.initialFirstResponder != nil)
 
         let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
-        #expect(labels.contains("Open…"))
-        #expect(labels.contains("New Document…"))
+        #expect(labels.contains("Open File"))
+        #expect(labels.contains("New Document"))
+        // Ellipsis on the start screen reads as truncated text.
+        #expect(labels.contains(where: { $0.contains("…") || $0.contains("...") }) == false)
     }
 
     @Test
-    func recentRowsExposeFolderAndRelativeTime() throws {
+    func primaryActionsShareAnOpticalAxis() throws {
+        let controller = StartWindowController(recents: [])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        let content = try #require(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let open = try #require(
+            buttons(in: content).first { $0.accessibilityLabel() == "Open File" }
+        )
+        let create = try #require(
+            buttons(in: content).first { $0.accessibilityLabel() == "New Document" }
+        )
+        let openCenter = open.convert(
+            NSPoint(x: open.bounds.midX, y: open.bounds.midY),
+            to: content
+        ).x
+        let createCenter = create.convert(
+            NSPoint(x: create.bounds.midX, y: create.bounds.midY),
+            to: content
+        ).x
+
+        #expect(abs(openCenter - createCenter) < 0.5)
+        #expect(abs(open.frame.width - create.frame.width) < 0.5)
+    }
+
+    @Test
+    func recentRowsPreferHeadingOverMachineGeneratedNames() throws {
         let recent = RecentDocument(
-            path: "/tmp/notes/downright-start-window-test.md",
-            displayName: "note",
-            firstHeading: "Planning",
+            path: "/tmp/T/EditingKeyRepro-92C5F190-B66C-4E83-ABBF-5A58BB0EAFC3.md",
+            displayName: "EditingKeyRepro-92C5F190-B66C-4E83-ABBF-5A58BB0EAFC3",
+            firstHeading: "Editing Keys",
             lastOpened: Date(),
-            wordCount: 1
+            wordCount: 12
         )
         let controller = StartWindowController(recents: [recent])
         defer { controller.close() }
@@ -38,12 +68,83 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        let recentButton = try #require(
-            buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
+        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
+        #expect(labels.contains("Open Editing Keys"))
+        #expect(labels.contains(where: { $0.contains("92C5F190") }) == false)
+    }
+
+    @Test
+    func duplicateTitlesAreDisambiguatedByFolder() throws {
+        let first = RecentDocument(
+            path: "/tmp/a/DownrightFresh.md",
+            displayName: "DownrightFresh",
+            firstHeading: "",
+            lastOpened: Date(),
+            wordCount: 1
         )
-        let value = try #require(recentButton.accessibilityValue() as? String)
-        #expect(value.contains("Planning"))
-        #expect(value.contains("notes"))
+        let second = RecentDocument(
+            path: "/tmp/b/DownrightFresh.md",
+            displayName: "DownrightFresh",
+            firstHeading: "",
+            lastOpened: Date().addingTimeInterval(-10),
+            wordCount: 1
+        )
+        let controller = StartWindowController(recents: [first, second])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
+        #expect(labels.contains("Open DownrightFresh (a)"))
+        #expect(labels.contains("Open DownrightFresh (b)"))
+    }
+
+    @Test
+    func sameFolderDuplicatesGetUniqueFragments() throws {
+        let first = RecentDocument(
+            path: "/tmp/T/EditingKeyRepro-11111111-B66C-4E83-ABBF-5A58BB0EAFC3.md",
+            displayName: "EditingKeyRepro-11111111-B66C-4E83-ABBF-5A58BB0EAFC3",
+            firstHeading: "Title",
+            lastOpened: Date(),
+            wordCount: 1
+        )
+        let second = RecentDocument(
+            path: "/tmp/T/EditingKeyRepro-22222222-B66C-4E83-ABBF-5A58BB0EAFC3.md",
+            displayName: "EditingKeyRepro-22222222-B66C-4E83-ABBF-5A58BB0EAFC3",
+            firstHeading: "Title",
+            lastOpened: Date().addingTimeInterval(-10),
+            wordCount: 1
+        )
+        let controller = StartWindowController(recents: [first, second])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
+        #expect(labels.contains("Open EditingKeyRepro · 11111111"))
+        #expect(labels.contains("Open EditingKeyRepro · 22222222"))
+    }
+
+    @Test
+    func genericHeadingsFallBackToFileName() throws {
+        let recent = RecentDocument(
+            path: "/tmp/T/EditingKeyRepro-92C5F190-B66C-4E83-ABBF-5A58BB0EAFC3.md",
+            displayName: "EditingKeyRepro-92C5F190-B66C-4E83-ABBF-5A58BB0EAFC3",
+            firstHeading: "Title",
+            lastOpened: Date(),
+            wordCount: 12
+        )
+        let controller = StartWindowController(recents: [recent])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
+        #expect(labels.contains("Open EditingKeyRepro"))
+        #expect(labels.contains(where: { $0 == "Open Title" }) == false)
     }
 
     @Test
@@ -84,10 +185,10 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
         let open = try #require(
-            buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open…" }
+            buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open File" }
         )
         let create = try #require(
-            buttons(in: window.contentView).first { $0.accessibilityLabel() == "New Document…" }
+            buttons(in: window.contentView).first { $0.accessibilityLabel() == "New Document" }
         )
 
         open.performClick(nil)
@@ -122,67 +223,42 @@ struct StartWindowTests {
         window.contentView?.layoutSubtreeIfNeeded()
 
         #expect(buttons(in: window.contentView).contains { $0.accessibilityLabel() == "Open note" } == false)
-        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
-        #expect(labels.contains("Open…"))
-        #expect(labels.contains("New Document…"))
     }
 
     @Test
-    func reloadRecentsSkipsIdenticalPaths() throws {
-        let recent = RecentDocument(
-            path: "/tmp/downright-start-window-identical.md",
+    func reloadUpdatesRecentMetadataWhenPathStaysTheSame() throws {
+        let path = "/tmp/downright-start-window-metadata.md"
+        let older = RecentDocument(
+            path: path,
+            displayName: "note",
+            firstHeading: "Planning",
+            lastOpened: Date().addingTimeInterval(-7_200),
+            wordCount: 3
+        )
+        let controller = StartWindowController(recents: [older])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let button = try #require(
+            buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
+        )
+        let before = button.accessibilityValue() as? String
+
+        let newer = RecentDocument(
+            path: path,
             displayName: "note",
             firstHeading: "Planning",
             lastOpened: Date(),
-            wordCount: 2
+            wordCount: 3
         )
-        let controller = StartWindowController(recents: [recent])
-        defer { controller.close() }
-
-        let window = try #require(controller.window)
+        controller.reloadRecents([newer])
         window.contentView?.layoutSubtreeIfNeeded()
-        let first = try #require(
+
+        let refreshed = try #require(
             buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
         )
-
-        controller.reloadRecents([recent])
-        window.contentView?.layoutSubtreeIfNeeded()
-        let second = try #require(
-            buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
-        )
-
-        #expect(first === second)
-    }
-
-    @Test
-    func reloadRecentsReplacesChangedSet() throws {
-        let first = RecentDocument(
-            path: "/tmp/downright-start-a.md",
-            displayName: "alpha",
-            firstHeading: "A",
-            lastOpened: Date(),
-            wordCount: 1
-        )
-        let second = RecentDocument(
-            path: "/tmp/downright-start-b.md",
-            displayName: "beta",
-            firstHeading: "B",
-            lastOpened: Date(),
-            wordCount: 2
-        )
-        let controller = StartWindowController(recents: [first])
-        defer { controller.close() }
-
-        let window = try #require(controller.window)
-        window.contentView?.layoutSubtreeIfNeeded()
-        #expect(buttons(in: window.contentView).contains { $0.accessibilityLabel() == "Open alpha" })
-
-        controller.reloadRecents([second])
-        window.contentView?.layoutSubtreeIfNeeded()
-
-        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
-        #expect(labels.contains("Open beta"))
-        #expect(labels.contains("Open alpha") == false)
+        #expect(refreshed.accessibilityValue() as? String != before)
     }
 
     @Test
@@ -199,26 +275,43 @@ struct StartWindowTests {
     }
 
     @Test
-    func displaysUpToEightRecentRows() throws {
-        let recents = (0..<10).map { index in
-            RecentDocument(
-                path: "/tmp/downright-start-limit-\(index).md",
-                displayName: "doc\(index)",
-                firstHeading: "H\(index)",
-                lastOpened: Date().addingTimeInterval(TimeInterval(-index)),
-                wordCount: index + 1
-            )
-        }
-        let controller = StartWindowController(recents: Array(recents.prefix(8)))
+    func primaryAndRecentButtonsAreEnabledAndFire() throws {
+        let recent = RecentDocument(
+            path: "/tmp/downright-start-enabled.md",
+            displayName: "note",
+            firstHeading: "",
+            lastOpened: Date(),
+            wordCount: 1
+        )
+        let controller = StartWindowController(recents: [recent])
         defer { controller.close() }
+
+        var openedPanel = false
+        var created = false
+        var openedURL: URL?
+        controller.onOpenPanel = { openedPanel = true }
+        controller.onNew = { created = true }
+        controller.onOpen = { openedURL = $0 }
 
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        let recentLabels = buttons(in: window.contentView)
-            .compactMap { $0.accessibilityLabel() }
-            .filter { $0.hasPrefix("Open doc") }
-        #expect(recentLabels.count == 8)
+        let all = buttons(in: window.contentView)
+        for button in all {
+            #expect(button.isEnabled)
+        }
+
+        let open = try #require(all.first { $0.accessibilityLabel() == "Open File" })
+        let create = try #require(all.first { $0.accessibilityLabel() == "New Document" })
+        let recentButton = try #require(all.first { $0.accessibilityLabel() == "Open note" })
+
+        open.performClick(nil)
+        create.performClick(nil)
+        recentButton.performClick(nil)
+
+        #expect(openedPanel)
+        #expect(created)
+        #expect(openedURL?.path == recent.path)
     }
 
     private func buttons(in view: NSView?) -> [NSButton] {
