@@ -6,13 +6,12 @@ import QuickLookThumbnailing
 private let startRecentDisplayLimit = 6
 
 private enum StartLayout {
-    static let windowSize = NSSize(width: 760, height: 450)
-    static let minimumWindowSize = NSSize(width: 720, height: 410)
-    static let horizontalInset: CGFloat = 48
+    static let windowSize = NSSize(width: 680, height: 500)
+    static let horizontalInset: CGFloat = 56
     static let bottomInset: CGFloat = 32
-    static let columnSpacing: CGFloat = 44
-    static let heroWidth: CGFloat = 252
-    static let recentWidth: CGFloat = 320
+    static let sectionSpacing: CGFloat = 26
+    static let contentWidth: CGFloat = 568
+    static let actionWidth: CGFloat = 164
 }
 
 @MainActor
@@ -29,7 +28,7 @@ final class StartWindowController: NSWindowController {
     convenience init(recents: [RecentDocument]) {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: StartLayout.windowSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -37,7 +36,9 @@ final class StartWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
-        window.minSize = StartLayout.minimumWindowSize
+        window.minSize = StartLayout.windowSize
+        window.maxSize = StartLayout.windowSize
+        window.isRestorable = false
         window.backgroundColor = .windowBackgroundColor
         window.center()
         self.init(window: window)
@@ -148,28 +149,24 @@ private final class StartView: NSView {
         canvas.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = canvas
 
-        // One compact composition: hero + recents, centered — no stretched columns.
-        let columns = NSStackView()
-        columns.translatesAutoresizingMaskIntoConstraints = false
-        columns.orientation = .horizontal
-        columns.alignment = .top
-        columns.distribution = .fill
-        columns.spacing = StartLayout.columnSpacing
-        canvas.addSubview(columns)
+        // One task path: choose an action, then a recent file. The old split
+        // hero/card composition made two unrelated visual centres.
+        let content = NSStackView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.orientation = .vertical
+        content.alignment = .width
+        content.distribution = .fill
+        content.spacing = StartLayout.sectionSpacing
+        canvas.addSubview(content)
 
         hero.translatesAutoresizingMaskIntoConstraints = false
         recentPanel.translatesAutoresizingMaskIntoConstraints = false
-        columns.addArrangedSubview(hero)
-        columns.addArrangedSubview(recentPanel)
+        content.addArrangedSubview(hero)
+        content.addArrangedSubview(recentPanel)
 
-        hero.setContentHuggingPriority(.required, for: .horizontal)
-        hero.setContentCompressionResistancePriority(.required, for: .horizontal)
-        recentPanel.setContentHuggingPriority(.required, for: .horizontal)
-        recentPanel.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let centerY = columns.centerYAnchor.constraint(equalTo: canvas.centerYAnchor, constant: -4)
+        let centerY = content.centerYAnchor.constraint(equalTo: canvas.centerYAnchor, constant: -2)
         centerY.priority = .defaultHigh
-        let centerX = columns.centerXAnchor.constraint(equalTo: canvas.centerXAnchor)
+        let centerX = content.centerXAnchor.constraint(equalTo: canvas.centerXAnchor)
         centerX.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
@@ -189,24 +186,24 @@ private final class StartView: NSView {
             canvas.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             canvas.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
 
-            columns.leadingAnchor.constraint(
+            content.leadingAnchor.constraint(
                 greaterThanOrEqualTo: canvas.leadingAnchor,
                 constant: StartLayout.horizontalInset
             ),
-            columns.trailingAnchor.constraint(
+            content.trailingAnchor.constraint(
                 lessThanOrEqualTo: canvas.trailingAnchor,
                 constant: -StartLayout.horizontalInset
             ),
-            columns.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
-            columns.bottomAnchor.constraint(
+            content.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
+            content.bottomAnchor.constraint(
                 lessThanOrEqualTo: canvas.bottomAnchor,
                 constant: -StartLayout.bottomInset
             ),
             centerX,
             centerY,
-
-            hero.widthAnchor.constraint(equalToConstant: StartLayout.heroWidth),
-            recentPanel.widthAnchor.constraint(equalToConstant: StartLayout.recentWidth),
+            content.widthAnchor.constraint(equalToConstant: StartLayout.contentWidth),
+            hero.widthAnchor.constraint(equalTo: content.widthAnchor),
+            recentPanel.widthAnchor.constraint(equalTo: content.widthAnchor),
         ])
     }
 
@@ -277,11 +274,12 @@ private final class StartHeroView: NSView {
     private let newButton: StartActionButton
     private let brandLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(wrappingLabelWithString: "Open a Markdown file and stay with it.")
-    private let dropHint = NSTextField(labelWithString: "Or drop a file anywhere")
-    private var didPlayArrival = false
+    private let subtitleLabel = NSTextField(
+        wrappingLabelWithString: "Read, edit, and review it in one focused place."
+    )
+    private let dropHint = NSTextField(labelWithString: "You can also drop a file anywhere")
     private var isDropActive = false
-    private static let idleDropHint = "Or drop a file anywhere"
+    private static let idleDropHint = "You can also drop a file anywhere"
 
     init(owner: StartWindowController) {
         // No trailing ellipsis on the start screen — it reads as truncated text.
@@ -312,29 +310,29 @@ private final class StartHeroView: NSView {
         let brandRow = NSStackView(views: [brand, brandLabel])
         brandRow.orientation = .horizontal
         brandRow.alignment = .centerY
-        brandRow.spacing = 8
+        brandRow.spacing = 9
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.maximumNumberOfLines = 2
+        titleLabel.maximumNumberOfLines = 1
         configurePassiveLabel(titleLabel)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = .systemFont(ofSize: 13, weight: .regular)
         subtitleLabel.maximumNumberOfLines = 2
-        subtitleLabel.preferredMaxLayoutWidth = 240
+        subtitleLabel.preferredMaxLayoutWidth = StartLayout.contentWidth
         configurePassiveLabel(subtitleLabel)
 
-        // Keep the reading path straight from headline to primary action.
+        // Two peer entry paths, with Open File carrying primary emphasis.
         let actions = NSStackView(views: [openButton, newButton])
-        actions.orientation = .vertical
-        actions.alignment = .leading
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
         actions.spacing = 8
-        actions.distribution = .fillEqually
+        actions.distribution = .fill
 
         dropHint.translatesAutoresizingMaskIntoConstraints = false
         dropHint.font = .systemFont(ofSize: 12, weight: .regular)
         dropHint.textColor = .secondaryLabelColor
-        dropHint.alignment = .center
+        dropHint.alignment = .left
         configurePassiveLabel(dropHint)
 
         let dropSlot = NSView()
@@ -349,14 +347,14 @@ private final class StartHeroView: NSView {
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            brand.widthAnchor.constraint(equalToConstant: 18),
-            brand.heightAnchor.constraint(equalToConstant: 18),
+            brand.widthAnchor.constraint(equalToConstant: 22),
+            brand.heightAnchor.constraint(equalToConstant: 22),
             openButton.heightAnchor.constraint(equalToConstant: 36),
             newButton.heightAnchor.constraint(equalToConstant: 36),
-            openButton.widthAnchor.constraint(equalToConstant: 196),
-            newButton.widthAnchor.constraint(equalTo: openButton.widthAnchor),
-            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.heroWidth),
-            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.heroWidth),
+            openButton.widthAnchor.constraint(equalToConstant: StartLayout.actionWidth),
+            newButton.widthAnchor.constraint(equalToConstant: StartLayout.actionWidth),
+            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
+            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
             dropSlot.widthAnchor.constraint(equalTo: stack.widthAnchor),
             dropHint.leadingAnchor.constraint(equalTo: dropSlot.leadingAnchor),
             dropHint.topAnchor.constraint(equalTo: dropSlot.topAnchor),
@@ -368,10 +366,10 @@ private final class StartHeroView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        stack.setCustomSpacing(18, after: brandRow)
-        stack.setCustomSpacing(9, after: titleLabel)
-        stack.setCustomSpacing(22, after: subtitleLabel)
-        stack.setCustomSpacing(13, after: actions)
+        stack.setCustomSpacing(14, after: brandRow)
+        stack.setCustomSpacing(5, after: titleLabel)
+        stack.setCustomSpacing(17, after: subtitleLabel)
+        stack.setCustomSpacing(9, after: actions)
 
         applyTextColors()
         setAccessibilityRole(.group)
@@ -406,19 +404,18 @@ private final class StartHeroView: NSView {
         let titleParagraph = NSMutableParagraphStyle()
         titleParagraph.lineSpacing = 0
         brandLabel.attributedStringValue = NSAttributedString(
-            string: "DOWNRIGHT",
+            string: "Downright",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor,
-                .kern: 0.8,
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
             ]
         )
         titleLabel.attributedStringValue = NSAttributedString(
-            string: "Read deeply.\nWrite lightly.",
+            string: "Open a Markdown file",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 25, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 22, weight: .semibold),
                 .foregroundColor: NSColor.labelColor,
-                .kern: -0.3,
+                .kern: -0.2,
                 .paragraphStyle: titleParagraph,
             ]
         )
@@ -426,19 +423,6 @@ private final class StartHeroView: NSView {
         dropHint.textColor = isDropActive ? .controlAccentColor : .secondaryLabelColor
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard window != nil, !didPlayArrival else { return }
-        didPlayArrival = true
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        wantsLayer = true
-        alphaValue = 0
-        layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -4))
-        Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
-            self.animator().alphaValue = 1
-            self.layer?.setAffineTransform(.identity)
-        }
-    }
 }
 
 private func configurePassiveLabel(_ field: NSTextField) {
@@ -453,27 +437,16 @@ private func configurePassiveLabel(_ field: NSTextField) {
 
 private final class RecentDocumentsPanel: NSView {
     private weak var owner: StartWindowController?
-    private let headerLabel = NSTextField(labelWithString: "Recent")
+    private let headerLabel = NSTextField(labelWithString: "Recent files")
     private let list = NSStackView()
-    private var recentCards: [NSView] = []
     private var displayedRecents: [RecentDocument] = []
-    private var didAnimate = false
 
     init(recents: [RecentDocument], owner: StartWindowController) {
         self.owner = owner
         super.init(frame: .zero)
 
-        wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.masksToBounds = false
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.10
-        layer?.shadowRadius = 18
-        layer?.shadowOffset = NSSize(width: 0, height: -6)
-        applySurface()
-
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        headerLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        headerLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         headerLabel.textColor = .secondaryLabelColor
         configurePassiveLabel(headerLabel)
 
@@ -486,21 +459,21 @@ private final class RecentDocumentsPanel: NSView {
         addSubview(list)
 
         NSLayoutConstraint.activate([
-            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            headerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            headerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            headerLabel.topAnchor.constraint(equalTo: topAnchor),
 
-            list.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            list.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            list.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 10),
-            list.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            list.leadingAnchor.constraint(equalTo: leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: trailingAnchor),
+            list.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 9),
+            list.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            widthAnchor.constraint(equalToConstant: StartLayout.recentWidth),
+            widthAnchor.constraint(equalToConstant: StartLayout.contentWidth),
         ])
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Recent Markdown documents")
-        rebuild(recents: recents, animate: false)
+        rebuild(recents: recents)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -508,35 +481,20 @@ private final class RecentDocumentsPanel: NSView {
     func reload(recents: [RecentDocument], owner: StartWindowController) {
         self.owner = owner
         guard recents != displayedRecents else { return }
-        rebuild(recents: recents, animate: window != nil)
+        rebuild(recents: recents)
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        applySurface()
         headerLabel.textColor = .secondaryLabelColor
     }
 
-    private func applySurface() {
-        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-        // Keep the panel solid enough that secondary text stays readable over the
-        // window backdrop — 0.45 was washing metadata into the background.
-        let alpha: CGFloat = (increaseContrast || reduceTransparency) ? 0.98 : 0.62
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(alpha).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor
-            .withAlphaComponent(increaseContrast ? 0.55 : 0.20).cgColor
-    }
-
-    private func rebuild(recents: [RecentDocument], animate: Bool) {
+    private func rebuild(recents: [RecentDocument]) {
         for view in list.arrangedSubviews {
             list.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        recentCards = []
         displayedRecents = recents
-        didAnimate = false
 
         guard let owner else { return }
 
@@ -547,8 +505,7 @@ private final class RecentDocumentsPanel: NSView {
             empty.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
             // Keep the no-recents panel close to the populated panel's visual
             // weight so the start screen does not jump between two compositions.
-            empty.heightAnchor.constraint(equalToConstant: 180).isActive = true
-            recentCards = [empty]
+            empty.heightAnchor.constraint(equalToConstant: 150).isActive = true
         } else {
             let titles = RecentRowCopy.disambiguatedTitles(for: recents)
             for (index, recent) in recents.prefix(StartWindowController.recentDisplayLimit).enumerated() {
@@ -558,37 +515,9 @@ private final class RecentDocumentsPanel: NSView {
                     target: owner
                 )
                 card.translatesAutoresizingMaskIntoConstraints = false
-                card.heightAnchor.constraint(equalToConstant: 40).isActive = true
+                card.heightAnchor.constraint(equalToConstant: 38).isActive = true
                 list.addArrangedSubview(card)
                 card.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
-                recentCards.append(card)
-            }
-        }
-
-        if animate { animateIn() }
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard window != nil else { return }
-        animateIn()
-    }
-
-    private func animateIn() {
-        guard !didAnimate else { return }
-        didAnimate = true
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        // Slide/fade from a near-opaque start so hit-testing and hover stay
-        // honest during arrival — full alpha 0 left the first row "sticky".
-        for (index, card) in recentCards.enumerated() {
-            card.alphaValue = 0.01
-            card.layer?.transform = CATransform3DMakeTranslation(0, 6, 0)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.028 * Double(index)) { [weak card] in
-                guard let card, card.window != nil else { return }
-                Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
-                    card.animator().alphaValue = 1
-                    card.layer?.transform = CATransform3DIdentity
-                }
             }
         }
     }
@@ -911,7 +840,6 @@ private enum RecentRowCopy {
 private final class RecentDocumentButton: NSButton {
     let documentPath: String
     private let shell = NSView()
-    private let hoverRule = NSView()
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
     private var isHovered = false
@@ -942,15 +870,8 @@ private final class RecentDocumentButton: NSButton {
         shell.layer?.masksToBounds = true
         addSubview(shell)
 
-        hoverRule.translatesAutoresizingMaskIntoConstraints = false
-        hoverRule.wantsLayer = true
-        hoverRule.layer?.cornerRadius = 1
-        hoverRule.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        hoverRule.alphaValue = 0
-        shell.addSubview(hoverRule)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
@@ -958,10 +879,8 @@ private final class RecentDocumentButton: NSButton {
         shell.addSubview(titleLabel)
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
-        // Secondary label on a translucent panel falls below readable contrast;
-        // keep it clearly subordinate but still legible in dark and light.
-        detailLabel.textColor = NSColor.labelColor.withAlphaComponent(0.62)
+        detailLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
+        detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.maximumNumberOfLines = 1
         configurePassiveLabel(detailLabel)
@@ -973,19 +892,16 @@ private final class RecentDocumentButton: NSButton {
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            hoverRule.leadingAnchor.constraint(equalTo: shell.leadingAnchor),
-            hoverRule.topAnchor.constraint(equalTo: shell.topAnchor, constant: 7),
-            hoverRule.bottomAnchor.constraint(equalTo: shell.bottomAnchor, constant: -7),
-            hoverRule.widthAnchor.constraint(equalToConstant: 2),
-
             titleLabel.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 10),
-            titleLabel.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -10),
-            titleLabel.topAnchor.constraint(equalTo: shell.topAnchor, constant: 6),
+            titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
 
-            detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            detailLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            detailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 20),
+            detailLabel.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -10),
+            detailLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
         ])
+
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         updateSurface(animated: false)
         addTrackingArea(NSTrackingArea(
@@ -1066,7 +982,7 @@ private final class RecentDocumentButton: NSButton {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        detailLabel.textColor = NSColor.labelColor.withAlphaComponent(0.62)
+        detailLabel.textColor = .secondaryLabelColor
         updateSurface(animated: false)
     }
 
@@ -1082,13 +998,10 @@ private final class RecentDocumentButton: NSButton {
         }
         let apply = {
             self.shell.layer?.backgroundColor = fill.cgColor
-            self.hoverRule.alphaValue = self.isHovered || self.isPressed ? 1 : 0
             self.shell.layer?.setAffineTransform(
                 self.isPressed
-                    ? CGAffineTransform(scaleX: 0.985, y: 0.985)
-                    : self.isHovered
-                        ? CGAffineTransform(scaleX: 1.008, y: 1.008)
-                        : .identity
+                    ? CGAffineTransform(scaleX: 0.992, y: 0.992)
+                    : .identity
             )
         }
         if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {

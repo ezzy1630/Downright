@@ -13,7 +13,9 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        #expect(window.minSize == NSSize(width: 720, height: 410))
+        #expect(window.minSize == NSSize(width: 680, height: 500))
+        #expect(window.maxSize == NSSize(width: 680, height: 500))
+        #expect(!window.styleMask.contains(.resizable))
         #expect(window.titleVisibility == .hidden)
         #expect(window.contentView?.accessibilityLabel() == "Downright start window")
         #expect(window.initialFirstResponder != nil)
@@ -26,7 +28,7 @@ struct StartWindowTests {
     }
 
     @Test
-    func primaryActionsShareAnOpticalAxis() throws {
+    func primaryActionsShareACompactHorizontalAxis() throws {
         let controller = StartWindowController(recents: [])
         defer { controller.close() }
 
@@ -43,15 +45,16 @@ struct StartWindowTests {
         let openCenter = open.convert(
             NSPoint(x: open.bounds.midX, y: open.bounds.midY),
             to: content
-        ).x
+        )
         let createCenter = create.convert(
             NSPoint(x: create.bounds.midX, y: create.bounds.midY),
             to: content
-        ).x
+        )
 
-        #expect(abs(openCenter - createCenter) < 0.5)
+        #expect(abs(openCenter.y - createCenter.y) < 0.5)
+        #expect(createCenter.x > openCenter.x)
         #expect(abs(open.frame.width - create.frame.width) < 0.5)
-        #expect(abs(open.frame.width - 196) < 0.5)
+        #expect(abs(open.frame.width - 164) < 0.5)
     }
 
     @Test
