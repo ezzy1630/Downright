@@ -75,3 +75,34 @@ struct ContentResizeTests {
         #expect(view.pendingResizeRequestForTesting == .viewport)
     }
 }
+    @Test("local typing keeps the viewport pixel-stable across parse commit")
+    func localTypingDoesNotRescrollTheDocument() async throws {
+        let paragraph = "A paragraph with enough words to form a stable line of document text."
+        let text = (0..<80).map { "## Section \($0)\n\n\(paragraph)" }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 700))
+        container.scrollView.reflectScrolledClipView(clip)
+        let editOffset = container.textView.topVisibleOffset + 8
+
+        #expect(container.textView.performSourceEdit(
+            range: NSRange(location: editOffset, length: 0),
+            replacement: "x"
+        ))
+        let originAfterKeystroke = clip.bounds.origin
+        let changed = storage.string
+        container.textView.update(
+            document: MarkdownParser.parse(changed),
+            dirty: DirtySet(ranges: [NSRange(location: editOffset, length: 1)], isWholesale: false)
+        )
+
+        try await Task.sleep(for: .milliseconds(140))
+        #expect(abs(clip.bounds.origin.y - originAfterKeystroke.y) < 0.5)
+        #expect(abs(clip.bounds.origin.x - originAfterKeystroke.x) < 0.5)
+    }

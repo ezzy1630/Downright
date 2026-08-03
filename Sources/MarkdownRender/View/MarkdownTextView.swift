@@ -452,7 +452,8 @@ public final class MarkdownTextView: NSTextView {
     public func update(document: ParsedDocument, dirty: DirtySet) {
         let selection = sourceSelectedRanges
         let anchor = topVisibleOffset
-        let followsCaret = shouldFollowCaretAfterLocalEdit && configuration.typewriterScrolling
+        let followsLocalEdit = shouldFollowCaretAfterLocalEdit
+        let followsCaret = followsLocalEdit && configuration.typewriterScrolling
         shouldFollowCaretAfterLocalEdit = false
         let currentMode = mode
         let isInitialUpdate = updateGeneration == 0
@@ -497,7 +498,7 @@ public final class MarkdownTextView: NSTextView {
         }
         requestContentResize(
             resizeRequest,
-            anchor: resizeRequest == .immediate || followsCaret ? nil : anchor
+            anchor: resizeRequest == .immediate || followsLocalEdit ? nil : anchor
         )
 
         // Async parses replace only the tree and decorations. Keep the same
@@ -510,7 +511,12 @@ public final class MarkdownTextView: NSTextView {
             return NSRange(location: location, length: end - location)
         }
         setSourceSelectedRanges(boundedSelection)
-        if !followsCaret {
+        // AppKit already owns the clip view during typing. Re-scrolling to a
+        // source-derived top offset after every local parse re-resolves lazy
+        // TextKit geometry and makes the whole page shudder. Vertical metrics
+        // are fixed for inline edits, so leave the pixel viewport untouched;
+        // real line growth still flows through the coalesced resize path.
+        if !followsCaret, !followsLocalEdit {
             scroll(toOffset: min(max(0, anchor), document.length), position: .top, animated: false)
         }
     }
