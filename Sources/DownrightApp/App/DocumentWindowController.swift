@@ -344,8 +344,9 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.markdownDelegate = self
         primaryContainer.textView.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
+        primaryContainer.topAccessoryOverlaysContent = true
         // Keep the document map on the leading edge of the document surface.
-        // It reads as Contents there; on the trailing edge it looks like an
+        // It reads as contents there; on the trailing edge it looks like an
         // unexplained second scrollbar.
         primaryContainer.leadingAccessory = densityGutterView
         breadcrumbView.delegate = self
@@ -353,7 +354,6 @@ final class DocumentWindowController: NSWindowController {
         densityGutterView.delegate = self
         densityGutterView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
-        breadcrumbView.alphaValue = 1
 
         rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
         leadingPane = NSView()
@@ -414,7 +414,7 @@ final class DocumentWindowController: NSWindowController {
         // Keep the document switch in the optical centre with explicit flexible
         // spaces. AppKit then owns hit testing and the layout stays stable when
         // a toolbar item is hidden or the window gets narrower.
-        let toolbar = NSToolbar(identifier: "DownrightToolbar.v9")
+        let toolbar = NSToolbar(identifier: "DownrightToolbar.v10")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.sizeMode = .regular
@@ -751,7 +751,7 @@ final class DocumentWindowController: NSWindowController {
             barStack.addArrangedSubview(bar)
             bar.widthAnchor.constraint(equalTo: barStack.widthAnchor).isActive = true
         }
-        changeSummaryBar?.message = message
+        changeSummaryBar?.configure(message: message, changeCount: markdownDocument.changes.count)
         rootView.needsLayout = true
     }
 

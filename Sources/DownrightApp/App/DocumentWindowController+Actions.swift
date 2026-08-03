@@ -237,9 +237,8 @@ enum CodeFileExtensions {
 // MARK: - Toolbar
 //
 // The toolbar has three stable zones: document identity at the leading edge,
-// Source Focus at the optical centre (only while active), and a compact
-// trailing cluster — activity, task progress, overflow — that never nudges
-// the centre rail.
+// Document/Source at the optical centre, and a compact trailing cluster —
+// activity, task progress, overflow — that never nudges the centre rail.
 
 extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     private static let identityItem = NSToolbarItem.Identifier("document-identity")
@@ -283,15 +282,14 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             let control = ToolbarPresentationControl { [weak self] selectedSegment in
                 self?.toolbarModeChanged(selectedSegment)
             }
+            control.isHidden = false
             toolbarPresentationControl = control
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.isBordered = false
-            item.label = "Source Focus"
+            item.label = "Document / Source"
             item.toolTip = "Switch between rendered Document and Source Focus"
             item.visibilityPriority = .high
-            // Quiet by default — Source Focus chrome appears only while active.
-            control.isHidden = true
             return item
 
         case Self.overflowItem:
@@ -349,11 +347,8 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     func refreshSourceFocusToolbar() {
         let isActive = primaryContainer.textView.sourceFocus != .none
             || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)
+        toolbarPresentationControl?.isHidden = false
         toolbarPresentationControl?.setSelectedSegment(isActive ? 1 : 0)
-        // Collapse via the view's intrinsic size so macOS 14 stays supported
-        // (NSToolbarItem.isHidden is 15+).
-        toolbarPresentationControl?.isHidden = !isActive
-        window?.toolbar?.validateVisibleItems()
     }
 
     @objc private func toolbarShowTasks(_ sender: Any?) {

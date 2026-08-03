@@ -27,8 +27,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             return
         }
 
-        // A relative link to another markdown file opens in this app; ⌘-click
-        // gives it a new window (§7.1).
+        // A relative link opens in place; ⌘-click keeps the current document
+        // and opens the target in the active native tab group.
         guard let base = markdownDocument.url?.deletingLastPathComponent() else { return }
         let target = base.appendingPathComponent(destination).standardizedFileURL
         guard FileManager.default.fileExists(atPath: target.path) else { return }
@@ -100,6 +100,12 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {
         synchronizePanes(from: view)
         updateBreadcrumbAndGutter()
+        if let first = markdownDocument.parsed.headings.first,
+           view.topVisibleOffset > first.range.upperBound {
+            breadcrumbView.presentTransiently()
+        } else {
+            breadcrumbView.hideImmediately()
+        }
         updateFocusDimmingViews()
     }
 
@@ -343,7 +349,7 @@ extension DocumentWindowController: TaskPanelDelegate {
 extension DocumentWindowController: SiblingSidebarDelegate {
     func siblingSidebar(_ sidebar: SiblingSidebarView, didSelect url: URL, inNewWindow: Bool) {
         if inNewWindow {
-            (NSApp.delegate as? AppDelegate)?.open(url)
+            (NSApp.delegate as? AppDelegate)?.open(url, disposition: .window)
         } else {
             openInPlace(url)
         }
@@ -486,6 +492,11 @@ extension DocumentWindowController: ConflictBarDelegate {
 extension DocumentWindowController: ChangeSummaryBarDelegate {
     func changeSummaryBar(_ bar: ChangeSummaryBarView, didRequestJump forward: Bool) {
         perform(forward ? .nextChange : .previousChange)
+    }
+
+    func changeSummaryBarDidRequestMarkReviewed(_ bar: ChangeSummaryBarView) {
+        markdownDocument.changes.clear()
+        dismissChangeSummary()
     }
 
     func changeSummaryBarDidRequestDismiss(_ bar: ChangeSummaryBarView) { dismissChangeSummary() }

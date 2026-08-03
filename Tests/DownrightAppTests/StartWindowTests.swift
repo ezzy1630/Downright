@@ -203,6 +203,33 @@ struct StartWindowTests {
     }
 
     @Test
+    func recentPathCanonicalizationCollapsesSymlinks() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-recents-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let target = directory.appendingPathComponent("notes.md")
+        try Data("# Notes\n".utf8).write(to: target)
+        let link = directory.appendingPathComponent("alias.md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        // A file reached through a symlink must be the same recent identity as
+        // the file itself — this is the contract `AppDelegate.open` uses to
+        // keep one window per file (§9.3).
+        let viaTarget = DocumentStateStore.canonicalPath(target.path)
+        let viaLink = DocumentStateStore.canonicalPath(link.path)
+        #expect(viaTarget == viaLink)
+        #expect(viaTarget == DocumentStateStore.canonicalPath(viaTarget))
+        #expect(viaLink == DocumentStateStore.canonicalPath(viaLink))
+
+        // Distinct files must stay distinct even when they share a folder.
+        let other = directory.appendingPathComponent("other.md")
+        try Data("# Other\n".utf8).write(to: other)
+        #expect(DocumentStateStore.canonicalPath(other.path) != viaTarget)
+    }
+
+    @Test
     func reloadRecentsSwapsEmptyAndPopulatedStates() throws {
         let controller = StartWindowController(recents: [])
         defer { controller.close() }
@@ -247,7 +274,7 @@ struct StartWindowTests {
         let button = try #require(
             buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
         )
-        let before = button.accessibilityValue() as? String
+        let before = String(describing: button.accessibilityValue())
 
         let newer = RecentDocument(
             path: path,
@@ -262,7 +289,7 @@ struct StartWindowTests {
         let refreshed = try #require(
             buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
         )
-        #expect(refreshed.accessibilityValue() as? String != before)
+        #expect(String(describing: refreshed.accessibilityValue()) != before)
     }
 
     @Test

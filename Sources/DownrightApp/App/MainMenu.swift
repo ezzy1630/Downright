@@ -163,6 +163,24 @@ enum MainMenu {
         menu.addItem(commandItem(.splitView))
         menu.addItem(commandItem(.pinWindow))
         menu.addItem(.separator())
+        let previousTab = NSMenuItem(
+            title: "Show Previous Tab",
+            action: #selector(NSWindow.selectPreviousTab(_:)),
+            keyEquivalent: "\t"
+        )
+        previousTab.keyEquivalentModifierMask = [.control, .shift]
+        menu.addItem(previousTab)
+        let nextTab = NSMenuItem(
+            title: "Show Next Tab",
+            action: #selector(NSWindow.selectNextTab(_:)),
+            keyEquivalent: "\t"
+        )
+        nextTab.keyEquivalentModifierMask = [.control]
+        menu.addItem(nextTab)
+        menu.addItem(withTitle: "Move Tab to New Window", action: #selector(NSWindow.moveTabToNewWindow(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Merge All Windows", action: #selector(NSWindow.mergeAllWindows(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Show Tab Bar", action: #selector(NSWindow.toggleTabBar(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         item.submenu = menu
         NSApp.windowsMenu = menu

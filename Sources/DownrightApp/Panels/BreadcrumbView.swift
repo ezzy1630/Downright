@@ -44,7 +44,11 @@ final class BreadcrumbView: NSView {
     }
 
     private let sectionButton = ToolbarInteractiveButton(frame: .zero)
+    private let material = NSVisualEffectView()
     private var sectionAction: ButtonAction?
+    private var dismissWorkItem: DispatchWorkItem?
+
+    var isPresentedForTesting: Bool { !isHidden }
 
     var currentTitleOrigin: CGFloat {
         let titleRect = (sectionButton.cell as? NSButtonCell)?.titleRect(forBounds: sectionButton.bounds)
@@ -77,6 +81,15 @@ final class BreadcrumbView: NSView {
         self.styleSheet = styleSheet
         super.init(frame: .zero)
 
+        material.material = .hudWindow
+        material.blendingMode = .withinWindow
+        material.state = .followsWindowActiveState
+        material.wantsLayer = true
+        material.layer?.cornerRadius = 7
+        material.layer?.cornerCurve = .continuous
+        material.layer?.masksToBounds = true
+        addSubview(material)
+
         let action = ButtonAction { [weak self] in self?.showPathMenu() }
         sectionAction = action
         sectionButton.feedbackInsetX = 0
@@ -94,10 +107,14 @@ final class BreadcrumbView: NSView {
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Current section")
+        isHidden = true
+        alphaValue = 0
         rebuild(animated: false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    deinit { dismissWorkItem?.cancel() }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Metrics.maximumButtonWidth, height: Metrics.height)
@@ -111,6 +128,7 @@ final class BreadcrumbView: NSView {
             sectionButton.attributedTitle = NSAttributedString()
             sectionButton.image = nil
             setAccessibilityLabel("Current section")
+            hideImmediately()
             needsLayout = true
             return
         }
@@ -131,6 +149,44 @@ final class BreadcrumbView: NSView {
         )
         setAccessibilityLabel("Current section: \(current.title)")
         needsLayout = true
+    }
+
+    func presentTransiently() {
+        guard !trail.isEmpty else { return }
+        dismissWorkItem?.cancel()
+        isHidden = false
+        superview?.needsLayout = true
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if reduceMotion {
+            alphaValue = 1
+        } else {
+            animator().alphaValue = 1
+        }
+        let work = DispatchWorkItem { [weak self] in self?.dismissTransiently() }
+        dismissWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    func hideImmediately() {
+        dismissWorkItem?.cancel()
+        dismissWorkItem = nil
+        alphaValue = 0
+        isHidden = true
+    }
+
+    private func dismissTransiently() {
+        dismissWorkItem = nil
+        guard !isHidden else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            hideImmediately()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            self?.isHidden = true
+        }
     }
 
     private func styledTitle(_ text: String) -> NSAttributedString {
@@ -177,6 +233,7 @@ final class BreadcrumbView: NSView {
         // the control, not its text, so the visible title shares the document's
         // exact leading axis while the hit target and feedback stay native.
         sectionButton.frame.origin.x -= currentTitleOrigin
+        material.frame = sectionButton.frame.insetBy(dx: -7, dy: 0)
 
         discardCursorRects()
         window?.invalidateCursorRects(for: self)

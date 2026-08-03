@@ -110,22 +110,23 @@ struct RenderSmokeTests {
         #expect(map.frame.minY == container.bounds.minY)
         #expect(map.frame.height == container.bounds.height)
         #expect(map.frame.midY == container.bounds.midY)
-        #expect(map.frame.minX == 0)
+        #expect(map.frame.minX == container.bounds.minX)
         #expect(map.frame.width == DensityGutterView.width)
     }
 
-    @Test("Document map stays full-height beside the breadcrumb lane")
+    @Test("Document map stays full-height beside the floating breadcrumb")
     func densityMapStaysFullHeightWithBreadcrumb() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "# Heading\n\nText"))
         let map = DensityGutterView(styleSheet: container.textView.styleSheet)
         let breadcrumb = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         container.leadingAccessory = map
         container.topAccessory = breadcrumb
+        container.topAccessoryOverlaysContent = true
         container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         container.layoutSubtreeIfNeeded()
 
         #expect(map.frame == NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 700))
-        #expect(container.scrollView.frame.minY > 0)
+        #expect(container.scrollView.frame.minY == 0)
         #expect(map.frame.midX == DensityGutterView.width / 2)
     }
 
@@ -158,20 +159,20 @@ struct RenderSmokeTests {
         #expect(container.textView.textContainer?.size.width == documentMeasure)
     }
 
-    @Test("Breadcrumb owns a lane and never overlays document text")
-    func breadcrumbReservesItsLane() {
+    @Test("Floating breadcrumb leaves the document viewport full height")
+    func breadcrumbOverlaysWithoutResizingDocument() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "# Heading\n\nText"))
         let breadcrumb = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         container.topAccessory = breadcrumb
+        container.topAccessoryOverlaysContent = true
         container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         container.layoutSubtreeIfNeeded()
 
-        #expect(breadcrumb.frame.maxY <= container.scrollView.frame.minY)
+        #expect(container.scrollView.frame.minY == 0)
         let textOrigin = container.scrollView.frame.minX
             + container.scrollView.contentInsets.left
             + RenderMetrics.revealSlack
         #expect(abs(breadcrumb.frame.minX - textOrigin) < 0.5)
-        #expect(container.scrollView.frame.minY > 0)
         #expect(container.scrollView.frame.maxY == container.bounds.maxY)
     }
 

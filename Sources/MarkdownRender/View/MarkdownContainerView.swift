@@ -66,6 +66,12 @@ public final class MarkdownContainerView: NSView {
         }
     }
 
+    /// A transient orientation control may float over the page instead of
+    /// reserving a permanent second title row. The host owns its visibility.
+    public var topAccessoryOverlaysContent = false {
+        didSet { needsLayout = true }
+    }
+
     public convenience init(storage: NSTextStorage) {
         self.init(storage: storage, styleSheet: MarkdownTextView.fallbackStyleSheet())
     }
@@ -124,7 +130,9 @@ public final class MarkdownContainerView: NSView {
             return height > 0 ? height : 24
         } ?? 0
         let topHeight = accessoryFitting
-        let topLaneHeight = topHeight > 0 ? topHeight + 8 : 0
+        let topLaneHeight = topAccessoryOverlaysContent
+            ? 0
+            : (topHeight > 0 ? topHeight + 8 : 0)
         let isFloatingDensityMap = leadingAccessory is DensityGutterView
         let leadingWidth = isFloatingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
@@ -178,10 +186,13 @@ public final class MarkdownContainerView: NSView {
         let textOrigin = scrollView.frame.minX + textLeft
         topAccessory?.frame = NSRect(
             x: textOrigin,
-            y: 4,
+            y: topAccessoryOverlaysContent ? 8 : 4,
             width: min(measure, max(0, bounds.width - textOrigin - trailingWidth)),
             height: max(topHeight, 0)
         )
+        if topAccessoryOverlaysContent, let topAccessory {
+            addSubview(topAccessory, positioned: .above, relativeTo: nil)
+        }
         gutter.frame = NSRect(x: max(0, textOrigin - gutterWidth), y: topLaneHeight,
                               width: gutterWidth, height: scrollView.frame.height)
 

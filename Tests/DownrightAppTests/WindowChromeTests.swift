@@ -67,34 +67,36 @@ struct WindowChromeTests {
     }
 
     @Test
-    func breadcrumbKeepsAStableDocumentLane() {
+    func breadcrumbFloatsWithoutTakingDocumentSpace() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
         let crumb = BreadcrumbView()
         crumb.trail = [(0, "Root", 1), (1, "Section", 2)]
         container.topAccessory = crumb
+        container.topAccessoryOverlaysContent = true
         container.setFrameSize(NSSize(width: 900, height: 600))
         container.layout()
-        #expect(container.scrollView.frame.minY > 20)
-        #expect(crumb.frame.maxY <= container.scrollView.frame.minY)
+        #expect(container.scrollView.frame.minY == 0)
+        #expect(crumb.frame.minY > container.scrollView.frame.minY)
     }
 
     @Test
-    func breadcrumbKeepsItsLaneWhenTheHeadingListIsEmpty() {
+    func breadcrumbAppearsOnlyWhenPresented() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
         let crumb = BreadcrumbView()
         container.topAccessory = crumb
+        container.topAccessoryOverlaysContent = true
         container.setFrameSize(NSSize(width: 900, height: 600))
         container.layout()
-        let occupiedLane = container.scrollView.frame.minY
+        #expect(!crumb.isPresentedForTesting)
 
         crumb.trail = [(0, "Section", 1)]
+        crumb.presentTransiently()
         container.layout()
-        #expect(container.scrollView.frame.minY == occupiedLane)
+        #expect(crumb.isPresentedForTesting)
+        #expect(container.scrollView.frame.minY == 0)
 
-        crumb.trail = []
-        container.layout()
-        #expect(container.scrollView.frame.minY == occupiedLane)
-        #expect(crumb.intrinsicContentSize.height == 28)
+        crumb.hideImmediately()
+        #expect(!crumb.isPresentedForTesting)
     }
 
     @Test
@@ -140,7 +142,7 @@ struct WindowChromeTests {
         #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
         #expect(controller.primaryContainer.trailingAccessory == nil)
         #expect(toolbar.displayMode == .iconOnly)
-        #expect(toolbar.identifier == "DownrightToolbar.v9")
+        #expect(toolbar.identifier == "DownrightToolbar.v10")
         #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
@@ -153,27 +155,25 @@ struct WindowChromeTests {
             toolbar.items.first { $0.itemIdentifier.rawValue == "document-identity" }?.view
                 as? ToolbarDocumentIdentityView
         )
-        #expect(identity.intrinsicContentSize.width == 214)
-        #expect(identity.intrinsicContentSize.height == 36)
+        #expect(identity.intrinsicContentSize.width == 220)
+        #expect(identity.intrinsicContentSize.height == 32)
         #expect(controller.window?.titleVisibility == .hidden)
 
         let modeItem = try #require(
             toolbar.items.first { $0.itemIdentifier.rawValue == "presentation-mode" }
         )
         let mode = try #require(modeItem.view as? ToolbarPresentationControl)
-        #expect(mode.isHidden)
+        #expect(!mode.isHidden)
         #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.intrinsicContentSize == .zero)
+        #expect(mode.intrinsicContentSize.width == 176)
+        #expect(mode.intrinsicContentSize.height == 32)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
-        #expect(!mode.isHidden)
         #expect(mode.selectedSegment == 1)
-        #expect(mode.intrinsicContentSize.width == 176)
         controller.primaryContainer.textView.clearSourceFocus()
         controller.refreshSourceFocusToolbar()
-        #expect(mode.isHidden)
         #expect(mode.selectedSegment == 0)
 
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
@@ -218,6 +218,14 @@ struct WindowChromeTests {
         #expect(controller.barStack.arrangedSubviews.count == 2)
         #expect(controller.barStack.frame.height > 0)
         #expect(controller.primaryContainer.frame.minY >= controller.barStack.frame.maxY - 0.5)
+    }
+
+    @Test
+    func changeSummaryUsesCompactCountedNavigation() {
+        let bar = ChangeSummaryBarView()
+        bar.configure(message: "Updated on disk", changeCount: 4)
+        #expect(bar.intrinsicContentSize.height == 32)
+        #expect(bar.positionStatusForTesting == "4 unread")
     }
 
     @Test
@@ -305,5 +313,15 @@ struct WindowChromeTests {
 
         controller.dismissFindBar()
         #expect(controller.findBar == nil)
+    }
+
+    @Test
+    func findOptionsLiveInOneCompactMenu() {
+        let bar = FindBarView()
+        let menu = bar.makeOptionsMenuForTesting()
+        #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
+            "Regular Expression", "Match Case", "Whole Word", "In Selection",
+        ])
+        #expect(menu.items.last?.isEnabled == false)
     }
 }

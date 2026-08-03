@@ -819,6 +819,53 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(layout.rowHeights.last ?? 0 > styleSheet().lineHeight)
 }
 
+@Test func renderedTableCellsOmitInlineMarkdownMarkers() {
+    let source = """
+    | | |
+    |---|---|
+    | **Rendered diff** | Updates *in place* with `code` and [links](https://example.com). |
+    """
+    let document = MarkdownParser.parse(source)
+    guard let block = document.root.children.first,
+          case .table(let data) = block.content,
+          let row = data.bodyRows.first,
+          row.cells.count == 2 else {
+        Issue.record("the parser did not produce the expected table")
+        return
+    }
+    let storage = NSAttributedString(string: source)
+
+    #expect(TableCellPresentation.plainText(for: row.cells[0], in: storage) == "Rendered diff")
+    #expect(
+        TableCellPresentation.plainText(for: row.cells[1], in: storage)
+            == "Updates in place with code and links."
+    )
+}
+
+@Test func compactTableLabelsKeepTheirNaturalWidthBesideProse() {
+    let source = """
+    | | |
+    |---|---|
+    | **Rendered diff** | The file is watched and updates in place while preserving the current heading anchor. |
+    """
+    let document = MarkdownParser.parse(source)
+    guard let block = document.root.children.first, case .table(let data) = block.content else {
+        Issue.record("the parser did not produce a table")
+        return
+    }
+    let style = styleSheet()
+    let storage = NSAttributedString(string: source)
+    let layout = TableLayout.make(data: data, storage: storage, width: 620, style: style)
+    let labelWidth = NSAttributedString(
+        string: "Rendered diff",
+        attributes: [.font: style.bodyFont()]
+    ).size().width
+
+    #expect(layout.columnWidths.count == 2)
+    #expect(layout.columnWidths[0] >= labelWidth - 0.5)
+    #expect(layout.columnWidths[1] > layout.columnWidths[0])
+}
+
 @Test func unlabeledCodeFencesExposeTheSameCopyGeometryAsLabeledFences() {
     let style = styleSheet()
     let band = CGRect(x: 12, y: 4, width: 420, height: 30)

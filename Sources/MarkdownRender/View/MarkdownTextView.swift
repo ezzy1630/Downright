@@ -333,6 +333,11 @@ public final class MarkdownTextView: NSTextView {
     /// prevents Document-mode parse commits from sweeping `.drSourceFocus`
     /// across the entire document when no source presentation is active.
     private var appliedSourceFocus: SourceFocus = .none
+    /// A frame shrink was deferred because the viewport was pinned to the bottom
+    /// (shrinking there would clamp the clip view and drop the page).  The
+    /// scroll observer clears this and settles the frame once the viewport
+    /// moves away from the bottom edge.
+    private var pendingShrinkRepair = false
 
     private var effectivePolicy: DecorationPolicy {
         var policy = mode.policy
@@ -433,6 +438,12 @@ public final class MarkdownTextView: NSTextView {
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         resizeWorkItem?.cancel()
+        copiedCodeFeedbackWorkItem?.cancel()
+        // A repeating 60fps timer on the main run loop would otherwise keep
+        // firing forever after the view is gone: its block only ever
+        // invalidates itself while `self` is still alive.
+        checkboxPulseTimer?.invalidate()
+        checkboxPulseTimer = nil
     }
 
     /// Used only by the convenience initialiser, so a text view can always be
@@ -592,6 +603,10 @@ public final class MarkdownTextView: NSTextView {
                     + textContainerInset.height * 2 + viewportHeight * 0.40
             )
             guard abs(frame.height - estimated) > 0.5 else { return }
+            if estimated < frame.height, viewportIsPinnedToBottom {
+                pendingShrinkRepair = true
+                return
+            }
             setFrameSize(NSSize(width: frame.width, height: estimated))
             return
         }
@@ -601,6 +616,15 @@ public final class MarkdownTextView: NSTextView {
         let viewportHeight = enclosingScrollView?.contentView.bounds.height ?? 0
         let height = max(used.maxY + textContainerInset.height + viewportHeight * 0.40, viewportHeight)
         guard abs(frame.height - height) > 0.5 else { return }
+        // Never shrink the document under the reader's hands.  When the visible
+        // region reaches the bottom of the frame, shrinking clamps the clip view
+        // and the whole page drops mid-keystroke.  Defer the shrink until the
+        // viewport moves away from the bottom edge; the scroll observer then
+        // settles the over-tall frame via `pendingShrinkRepair`.
+        if height < frame.height, viewportIsPinnedToBottom {
+            pendingShrinkRepair = true
+            return
+        }
         setFrameSize(NSSize(width: frame.width, height: height))
     }
 
@@ -626,6 +650,15 @@ public final class MarkdownTextView: NSTextView {
         animationLayer.add(spring, forKey: "downrightStructuralZoom")
     }
 
+    /// True while the visible region sits within a hair of the bottom of the
+    /// current frame — the one place a frame shrink would clamp the clip view
+    /// and drop the whole page.
+    private var viewportIsPinnedToBottom: Bool {
+        guard let scrollView = enclosingScrollView else { return false }
+        let slack = max(24, scrollView.contentView.bounds.height * 0.15)
+        return scrollView.documentVisibleRect.maxY >= frame.height - slack
+    }
+
     /// Layout only the visible viewport for semantic updates.  The usage
     /// bounds are incomplete until TextKit has visited the whole document, so
     /// this path may grow the frame but never shrinks it.  A later scroll near
@@ -648,8 +681,12 @@ public final class MarkdownTextView: NSTextView {
             + textContainerInset.height * 2 + viewportHeight * 0.40
         let used = layoutManager.usageBoundsForTextContainer.maxY
             + textContainerInset.height + viewportHeight * 0.40
-        let minimumVisibleHeight = visible.maxY + viewportHeight * 0.40
-        let height = max(frame.height, estimated, used, minimumVisibleHeight, viewportHeight)
+        // Content-anchored only.  A `visible.maxY`-based term overshoots at the
+        // document's end: with the caret pinned to the bottom it grows the frame
+        // by another viewport fraction, and the next document-scope repair
+        // (scrollRepair / lineCount) shrinks it back — clamping the clip view and
+        // dropping the whole page under the user's hands on every keystroke.
+        let height = max(frame.height, estimated, used, viewportHeight)
         guard height - frame.height > 0.5 else { return }
         setFrameSize(NSSize(width: frame.width, height: height))
     }
@@ -1855,12 +1892,20 @@ public final class MarkdownTextView: NSTextView {
                     guard let self else { return }
                     self.gutterRail?.needsDisplay = true
                     self.markdownDelegate?.markdownTextViewDidScroll(self)
-                    guard self.resizeNeedsRepair,
-                          let scrollView = self.enclosingScrollView else { return }
+                    guard let scrollView = self.enclosingScrollView else { return }
                     let viewportHeight = scrollView.contentView.bounds.height
                     let visibleMaxY = scrollView.documentVisibleRect.maxY
                     let repairSlack = max(24, viewportHeight * 0.15)
-                    guard visibleMaxY >= self.frame.height - repairSlack else { return }
+                    let pinnedToBottom = visibleMaxY >= self.frame.height - repairSlack
+                    if self.pendingShrinkRepair, !pinnedToBottom {
+                        // The viewport left the bottom edge — settle an over-tall
+                        // frame whose shrink was deferred so it never dropped the
+                        // page under the user's hands.
+                        self.pendingShrinkRepair = false
+                        self.requestContentResize(.scrollRepair)
+                        return
+                    }
+                    guard self.resizeNeedsRepair, pinnedToBottom else { return }
                     self.requestContentResize(.scrollRepair)
                 }
             }

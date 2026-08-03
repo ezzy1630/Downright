@@ -78,10 +78,12 @@ final class FindBarView: NSView {
     private let caseToggle: NSButton
     private let wordToggle: NSButton
     private let scopeToggle: NSButton
+    private let optionsButton: NSButton
     private let findRow = NSStackView()
     private let replaceRow = NSStackView()
     private let rows = NSStackView()
     private var actions: [ButtonAction] = []
+    private var optionsAction: ButtonAction?
     private let presentation: Presentation
 
     // MARK: - Init
@@ -102,6 +104,11 @@ final class FindBarView: NSView {
         self.caseToggle = PanelButton.toggle("Aa", label: "Match case", action: placeholder)
         self.wordToggle = PanelButton.toggle("W", label: "Whole word", action: placeholder)
         self.scopeToggle = PanelButton.toggle("In Selection", label: "Search in selection", action: placeholder)
+        self.optionsButton = PanelButton.symbol(
+            "slider.horizontal.3",
+            label: "Find options",
+            action: placeholder
+        )
 
         super.init(frame: .zero)
 
@@ -137,6 +144,10 @@ final class FindBarView: NSView {
             toggle.target = action
             toggle.action = #selector(ButtonAction.fire(_:))
         }
+        let optionsAction = ButtonAction { [weak self] in self?.showOptionsMenu() }
+        self.optionsAction = optionsAction
+        optionsButton.target = optionsAction
+        optionsButton.action = #selector(ButtonAction.fire(_:))
         scopeToggle.isEnabled = false
 
         applyStyle()
@@ -194,8 +205,7 @@ final class FindBarView: NSView {
             findRow.orientation = .horizontal
             findRow.spacing = 6
             findRow.alignment = .centerY
-            for view in [searchField, warningImage, statusLabel, regexToggle, caseToggle,
-                         wordToggle, scopeToggle, previousButton, nextButton,
+            for view in [searchField, warningImage, statusLabel, optionsButton, previousButton, nextButton,
                          PanelButton.symbol("xmark", label: "Close find bar", action: close)] {
                 findRow.addArrangedSubview(view)
             }
@@ -206,14 +216,9 @@ final class FindBarView: NSView {
             searchLine.spacing = 6
             searchLine.alignment = .centerY
 
-            let options = NSStackView(views: [regexToggle, caseToggle, wordToggle, scopeToggle])
-            options.orientation = .horizontal
-            options.spacing = 6
-            options.alignment = .centerY
-
             let spacer = NSView()
             spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let navigation = NSStackView(views: [statusLabel, spacer, previousButton, nextButton])
+            let navigation = NSStackView(views: [statusLabel, spacer, optionsButton, previousButton, nextButton])
             navigation.orientation = .horizontal
             navigation.spacing = 6
             navigation.alignment = .centerY
@@ -221,11 +226,76 @@ final class FindBarView: NSView {
             findRow.orientation = .vertical
             findRow.spacing = 8
             findRow.alignment = .leading
-            for view in [searchLine, options, navigation] {
+            for view in [searchLine, navigation] {
                 findRow.addArrangedSubview(view)
                 view.widthAnchor.constraint(equalTo: findRow.widthAnchor).isActive = true
             }
         }
+    }
+
+    func makeOptionsMenuForTesting() -> NSMenu {
+        let menu = NSMenu(title: "Find Options")
+        menu.addItem(optionItem(
+            title: "Regular Expression",
+            action: #selector(toggleRegexOption(_:)),
+            state: regexToggle.state,
+            enabled: true
+        ))
+        menu.addItem(optionItem(
+            title: "Match Case",
+            action: #selector(toggleCaseOption(_:)),
+            state: caseToggle.state,
+            enabled: true
+        ))
+        menu.addItem(optionItem(
+            title: "Whole Word",
+            action: #selector(toggleWordOption(_:)),
+            state: wordToggle.state,
+            enabled: true
+        ))
+        menu.addItem(.separator())
+        menu.addItem(optionItem(
+            title: "In Selection",
+            action: #selector(toggleScopeOption(_:)),
+            state: scopeToggle.state,
+            enabled: selectionScope != nil
+        ))
+        return menu
+    }
+
+    private func optionItem(
+        title: String,
+        action: Selector,
+        state: NSControl.StateValue,
+        enabled: Bool
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.state = state
+        item.isEnabled = enabled
+        return item
+    }
+
+    private func showOptionsMenu() {
+        let menu = makeOptionsMenuForTesting()
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: optionsButton.bounds.minX, y: optionsButton.bounds.maxY + 2),
+            in: optionsButton
+        )
+    }
+
+    @objc private func toggleRegexOption(_ sender: NSMenuItem) { toggle(regexToggle) }
+    @objc private func toggleCaseOption(_ sender: NSMenuItem) { toggle(caseToggle) }
+    @objc private func toggleWordOption(_ sender: NSMenuItem) { toggle(wordToggle) }
+    @objc private func toggleScopeOption(_ sender: NSMenuItem) {
+        guard selectionScope != nil else { return }
+        toggle(scopeToggle)
+    }
+
+    private func toggle(_ control: NSButton) {
+        control.state = control.state == .on ? .off : .on
+        emitQuery()
     }
 
     private func buildReplaceRow() {

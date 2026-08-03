@@ -17,7 +17,7 @@ enum PanelMetrics {
     /// Thin enough to replace a scrollbar rather than become a sidebar (§8.6).
     static let gutterWidth: CGFloat = 14
     static let headerHeight: CGFloat = 32
-    static let barHeight: CGFloat = 36
+    static let barHeight: CGFloat = 32
     static let rowHeight: CGFloat = 24
     static let groupRowHeight: CGFloat = 22
     static let inset: CGFloat = 10
@@ -342,9 +342,10 @@ class MessageBarView: NSView {
     var onDismiss: (() -> Void)?
 
     private let label = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
     private let actionStack = NSStackView()
     private var actions: [ButtonAction] = []
-    private let stripeWidth: CGFloat = 3
+    private let stripeWidth: CGFloat = 2
 
     init(styleSheet: StyleSheet, stripeColor: NSColor) {
         self.styleSheet = styleSheet
@@ -357,9 +358,15 @@ class MessageBarView: NSView {
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(label)
 
+        statusLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        statusLabel.textColor = styleSheet.textFaint
+        statusLabel.isHidden = true
+        statusLabel.setContentHuggingPriority(.required, for: .horizontal)
+
         actionStack.orientation = .horizontal
-        actionStack.spacing = 6
+        actionStack.spacing = 4
         actionStack.translatesAutoresizingMaskIntoConstraints = false
+        actionStack.addArrangedSubview(statusLabel)
         addSubview(actionStack)
 
         let dismiss = ButtonAction { [weak self] in self?.onDismiss?() }
@@ -401,13 +408,35 @@ class MessageBarView: NSView {
         return button
     }
 
+    @discardableResult
+    func addSymbolAction(
+        _ symbol: String,
+        label: String,
+        handler: @escaping () -> Void
+    ) -> NSButton {
+        let action = ButtonAction(handler)
+        actions.append(action)
+        let button = PanelButton.symbol(symbol, label: label, action: action)
+        actionStack.addArrangedSubview(button)
+        return button
+    }
+
+    func setStatus(_ text: String) {
+        statusLabel.stringValue = text
+        statusLabel.isHidden = text.isEmpty
+        statusLabel.setAccessibilityLabel(text)
+    }
+
     func applyStyle() {
         label.textColor = styleSheet.text
+        statusLabel.textColor = styleSheet.textFaint
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        styleSheet.codeBackground.setFill()
+        styleSheet.background.setFill()
+        bounds.fill()
+        styleSheet.text.withAlphaComponent(styleSheet.increaseContrast ? 0.08 : 0.035).setFill()
         bounds.fill()
 
         stripeColor.setFill()

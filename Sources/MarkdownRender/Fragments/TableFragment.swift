@@ -1,6 +1,56 @@
 import AppKit
 import MarkdownCore
 
+/// Materialises the semantic content of a Markdown table cell.
+///
+/// Table fragments replace TextKit's glyph drawing, so reading directly from
+/// `NSTextStorage` also reads the Markdown delimiters that the normal display
+/// map hides.  Keep that projection local and pure: decoration attributes stay
+/// intact, only the inline marker characters are removed.
+enum TableCellPresentation {
+    static func attributedContent(
+        for cell: TableCell,
+        in storage: NSAttributedString
+    ) -> NSAttributedString {
+        guard cell.contentRange.length > 0,
+              cell.contentRange.upperBound <= storage.length else {
+            return NSAttributedString()
+        }
+
+        let content = NSMutableAttributedString(
+            attributedString: storage.attributedSubstring(from: cell.contentRange)
+        )
+        let markers = markerRanges(in: cell.inlines)
+            .compactMap { marker -> NSRange? in
+                let intersection = NSIntersectionRange(marker, cell.contentRange)
+                guard intersection.length > 0 else { return nil }
+                return NSRange(
+                    location: intersection.location - cell.contentRange.location,
+                    length: intersection.length
+                )
+            }
+            .sorted { $0.location > $1.location }
+        for marker in markers where marker.upperBound <= content.length {
+            content.deleteCharacters(in: marker)
+        }
+        return content
+    }
+
+    static func plainText(for cell: TableCell, in storage: NSAttributedString) -> String {
+        attributedContent(for: cell, in: storage).string
+    }
+
+    private static func markerRanges(in spans: [InlineSpan]) -> [NSRange] {
+        var result: [NSRange] = []
+        func collect(_ span: InlineSpan) {
+            result.append(contentsOf: span.markerRanges)
+            for child in span.children { collect(child) }
+        }
+        for span in spans { collect(span) }
+        return RangeSet.normalized(result)
+    }
+}
+
 /// Column geometry for one table, computed once and shared by its rows.
 struct TableLayout {
     var columnX: [CGFloat]
@@ -16,16 +66,32 @@ struct TableLayout {
     static func make(data: TableData, storage: NSAttributedString, width: CGFloat, style: StyleSheet) -> TableLayout {
         let columns = max(1, data.columnCount)
         var natural = [CGFloat](repeating: 0, count: columns)
+        var minimums = [CGFloat](repeating: 0, count: columns)
         var numeric = [Int](repeating: 0, count: columns)
         var counted = [Int](repeating: 0, count: columns)
 
         for row in data.rows {
             for (index, cell) in row.cells.enumerated() where index < columns {
-                let text = substring(storage, cell.contentRange)
+                let text = TableCellPresentation.plainText(for: cell, in: storage)
                 let measured = NSAttributedString(string: text, attributes: [
                     .font: row.isHeader ? style.emphasisFont(bold: true, italic: false) : style.bodyFont(),
                 ]).size().width
                 natural[index] = max(natural[index], measured)
+                let longestToken = text
+                    .split(whereSeparator: \.isWhitespace)
+                    .map(String.init)
+                    .map {
+                        NSAttributedString(string: $0, attributes: [
+                            .font: row.isHeader
+                                ? style.emphasisFont(bold: true, italic: false)
+                                : style.bodyFont(),
+                        ]).size().width
+                    }
+                    .max() ?? 0
+                // Short labels should remain labels. Long prose columns may
+                // wrap, but never below their longest readable token.
+                let readableMinimum = measured <= 180 ? measured : longestToken
+                minimums[index] = max(minimums[index], readableMinimum)
                 guard !row.isHeader else { continue }
                 let trimmed = text.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.isEmpty else { continue }
@@ -39,22 +105,33 @@ struct TableLayout {
         // wrap aggressively, but it must never claim a wider layout fragment:
         // doing so invites a second scroll surface inside TextKit.
         let available = max(1, width - gaps)
-        let total = natural.reduce(0, +)
-        let scale = total > available ? available / max(1, total) : 1
-        let minimum = min(28, available / CGFloat(columns))
-        var widths = natural.map { max(minimum, $0 * scale) }
-        let usedBeforeSlack = widths.reduce(0, +)
-        if usedBeforeSlack > available {
-            let correction = available / usedBeforeSlack
-            widths = widths.map { $0 * correction }
-        }
-        // Distribute any slack so the table fills the measure rather than
-        // hugging the left edge.
-        let used = widths.reduce(0, +)
-        if used < available, total > 0 {
-            let slack = available - used
-            for i in widths.indices { widths[i] += slack * (natural[i] / total) }
-        } else if total == 0 {
+        let floor = min(28, available / CGFloat(columns))
+        var widths = minimums.map { max(floor, $0) }
+        let minimumTotal = widths.reduce(0, +)
+        if minimumTotal > available {
+            let correction = available / minimumTotal
+            widths = widths.map { max(1, $0 * correction) }
+        } else if natural.reduce(0, +) > 0 {
+            // Give remaining space only to columns that can use it. This keeps
+            // a compact label column intact beside a long prose column.
+            var remaining = available - minimumTotal
+            var unmet = natural.indices.map { max(0, natural[$0] - widths[$0]) }
+            while remaining > 0.5 {
+                let demand = unmet.reduce(0, +)
+                guard demand > 0.5 else { break }
+                let budget = remaining
+                for index in widths.indices where unmet[index] > 0 {
+                    let addition = min(unmet[index], budget * (unmet[index] / demand))
+                    widths[index] += addition
+                    unmet[index] -= addition
+                    remaining -= addition
+                }
+            }
+            if remaining > 0.5 {
+                let share = remaining / CGFloat(columns)
+                widths = widths.map { $0 + share }
+            }
+        } else {
             widths = [CGFloat](repeating: available / CGFloat(columns), count: columns)
         }
 
@@ -83,7 +160,7 @@ struct TableLayout {
         for row in data.rows {
             var lines: CGFloat = 1
             for (index, cell) in row.cells.enumerated() where index < widths.count {
-                let value = substring(storage, cell.contentRange)
+                let value = TableCellPresentation.plainText(for: cell, in: storage)
                 let font = row.isHeader
                     ? style.emphasisFont(bold: true, italic: false).withSize(style.bodyFont().pointSize * 0.85)
                     : style.bodyFont()
@@ -100,11 +177,6 @@ struct TableLayout {
         return TableLayout(columnX: xs, columnWidths: widths, alignments: alignments,
                            rowHeights: rowHeights,
                            totalWidth: min(width, max(0, cursor - RenderMetrics.tableColumnGap)))
-    }
-
-    private static func substring(_ storage: NSAttributedString, _ range: NSRange) -> String {
-        guard range.length > 0, range.upperBound <= storage.length else { return "" }
-        return storage.attributedSubstring(from: range).string
     }
 
     private static func isNumeric(_ text: String) -> Bool {
@@ -190,7 +262,12 @@ final class TableRowFragment: DownrightFragment {
         }
 
         for (index, cell) in row.cells.enumerated() where index < layout.columnX.count {
-            let source = attributedSource(cell.contentRange)
+            let source: NSAttributedString
+            if let storage = context?.storage {
+                source = TableCellPresentation.attributedContent(for: cell, in: storage)
+            } else {
+                source = NSAttributedString()
+            }
             let text = NSMutableAttributedString(attributedString: row.isHeader
                 ? NSAttributedString(string: source.string.uppercased(), attributes: source.length > 0 ? source.attributes(at: 0, effectiveRange: nil) : [:])
                 : source)

@@ -17,7 +17,7 @@ final class DensityGutterPreviewWindow: NSWindow {
 
     private let content: PreviewContentView
     private let maximumWidth: CGFloat = 320
-    private let entranceDuration: TimeInterval = 0.06
+    private let entranceDuration: TimeInterval = 0.10
     private let exitDuration: TimeInterval = 0.08
     private var presentationGeneration = 0
 
@@ -64,7 +64,11 @@ final class DensityGutterPreviewWindow: NSWindow {
             ? frame.size
             : content.fittingSize(maxWidth: maximumWidth)
 
-        var origin = NSPoint(x: anchor.x + 8, y: anchor.y - size.height / 2)
+        let opensInward = anchor.x > parent.frame.midX
+        var origin = NSPoint(
+            x: opensInward ? anchor.x - size.width - 8 : anchor.x + 8,
+            y: anchor.y - size.height / 2
+        )
         if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = min(max(visible.minX + 4, origin.x), visible.maxX - size.width - 4)
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
@@ -77,12 +81,19 @@ final class DensityGutterPreviewWindow: NSWindow {
             // behind the rail; entrance and exit carry the intentional motion.
             alphaValue = 1
             setFrame(finalFrame, display: true)
-            if titleChanged { content.animateContentChange(reduceMotion: reduceMotion) }
+            if titleChanged {
+                content.animateContentChange(reduceMotion: reduceMotion)
+                content.staggerSnippetReveal(reduceMotion: reduceMotion)
+            }
             content.needsDisplay = true
             return
         }
 
-        let entranceFrame = finalFrame.offsetBy(dx: reduceMotion ? 0 : -4, dy: 0)
+        // Rise ~4pt while fading in — card lifts toward the mark.
+        let entranceFrame = finalFrame.offsetBy(
+            dx: reduceMotion ? 0 : (opensInward ? 4 : -4),
+            dy: reduceMotion ? 0 : -4
+        )
         setFrame(entranceFrame, display: true)
 
         guard self.parent !== parent || !isVisible else {
@@ -92,11 +103,16 @@ final class DensityGutterPreviewWindow: NSWindow {
         parent.addChildWindow(self, ordered: .above)
         alphaValue = reduceMotion ? 1 : 0
         orderFront(nil)
-        guard !reduceMotion else { return }
+        content.prepareSnippetStagger(reduceMotion: reduceMotion)
+        guard !reduceMotion else {
+            content.revealSnippetImmediately()
+            return
+        }
         GutterChrome.animate(reduceMotion: false, duration: entranceDuration) { _ in
             self.animator().alphaValue = 1
             self.animator().setFrame(finalFrame, display: true)
         }
+        content.staggerSnippetReveal(reduceMotion: false)
     }
 
     func hide() {
@@ -109,6 +125,7 @@ final class DensityGutterPreviewWindow: NSWindow {
             parent?.removeChildWindow(self)
             orderOut(nil)
             alphaValue = 1
+            content.revealSnippetImmediately()
             return
         }
 
@@ -123,6 +140,7 @@ final class DensityGutterPreviewWindow: NSWindow {
             self.parent?.removeChildWindow(self)
             self.orderOut(nil)
             self.alphaValue = 1
+            self.content.revealSnippetImmediately()
         })
     }
 
@@ -141,7 +159,9 @@ private final class PreviewContentView: NSView {
     var styleSheet: StyleSheet {
         didSet {
             layer?.backgroundColor = styleSheet.surface.withAlphaComponent(0.96).cgColor
-            cached = nil
+            cachedTitle = nil
+            cachedSnippet = nil
+            cachedFooter = nil
             needsDisplay = true
         }
     }
@@ -149,11 +169,16 @@ private final class PreviewContentView: NSView {
     private var title = ""
     private var snippet = ""
     private var footer = ""
-    private var cached: NSAttributedString?
+    private var cachedTitle: NSAttributedString?
+    private var cachedSnippet: NSAttributedString?
+    private var cachedFooter: NSAttributedString?
     private let padding: CGFloat = 9
     /// Enough to recognise the section, not enough to read it here.
     private let snippetLimit = 220
     private var trackingArea: NSTrackingArea?
+    private var snippetAlpha: CGFloat = 1
+    private var snippetRevealWork: DispatchWorkItem?
+    private var staggerGeneration = 0
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
@@ -191,7 +216,9 @@ private final class PreviewContentView: NSView {
         self.title = title
         self.snippet = snippet
         self.footer = footer
-        cached = nil
+        cachedTitle = nil
+        cachedSnippet = nil
+        cachedFooter = nil
         needsDisplay = true
         return titleChanged
     }
@@ -205,8 +232,75 @@ private final class PreviewContentView: NSView {
         layer.add(transition, forKey: "preview-content-change")
     }
 
+    /// Title paints immediately; snippet waits a beat on entrance / section change.
+    func prepareSnippetStagger(reduceMotion: Bool) {
+        snippetRevealWork?.cancel()
+        if reduceMotion || snippet.isEmpty {
+            snippetAlpha = 1
+        } else {
+            snippetAlpha = 0
+        }
+        needsDisplay = true
+    }
+
+    func staggerSnippetReveal(reduceMotion: Bool) {
+        snippetRevealWork?.cancel()
+        staggerGeneration &+= 1
+        let generation = staggerGeneration
+        guard !reduceMotion, !snippet.isEmpty else {
+            snippetAlpha = 1
+            needsDisplay = true
+            return
+        }
+        snippetAlpha = 0
+        needsDisplay = true
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.staggerGeneration == generation else { return }
+            self.animateSnippetAlpha(to: 1, generation: generation)
+        }
+        snippetRevealWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.previewStagger, execute: work)
+    }
+
+    func revealSnippetImmediately() {
+        snippetRevealWork?.cancel()
+        snippetRevealWork = nil
+        staggerGeneration &+= 1
+        snippetAlpha = 1
+        needsDisplay = true
+    }
+
+    /// Stagger steps are dispatched as anonymous work items and are not
+    /// cancellable, so each one re-checks the generation it belongs to.  A
+    /// hide / re-show (which bumps `staggerGeneration`) then cannot be
+    /// overwritten by an in-flight fade from an earlier section.
+    private func animateSnippetAlpha(to target: CGFloat, generation: Int) {
+        let steps = 6
+        let start = snippetAlpha
+        let delta = target - start
+        guard abs(delta) > 0.01 else {
+            snippetAlpha = target
+            needsDisplay = true
+            return
+        }
+        for step in 1...steps {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.staggerGeneration == generation else { return }
+                let t = CGFloat(step) / CGFloat(steps)
+                // Ease-out.
+                let eased = 1 - (1 - t) * (1 - t)
+                self.snippetAlpha = start + delta * eased
+                self.needsDisplay = true
+            }
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.018 * Double(step),
+                execute: work
+            )
+        }
+    }
+
     func fittingSize(maxWidth: CGFloat) -> NSSize {
-        let text = attributed()
+        let text = combinedAttributed(snippetAlpha: 1)
         let bounds = text.boundingRect(
             with: NSSize(width: maxWidth - padding * 2, height: 400),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -214,42 +308,72 @@ private final class PreviewContentView: NSView {
         return NSSize(width: maxWidth, height: min(140, ceil(bounds.height) + padding * 2))
     }
 
-    private func attributed() -> NSAttributedString {
-        if let cached { return cached }
-
+    private func titleAttributed() -> NSAttributedString {
+        if let cachedTitle { return cachedTitle }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.lineSpacing = 2
-
-        let result = NSMutableAttributedString(string: title, attributes: [
+        let value = NSAttributedString(string: title, attributes: [
             .font: GutterChrome.titleFont,
             .foregroundColor: styleSheet.text,
             .paragraphStyle: paragraph,
         ])
+        cachedTitle = value
+        return value
+    }
 
-        if !snippet.isEmpty {
-            var body = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
-            if body.count > snippetLimit { body = String(body.prefix(snippetLimit)) + "…" }
-            // The snippet is document text, so it borrows the theme's body face
-            // at panel size rather than the system font (§11.1).
-            let face = NSFont(descriptor: styleSheet.bodyFont().fontDescriptor, size: 12)
-                ?? NSFont.systemFont(ofSize: 12)
-            result.append(NSAttributedString(string: "\n" + body, attributes: [
-                .font: face,
-                .foregroundColor: styleSheet.textSecondary,
-                .paragraphStyle: paragraph,
-            ]))
-        }
+    private func snippetAttributed() -> NSAttributedString {
+        if let cachedSnippet { return cachedSnippet }
+        var body = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.count > snippetLimit { body = String(body.prefix(snippetLimit)) + "…" }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = 2
+        let face = NSFont(descriptor: styleSheet.bodyFont().fontDescriptor, size: 12)
+            ?? NSFont.systemFont(ofSize: 12)
+        let value = NSAttributedString(string: body.isEmpty ? "" : "\n" + body, attributes: [
+            .font: face,
+            .foregroundColor: styleSheet.textSecondary,
+            .paragraphStyle: paragraph,
+        ])
+        cachedSnippet = value
+        return value
+    }
 
-        if !footer.isEmpty {
-            result.append(NSAttributedString(string: "\n" + footer, attributes: [
+    private func footerAttributed() -> NSAttributedString {
+        if let cachedFooter { return cachedFooter }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = 2
+        let value = NSAttributedString(
+            string: footer.isEmpty ? "" : "\n" + footer,
+            attributes: [
                 .font: GutterChrome.bodyFont,
                 .foregroundColor: styleSheet.textFaint,
                 .paragraphStyle: paragraph,
-            ]))
-        }
+            ]
+        )
+        cachedFooter = value
+        return value
+    }
 
-        cached = result
+    private func combinedAttributed(snippetAlpha: CGFloat) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: titleAttributed())
+        if !snippet.isEmpty {
+            let snippet = NSMutableAttributedString(attributedString: snippetAttributed())
+            let color = styleSheet.textSecondary.withAlphaComponent(
+                styleSheet.textSecondary.alphaComponent * snippetAlpha
+            )
+            snippet.addAttribute(
+                .foregroundColor,
+                value: color,
+                range: NSRange(location: 0, length: snippet.length)
+            )
+            result.append(snippet)
+        }
+        if !footer.isEmpty {
+            result.append(footerAttributed())
+        }
         return result
     }
 
@@ -263,7 +387,7 @@ private final class PreviewContentView: NSView {
         path.lineWidth = 1
         path.stroke()
 
-        attributed().draw(
+        combinedAttributed(snippetAlpha: snippetAlpha).draw(
             with: bounds.insetBy(dx: padding, dy: padding),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
@@ -271,7 +395,9 @@ private final class PreviewContentView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        cached = nil
+        cachedTitle = nil
+        cachedSnippet = nil
+        cachedFooter = nil
         needsDisplay = true
     }
 }

@@ -178,8 +178,8 @@ final class MarkdownDocument: NSObject {
             defer { watcher?.acknowledgeOwnWrite() }
             try DocumentIO.write(text, to: url, fidelity: fidelity)
 
-        diskHash = DocumentIO.contentHash(text)
-        SnapshotStore.shared.record(text, for: url, kind: .local)
+            diskHash = DocumentIO.contentHash(text)
+            SnapshotStore.shared.record(text, for: url, kind: .local)
             setDirty(false)
             persistState()
         } catch {

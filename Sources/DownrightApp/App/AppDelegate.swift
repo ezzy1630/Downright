@@ -2,6 +2,13 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+enum DocumentOpenDisposition {
+    /// Join the active document window's native tab group when one exists.
+    case tab
+    /// Keep the document in a separate window.
+    case window
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [DocumentWindowController] = []
@@ -104,7 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @discardableResult
-    func open(_ url: URL, mode: RenderMode? = nil) -> DocumentWindowController? {
+    func open(
+        _ url: URL,
+        mode: RenderMode? = nil,
+        disposition: DocumentOpenDisposition = .tab,
+        tabbingWith explicitHost: NSWindow? = nil
+    ) -> DocumentWindowController? {
         // One window per file: reopening a file you already have open should
         // raise it, not give you two buffers over the same bytes.
         if let existing = windowControllers.first(where: {
@@ -117,6 +129,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return existing
         }
 
+        let tabHost: NSWindow? = switch disposition {
+        case .tab:
+            explicitHost ?? activeDocumentWindow
+        case .window:
+            nil
+        }
         let controller = DocumentWindowController()
         do {
             try controller.open(url, mode: mode ?? launchMode ?? Preferences.shared.values.defaultMode)
@@ -131,8 +149,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SpotlightIndexer.indexOpenedDocument(at: url)
         dismissStartWindow()
         controller.showWindow(nil)
+        if let tabHost, let window = controller.window, tabHost !== window {
+            tabHost.addTabbedWindow(window, ordered: .above)
+        }
         controller.window?.makeKeyAndOrderFront(nil)
         return controller
+    }
+
+    private var activeDocumentWindow: NSWindow? {
+        if let key = NSApp.keyWindow,
+           windowControllers.contains(where: { $0.window === key }) {
+            return key
+        }
+        return windowControllers.compactMap(\.window).last(where: \.isVisible)
     }
 
     func adopt(_ controller: DocumentWindowController) {
@@ -199,15 +228,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var path: String
         var frame: String
         var mode: String
+        var tabGroup: Int?
+        var tabOrder: Int?
+        var selectedTab: Bool?
     }
 
     private func saveSession() {
+        var groupIDs: [ObjectIdentifier: Int] = [:]
+        var nextGroupID = 0
         let windows = windowControllers.compactMap { controller -> SessionWindow? in
             guard let url = controller.markdownDocument.url, let frame = controller.window?.frame else { return nil }
+            let groupID: Int?
+            let tabOrder: Int?
+            let selected: Bool?
+            if let group = controller.window?.tabGroup {
+                let identity = ObjectIdentifier(group)
+                if groupIDs[identity] == nil {
+                    groupIDs[identity] = nextGroupID
+                    nextGroupID += 1
+                }
+                groupID = groupIDs[identity]
+                tabOrder = controller.window.flatMap { group.windows.firstIndex(of: $0) }
+                selected = group.selectedWindow === controller.window
+            } else {
+                groupID = nil
+                tabOrder = nil
+                selected = nil
+            }
             return SessionWindow(
                 path: url.path,
                 frame: NSStringFromRect(frame),
-                mode: controller.mode.rawValue
+                mode: controller.mode.rawValue,
+                tabGroup: groupID,
+                tabOrder: tabOrder,
+                selectedTab: selected
             )
         }
         guard let data = try? JSONEncoder().encode(windows) else { return }
@@ -225,12 +279,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else { return false }
 
         var restored = 0
-        for entry in windows {
+        var groupHosts: [Int: NSWindow] = [:]
+        var selectedWindows: [NSWindow] = []
+        let ordered = windows.sorted {
+            if $0.tabGroup != $1.tabGroup {
+                return ($0.tabGroup ?? Int.max) < ($1.tabGroup ?? Int.max)
+            }
+            return ($0.tabOrder ?? 0) < ($1.tabOrder ?? 0)
+        }
+        for entry in ordered {
             let url = URL(fileURLWithPath: entry.path)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            guard let controller = open(url, mode: RenderMode(rawValue: entry.mode)) else { continue }
+            let host = entry.tabGroup.flatMap { groupHosts[$0] }
+            guard let controller = open(
+                url,
+                mode: RenderMode(rawValue: entry.mode),
+                disposition: host == nil ? .window : .tab,
+                tabbingWith: host
+            ) else { continue }
             controller.window?.setFrame(NSRectFromString(entry.frame), display: true)
+            if let group = entry.tabGroup, groupHosts[group] == nil, let window = controller.window {
+                groupHosts[group] = window
+            }
+            if entry.selectedTab == true, let window = controller.window {
+                selectedWindows.append(window)
+            }
             restored += 1
+        }
+        for window in selectedWindows {
+            window.tabGroup?.selectedWindow = window
         }
         return restored > 0
     }

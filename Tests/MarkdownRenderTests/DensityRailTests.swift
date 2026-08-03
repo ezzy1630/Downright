@@ -15,7 +15,19 @@ struct DensityRailTests {
         #expect(DensityGutterView.previewExitDelay == 0.06)
         #expect(DensityGutterView.proximityRadius == 36)
         #expect(DensityGutterView.magneticPull == 1.5)
+        #expect(DensityGutterView.scrubVelocityPull == 2.0)
         #expect(DensityGutterView.stackCompression == 0.08)
+        #expect(DensityGutterView.breatheScale == 1.08)
+        #expect(DensityGutterView.neighborhoodDim == 0.82)
+        #expect(DensityGutterView.shortDocMarkGap == 18)
+        #expect(DensityGutterView.shortDocThreshold == 3)
+        #expect(DensityGutterView.jumpPunchBoost == 4)
+        #expect(Motion.hoverGrow == 0.08)
+        #expect(Motion.hoverShrink == 0.18)
+        #expect(Motion.settle == 0.20)
+        #expect(Motion.jumpPunch == 0.14)
+        #expect(Motion.breathe == 0.12)
+        #expect(Motion.previewStagger == 0.04)
         #expect(DensityOutlineWindow.rowHeight == 44)
         #expect(DensityOutlineWindow.cornerRadius == 14)
         #expect(DensityOutlineWindow.showDwell == 0.25)
@@ -77,6 +89,32 @@ struct DensityRailTests {
         #expect(DensityGutterView.headingMarkWidth(level: 2) == 20)
         #expect(DensityGutterView.headingMarkWidth(level: 3) == 14)
         #expect(DensityGutterView.headingMarkWidth(level: 4) == 10)
+        #expect(DensityGutterView.headingMarkWidth(level: 1, emphasized: true) == 30)
+        #expect(DensityGutterView.headingMarkWidth(level: 2, emphasized: true) == 26)
+        #expect(DensityGutterView.headingMarkWidth(level: 3, emphasized: true) == 20)
+        #expect(DensityGutterView.headingMarkWidth(level: 4, emphasized: true) == 14)
+    }
+
+    @Test("Neighbourhood dim softens distant marks under hover")
+    func neighborhoodDimPolicy() {
+        #expect(DensityGutterView.neighborhoodFactor(index: 2, hoveredIndex: nil) == 1)
+        #expect(DensityGutterView.neighborhoodFactor(index: 2, hoveredIndex: 2) == 1)
+        #expect(DensityGutterView.neighborhoodFactor(index: 3, hoveredIndex: 2) == 0.92)
+        #expect(DensityGutterView.neighborhoodFactor(index: 5, hoveredIndex: 2) == 0.82)
+    }
+
+    @Test("Short documents use a wider resting gap")
+    func shortDocumentSpacing() {
+        #expect(DensityGutterView.restingMarkGap(count: 1) == 18)
+        #expect(DensityGutterView.restingMarkGap(count: 2) == 18)
+        #expect(DensityGutterView.restingMarkGap(count: 3) == 10)
+        #expect(DensityGutterView.restingMarkGap(count: 8) == 10)
+
+        let short = DensityGutterView.centeredBandYPositions(
+            height: 800, count: 2, markGap: DensityGutterView.restingMarkGap(count: 2)
+        )
+        let dense = DensityGutterView.centeredBandYPositions(height: 800, count: 2, markGap: 10)
+        #expect(short[1] - short[0] > dense[1] - dense[0])
     }
 
     @Test("Stack compression tightens gaps near the pointer")

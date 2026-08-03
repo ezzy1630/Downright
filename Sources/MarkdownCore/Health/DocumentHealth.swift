@@ -496,7 +496,9 @@ private struct HealthPass {
 
     private func sentenceRanges(in range: NSRange) -> [NSRange] {
         let value = source.substring(with: range) as NSString
-        let regex = try! NSRegularExpression(pattern: #"[^.!?]+(?:[.!?]+|$)"#)
+        // A static pattern here is effectively constant, but a crash on a
+        // future edit would take the whole health pass down with it.
+        guard let regex = try? NSRegularExpression(pattern: #"[^.!?]+(?:[.!?]+|$)"#) else { return [] }
         return regex.matches(in: value as String, range: NSRange(location: 0, length: value.length)).map {
             NSRange(location: range.location + $0.range.location, length: $0.range.length)
         }
@@ -515,7 +517,7 @@ private struct HealthPass {
 
     private func matches(_ pattern: String, in value: String? = nil) -> [Match] {
         let string = value ?? (source as String)
-        let regex = try! NSRegularExpression(pattern: pattern)
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         return regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)).map { result in
             let captures = (1..<result.numberOfRanges).map { result.range(at: $0) }
             return Match(range: result.range, captures: captures)

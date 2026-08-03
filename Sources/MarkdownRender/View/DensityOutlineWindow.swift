@@ -33,6 +33,7 @@ final class DensityOutlineWindow: NSPanel, NSTableViewDataSource, NSTableViewDel
     private let scroll = NSScrollView()
     private let backdrop: OutlineBackdrop
     private var presentedFrame = NSRect.zero
+    private var presentedOpensInward = false
     private var dismissGeneration = 0
 
     init(styleSheet: StyleSheet) {
@@ -94,7 +95,11 @@ final class DensityOutlineWindow: NSPanel, NSTableViewDataSource, NSTableViewDel
             let windowPoint = rail.convert(local, to: nil)
             return parent.convertToScreen(NSRect(origin: windowPoint, size: .zero)).midY
         }()
-        var origin = NSPoint(x: railScreen.maxX + 8, y: focusY - size.height / 2)
+        let opensInward = railScreen.midX > parent.frame.midX
+        var origin = NSPoint(
+            x: opensInward ? railScreen.minX - size.width - 8 : railScreen.maxX + 8,
+            y: focusY - size.height / 2
+        )
         if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = max(visible.minX + 4, origin.x)
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
@@ -102,7 +107,14 @@ final class DensityOutlineWindow: NSPanel, NSTableViewDataSource, NSTableViewDel
         let finalFrame = NSRect(origin: origin, size: size)
         dismissGeneration += 1
         presentedFrame = finalFrame
-        setFrame(finalFrame.offsetBy(dx: styleSheet.reduceMotion ? 0 : 4, dy: 0), display: true)
+        presentedOpensInward = opensInward
+        setFrame(
+            finalFrame.offsetBy(
+                dx: styleSheet.reduceMotion ? 0 : (opensInward ? 4 : -4),
+                dy: 0
+            ),
+            display: true
+        )
         if self.parent !== parent { parent.addChildWindow(self, ordered: .above) }
         alphaValue = styleSheet.reduceMotion ? 1 : 0
         orderFront(nil)
@@ -135,7 +147,10 @@ final class DensityOutlineWindow: NSPanel, NSTableViewDataSource, NSTableViewDel
         let frame = frame
         GutterChrome.animate(reduceMotion: false, duration: Self.hideDuration) { _ in
             self.animator().alphaValue = 0
-            self.animator().setFrame(frame.offsetBy(dx: 4, dy: 0), display: true)
+            self.animator().setFrame(
+                frame.offsetBy(dx: self.presentedOpensInward ? 4 : -4, dy: 0),
+                display: true
+            )
         } completion: {
             remove()
         }

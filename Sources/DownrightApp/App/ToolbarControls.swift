@@ -75,10 +75,13 @@ enum ToolbarScrubPhase {
 @MainActor
 final class ToolbarDocumentIdentityView: NSView {
     private enum Metrics {
-        static let width: CGFloat = 214
-        static let height: CGFloat = 36
-        static let proxySize: CGFloat = 14
+        static let width: CGFloat = 220
+        static let height: CGFloat = 32
+        static let proxySize: CGFloat = 16
         static let dirtySize: CGFloat = 6
+        static let titleSize: CGFloat = 12
+        static let contextSize: CGFloat = 10
+        static let lineGap: CGFloat = 1
     }
 
     private weak var hostWindow: NSWindow?
@@ -87,6 +90,7 @@ final class ToolbarDocumentIdentityView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let contextLabel = NSTextField(labelWithString: "")
     private let titleRow = NSStackView()
+    private let textColumn = NSStackView()
     private var titleObservation: NSKeyValueObservation?
     private var subtitleObservation: NSKeyValueObservation?
     private var editedObservation: NSKeyValueObservation?
@@ -116,7 +120,7 @@ final class ToolbarDocumentIdentityView: NSView {
         proxyButton.image = NSImage(
             systemSymbolName: "doc.text",
             accessibilityDescription: "Document path"
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium))
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
         proxyButton.imagePosition = .imageOnly
         proxyButton.imageScaling = .scaleProportionallyDown
         proxyButton.isBordered = false
@@ -137,13 +141,15 @@ final class ToolbarDocumentIdentityView: NSView {
 
         titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.maximumNumberOfLines = 1
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: Metrics.titleSize, weight: .semibold)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         contextLabel.lineBreakMode = .byTruncatingMiddle
         contextLabel.maximumNumberOfLines = 1
-        contextLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
+        contextLabel.font = .systemFont(ofSize: Metrics.contextSize, weight: .medium)
         contextLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        contextLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
@@ -152,33 +158,33 @@ final class ToolbarDocumentIdentityView: NSView {
         titleRow.addArrangedSubview(dirtyDot)
         titleRow.addArrangedSubview(titleLabel)
 
+        textColumn.orientation = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = Metrics.lineGap
+        textColumn.addArrangedSubview(titleRow)
+        textColumn.addArrangedSubview(contextLabel)
+
         proxyButton.translatesAutoresizingMaskIntoConstraints = false
-        titleRow.translatesAutoresizingMaskIntoConstraints = false
-        contextLabel.translatesAutoresizingMaskIntoConstraints = false
+        textColumn.translatesAutoresizingMaskIntoConstraints = false
         dirtyDot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(proxyButton)
-        addSubview(titleRow)
-        addSubview(contextLabel)
+        addSubview(textColumn)
 
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         NSLayoutConstraint.activate([
             proxyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-            proxyButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
-            proxyButton.widthAnchor.constraint(equalToConstant: Metrics.proxySize + 4),
-            proxyButton.heightAnchor.constraint(equalToConstant: Metrics.proxySize + 4),
+            proxyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            proxyButton.widthAnchor.constraint(equalToConstant: Metrics.proxySize + 2),
+            proxyButton.heightAnchor.constraint(equalToConstant: Metrics.proxySize + 2),
 
             dirtyDot.widthAnchor.constraint(equalToConstant: Metrics.dirtySize),
             dirtyDot.heightAnchor.constraint(equalToConstant: Metrics.dirtySize),
 
-            titleRow.leadingAnchor.constraint(equalTo: proxyButton.trailingAnchor, constant: 4),
-            titleRow.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            titleRow.centerYAnchor.constraint(equalTo: proxyButton.centerYAnchor),
-
-            contextLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            contextLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            contextLabel.topAnchor.constraint(equalTo: titleRow.bottomAnchor, constant: -1),
+            textColumn.leadingAnchor.constraint(equalTo: proxyButton.trailingAnchor, constant: 5),
+            textColumn.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            textColumn.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
         titleObservation = window.observe(\.title, options: [.initial, .new]) { [weak self] window, _ in
@@ -201,6 +207,13 @@ final class ToolbarDocumentIdentityView: NSView {
     required init?(coder: NSCoder) { nil }
 
     deinit {
+        // The observations retain the window they observe and their closures
+        // capture it strongly.  Without invalidating them here, closing the
+        // document window leaves the whole toolbar chain — window, toolbar,
+        // item, this view — alive in a retain cycle.
+        titleObservation?.invalidate()
+        subtitleObservation?.invalidate()
+        editedObservation?.invalidate()
         for observer in activationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -320,11 +333,7 @@ final class ToolbarPresentationControl: NSView {
     let performHapticFeedback: () -> Void
 
     override var intrinsicContentSize: NSSize {
-        isHidden ? .zero : NSSize(width: Metrics.width, height: Metrics.height)
-    }
-
-    override var isHidden: Bool {
-        didSet { invalidateIntrinsicContentSize() }
+        NSSize(width: Metrics.width, height: Metrics.height)
     }
 
     var segmentTitles: [String] {

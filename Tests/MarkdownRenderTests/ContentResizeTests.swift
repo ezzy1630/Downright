@@ -62,19 +62,40 @@ struct ContentResizeTests {
         #expect(view.pendingResizeRequestForTesting == .lineCount)
     }
 
-    @Test("mode switches do not force layout in the property setter")
-    func modeSwitchUsesDeferredViewportPath() {
-        let source = "# Heading\n\nText"
-        let storage = NSTextStorage(string: source)
-        let view = MarkdownTextView(
-            frame: NSRect(x: 0, y: 0, width: 640, height: 400), storage: storage)
-        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+    /// Typing at the very end of a document used to grow the document view by
+    /// a viewport fraction on every semantic repair, then shrink it back on the
+    /// next document-scope pass — clamping the clip view and dropping the whole
+    /// page on each keystroke.  The repair must stay content-anchored so the
+    /// frame settles and the caret never moves under the user.
+    @Test("typing at the document's end does not grow the frame into empty space")
+    func semanticRepairStaysContentAnchoredAtTheBottom() async throws {
+        let text = "# Heading\n\nA short document.\n\nEnd."
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+        let settledHeight = container.textView.frame.height
 
-        view.mode = .source
+        // Pin the clip to the bottom, as AppKit does when the caret lands at
+        // the end of the document.
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: max(0, settledHeight - clip.bounds.height)))
+        container.scrollView.reflectScrolledClipView(clip)
 
-        #expect(view.pendingResizeRequestForTesting == .viewport)
+        // Two keystroke parse commits while pinned to the bottom.
+        for _ in 0..<2 {
+            container.textView.update(
+                document: MarkdownParser.parse(text),
+                dirty: DirtySet(
+                    ranges: [NSRange(location: (text as NSString).length - 1, length: 1)],
+                    isWholesale: false))
+            try await Task.sleep(for: .milliseconds(160))
+        }
+        #expect(container.textView.frame.height <= settledHeight + 0.5)
     }
-}
+
     @Test("local typing keeps the viewport pixel-stable across parse commit")
     func localTypingDoesNotRescrollTheDocument() async throws {
         let paragraph = "A paragraph with enough words to form a stable line of document text."
@@ -106,3 +127,52 @@ struct ContentResizeTests {
         #expect(abs(clip.bounds.origin.y - originAfterKeystroke.y) < 0.5)
         #expect(abs(clip.bounds.origin.x - originAfterKeystroke.x) < 0.5)
     }
+
+    /// A stale over-tall frame (from an earlier estimate or a shrunk document)
+    /// must not shrink while the viewport is pinned to the bottom, or the clip
+    /// clamps and the whole page drops.  Once the user scrolls away from the
+    /// edge, the frame settles.
+    @Test("frame shrink is deferred while the viewport sits at the bottom")
+    func shrinkIsDeferredAtTheBottom() throws {
+        let text = "# Heading\n\nShort."
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+        let trueHeight = container.textView.frame.height
+
+        // Over-tall frame with the viewport pinned to its bottom.
+        container.textView.setFrameSize(
+            NSSize(width: container.textView.frame.width, height: trueHeight + 400))
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: container.textView.frame.height - clip.bounds.height))
+        container.scrollView.reflectScrolledClipView(clip)
+
+        container.textView.resizeToFitContent()
+        #expect(
+            container.textView.frame.height > trueHeight + 200,
+            "shrank while the viewport was pinned to the bottom"
+        )
+
+        // Scrolling away from the edge lets the frame settle.
+        clip.scroll(to: .zero)
+        container.scrollView.reflectScrolledClipView(clip)
+        container.textView.resizeToFitContent()
+        #expect(abs(container.textView.frame.height - trueHeight) < 1)
+    }
+
+    @Test("mode switches do not force layout in the property setter")
+    func modeSwitchUsesDeferredViewportPath() {
+        let source = "# Heading\n\nText"
+        let storage = NSTextStorage(string: source)
+        let view = MarkdownTextView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 400), storage: storage)
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+
+        view.mode = .source
+
+        #expect(view.pendingResizeRequestForTesting == .viewport)
+    }
+}

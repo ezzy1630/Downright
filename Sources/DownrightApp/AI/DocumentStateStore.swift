@@ -152,15 +152,34 @@ final class DocumentStateStore {
         guard let data = try? Data(contentsOf: recentsURL),
               let list = try? JSONDecoder.snapshotDecoder.decode([RecentDocument].self, from: data)
         else { return [] }
-        let liveDocuments = list.filter { fm.fileExists(atPath: $0.path) }
+        var seen = Set<String>()
+        let liveDocuments = list.compactMap { recent -> RecentDocument? in
+            let canonical = Self.canonicalPath(recent.path)
+            guard fm.fileExists(atPath: canonical) else { return nil }
+            guard seen.insert(canonical).inserted else { return nil }
+            var copy = recent
+            copy.path = canonical
+            return copy
+        }
         return Array(liveDocuments.sorted { $0.lastOpened > $1.lastOpened }.prefix(limit))
     }
 
+    /// Resolves a stored path the same way `AppDelegate.open` identifies a
+    /// window, so a file reached through a symlink is the same recent entry
+    /// everywhere instead of a duplicate.  Internal so tests can lock the
+    /// identity contract with `AppDelegate.open`.
+    static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
     func noteOpened(_ url: URL, document: ParsedDocument) {
-        var list = recents(limit: 200).filter { $0.path != url.path }
+        let canonical = Self.canonicalPath(url.path)
+        var list = recents(limit: 200).filter {
+            Self.canonicalPath($0.path) != canonical
+        }
         list.insert(
             RecentDocument(
-                path: url.path,
+                path: canonical,
                 displayName: url.deletingPathExtension().lastPathComponent,
                 firstHeading: document.headings.first?.title ?? "",
                 lastOpened: Date(),
