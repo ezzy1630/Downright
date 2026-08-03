@@ -77,6 +77,8 @@ final class DocumentWindowController: NSWindowController {
     private var discardChangesOnClose = false
     private var focusDimmingViews: [FocusDimmingView] = []
     private var isSynchronizingPanes = false
+    private var pendingInitialRestoreOffset: Int?
+    private var deferredInitialRestoreOffset: Int?
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     var breadcrumbHideWorkItem: DispatchWorkItem?
@@ -165,22 +167,74 @@ final class DocumentWindowController: NSWindowController {
         if markdownDocument.state.splitViewEnabled { toggleSplitView() }
         applyFocusMode(Preferences.shared.values.focusMode, animated: false)
 
-        // Restore reading position, then offer to jump to the first thing that
-        // changed while the app was closed (§8.2).
-        let restored = markdownDocument.restoredOffset()
+        // Paint a deterministic first frame. Apply a saved deep offset only
+        // after the document surface has had a chance to establish its TextKit
+        // viewport; restoring it during the first layout pass can otherwise
+        // produce a blank surface until the first user scroll.
+        pendingInitialRestoreOffset = 0
+        deferredInitialRestoreOffset = markdownDocument.restoredOffset()
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreInitialReadingPositionIfReady()
+        }
+    }
+
+    private func restoreInitialReadingPositionIfReady() {
+        guard let restored = pendingInitialRestoreOffset, window?.isVisible == true else { return }
+        pendingInitialRestoreOffset = nil
+
+        window?.layoutIfNeeded()
+        rootView.layoutSubtreeIfNeeded()
+        primaryContainer.layoutSubtreeIfNeeded()
+        primaryContainer.textView.resizeToFitContent()
+
+        // TextKit 2 can defer the first rendering surface when the initial
+        // bounds jump straight into a deep, restored section. Prime the
+        // document once at the top before applying the saved position. This
+        // stays off-screen, but makes the first visible frame deterministic.
+        primaryContainer.textView.scroll(toOffset: 0, position: .top, animated: false)
+        primaryContainer.textView.prepareForDisplay()
+        primaryContainer.textView.displayIfNeeded()
+        primaryContainer.textView.scroll(toOffset: restored, position: .top, animated: false)
+        primaryContainer.textView.prepareForDisplay()
+        primaryContainer.textView.needsDisplay = true
+        primaryContainer.scrollView.contentView.needsDisplay = true
+        updateBreadcrumbAndGutter()
+        breadcrumbHideWorkItem?.cancel()
+        breadcrumbView.alphaValue = 0
+
+        let selection = NSRange(
+            location: min(markdownDocument.state.selectionLocation, markdownDocument.storage.length),
+            length: 0
+        )
+        let available = markdownDocument.storage.length - selection.location
+        primaryContainer.textView.setSourceSelectedRanges([
+            NSRange(location: selection.location, length: min(markdownDocument.state.selectionLength, available))
+        ])
+        window?.makeFirstResponder(primaryContainer.textView)
+        if !markdownDocument.changes.isEmpty { presentUnreadChanges() }
+        dumpLayoutIfRequested()
+
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.primaryContainer.textView.scroll(toOffset: restored, position: .top, animated: false)
-            let selection = NSRange(
-                location: min(self.markdownDocument.state.selectionLocation, self.markdownDocument.storage.length),
-                length: 0
-            )
-            let available = self.markdownDocument.storage.length - selection.location
-            self.primaryContainer.textView.setSourceSelectedRanges([
-                NSRange(location: selection.location, length: min(self.markdownDocument.state.selectionLength, available))
-            ])
-            if !self.markdownDocument.changes.isEmpty { self.presentUnreadChanges() }
-            self.dumpLayoutIfRequested()
+            self.primaryContainer.textView.prepareForDisplay()
+            self.primaryContainer.textView.displayIfNeeded()
+            self.primaryContainer.scrollView.contentView.displayIfNeeded()
+        }
+
+        guard let deferred = deferredInitialRestoreOffset, deferred > 0 else { return }
+        deferredInitialRestoreOffset = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            self.window?.layoutIfNeeded()
+            self.primaryContainer.layoutSubtreeIfNeeded()
+            self.primaryContainer.textView.scroll(toOffset: deferred, position: .top, animated: false)
+            self.primaryContainer.textView.prepareForDisplay()
+            self.primaryContainer.textView.displayIfNeeded()
+            self.primaryContainer.scrollView.contentView.displayIfNeeded()
+            self.updateBreadcrumbAndGutter()
+            self.breadcrumbHideWorkItem?.cancel()
+            self.breadcrumbView.alphaValue = 0
         }
     }
 
@@ -263,10 +317,10 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.markdownDelegate = self
         primaryContainer.textView.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
-        // Keep the document map on the same surface as the text. It is narrow,
-        // non-scrolling chrome, so it cannot steal the text view's coordinate
-        // space or make the scrollbar carry two meanings.
-        primaryContainer.trailingAccessory = densityGutterView
+        // Keep the document map on the leading edge of the document surface.
+        // It reads as Contents there; on the trailing edge it looks like an
+        // unexplained second scrollbar.
+        primaryContainer.leadingAccessory = densityGutterView
 
         breadcrumbView.delegate = self
         breadcrumbView.styleSheet = activeStyleSheet
@@ -334,10 +388,11 @@ final class DocumentWindowController: NSWindowController {
         // Keep the document switch in the optical centre with explicit flexible
         // spaces. AppKit then owns hit testing and the layout stays stable when
         // a toolbar item is hidden or the window gets narrower.
-        let toolbar = NSToolbar(identifier: "DownrightToolbar.v5")
+        let toolbar = NSToolbar(identifier: "DownrightToolbar.v8")
         toolbar.delegate = self
-        toolbar.displayMode = .iconAndLabel
+        toolbar.displayMode = .iconOnly
         toolbar.sizeMode = .regular
+        toolbar.centeredItemIdentifier = Self.modeItem
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
         toolbar.isVisible = true
@@ -529,6 +584,9 @@ final class DocumentWindowController: NSWindowController {
     func refreshDensityBands() {
         let parsed = markdownDocument.parsed
         let source = containerTextView
+        let wordCount = markdownDocument.text.split(whereSeparator: { $0.isWhitespace }).count
+        let readMinutes = max(1, (wordCount + 199) / 200)
+        densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
         let changes = markdownDocument.changes.visibleMarks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
             for: parsed, changes: changes, searchHits: findSession.matches
@@ -1285,7 +1343,12 @@ final class DocumentWindowController: NSWindowController {
 
 extension DocumentWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
+        restoreInitialReadingPositionIfReady()
         refreshToolbarSelectionState()
+    }
+
+    func windowDidBecomeVisible(_ notification: Notification) {
+        restoreInitialReadingPositionIfReady()
     }
 
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {

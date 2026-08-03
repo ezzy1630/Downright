@@ -487,6 +487,34 @@ public final class MarkdownTextView: NSTextView {
         resizeToFitContent(layoutScope: .document)
     }
 
+    /// Resolves the restored viewport before the first frame is shown. TextKit
+    /// can have a correct document height while still holding the glyphs at a
+    /// deep restored offset lazily; the first keyboard scroll would otherwise
+    /// be the thing that makes them appear.
+    public func prepareForDisplay() {
+        guard let layoutManager = textLayoutManager else { return }
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        let origin = textContainerOrigin
+        let viewport = NSRect(
+            x: max(0, visible.minX - origin.x),
+            y: max(0, visible.minY - origin.y),
+            width: max(1, visible.width),
+            height: max(1, visible.height)
+        )
+        layoutManager.ensureLayout(for: viewport)
+        // NSTextView's TextKit 2 viewport controller owns the active fragment
+        // set. A bounds jump can update the clip view without asking that
+        // controller to lay out its new viewport; a native scroll gesture
+        // does both. Re-run it explicitly for programmatic restores.
+        layoutManager.textViewportLayoutController.layoutViewport()
+        setNeedsDisplay(visible)
+        // `displayIfNeeded()` may leave a freshly scrolled TextKit 2 surface
+        // pending when the view has not painted once at that offset yet.
+        // Force this small visible rect so programmatic restores behave like
+        // the first native scroll gesture.
+        display(visible)
+    }
+
     private enum ContentLayoutScope {
         case viewport
         case document
@@ -1203,7 +1231,11 @@ public final class MarkdownTextView: NSTextView {
                 completion: { scrollView.reflectScrolledClipView(clip) }
             )
         } else {
-            clip.setBoundsOrigin(target)
+            // Use the clip view's scrolling entry point instead of mutating
+            // bounds directly. AppKit forwards this through the TextKit 2
+            // viewport controller, which keeps lazily-rendered fragments in
+            // sync with a programmatic jump.
+            clip.scroll(to: target)
             scrollView.reflectScrolledClipView(clip)
         }
     }
@@ -1418,6 +1450,10 @@ public final class MarkdownTextView: NSTextView {
         if abs(previousWidth - width) > 0.5 {
             inlineCodeBandCache.removeAll(keepingCapacity: true)
             invisibleGlyphCache.removeAll(keepingCapacity: true)
+            // A responsive measure changes every fragment's wrapping and
+            // object frame. Invalidate the old TextKit 2 layout before a
+            // saved deep position asks it to paint lazily.
+            invalidateAllFragments()
             requestContentResize(.viewport)
         }
     }

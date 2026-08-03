@@ -4,10 +4,11 @@ import MarkdownCore
 /// The single view the app installs.
 ///
 /// Owns the scroll view, the text view, and the left gutter rail (§6.1a), and
-/// leaves two documented seams for the pieces other parts of the app add
-/// later: the density gutter on the trailing edge (§8.6) and the sticky
-/// breadcrumb pinned at the top (§5.1).  Neither is built here — this view
-/// only guarantees them a place to live and a layout that accounts for them.
+/// leaves three documented seams for the pieces other parts of the app add
+/// later: a contents map on the leading edge (§8.6), a trailing accessory, and
+/// the sticky breadcrumb pinned at the top (§5.1). Neither is built here —
+/// this view only guarantees them a place to live and a layout that accounts
+/// for them.
 public final class MarkdownContainerView: NSView {
 
     public let textView: MarkdownTextView
@@ -27,7 +28,20 @@ public final class MarkdownContainerView: NSView {
     /// Width reserved on the left for block markers in Live mode (§6.1a).
     public private(set) var gutterWidth: CGFloat = RenderMetrics.gutterWidth
 
-    /// Accessory installed on the right edge; the density gutter goes here.
+    /// Optional contents map. It sits at the leading edge so it reads as
+    /// navigation, not as a second scrollbar.
+    public var leadingAccessory: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let leadingAccessory {
+                leadingAccessory.translatesAutoresizingMaskIntoConstraints = true
+                addSubview(leadingAccessory, positioned: .above, relativeTo: nil)
+            }
+            needsLayout = true
+        }
+    }
+
+    /// Optional accessory installed on the right edge.
     public var trailingAccessory: NSView? {
         didSet {
             oldValue?.removeFromSuperview()
@@ -63,9 +77,11 @@ public final class MarkdownContainerView: NSView {
         super.init(frame: .zero)
 
         scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
+        // The contents map is the document's only persistent scroll affordance.
+        // Keep native scrolling and keyboard navigation, but remove the second
+        // thumb that otherwise reads as an unrelated right-hand sidebar.
+        scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
         // The text column's width is `layout()`'s decision; leaving the
         // automatic adjustment on silently discards the centring inset, and
         // the document view's autoresizing mask would stretch it to the clip
@@ -99,16 +115,20 @@ public final class MarkdownContainerView: NSView {
     public override func layout() {
         super.layout()
         let topHeight = topAccessory.map { $0.fittingSize.height > 0 ? $0.fittingSize.height : 28 } ?? 0
+        let leadingWidth = leadingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 24 } ?? 0
         let trailingWidth = trailingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 14 } ?? 0
+        let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
 
         let accessoryWidth = min(max(160, textView.styleSheet.measureWidth), max(160, bounds.width - 80))
         topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 8,
                                      width: accessoryWidth, height: topHeight)
+        leadingAccessory?.frame = NSRect(x: 0, y: 0,
+                                         width: leadingWidth, height: bounds.height)
         trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: 0,
                                           width: trailingWidth, height: bounds.height)
 
-        scrollView.frame = NSRect(x: 0, y: 0,
-                                  width: max(0, bounds.width - trailingWidth),
+        scrollView.frame = NSRect(x: leadingWidth, y: 0,
+                                  width: contentWidth,
                                   height: bounds.height)
 
         // The text column is centred in the measure (§11.1); the rail sits
@@ -132,7 +152,7 @@ public final class MarkdownContainerView: NSView {
             responsiveCharacters = renderedTarget
         }
         let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
-        let measure = min(preferredMeasure, max(240, scrollView.frame.width - RenderMetrics.revealSlack * 2))
+        let measure = min(preferredMeasure, max(240, contentWidth - RenderMetrics.revealSlack * 2))
         textView.applyResponsiveMeasure(measure)
         let textLeft = max(gutterWidth + RenderMetrics.revealSlack, (scrollView.frame.width - measure) / 2)
         let columnOrigin = textLeft - RenderMetrics.revealSlack

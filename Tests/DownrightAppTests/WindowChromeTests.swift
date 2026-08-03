@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct WindowChromeTests {
     @Test
-    func toolbarUsesNativeThreeZoneLayoutAndCentredModeControl() throws {
+    func toolbarUsesNativeQuietThreeZoneLayout() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }
         let toolbar = try #require(controller.window?.toolbar)
@@ -14,17 +14,16 @@ struct WindowChromeTests {
         #expect(controller.window?.isRestorable == false)
         #expect(controller.window?.delegate === controller)
         #expect(controller.window?.titlebarAppearsTransparent == false)
-        #expect(controller.primaryContainer.trailingAccessory === controller.densityGutterView)
-        #expect(toolbar.displayMode == .iconAndLabel)
-        #expect(toolbar.identifier == "DownrightToolbar.v5")
-        #expect(toolbar.centeredItemIdentifier == nil)
+        #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
+        #expect(controller.primaryContainer.trailingAccessory == nil)
+        #expect(toolbar.displayMode == .iconOnly)
+        #expect(toolbar.identifier == "DownrightToolbar.v8")
+        #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
-            "contents",
             flexibleSpace,
-            "presentation-mode",
+            "presentation-mode", "find", "overflow",
             flexibleSpace,
-            "find", "inspector", "overflow",
         ])
 
         let mode = try #require(
@@ -45,10 +44,8 @@ struct WindowChromeTests {
         #expect(mode.selectedSegment == 0)
 
         #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
-        let inspector = try #require(toolbar.items.first { $0.itemIdentifier.rawValue == "inspector" })
-        #expect(inspector.label == "Inspector")
-        #expect(inspector.image != nil)
-        #expect(inspector.action != nil)
+        #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "contents" })
+        #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
         let overflow = try #require(
             toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" } as? NSMenuToolbarItem
         )
@@ -126,14 +123,12 @@ struct WindowChromeTests {
         let controller = DocumentWindowController()
         defer { controller.close() }
         let toolbar = try #require(controller.window?.toolbar)
-        let inspector = try #require(toolbar.items.first { $0.itemIdentifier.rawValue == "inspector" })
+        #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
 
         controller.showInInspector(NSView(), section: .tasks)
-        #expect(inspector.isBordered)
         #expect(!controller.inspectorItem.isCollapsed)
 
         controller.closeInspector()
-        #expect(!inspector.isBordered)
         #expect(controller.inspectorItem.isCollapsed)
     }
 

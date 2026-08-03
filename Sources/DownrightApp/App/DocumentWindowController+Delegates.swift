@@ -406,7 +406,11 @@ extension DocumentWindowController: NavigationPanelViewDelegate {
 extension DocumentWindowController: DensityGutterDelegate {
     func densityGutter(_ gutter: DensityGutterView, didRequestScrollToFraction fraction: CGFloat) {
         let offset = Int(fraction * CGFloat(markdownDocument.parsed.length))
-        containerTextView.scroll(toOffset: offset, position: .top, animated: false)
+        containerTextView.scroll(
+            toOffset: offset,
+            position: .top,
+            animated: !gutter.isScrubbing
+        )
         updateBreadcrumbAndGutter()
     }
 

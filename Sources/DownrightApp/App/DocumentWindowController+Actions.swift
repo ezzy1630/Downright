@@ -241,24 +241,22 @@ enum CodeFileExtensions {
 
 // MARK: - Toolbar
 //
-// The toolbar has three stable zones: navigation at the leading edge, the
-// document/source presentation at the optical centre, and document tools at
-// the trailing edge. AppKit owns the chrome and all pointer states.
+// The toolbar has two stable zones: document/source presentation at the
+// optical centre and small document tools at the trailing edge. The always-
+// present prompt rail owns navigation; there is no duplicate Contents button.
 
 extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
-    private static let contentsItem = NSToolbarItem.Identifier("contents")
-    private static let modeItem = NSToolbarItem.Identifier("presentation-mode")
+    static let modeItem = NSToolbarItem.Identifier("presentation-mode")
     private static let findItem = NSToolbarItem.Identifier("find")
-    private static let inspectorToolbarItem = NSToolbarItem.Identifier("inspector")
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.contentsItem,
             .flexibleSpace,
             Self.modeItem,
+            Self.findItem,
+            Self.overflowItem,
             .flexibleSpace,
-            Self.findItem, Self.inspectorToolbarItem, Self.overflowItem,
         ]
     }
 
@@ -271,17 +269,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         switch identifier {
-        case Self.contentsItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Contents")
-            item.label = "Contents"
-            item.toolTip = "Contents (⌘⇧O)"
-            item.target = self
-            item.action = #selector(toolbarContents(_:))
-            item.isBordered = false
-            item.visibilityPriority = .high
-            return item
-
         case Self.modeItem:
             let control = NSSegmentedControl(
                 labels: ["Document", "Source"],
@@ -328,17 +315,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.visibilityPriority = .high
             return item
 
-        case Self.inspectorToolbarItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Inspector")
-            item.label = "Inspector"
-            item.toolTip = "Inspector — Tasks and History"
-            item.target = self
-            item.action = #selector(toolbarShowTasks(_:))
-            item.isBordered = false
-            item.visibilityPriority = .high
-            return item
-
         case Self.overflowItem:
             let item = NSMenuToolbarItem(itemIdentifier: identifier)
             item.label = "More"
@@ -370,8 +346,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         control.selectedSegment = isActive ? 1 : 0
     }
 
-    @objc private func toolbarContents(_ sender: Any?) { toggleOutlinePanel() }
-
     @objc private func toolbarFind(_ sender: Any?) {
         if findBar != nil || (inspectorHost?.selectedSection == .search && !inspectorItem.isCollapsed) {
             dismissFindBar()
@@ -396,7 +370,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         menu.delegate = self
         menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
         menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
-        menu.addItem(menuItem(title: "Close Inspector", symbol: "sidebar.right", action: #selector(closeInspectorFromMenu(_:))))
         menu.addItem(.separator())
         addCommands([.focusMode, .splitView, .pinWindow], to: menu)
 
@@ -421,8 +394,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         menu.addItem(exportItem)
         return menu
     }
-
-    @objc private func closeInspectorFromMenu(_ sender: Any?) { closeInspector() }
 
     private func addCommands(_ commands: [Command], to menu: NSMenu) {
         for command in commands {
@@ -451,17 +422,8 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
 
     func refreshToolbarSelectionState() {
         guard let toolbar = window?.toolbar else { return }
-        let navigationOpen = navigationPinned || navigationWindow != nil
-        toolbar.items.first(where: { $0.itemIdentifier == Self.contentsItem })?.isBordered = navigationOpen
-        let inspectorOpen = !inspectorItem.isCollapsed
-        toolbar.items.first(where: { $0.itemIdentifier == Self.inspectorToolbarItem })?.isBordered = inspectorOpen
         let searchOpen = findBar != nil
         toolbar.items.first(where: { $0.itemIdentifier == Self.findItem })?.isBordered = searchOpen
-
-        let progress = progressRing.progress
-        let progressText = progress.total == 0 ? "" : " — \(progress.done) of \(progress.total) tasks complete"
-        toolbar.items.first(where: { $0.itemIdentifier == Self.inspectorToolbarItem })?.toolTip =
-            "Inspector — Tasks and History\(progressText)"
         refreshSourceFocusToolbar()
     }
 
@@ -470,7 +432,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             switch item.title {
             case "Tasks": item.state = inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed ? .on : .off
             case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
-            case "Close Inspector": item.isEnabled = !inspectorItem.isCollapsed
             default: break
             }
         }

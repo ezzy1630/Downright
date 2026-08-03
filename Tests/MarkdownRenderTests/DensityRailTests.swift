@@ -8,6 +8,8 @@ import Testing
 struct DensityRailTests {
     @Test("Outline geometry and dwell policy stay on spec")
     func outlineGeometryAndTiming() {
+        #expect(DensityGutterView.width == 80)
+        #expect(DensityGutterView.hoverDwell == 0.08)
         #expect(DensityOutlineWindow.rowHeight == 44)
         #expect(DensityOutlineWindow.cornerRadius == 14)
         #expect(DensityOutlineWindow.showDwell == 0.25)
@@ -45,10 +47,11 @@ struct DensityRailTests {
         #expect(bands.contains { if case .change = $0.kind { true } else { false } })
         #expect(bands.contains { if case .codeBlock = $0.kind { true } else { false } })
         #expect(bands.contains { if case .table = $0.kind { true } else { false } })
-        #expect(bands.filter { DensityGutterView.isVisibleAtRest($0.kind) }.count == 5)
+        #expect(bands.filter { DensityGutterView.isVisibleAtRest($0.kind) }.count == 4)
         #expect(!DensityGutterView.isVisibleAtRest(.codeBlock))
         #expect(!DensityGutterView.isVisibleAtRest(.table))
         #expect(!DensityGutterView.isVisibleAtRest(.math))
+        #expect(!DensityGutterView.isVisibleAtRest(.taskList))
         #expect(!DensityGutterView.isVisibleAtRest(.image))
         #expect(!DensityGutterView.isVisibleAtRest(.callout))
     }

@@ -21,8 +21,8 @@ extension StyleSheet {
 // Quick Look extension can draw the same rail (§10), and it must not reach back
 // into the app target for a font size.
 enum GutterChrome {
-    static let titleFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    static let bodyFont = NSFont.systemFont(ofSize: 10.5)
+    static let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
+    static let bodyFont = NSFont.systemFont(ofSize: 11)
 
     /// Full respect for Reduce Motion (§11.4).
     static func animate(

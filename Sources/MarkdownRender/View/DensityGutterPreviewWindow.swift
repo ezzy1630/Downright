@@ -13,7 +13,7 @@ final class DensityGutterPreviewWindow: NSWindow {
     }
 
     private let content: PreviewContentView
-    private let maximumWidth: CGFloat = 300
+    private let maximumWidth: CGFloat = 320
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
@@ -32,21 +32,21 @@ final class DensityGutterPreviewWindow: NSWindow {
         contentView = content
     }
 
-    /// `anchor` is the screen point at the gutter's leading edge, level with
-    /// the pointer.  An empty `snippet` gives the hover form — just the
-    /// heading; `footer` carries the §9.6 reading metrics.
+    /// `anchor` is the screen point at the gutter's trailing edge, level with
+    /// the pointer. The hover form carries the heading and a short text
+    /// glimpse; `footer` carries the §9.6 reading metrics.
     func show(
         title: String,
         snippet: String,
         footer: String,
-        leftOf anchor: NSPoint,
+        rightOf anchor: NSPoint,
         over parent: NSWindow,
         reduceMotion: Bool
     ) {
         content.update(title: title, snippet: snippet, footer: footer)
         let size = content.fittingSize(maxWidth: maximumWidth)
 
-        var origin = NSPoint(x: anchor.x - size.width - 8, y: anchor.y - size.height / 2)
+        var origin = NSPoint(x: anchor.x + 8, y: anchor.y - size.height / 2)
         if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = min(max(visible.minX + 4, origin.x), visible.maxX - size.width - 4)
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
@@ -78,6 +78,7 @@ final class DensityGutterPreviewWindow: NSWindow {
 private final class PreviewContentView: NSView {
     var styleSheet: StyleSheet {
         didSet {
+            layer?.backgroundColor = styleSheet.surface.withAlphaComponent(0.96).cgColor
             cached = nil
             needsDisplay = true
         }
@@ -94,6 +95,12 @@ private final class PreviewContentView: NSView {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.masksToBounds = true
+        layer?.backgroundColor = styleSheet.surface.withAlphaComponent(0.96).cgColor
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Document map preview")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -122,8 +129,8 @@ private final class PreviewContentView: NSView {
         if let cached { return cached }
 
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        paragraph.lineSpacing = 1
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = 2
 
         let result = NSMutableAttributedString(string: title, attributes: [
             .font: GutterChrome.titleFont,
@@ -136,8 +143,8 @@ private final class PreviewContentView: NSView {
             if body.count > snippetLimit { body = String(body.prefix(snippetLimit)) + "…" }
             // The snippet is document text, so it borrows the theme's body face
             // at panel size rather than the system font (§11.1).
-            let face = NSFont(descriptor: styleSheet.bodyFont().fontDescriptor, size: 11)
-                ?? NSFont.systemFont(ofSize: 11)
+            let face = NSFont(descriptor: styleSheet.bodyFont().fontDescriptor, size: 12)
+                ?? NSFont.systemFont(ofSize: 12)
             result.append(NSAttributedString(string: "\n" + body, attributes: [
                 .font: face,
                 .foregroundColor: styleSheet.textSecondary,
@@ -158,9 +165,10 @@ private final class PreviewContentView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
         let card = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let path = NSBezierPath(roundedRect: card, xRadius: 6, yRadius: 6)
-        styleSheet.background.setFill()
+        let path = NSBezierPath(roundedRect: card, xRadius: 14, yRadius: 14)
+        styleSheet.surface.withAlphaComponent(0.96).setFill()
         path.fill()
         styleSheet.rule.setStroke()
         path.lineWidth = 1
