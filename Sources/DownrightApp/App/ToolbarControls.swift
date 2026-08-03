@@ -6,10 +6,10 @@ import AppKit
 @MainActor
 final class ToolbarPresentationControl: NSView {
     private enum Metrics {
-        static let width: CGFloat = 204
-        static let height: CGFloat = 28
-        static let documentWidth: CGFloat = 108
-        static let sourceWidth: CGFloat = 94
+        static let width: CGFloat = 164
+        static let height: CGFloat = 26
+        static let documentWidth: CGFloat = 88
+        static let sourceWidth: CGFloat = 74
     }
 
     private static let cornerRadius: CGFloat = 7
@@ -30,10 +30,10 @@ final class ToolbarPresentationControl: NSView {
 
     init(onChange: @escaping (Int) -> Void) {
         documentButton = ToolbarModeButton(
-            title: "Document", symbolName: "doc.text", accessibilityLabel: "Document"
+            title: "Document", accessibilityLabel: "Document"
         )
         sourceButton = ToolbarModeButton(
-            title: "Source", symbolName: "chevron.left.forwardslash.chevron.right", accessibilityLabel: "Source"
+            title: "Source", accessibilityLabel: "Source"
         )
         self.onChange = onChange
         super.init(frame: .zero)
@@ -91,11 +91,8 @@ final class ToolbarPresentationControl: NSView {
             xRadius: Self.cornerRadius,
             yRadius: Self.cornerRadius
         )
-        NSColor.controlBackgroundColor.withAlphaComponent(0.46).setFill()
+        NSColor.controlBackgroundColor.withAlphaComponent(0.3).setFill()
         path.fill()
-        NSColor.separatorColor.withAlphaComponent(0.32).setStroke()
-        path.lineWidth = 1
-        path.stroke()
     }
 }
 
@@ -106,15 +103,10 @@ final class ToolbarPresentationControl: NSView {
 private final class ToolbarModeButton: NSButton {
     let displayTitle: String
 
-    private let iconView: NSImageView
-    private let titleView: NSTextField
-    private let contentStack: NSStackView
-
     var isSelected = false {
         didSet {
-            let color: NSColor = isSelected ? .labelColor : .secondaryLabelColor
-            iconView.contentTintColor = color
-            titleView.textColor = color
+            guard isSelected != oldValue else { return }
+            updateTitle()
             setAccessibilityValue(isSelected ? "Selected" : "Not selected")
             needsDisplay = true
         }
@@ -124,52 +116,33 @@ private final class ToolbarModeButton: NSButton {
         didSet { needsDisplay = true }
     }
 
-    init(title: String, symbolName: String, accessibilityLabel: String) {
+    init(title: String, accessibilityLabel: String) {
         displayTitle = title
-        let image = NSImage(
-            systemSymbolName: symbolName,
-            accessibilityDescription: accessibilityLabel
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .medium))
-        iconView = NSImageView(image: image ?? NSImage())
-        titleView = NSTextField(labelWithString: title)
-        contentStack = NSStackView()
         super.init(frame: .zero)
 
-        contentStack.orientation = .horizontal
-        contentStack.alignment = .centerY
-        contentStack.spacing = 6
-        contentStack.distribution = .fill
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        iconView.imageScaling = .scaleProportionallyDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        titleView.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        titleView.alignment = .center
-        titleView.lineBreakMode = .byClipping
-        titleView.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(iconView)
-        contentStack.addArrangedSubview(titleView)
-        addSubview(contentStack)
-
-        NSLayoutConstraint.activate([
-            contentStack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            contentStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 14),
-            iconView.heightAnchor.constraint(equalToConstant: 14),
-        ])
-
-        // The button's visual content is the stack above. Keep the NSButton
-        // title/image empty so AppKit cannot lay them out independently.
-        self.title = ""
+        self.title = title
         bezelStyle = .regularSquare
-        controlSize = .regular
+        controlSize = .small
         isBordered = false
+        alignment = .center
         focusRingType = .default
         setAccessibilityRole(.radioButton)
         setAccessibilityLabel(accessibilityLabel)
         toolTip = accessibilityLabel
+        updateTitle()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    private func updateTitle() {
+        attributedTitle = NSAttributedString(
+            string: displayTitle,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11.5, weight: isSelected ? .semibold : .medium),
+                .foregroundColor: isSelected ? NSColor.labelColor : NSColor.secondaryLabelColor,
+            ]
+        )
+    }
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
@@ -194,11 +167,8 @@ private final class ToolbarModeButton: NSButton {
         let rect = bounds.insetBy(dx: 2, dy: 2)
         let path = NSBezierPath(roundedRect: rect, xRadius: 5.5, yRadius: 5.5)
         if isSelected {
-            NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16).setFill()
+            NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.62).setFill()
             path.fill()
-            NSColor.labelColor.withAlphaComponent(0.13).setStroke()
-            path.lineWidth = 0.5
-            path.stroke()
         } else if isHovered || isHighlighted {
             NSColor.labelColor.withAlphaComponent(0.07).setFill()
             path.fill()

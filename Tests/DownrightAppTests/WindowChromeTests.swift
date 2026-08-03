@@ -31,8 +31,8 @@ struct WindowChromeTests {
         )
         #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.intrinsicContentSize.width == 204)
-        #expect(mode.intrinsicContentSize.height == 28)
+        #expect(mode.intrinsicContentSize.width == 164)
+        #expect(mode.intrinsicContentSize.height == 26)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
