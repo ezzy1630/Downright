@@ -26,16 +26,12 @@ struct WindowChromeTests {
         ])
 
         let mode = try #require(
-            toolbar.items.first { $0.itemIdentifier.rawValue == "presentation-mode" }?.view as? NSSegmentedControl
+            toolbar.items.first { $0.itemIdentifier.rawValue == "presentation-mode" }?.view as? ToolbarPresentationControl
         )
-        #expect(mode.segmentCount == 2)
-        #expect(mode.label(forSegment: 0) == "Document")
-        #expect(mode.label(forSegment: 1) == "Source")
+        #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.width(forSegment: 0) == mode.width(forSegment: 1))
-        #expect(mode.constraints.contains {
-            $0.firstAttribute == .width && $0.relation == .equal && $0.constant == mode.fittingSize.width
-        })
+        #expect(mode.intrinsicContentSize.width == 224)
+        #expect(mode.intrinsicContentSize.height == 32)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
@@ -47,9 +43,9 @@ struct WindowChromeTests {
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "contents" })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
         let overflow = try #require(
-            toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" } as? NSMenuToolbarItem
+            toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" }?.view as? ToolbarMenuButton
         )
-        #expect(overflow.menu.items.contains { $0.title == "Structural Zoom" })
+        #expect(overflow.popupMenuItems.contains { $0.title == "Structural Zoom" })
     }
 
     @Test

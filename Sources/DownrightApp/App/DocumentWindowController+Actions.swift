@@ -21,7 +21,6 @@ extension DocumentWindowController {
 
     func updateBreadcrumbAndGutter() {
         refreshBreadcrumb()
-        showTransientBreadcrumb()
         let current = markdownDocument.parsed.headings.lastIndex(where: {
             $0.range.location <= containerTextView.topVisibleOffset
         })
@@ -40,21 +39,6 @@ extension DocumentWindowController {
             updated.isCurrent = index == current
             return updated
         }
-    }
-
-    private func showTransientBreadcrumb() {
-        breadcrumbHideWorkItem?.cancel()
-        PanelAnimation.run(reduceMotion: activeStyleSheet.reduceMotion, duration: 0.12) { _ in
-            self.breadcrumbView.animator().alphaValue = 1
-        }
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            PanelAnimation.run(reduceMotion: self.activeStyleSheet.reduceMotion, duration: 0.09) { _ in
-                self.breadcrumbView.animator().alphaValue = 0
-            }
-        }
-        breadcrumbHideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
     // MARK: - Images
@@ -268,49 +252,21 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     ) -> NSToolbarItem? {
         switch identifier {
         case Self.modeItem:
-            let control = NSSegmentedControl(
-                labels: ["Document", "Source"],
-                trackingMode: .selectOne,
-                target: self,
-                action: #selector(toolbarModeChanged(_:))
-            )
-            control.segmentStyle = .capsule
-            control.controlSize = .regular
-            control.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-            control.selectedSegment = 0
-            // Equal segments give both presentation modes the same visual
-            // weight even though their labels have different lengths.
-            control.setWidth(108, forSegment: 0)
-            control.setWidth(108, forSegment: 1)
-            control.setImage(
-                NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Document"),
-                forSegment: 0
-            )
-            control.setImage(
-                NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: "Source"),
-                forSegment: 1
-            )
-            control.setToolTip("Document — rendered Markdown", forSegment: 0)
-            control.setToolTip("Source — raw Markdown (⇧⌘E)", forSegment: 1)
-            control.setAccessibilityLabel("Presentation")
-            let controlSize = control.fittingSize
-            control.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                control.widthAnchor.constraint(equalToConstant: controlSize.width),
-                control.heightAnchor.constraint(equalToConstant: controlSize.height),
-            ])
+            let control = ToolbarPresentationControl { [weak self] selectedSegment in
+                self?.toolbarModeChanged(selectedSegment)
+            }
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.label = "Presentation"
+            item.toolTip = "Choose rendered Document or raw Source"
             item.visibilityPriority = .high
             return item
 
         case Self.overflowItem:
-            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = ToolbarMenuButton(menu: makeOverflowMenu())
             item.label = "More"
-            item.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "More")
             item.toolTip = "More document actions"
-            item.menu = makeOverflowMenu()
             item.visibilityPriority = .high
             return item
         default:
@@ -318,8 +274,8 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func toolbarModeChanged(_ sender: NSSegmentedControl) {
-        let showSource = sender.selectedSegment == 1
+    private func toolbarModeChanged(_ selectedSegment: Int) {
+        let showSource = selectedSegment == 1
         let views = [primaryContainer?.textView, splitContainer?.textView].compactMap { $0 }
         for view in views {
             if showSource { view.focusEntireSource() }
@@ -332,9 +288,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         let isActive = primaryContainer.textView.sourceFocus != .none
             || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == Self.modeItem }),
-              let control = item.view as? NSSegmentedControl
+              let control = item.view as? ToolbarPresentationControl
         else { return }
-        control.selectedSegment = isActive ? 1 : 0
+        control.setSelectedSegment(isActive ? 1 : 0)
     }
 
     @objc private func toolbarShowTasks(_ sender: Any?) {
