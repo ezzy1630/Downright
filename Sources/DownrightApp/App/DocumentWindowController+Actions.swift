@@ -42,50 +42,6 @@ extension DocumentWindowController {
         }
     }
 
-    // MARK: - Breadcrumb scroll-tuck (§5.1)
-
-    /// While the document moves the crumb strip folds away so it does not
-    /// fight the prose scrolling underneath it; it settles back a beat after
-    /// the scroll stops, or the instant the pointer reaches for it.
-    func tuckBreadcrumb() {
-        guard !breadcrumbHovered, !breadcrumbView.isHidden else { return }
-        breadcrumbRevealWorkItem?.cancel()
-        breadcrumbHiddenByScroll = true
-        setBreadcrumbCollapsed(true)
-        let reveal = DispatchWorkItem { [weak self] in self?.revealBreadcrumb() }
-        breadcrumbRevealWorkItem = reveal
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: reveal)
-    }
-
-    func revealBreadcrumb() {
-        breadcrumbRevealWorkItem?.cancel()
-        breadcrumbRevealWorkItem = nil
-        breadcrumbHiddenByScroll = false
-        setBreadcrumbCollapsed(false)
-    }
-
-    private func setBreadcrumbCollapsed(_ collapsed: Bool) {
-        let targetAlpha: CGFloat = collapsed ? 0 : 1
-        let reserveLane = !collapsed
-        for container in documentPanes {
-            container.topAccessoryReservesLane = reserveLane
-            container.needsLayout = true
-            container.layoutSubtreeIfNeeded()
-        }
-        guard abs(breadcrumbView.alphaValue - targetAlpha) > 0.02 else { return }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            || activeStyleSheet.reduceMotion
-        if reduceMotion {
-            breadcrumbView.alphaValue = targetAlpha
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            breadcrumbView.animator().alphaValue = targetAlpha
-        }
-    }
-
     // MARK: - Activity cue (§12)
 
     func beginActivity() {

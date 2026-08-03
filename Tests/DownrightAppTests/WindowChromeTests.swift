@@ -67,23 +67,15 @@ struct WindowChromeTests {
     }
 
     @Test
-    func breadcrumbScrollTuckReclaimsDocumentLane() {
+    func breadcrumbKeepsAStableDocumentLane() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
         let crumb = BreadcrumbView()
         crumb.trail = [(0, "Root", 1), (1, "Section", 2)]
         container.topAccessory = crumb
         container.setFrameSize(NSSize(width: 900, height: 600))
-        container.topAccessoryReservesLane = true
         container.layout()
         #expect(container.scrollView.frame.minY > 20)
-
-        container.topAccessoryReservesLane = false
-        container.layout()
-        #expect(container.scrollView.frame.minY == 0)
-
-        container.topAccessoryReservesLane = true
-        container.layout()
-        #expect(container.scrollView.frame.minY > 20)
+        #expect(crumb.frame.maxY <= container.scrollView.frame.minY)
     }
 
     @Test

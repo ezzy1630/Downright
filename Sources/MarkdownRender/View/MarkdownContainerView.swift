@@ -63,28 +63,8 @@ public final class MarkdownContainerView: NSView {
                 addSubview(topAccessory)
             }
             needsLayout = true
-            updateTopEdgeTracking()
         }
     }
-
-    /// When false, the top accessory floats over the document instead of
-    /// claiming a permanent lane — used while the breadcrumb is tucked away
-    /// so scrolling reclaims vertical space (§5.1).
-    public var topAccessoryReservesLane = true {
-        didSet {
-            guard topAccessoryReservesLane != oldValue else { return }
-            needsLayout = true
-            updateTopEdgeTracking()
-        }
-    }
-
-    /// Fired when the pointer enters or leaves the top reveal strip while the
-    /// accessory lane is collapsed. Lets the host fade the breadcrumb back in
-    /// when the reader reaches for it mid-scroll.
-    public var onTopEdgeHover: ((Bool) -> Void)?
-
-    private var topEdgeTrackingArea: NSTrackingArea?
-    private var topEdgeHovered = false
 
     public convenience init(storage: NSTextStorage) {
         self.init(storage: storage, styleSheet: MarkdownTextView.fallbackStyleSheet())
@@ -144,9 +124,7 @@ public final class MarkdownContainerView: NSView {
             return height > 0 ? height : 24
         } ?? 0
         let topHeight = accessoryFitting
-        // A tucked accessory still lays out as an overlay so fade-in has a
-        // frame, but the scroller reclaim the lane immediately.
-        let topLaneHeight = topAccessoryReservesLane && topHeight > 0 ? topHeight + 8 : 0
+        let topLaneHeight = topHeight > 0 ? topHeight + 8 : 0
         let isFloatingDensityMap = leadingAccessory is DensityGutterView
         let leadingWidth = isFloatingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
@@ -157,7 +135,6 @@ public final class MarkdownContainerView: NSView {
         let accessoryWidth = min(max(160, textView.styleSheet.measureWidth), max(160, bounds.width - 80))
         topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 4,
                                      width: accessoryWidth, height: max(topHeight, 0))
-        updateTopEdgeTracking()
         leadingAccessory?.frame = NSRect(x: 0, y: 0,
                                          width: leadingWidth, height: bounds.height)
         trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: 0,
@@ -234,52 +211,4 @@ public final class MarkdownContainerView: NSView {
         needsLayout = true
     }
 
-    public override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        updateTopEdgeTracking()
-    }
-
-    public override func mouseEntered(with event: NSEvent) {
-        guard event.trackingArea === topEdgeTrackingArea else {
-            super.mouseEntered(with: event)
-            return
-        }
-        guard !topEdgeHovered else { return }
-        topEdgeHovered = true
-        onTopEdgeHover?(true)
-    }
-
-    public override func mouseExited(with event: NSEvent) {
-        guard event.trackingArea === topEdgeTrackingArea else {
-            super.mouseExited(with: event)
-            return
-        }
-        guard topEdgeHovered else { return }
-        topEdgeHovered = false
-        onTopEdgeHover?(false)
-    }
-
-    private func updateTopEdgeTracking() {
-        if let topEdgeTrackingArea {
-            removeTrackingArea(topEdgeTrackingArea)
-            self.topEdgeTrackingArea = nil
-        }
-        // Only while the lane is collapsed: a thin top strip lets the reader
-        // reach for the tucked breadcrumb without leaving an empty reservation.
-        guard topAccessory != nil, !topAccessoryReservesLane, bounds.width > 0 else {
-            if topEdgeHovered {
-                topEdgeHovered = false
-                onTopEdgeHover?(false)
-            }
-            return
-        }
-        let area = NSTrackingArea(
-            rect: NSRect(x: 0, y: 0, width: bounds.width, height: 28),
-            options: [.mouseEnteredAndExited, .activeInKeyWindow],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        topEdgeTrackingArea = area
-    }
 }

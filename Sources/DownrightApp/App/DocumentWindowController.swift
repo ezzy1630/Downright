@@ -29,14 +29,6 @@ final class DocumentWindowController: NSWindowController {
     /// Activity cue for sustained work (parses and exports past a second).
     let activityIndicator = ActivityIndicatorView()
 
-    /// The crumb strip folded away because the document is scrolling.  It
-    /// settles back on its own; only a scroll keeps it down (§5.1).
-    var breadcrumbHiddenByScroll = false
-    /// Pointer is over the crumb strip, so scroll-tucking stands aside.
-    var breadcrumbHovered = false
-    /// Debounce handle for the scroll-stop reveal.
-    var breadcrumbRevealWorkItem: DispatchWorkItem?
-
     // Transient panels (§11.4)
     var outlinePanel: OutlinePanelView?
     var taskPanel: TaskPanelView?
@@ -356,10 +348,6 @@ final class DocumentWindowController: NSWindowController {
         // It reads as Contents there; on the trailing edge it looks like an
         // unexplained second scrollbar.
         primaryContainer.leadingAccessory = densityGutterView
-        primaryContainer.onTopEdgeHover = { [weak self] hovered in
-            self?.handleTopEdgeHover(hovered)
-        }
-
         breadcrumbView.delegate = self
         breadcrumbView.styleSheet = activeStyleSheet
         densityGutterView.delegate = self
@@ -1409,9 +1397,6 @@ final class DocumentWindowController: NSWindowController {
             window?.toolbar?.isVisible = false
             densityGutterView.isHidden = true
             breadcrumbView.isHidden = true
-            breadcrumbRevealWorkItem?.cancel()
-            breadcrumbHiddenByScroll = false
-            breadcrumbHovered = false
             documentPanes.forEach { installFocusDimmingView(in: $0) }
             updateFocusDimmingViews()
         } else {
@@ -1419,14 +1404,12 @@ final class DocumentWindowController: NSWindowController {
                 window?.toolbar?.isVisible = true
                 densityGutterView.isHidden = false
                 breadcrumbView.isHidden = false
-                revealBreadcrumb()
                 return
             }
             removeFocusDimmingViews(animated: animated)
             window?.toolbar?.isVisible = true
             densityGutterView.isHidden = false
             breadcrumbView.isHidden = false
-            revealBreadcrumb()
             sidebarItem.isCollapsed = !focusRestoreSidebar
             inspectorItem.isCollapsed = !focusRestoreInspector
             focusModeApplied = false

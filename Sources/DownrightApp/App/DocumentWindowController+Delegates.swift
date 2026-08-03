@@ -101,7 +101,6 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         synchronizePanes(from: view)
         updateBreadcrumbAndGutter()
         updateFocusDimmingViews()
-        tuckBreadcrumb()
     }
 
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {
@@ -434,23 +433,6 @@ extension DocumentWindowController: BreadcrumbDelegate {
         jump(to: markdownDocument.parsed.headings[index].range.location, label: markdownDocument.parsed.headings[index].title)
     }
 
-    func breadcrumb(_ view: BreadcrumbView, hoverChanged hovered: Bool) {
-        breadcrumbHovered = hovered
-        if hovered {
-            revealBreadcrumb()
-        } else if breadcrumbHiddenByScroll {
-            tuckBreadcrumb()
-        }
-    }
-
-    func handleTopEdgeHover(_ hovered: Bool) {
-        breadcrumbHovered = hovered
-        if hovered {
-            revealBreadcrumb()
-        } else if breadcrumbHiddenByScroll {
-            tuckBreadcrumb()
-        }
-    }
 }
 
 extension DocumentWindowController: FindBarDelegate {
