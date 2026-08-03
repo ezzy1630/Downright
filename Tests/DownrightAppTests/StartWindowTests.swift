@@ -43,6 +43,31 @@ struct StartWindowTests {
         #expect((recentButton.accessibilityValue() as? String) == "Planning  ·  1 word")
     }
 
+    @Test
+    func clickingARecentRowRoutesItsURLToTheOwner() throws {
+        let recent = RecentDocument(
+            path: "/tmp/downright-start-window-click.md",
+            displayName: "note",
+            firstHeading: "Planning",
+            lastOpened: Date(),
+            wordCount: 1
+        )
+        let controller = StartWindowController(recents: [recent])
+        defer { controller.close() }
+
+        var openedURL: URL?
+        controller.onOpen = { openedURL = $0 }
+
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let recentButton = try #require(
+            buttons(in: window.contentView).first { $0.accessibilityLabel() == "Open note" }
+        )
+        recentButton.performClick(nil)
+
+        #expect(openedURL?.path == recent.path)
+    }
+
     private func buttons(in view: NSView?) -> [NSButton] {
         guard let view else { return [] }
         let button = (view as? NSButton).map { [$0] } ?? []

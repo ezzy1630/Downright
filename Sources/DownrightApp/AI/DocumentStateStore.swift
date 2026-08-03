@@ -152,7 +152,8 @@ final class DocumentStateStore {
         guard let data = try? Data(contentsOf: recentsURL),
               let list = try? JSONDecoder.snapshotDecoder.decode([RecentDocument].self, from: data)
         else { return [] }
-        return Array(list.sorted { $0.lastOpened > $1.lastOpened }.prefix(limit))
+        let liveDocuments = list.filter { fm.fileExists(atPath: $0.path) }
+        return Array(liveDocuments.sorted { $0.lastOpened > $1.lastOpened }.prefix(limit))
     }
 
     func noteOpened(_ url: URL, document: ParsedDocument) {

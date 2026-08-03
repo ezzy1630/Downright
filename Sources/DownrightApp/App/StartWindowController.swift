@@ -169,8 +169,8 @@ private final class StartBackgroundView: NSView {
 
         let accent = NSColor.controlAccentColor
         let glow = NSGradient(colors: [
-            accent.withAlphaComponent(0.10),
-            accent.withAlphaComponent(0.035),
+            accent.withAlphaComponent(0.075),
+            accent.withAlphaComponent(0.03),
             .clear,
         ])
         let glowRect = NSRect(
@@ -180,15 +180,6 @@ private final class StartBackgroundView: NSView {
             height: 420
         )
         glow?.draw(in: glowRect, relativeCenterPosition: NSPoint(x: 0.35, y: 0.55))
-
-        let secondaryGlow = NSGradient(colors: [
-            NSColor.white.withAlphaComponent(0.025),
-            .clear,
-        ])
-        secondaryGlow?.draw(
-            in: NSRect(x: -160, y: -120, width: 420, height: 360),
-            relativeCenterPosition: NSPoint(x: 0.65, y: 0.35)
-        )
 
         let hairline = NSBezierPath()
         hairline.move(to: NSPoint(x: 52, y: bounds.maxY - 1))
@@ -206,18 +197,18 @@ private final class StartHeroView: NSView {
     init(owner: StartWindowController, dropZone: DropZoneView) {
         openButton = StartActionButton(
             title: "Open file",
-            shortcut: "⌘ O",
+            shortcut: "⌘O",
             symbolName: "arrow.up.right",
-            iconMotion: .openFile,
+            keyEquivalent: "o",
             kind: .primary,
             target: owner,
             action: #selector(StartWindowController.openPanel(_:))
         )
         newButton = StartActionButton(
             title: "New document",
-            shortcut: "⌘ N",
+            shortcut: "⌘N",
             symbolName: "plus",
-            iconMotion: .newDocument,
+            keyEquivalent: "n",
             kind: .secondary,
             target: owner,
             action: #selector(StartWindowController.newDocument(_:))
@@ -480,52 +471,33 @@ private final class SurfaceView: NSView {
     }
 }
 
-private enum StartActionIconMotion {
-    case openFile
-    case newDocument
-
-    func transform(isHovered: Bool, isPressed: Bool) -> CGAffineTransform {
-        let offset: CGPoint
-        let hoverScale: CGFloat
-        switch self {
-        case .openFile:
-            offset = CGPoint(x: isHovered ? 2 : 0, y: isHovered ? 1 : 0)
-            hoverScale = 1.04
-        case .newDocument:
-            offset = CGPoint(x: isHovered ? 1 : 0, y: 0)
-            hoverScale = 1.07
-        }
-
-        let scale = isPressed ? 0.94 : (isHovered ? hoverScale : 1)
-        return CGAffineTransform(translationX: offset.x, y: offset.y)
-            .scaledBy(x: scale, y: scale)
-    }
-}
-
 private final class StartActionButton: NSButton {
     enum Kind { case primary, secondary }
 
     private let kind: Kind
-    private let iconMotion: StartActionIconMotion
     private let shell = NSView()
     private let titleLabel: NSTextField
+    private let shortcutBadge = NSView()
     private let shortcutLabel: NSTextField
     private let iconView: NSImageView
-    private let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
     private var isHovered = false
     private var isPressed = false
+    private var shortcutHopTimer: Timer?
+    private var isShortcutHoppingUp = false
 
     init(
         title: String,
         shortcut: String,
         symbolName: String,
-        iconMotion: StartActionIconMotion,
+        keyEquivalent: String,
         kind: Kind,
         target: AnyObject,
         action: Selector
     ) {
         self.kind = kind
-        self.iconMotion = iconMotion
         titleLabel = NSTextField(labelWithString: title)
         shortcutLabel = NSTextField(labelWithString: shortcut)
         iconView = NSImageView(image: NSImage(systemSymbolName: symbolName, accessibilityDescription: title)!)
@@ -537,7 +509,7 @@ private final class StartActionButton: NSButton {
         isBordered = false
         self.title = ""
         focusRingType = .default
-        keyEquivalent = shortcut == "⌘ O" ? "o" : "n"
+        self.keyEquivalent = keyEquivalent
         keyEquivalentModifierMask = [.command]
         setAccessibilityRole(.button)
         setAccessibilityLabel(titleLabel.stringValue)
@@ -557,16 +529,20 @@ private final class StartActionButton: NSButton {
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)
         shell.addSubview(titleLabel)
 
-        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
         shortcutLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
         shortcutLabel.alignment = .center
         shortcutLabel.textColor = kind == .primary
             ? NSColor.white.withAlphaComponent(0.84)
             : NSColor.secondaryLabelColor
+        shortcutBadge.translatesAutoresizingMaskIntoConstraints = false
+        shortcutBadge.wantsLayer = true
+        shortcutBadge.layer?.cornerRadius = 5
+        shortcutBadge.layer?.masksToBounds = true
+        shell.addSubview(shortcutBadge)
+
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
         shortcutLabel.wantsLayer = true
-        shortcutLabel.layer?.cornerRadius = 5
-        shortcutLabel.layer?.masksToBounds = true
-        shell.addSubview(shortcutLabel)
+        shortcutBadge.addSubview(shortcutLabel)
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyUpOrDown
@@ -582,11 +558,15 @@ private final class StartActionButton: NSButton {
 
             titleLabel.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 16),
             titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            shortcutLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 8),
-            shortcutLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            shortcutLabel.widthAnchor.constraint(equalToConstant: 32),
-            shortcutLabel.heightAnchor.constraint(equalToConstant: 20),
-            iconView.leadingAnchor.constraint(equalTo: shortcutLabel.trailingAnchor, constant: 10),
+            shortcutBadge.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 8),
+            shortcutBadge.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            shortcutBadge.widthAnchor.constraint(equalToConstant: 32),
+            shortcutBadge.heightAnchor.constraint(equalToConstant: 20),
+            shortcutLabel.leadingAnchor.constraint(equalTo: shortcutBadge.leadingAnchor),
+            shortcutLabel.trailingAnchor.constraint(equalTo: shortcutBadge.trailingAnchor),
+            shortcutLabel.topAnchor.constraint(equalTo: shortcutBadge.topAnchor),
+            shortcutLabel.bottomAnchor.constraint(equalTo: shortcutBadge.bottomAnchor),
+            iconView.leadingAnchor.constraint(equalTo: shortcutBadge.trailingAnchor, constant: 10),
             iconView.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -15),
             iconView.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 16),
@@ -609,10 +589,12 @@ private final class StartActionButton: NSButton {
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
         updateSurface(animated: true)
+        startShortcutHop()
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
+        stopShortcutHop()
         updateSurface(animated: true)
     }
 
@@ -623,12 +605,8 @@ private final class StartActionButton: NSButton {
         updateSurface(animated: true)
     }
 
-    override func mouseDown(with event: NSEvent) {
-        isPressed = true
-        updateSurface(animated: true)
-        super.mouseDown(with: event)
-        isPressed = false
-        updateSurface(animated: true)
+    deinit {
+        shortcutHopTimer?.invalidate()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -650,16 +628,19 @@ private final class StartActionButton: NSButton {
             self.shell.layer?.backgroundColor = base.cgColor
             self.shell.layer?.borderWidth = self.kind == .secondary ? 1 : 0
             self.shell.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.30).cgColor
-            self.shortcutLabel.layer?.backgroundColor = self.kind == .primary
+            self.shortcutBadge.layer?.backgroundColor = self.kind == .primary
                 ? NSColor.white.withAlphaComponent(0.13).cgColor
                 : NSColor.labelColor.withAlphaComponent(0.07).cgColor
+            self.shortcutLabel.layer?.setAffineTransform(
+                self.isShortcutHoppingUp && !self.isPressed
+                    ? CGAffineTransform(translationX: 0, y: 2)
+                    : .identity
+            )
             self.shell.layer?.setAffineTransform(
                 self.isPressed ? CGAffineTransform(scaleX: 0.98, y: 0.98) : .identity
             )
             self.iconView.alphaValue = self.isHovered ? 1 : 0.86
-            self.iconView.layer?.setAffineTransform(
-                self.iconMotion.transform(isHovered: self.isHovered, isPressed: self.isPressed)
-            )
+            self.iconView.layer?.setAffineTransform(.identity)
         }
 
         if animated {
@@ -672,6 +653,36 @@ private final class StartActionButton: NSButton {
         } else {
             changes()
         }
+    }
+
+    private func startShortcutHop() {
+        guard !reduceMotion, shortcutHopTimer == nil else { return }
+        isShortcutHoppingUp = true
+        animateShortcutHop()
+        shortcutHopTimer = Timer.scheduledTimer(withTimeInterval: 0.34, repeats: true) { [weak self] _ in
+            guard let self, self.isHovered else { return }
+            self.isShortcutHoppingUp.toggle()
+            self.animateShortcutHop()
+        }
+    }
+
+    private func stopShortcutHop() {
+        shortcutHopTimer?.invalidate()
+        shortcutHopTimer = nil
+        isShortcutHoppingUp = false
+    }
+
+    private func animateShortcutHop() {
+        guard isHovered, !isPressed, !reduceMotion else { return }
+        let transform = isShortcutHoppingUp
+            ? CGAffineTransform(translationX: 0, y: 2)
+            : .identity
+        Motion.run(
+            reduceMotion: false,
+            duration: Motion.standard,
+            curve: .easeOut,
+            changes: { _ in self.shortcutLabel.layer?.setAffineTransform(transform) }
+        )
     }
 }
 
@@ -942,7 +953,7 @@ private final class DropZoneView: NSView {
         let fill = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 14, yRadius: 14)
         (isActive
             ? NSColor.controlAccentColor.withAlphaComponent(0.13)
-            : NSColor.controlBackgroundColor.withAlphaComponent(0.22)
+            : NSColor.controlBackgroundColor.withAlphaComponent(0.32)
         ).setFill()
         fill.fill()
 
@@ -951,7 +962,7 @@ private final class DropZoneView: NSView {
         outline.setLineDash([5, 5], count: 2, phase: 0)
         (isActive
             ? NSColor.controlAccentColor
-            : NSColor.separatorColor.withAlphaComponent(0.45)
+            : NSColor.separatorColor.withAlphaComponent(0.58)
         ).setStroke()
         outline.stroke()
     }

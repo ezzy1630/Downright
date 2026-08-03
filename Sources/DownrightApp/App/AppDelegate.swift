@@ -109,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // raise it, not give you two buffers over the same bytes.
         if let existing = windowControllers.first(where: { $0.markdownDocument.url?.path == url.path }) {
             existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
             return existing
         }
 
@@ -125,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startWindow?.close()
         startWindow = nil
         controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
         return controller
     }
 
