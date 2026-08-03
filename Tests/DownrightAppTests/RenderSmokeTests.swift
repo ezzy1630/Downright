@@ -112,6 +112,33 @@ struct RenderSmokeTests {
         #expect(map.frame.midY == container.bounds.midY)
     }
 
+    @Test("Breadcrumb owns a lane and never overlays document text")
+    func breadcrumbReservesItsLane() {
+        let container = MarkdownContainerView(storage: NSTextStorage(string: "# Heading\n\nText"))
+        let breadcrumb = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        container.topAccessory = breadcrumb
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        container.layoutSubtreeIfNeeded()
+
+        #expect(breadcrumb.frame.maxY <= container.scrollView.frame.minY)
+        #expect(container.scrollView.frame.minY > 0)
+        #expect(container.scrollView.frame.maxY == container.bounds.maxY)
+    }
+
+    @Test("Top-visible offset samples text, not empty container padding")
+    func topVisibleOffsetStartsAtFirstHeading() {
+        let text = "# First\n\nBody\n\n## Later\n\nMore"
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.layoutSubtreeIfNeeded()
+        container.textView.prepareForDisplay()
+
+        let later = (text as NSString).range(of: "## Later").location
+        #expect(container.textView.topVisibleOffset < later)
+    }
+
     // MARK: - Tests
 
     @Test func sampleDocumentDrawsInEveryMode() throws {

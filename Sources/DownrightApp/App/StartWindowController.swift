@@ -208,6 +208,7 @@ private final class StartHeroView: NSView {
             title: "Open file",
             shortcut: "⌘ O",
             symbolName: "arrow.up.right",
+            iconMotion: .openFile,
             kind: .primary,
             target: owner,
             action: #selector(StartWindowController.openPanel(_:))
@@ -216,6 +217,7 @@ private final class StartHeroView: NSView {
             title: "New document",
             shortcut: "⌘ N",
             symbolName: "plus",
+            iconMotion: .newDocument,
             kind: .secondary,
             target: owner,
             action: #selector(StartWindowController.newDocument(_:))
@@ -478,10 +480,33 @@ private final class SurfaceView: NSView {
     }
 }
 
+private enum StartActionIconMotion {
+    case openFile
+    case newDocument
+
+    func transform(isHovered: Bool, isPressed: Bool) -> CGAffineTransform {
+        let offset: CGPoint
+        let hoverScale: CGFloat
+        switch self {
+        case .openFile:
+            offset = CGPoint(x: isHovered ? 2 : 0, y: isHovered ? 1 : 0)
+            hoverScale = 1.04
+        case .newDocument:
+            offset = CGPoint(x: isHovered ? 1 : 0, y: 0)
+            hoverScale = 1.07
+        }
+
+        let scale = isPressed ? 0.94 : (isHovered ? hoverScale : 1)
+        return CGAffineTransform(translationX: offset.x, y: offset.y)
+            .scaledBy(x: scale, y: scale)
+    }
+}
+
 private final class StartActionButton: NSButton {
     enum Kind { case primary, secondary }
 
     private let kind: Kind
+    private let iconMotion: StartActionIconMotion
     private let shell = NSView()
     private let titleLabel: NSTextField
     private let shortcutLabel: NSTextField
@@ -494,11 +519,13 @@ private final class StartActionButton: NSButton {
         title: String,
         shortcut: String,
         symbolName: String,
+        iconMotion: StartActionIconMotion,
         kind: Kind,
         target: AnyObject,
         action: Selector
     ) {
         self.kind = kind
+        self.iconMotion = iconMotion
         titleLabel = NSTextField(labelWithString: title)
         shortcutLabel = NSTextField(labelWithString: shortcut)
         iconView = NSImageView(image: NSImage(systemSymbolName: symbolName, accessibilityDescription: title)!)
@@ -544,6 +571,7 @@ private final class StartActionButton: NSButton {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.contentTintColor = kind == .primary ? .white : .labelColor
+        iconView.wantsLayer = true
         shell.addSubview(iconView)
 
         NSLayoutConstraint.activate([
@@ -588,6 +616,13 @@ private final class StartActionButton: NSButton {
         updateSurface(animated: true)
     }
 
+    override func highlight(_ flag: Bool) {
+        super.highlight(flag)
+        isPressed = flag
+        guard shell.superview != nil else { return }
+        updateSurface(animated: true)
+    }
+
     override func mouseDown(with event: NSEvent) {
         isPressed = true
         updateSurface(animated: true)
@@ -618,7 +653,13 @@ private final class StartActionButton: NSButton {
             self.shortcutLabel.layer?.backgroundColor = self.kind == .primary
                 ? NSColor.white.withAlphaComponent(0.13).cgColor
                 : NSColor.labelColor.withAlphaComponent(0.07).cgColor
+            self.shell.layer?.setAffineTransform(
+                self.isPressed ? CGAffineTransform(scaleX: 0.98, y: 0.98) : .identity
+            )
             self.iconView.alphaValue = self.isHovered ? 1 : 0.86
+            self.iconView.layer?.setAffineTransform(
+                self.iconMotion.transform(isHovered: self.isHovered, isPressed: self.isPressed)
+            )
         }
 
         if animated {

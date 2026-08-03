@@ -14,6 +14,7 @@ struct WindowChromeTests {
         #expect(controller.window?.isRestorable == false)
         #expect(controller.window?.delegate === controller)
         #expect(controller.window?.titlebarAppearsTransparent == false)
+        #expect(controller.window?.toolbarStyle == .unifiedCompact)
         #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
         #expect(controller.primaryContainer.trailingAccessory == nil)
         #expect(toolbar.displayMode == .iconOnly)
@@ -30,8 +31,8 @@ struct WindowChromeTests {
         )
         #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.intrinsicContentSize.width == 252)
-        #expect(mode.intrinsicContentSize.height == 34)
+        #expect(mode.intrinsicContentSize.width == 204)
+        #expect(mode.intrinsicContentSize.height == 28)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
@@ -45,8 +46,8 @@ struct WindowChromeTests {
         let overflow = try #require(
             toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" }?.view as? ToolbarMenuButton
         )
-        #expect(overflow.intrinsicContentSize.width == 40)
-        #expect(overflow.intrinsicContentSize.height == 32)
+        #expect(overflow.intrinsicContentSize.width == 30)
+        #expect(overflow.intrinsicContentSize.height == 28)
         #expect(overflow.popupMenuItems.contains { $0.title == "Structural Zoom" })
     }
 

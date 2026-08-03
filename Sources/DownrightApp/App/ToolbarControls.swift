@@ -6,17 +6,17 @@ import AppKit
 @MainActor
 final class ToolbarPresentationControl: NSView {
     private enum Metrics {
-        static let width: CGFloat = 252
-        static let height: CGFloat = 34
-        static let documentWidth: CGFloat = 134
-        static let sourceWidth: CGFloat = 116
+        static let width: CGFloat = 204
+        static let height: CGFloat = 28
+        static let documentWidth: CGFloat = 108
+        static let sourceWidth: CGFloat = 94
     }
 
-    private static let cornerRadius: CGFloat = 9
+    private static let cornerRadius: CGFloat = 7
 
     private let documentButton: ToolbarModeButton
     private let sourceButton: ToolbarModeButton
-    private(set) var selectedSegment = 0
+    private(set) var selectedSegment = -1
 
     var onChange: ((Int) -> Void)?
 
@@ -72,6 +72,7 @@ final class ToolbarPresentationControl: NSView {
 
     func setSelectedSegment(_ segment: Int) {
         let normalized = min(max(segment, 0), 1)
+        guard normalized != selectedSegment else { return }
         selectedSegment = normalized
         documentButton.isSelected = normalized == 0
         sourceButton.isSelected = normalized == 1
@@ -90,9 +91,9 @@ final class ToolbarPresentationControl: NSView {
             xRadius: Self.cornerRadius,
             yRadius: Self.cornerRadius
         )
-        NSColor.controlBackgroundColor.withAlphaComponent(0.72).setFill()
+        NSColor.controlBackgroundColor.withAlphaComponent(0.46).setFill()
         path.fill()
-        NSColor.separatorColor.withAlphaComponent(0.58).setStroke()
+        NSColor.separatorColor.withAlphaComponent(0.32).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -136,12 +137,12 @@ private final class ToolbarModeButton: NSButton {
 
         contentStack.orientation = .horizontal
         contentStack.alignment = .centerY
-        contentStack.spacing = 7
+        contentStack.spacing = 6
         contentStack.distribution = .fill
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        titleView.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleView.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         titleView.alignment = .center
         titleView.lineBreakMode = .byClipping
         titleView.translatesAutoresizingMaskIntoConstraints = false
@@ -152,8 +153,8 @@ private final class ToolbarModeButton: NSButton {
         NSLayoutConstraint.activate([
             contentStack.centerXAnchor.constraint(equalTo: centerXAnchor),
             contentStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
         ])
 
         // The button's visual content is the stack above. Keep the NSButton
@@ -190,13 +191,16 @@ private final class ToolbarModeButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 1, dy: 1)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+        let rect = bounds.insetBy(dx: 2, dy: 2)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 5.5, yRadius: 5.5)
         if isSelected {
-            NSColor.unemphasizedSelectedContentBackgroundColor.setFill()
+            NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16).setFill()
             path.fill()
+            NSColor.labelColor.withAlphaComponent(0.13).setStroke()
+            path.lineWidth = 0.5
+            path.stroke()
         } else if isHovered || isHighlighted {
-            NSColor.labelColor.withAlphaComponent(0.09).setFill()
+            NSColor.labelColor.withAlphaComponent(0.07).setFill()
             path.fill()
         }
         super.draw(dirtyRect)
@@ -209,9 +213,9 @@ private final class ToolbarModeButton: NSButton {
 @MainActor
 final class ToolbarMenuButton: NSButton {
     private enum Metrics {
-        static let width: CGFloat = 40
-        static let height: CGFloat = 32
-        static let cornerRadius: CGFloat = 8
+        static let width: CGFloat = 30
+        static let height: CGFloat = 28
+        static let cornerRadius: CGFloat = 7
     }
 
     private let popupMenu: NSMenu
@@ -228,7 +232,7 @@ final class ToolbarMenuButton: NSButton {
         image = NSImage(
             systemSymbolName: "ellipsis",
             accessibilityDescription: "More actions"
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
         bezelStyle = .accessoryBarAction
@@ -288,20 +292,10 @@ final class ToolbarMenuButton: NSButton {
             xRadius: Metrics.cornerRadius,
             yRadius: Metrics.cornerRadius
         )
-        let isInteractive = isHovered || isHighlighted || isPressed
-        NSColor.controlBackgroundColor.withAlphaComponent(isInteractive ? 1 : 0.94).setFill()
-        path.fill()
-        NSColor.separatorColor.withAlphaComponent(isInteractive ? 0.9 : 0.78).setStroke()
-        path.lineWidth = 1
-        path.stroke()
+        if isHovered || isHighlighted || isPressed {
+            NSColor.labelColor.withAlphaComponent(isPressed ? 0.14 : 0.08).setFill()
+            path.fill()
+        }
         super.draw(dirtyRect)
-
-        let chevron = NSBezierPath()
-        chevron.move(to: NSPoint(x: bounds.maxX - 11, y: bounds.midY + 2))
-        chevron.line(to: NSPoint(x: bounds.maxX - 8, y: bounds.midY - 1))
-        chevron.line(to: NSPoint(x: bounds.maxX - 5, y: bounds.midY + 2))
-        chevron.lineWidth = 1.25
-        NSColor.secondaryLabelColor.setStroke()
-        chevron.stroke()
     }
 }

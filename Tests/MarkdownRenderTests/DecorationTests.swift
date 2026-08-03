@@ -326,6 +326,43 @@ Trailing paragraph mentioning `src/auth/session.ts:42` and $a^2$ inline.
                               in: NSAttributedString(string: text))?.string == "before \u{FFFC} after")
 }
 
+@Test func inlineMathProducesAnAttachmentAndCompactsTheLogicalDisplayMap() {
+    let source = #"Euler $e^{i\pi} + 1 = 0$ and $\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$."# + "\n"
+    let document = MarkdownParser.parse(source)
+    let substitutions = InlineMathDisplay.substitutions(
+        in: document, styleSheet: styleSheet(), excluding: nil)
+
+    #expect(substitutions.count == 2)
+    for substitution in substitutions {
+        #expect(substitution.displayLength == 1)
+        #expect(substitution.replacement?.attribute(.attachment, at: 0, effectiveRange: nil) != nil)
+    }
+
+    let map = DisplayMap(
+        paragraphs: ParagraphIndex(text: source as NSString),
+        substitutions: substitutions)
+    let paragraph = ParagraphIndex(text: source as NSString).range(at: 0)
+    let displayed = map.displayString(
+        forParagraphAt: paragraph,
+        in: NSAttributedString(string: source))
+    #expect(displayed?.length == (source as NSString).length -
+            substitutions.reduce(0) { $0 + $1.sourceRange.length - $1.displayLength })
+}
+
+@Test @MainActor func textViewInstallsInlineMathInItsLiveDisplayMap() {
+    let source = #"Euler $e^{i\pi} + 1 = 0$ and $\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$."# + "\n"
+    let storage = NSTextStorage(string: source)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 640, height: 400), storage: storage)
+    view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+
+    let math = view.currentDisplayMap.substitutions.filter { substitution in
+        substitution.replacement?.attribute(.attachment, at: 0, effectiveRange: nil) != nil
+    }
+    #expect(math.count == 2)
+    #expect(storage.string == source)
+}
+
 @Test func displayMapRoundTripsEveryOffsetOfARealDocument() {
     let text = sampleMarkdown
     let ns = text as NSString
@@ -556,6 +593,11 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     for mode in [RenderMode.read, .live] {
         let hidden = engine(mode).hiddenRanges(document: document, caret: nil, selections: [])
         #expect(hidden.contains(marker), "callout marker is visible in \(mode)")
+        let continuation = ns.range(of: "> The source")
+        #expect(hidden.contains { range in
+            range.location <= continuation.location
+                && range.upperBound >= continuation.location + 2
+        }, "callout continuation marker is visible in \(mode)")
 
         let index = ParagraphIndex(text: ns)
         let map = DisplayMap(paragraphs: index, hidden: hidden)
@@ -563,6 +605,68 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
         #expect(ns.substring(with: marker) == "> [!WARNING] Build carefully")
         #expect(map.sourceOffset(forTextKit: map.textKitOffset(forSource: marker.upperBound)) == marker.upperBound)
     }
+
+    let sourceHidden = engine(.source).hiddenRanges(document: document, caret: nil, selections: [])
+    #expect(sourceHidden.isEmpty, "Source Focus must retain every quote marker")
+}
+
+@Test @MainActor func resolvedDefinitionsStayOutOfRenderedProse() {
+    let text = "Body with [a link][ref] and a note[^1].\n\n[ref]: https://example.com\n[^1]: Hidden definition.\n"
+    let document = MarkdownParser.parse(text)
+    let renderedHidden = engine(.live).hiddenRanges(
+        document: document,
+        caret: nil,
+        selections: []
+    )
+    let reference = document.linkReferences["ref"]?.range
+    let footnote = document.footnotes["1"]?.range
+
+    #expect(reference != nil)
+    #expect(footnote != nil)
+    #expect(!renderedHidden.isEmpty)
+    #expect(engine(.source).hiddenRanges(
+        document: document,
+        caret: nil,
+        selections: []
+    ).isEmpty)
+
+    let storage = NSTextStorage(string: text)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 640, height: 400),
+        storage: storage
+    )
+    view.update(document: document, dirty: .wholesale)
+    #expect(reference.map { target in
+        storage.attribute(.drElided, at: target.location, effectiveRange: nil) != nil
+    } == true)
+    #expect(footnote.map { target in
+        storage.attribute(.drElided, at: target.location, effectiveRange: nil) != nil
+    } == true)
+    let rendered = view.renderedStringForSpeech(
+        sourceRange: NSRange(location: 0, length: storage.length)
+    )
+    #expect(!rendered.contains("https://example.com"))
+    #expect(!rendered.contains("Hidden definition"))
+}
+
+@Test func listTextAndWrappedLinesShareOneContentEdge() {
+    let text = "- [ ] A task with enough words to wrap onto another visual line in a narrow measure.\n"
+    let storage = NSTextStorage(string: text)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 280, height: 300),
+        storage: storage
+    )
+    view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+
+    let content = (text as NSString).range(of: "A task")
+    let style = storage.attribute(
+        .paragraphStyle,
+        at: content.location,
+        effectiveRange: nil
+    ) as? NSParagraphStyle
+    #expect(style != nil)
+    #expect(style?.firstLineHeadIndent == style?.headIndent)
+    #expect((style?.headIndent ?? 0) > 0, "the ornament still needs a hanging column")
 }
 
 // MARK: - §6.1a Gutter markers
@@ -615,7 +719,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(texts.contains { $0.hasSuffix(".") || $0 == "-" })
 }
 
-@Test func listOrnamentsAndHangingIndentsPreserveMarkdownStructure() {
+@Test func listOrnamentsAndAlignedWrapsPreserveMarkdownStructure() {
     let source = "- [ ] a task with enough text to wrap under its text edge\n10. an ordered item\n"
     let document = MarkdownParser.parse(source)
     let storage = NSTextStorage(string: source)
@@ -634,8 +738,10 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
         return
     }
 
-    #expect(taskStyle.headIndent > taskStyle.firstLineHeadIndent)
-    #expect(orderedStyle.headIndent > orderedStyle.firstLineHeadIndent)
+    #expect(taskStyle.headIndent == taskStyle.firstLineHeadIndent)
+    #expect(orderedStyle.headIndent == orderedStyle.firstLineHeadIndent)
+    #expect(taskStyle.headIndent > 0)
+    #expect(orderedStyle.headIndent > 0)
     #expect((storage.attribute(.drFragment, at: task.range.location, effectiveRange: nil)
              as? FragmentPayload)?.detail == "task:unchecked")
     #expect(storage.string == source)

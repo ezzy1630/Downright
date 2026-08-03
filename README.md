@@ -32,6 +32,7 @@ native render path.
 | **Task panel** | `⌘T` lists every checkbox grouped by heading. Toggling writes to the file immediately. A plan document becomes something you work through. |
 | **Sibling sidebar** | Agents write six files into a folder, not one. `⌘0` shows the others, newest first, with dots for changed-since-you-last-looked. No index, no vault, no "open folder" ceremony. |
 | **Adaptive document surface** | Read rendered Markdown and edit it in place without switching modes. Selection stays rendered; a caret reveals local syntax; scoped and full Source Focus expose exact Markdown on demand. |
+| **Reading chrome that stays out of the way** | The current heading trail owns a slim lane above the page instead of floating over prose. Block and list markers use one aligned ornament column; wrapped list text keeps one content edge. |
 | **Document inspectors** | Outline, tasks, search, history, workspace, health, render-target checks, assets, and document-lens views keep review work beside the document instead of in modal dialogs. |
 
 And the things it deliberately **is not**: no vault, no sync, no collaboration,
@@ -118,7 +119,21 @@ Scripts/check.sh
 ```
 
 The script supplies the Swift Testing framework path when the active toolchain
-needs it. It also fails if Swift runs zero tests.
+needs it, builds every product, and rejects a run where Swift Testing executed
+zero tests. For render work, set `DOWNRIGHT_RENDER_DUMP` to keep the smoke-test
+PNGs for visual comparison:
+
+```bash
+DOWNRIGHT_RENDER_DUMP=/tmp/downright-render Scripts/check.sh
+```
+
+If a locally built window looks stale, close other Downright processes and
+launch the exact bundle path. Multiple build directories can register the same
+bundle identifier with Launch Services:
+
+```bash
+open -n .build-main/bundle/Downright.app --args README.md
+```
 
 For the release-path performance checks:
 

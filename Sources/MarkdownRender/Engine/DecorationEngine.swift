@@ -366,7 +366,7 @@ public final class DecorationEngine {
 
         case .callout(let kind, let title):
             emitFragment(.callout, block: block,
-                         detail: kind.rawValue + "|" + (title == nil ? kind.rawValue.capitalized : ""), state: &state)
+                         detail: kind.rawValue + "|" + (title ?? kind.rawValue.capitalized), state: &state)
             childContext.quoteDepth += 1
             childContext.calloutKind = kind
             applyBase(block, context: context, state: &state)

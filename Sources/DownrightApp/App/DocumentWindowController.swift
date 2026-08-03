@@ -81,7 +81,7 @@ final class DocumentWindowController: NSWindowController {
     private var deferredInitialRestoreOffset: Int?
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
-    var breadcrumbHideWorkItem: DispatchWorkItem?
+    weak var toolbarPresentationControl: ToolbarPresentationControl?
 
     // MARK: - Construction
 
@@ -200,8 +200,6 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.needsDisplay = true
         primaryContainer.scrollView.contentView.needsDisplay = true
         updateBreadcrumbAndGutter()
-        breadcrumbHideWorkItem?.cancel()
-        breadcrumbView.alphaValue = 0
 
         let selection = NSRange(
             location: min(markdownDocument.state.selectionLocation, markdownDocument.storage.length),
@@ -234,8 +232,6 @@ final class DocumentWindowController: NSWindowController {
             self.primaryContainer.textView.displayIfNeeded()
             self.primaryContainer.scrollView.contentView.displayIfNeeded()
             self.updateBreadcrumbAndGutter()
-            self.breadcrumbHideWorkItem?.cancel()
-            self.breadcrumbView.alphaValue = 0
         }
     }
 
@@ -328,7 +324,7 @@ final class DocumentWindowController: NSWindowController {
         densityGutterView.delegate = self
         densityGutterView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
-        breadcrumbView.alphaValue = 0
+        breadcrumbView.alphaValue = 1
 
         rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
         leadingPane = NSView()
@@ -398,7 +394,7 @@ final class DocumentWindowController: NSWindowController {
         toolbar.autosavesConfiguration = false
         toolbar.isVisible = true
         window?.toolbar = toolbar
-        window?.toolbarStyle = .unified
+        window?.toolbarStyle = .unifiedCompact
     }
 
     private func wireDocument() {

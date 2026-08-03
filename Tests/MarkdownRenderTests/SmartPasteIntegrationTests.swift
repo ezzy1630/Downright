@@ -169,6 +169,27 @@ struct SmartPasteIntegrationTests {
         #expect(view.sourceSelectedRange == NSRange(location: bodyEnd + 5, length: 0))
     }
 
+    @Test("AppKit selection, Delete, and typing mutate the rendered document")
+    func appKitEditingEntryPoints() {
+        let source = "# Title\n\nBody with **bold** text.\n"
+        let view = view(for: source)
+        let bold = (source as NSString).range(of: "bold")
+        let displayedBold = view.currentDisplayMap.textKitRange(forSource: bold)
+
+        // Use NSTextView's public selection path, as a mouse drag does. This
+        // catches source/display mapping bugs that `performSourceEdit` cannot.
+        view.setSelectedRange(displayedBold)
+        #expect(view.sourceSelectedRange == bold)
+        view.deleteBackward(nil)
+        #expect(view.textStorage?.string == "# Title\n\nBody with **** text.\n")
+
+        let insertion = (view.textStorage!.string as NSString).range(of: "Body").upperBound
+        view.setSourceSelectedRanges([NSRange(location: insertion, length: 0)])
+        view.insertText(" grows", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(view.textStorage?.string == "# Title\n\nBody grows with **** text.\n")
+        #expect(view.sourceSelectedRange == NSRange(location: insertion + 6, length: 0))
+    }
+
     @Test("an edit keeps unaffected paragraphs rendered until async parse commits")
     func transientEditProjection() throws {
         let source = "# Title\n\nBody with **bold** text.\n\nTail with _emphasis_.\n"

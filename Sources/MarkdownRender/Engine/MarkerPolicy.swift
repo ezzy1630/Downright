@@ -42,6 +42,20 @@ public enum MarkerPolicy {
         var out: [NSRange] = []
         out.reserveCapacity(256)
 
+        if policy.hidesBlockMarkers {
+            // Reference and footnote definitions are document metadata, not
+            // body prose. Their resolved uses remain visible at the point of
+            // reading; the raw definitions belong only in Source Focus.
+            // Display substitutions cannot cross a physical paragraph
+            // boundary, so split multi-line footnotes before publishing the
+            // policy instead of asking DisplayMap to reject them.
+            let definitions = document.linkReferences.values.map(\.range)
+                + document.footnotes.values.map(\.range)
+            out.append(contentsOf: definitions.flatMap {
+                paragraphLocalRanges(in: $0, document: document)
+            })
+        }
+
         // Selection is observation, not edit intent.  Dragging, double-click,
         // Shift-arrow, Look Up, speech, and copy all create non-empty
         // selections, so revealing syntax here would make the document move
@@ -53,6 +67,17 @@ public enum MarkerPolicy {
             if policy.hidesBlockMarkers, blockMarkersAreHidden(block) {
                 if let m = block.markerRange, m.length > 0 { out.append(m) }
                 if let m = block.trailingMarkerRange, m.length > 0 { out.append(m) }
+                switch block.content {
+                case .blockQuote, .callout:
+                    // swift-markdown exposes the quote as one container and
+                    // does not give every continuation line its own marker
+                    // range. Hide each physical `>` prefix explicitly; if we
+                    // hide only the opening line, the remaining source marks
+                    // leak into rendered prose as repeated black chevrons.
+                    out.append(contentsOf: quotePrefixRanges(in: block, document: document))
+                default:
+                    break
+                }
             }
             guard policy.hidesInlineMarkers, !block.inlines.isEmpty else { return }
             for span in block.inlines {
@@ -60,6 +85,57 @@ public enum MarkerPolicy {
             }
         }
         return RangeSet.normalized(out)
+    }
+
+    private static func quotePrefixRanges(
+        in block: MDBlock,
+        document: ParsedDocument
+    ) -> [NSRange] {
+        guard block.range.length > 0 else { return [] }
+        let text = document.text as NSString
+        var result: [NSRange] = []
+
+        for (index, lineStart) in document.lineStarts.enumerated()
+        where lineStart < block.range.upperBound {
+            let lineEnd = index + 1 < document.lineStarts.count
+                ? document.lineStarts[index + 1]
+                : document.length
+            guard lineEnd > block.range.location, lineStart >= block.range.location else { continue }
+
+            var cursor = lineStart
+            while cursor < lineEnd {
+                let character = text.character(at: cursor)
+                guard character == 0x20 || character == 0x09 else { break }
+                cursor += 1
+            }
+            let markerStart = cursor
+            var sawQuote = false
+            while cursor < lineEnd, text.character(at: cursor) == 0x3E {
+                sawQuote = true
+                cursor += 1
+                if cursor < lineEnd, text.character(at: cursor) == 0x20 { cursor += 1 }
+                while cursor < lineEnd, text.character(at: cursor) == 0x09 { cursor += 1 }
+            }
+            if sawQuote, cursor > markerStart {
+                result.append(NSRange(location: markerStart, length: cursor - markerStart))
+            }
+        }
+        return result
+    }
+
+    private static func paragraphLocalRanges(
+        in sourceRange: NSRange,
+        document: ParsedDocument
+    ) -> [NSRange] {
+        guard sourceRange.length > 0 else { return [] }
+        var result: [NSRange] = []
+        for index in document.lineStarts.indices {
+            let line = document.range(ofLine: index + 1)
+            guard line.location < sourceRange.upperBound else { break }
+            let intersection = NSIntersectionRange(line, sourceRange)
+            if intersection.length > 0 { result.append(intersection) }
+        }
+        return result
     }
 
     /// Front matter and fenced code keep their delimiters in the source text:

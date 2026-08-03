@@ -157,8 +157,15 @@ final class BlockStyleFactory {
             style.paragraphSpacingBefore = 0
             style.paragraphSpacing = 0
             if context.listDepth > 0 {
-                style.firstLineHeadIndent = indent
-                style.headIndent = indent + markerColumn(context: context)
+                // The semantic ornament is drawn in the hanging column by
+                // `ListOrnamentFragment`; the source marker is not inline.
+                // Both the first visual line and every wrap therefore start
+                // at the same content edge.  A split indent here makes list
+                // text visibly staircase after the first line and places the
+                // checkbox on top of the first word.
+                let contentEdge = indent + markerColumn(context: context)
+                style.firstLineHeadIndent = contentEdge
+                style.headIndent = contentEdge
             }
         case .table, .thematicBreak:
             style.paragraphSpacingBefore = 0
@@ -177,8 +184,9 @@ final class BlockStyleFactory {
             // sequence of essays.
             style.paragraphSpacing = RenderMetrics.snap(h * (context.listDepth > 0 ? 0.15 : 0.45), grid: grid)
             if context.listDepth > 0 {
-                style.firstLineHeadIndent = indent
-                style.headIndent = indent + markerColumn(context: context)
+                let contentEdge = indent + markerColumn(context: context)
+                style.firstLineHeadIndent = contentEdge
+                style.headIndent = contentEdge
             }
         }
 

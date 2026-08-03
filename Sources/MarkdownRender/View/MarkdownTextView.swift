@@ -642,6 +642,23 @@ public final class MarkdownTextView: NSTextView {
             hidden.removeAll { NSIntersectionRange($0, focus).length > 0 }
         }
 
+        let mathRanges = effectivePolicy.rendersFragments
+            ? InlineMathDisplay.ranges(in: document).filter { range in
+                guard let focus = sourceFocus.range else { return true }
+                return NSIntersectionRange(range, focus).length == 0
+            }
+            : []
+        // The math replacement owns its delimiters and content as one visual
+        // object. Keeping the marker substitutions too would overlap the
+        // object range, causing DisplayMap to reject one of the entries.
+        hidden.removeAll { hiddenRange in
+            mathRanges.contains { NSIntersectionRange(hiddenRange, $0).length > 0 }
+        }
+        let mathSubstitutions = effectivePolicy.rendersFragments
+            ? InlineMathDisplay.substitutions(
+                in: document, styleSheet: styleSheet, excluding: sourceFocus.range)
+            : []
+
         baseHiddenRanges = hidden
         let plan = HardWrapReflow.plan(
             document: document,
@@ -653,6 +670,7 @@ public final class MarkdownTextView: NSTextView {
         baseDisplayMap = DisplayMap(
             paragraphs: paragraphIndex,
             substitutions: hidden.map(DisplaySubstitution.hide)
+                + mathSubstitutions
                 + plan.substitutions.filter { !$0.isHidden }
         )
         displayMap = baseDisplayMap
@@ -669,20 +687,40 @@ public final class MarkdownTextView: NSTextView {
     /// selection and reveal decisions.
     private func layoutDisplayMap(from logical: DisplayMap) -> DisplayMap {
         let substitutions = logical.substitutions.map { substitution in
-            guard substitution.isHidden else { return substitution }
-            let length = substitution.sourceRange.length
-            let replacement = NSAttributedString(
-                string: String(repeating: "\u{2060}", count: length),
+            guard !substitution.isHidden,
+                  let replacement = substitution.replacement,
+                  replacement.length < substitution.sourceRange.length,
+                  replacement.attribute(.attachment, at: 0, effectiveRange: nil) != nil else {
+                guard substitution.isHidden else { return substitution }
+                let length = substitution.sourceRange.length
+                let replacement = NSAttributedString(
+                    string: String(repeating: "\u{2060}", count: length),
+                    attributes: textStorage?.attributes(
+                        at: substitution.sourceRange.location,
+                        effectiveRange: nil
+                    ) ?? [:]
+                )
+                return DisplaySubstitution(
+                    sourceRange: substitution.sourceRange,
+                    displayLength: length,
+                    replacement: replacement,
+                    isHidden: true,
+                    preservesSourceOffsets: true
+                )
+            }
+            let fillerCount = substitution.sourceRange.length - replacement.length
+            let layoutReplacement = NSMutableAttributedString(attributedString: replacement)
+            layoutReplacement.append(NSAttributedString(
+                string: String(repeating: "\u{2060}", count: fillerCount),
                 attributes: textStorage?.attributes(
                     at: substitution.sourceRange.location,
                     effectiveRange: nil
                 ) ?? [:]
-            )
+            ))
             return DisplaySubstitution(
                 sourceRange: substitution.sourceRange,
-                displayLength: length,
-                replacement: replacement,
-                isHidden: true,
+                displayLength: substitution.sourceRange.length,
+                replacement: layoutReplacement,
                 preservesSourceOffsets: true
             )
         }
@@ -845,6 +883,10 @@ public final class MarkdownTextView: NSTextView {
             let revealed = MarkerPolicy.revealedMarkerRanges(
                 document: parsedDocument, policy: effectivePolicy,
                 caret: caret, selections: sourceSelectedRanges)
+            let revealedMath = caret.map {
+                InlineMathDisplay.ranges(in: parsedDocument, touching: $0)
+            } ?? []
+            let revealedDisplayObjects = revealed + revealedMath
             let paragraph = caret.map { paragraphIndex.paragraphRange(containing: $0) }
             // The fast path holds when the reveal is confined to the caret's
             // own paragraph, which is every ordinary keystroke.  A span
@@ -857,9 +899,9 @@ public final class MarkdownTextView: NSTextView {
                 }
             } ?? false
             if let paragraph, singleCaret {
-                if !revealed.isEmpty {
+                if !revealedDisplayObjects.isEmpty {
                     logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
-                                                                           excluding: revealed)
+                                                                           excluding: revealedDisplayObjects)
                     // Keep the cached document-wide set intact.  The display
                     // map and this exclusion list together describe the one
                     // paragraph that is currently revealed; no global filter
@@ -875,7 +917,7 @@ public final class MarkdownTextView: NSTextView {
             } else if !revealed.isEmpty {
                 hidden = subtract(revealed, from: hidden)
                 let revealedMapEntries = baseDisplayMap.substitutions.filter { entry in
-                    !revealed.contains { $0 == entry.sourceRange }
+                    !revealedDisplayObjects.contains { $0 == entry.sourceRange }
                 }
                 logicalDisplayMap = DisplayMap(paragraphs: paragraphIndex, substitutions: revealedMapEntries)
                 // A selection can span any number of paragraphs. The map was
@@ -953,7 +995,20 @@ public final class MarkdownTextView: NSTextView {
             document: parsedDocument, zoom: zoomLevel,
             foldedHeadingSlugs: foldedHeadingSlugs, searchHits: searchHits,
             caret: primarySourceCaret, selections: sourceSelectedRanges)
-        fragmentContext.elision = elision
+        let definitionElisions: [NSRange]
+        if effectivePolicy.hidesBlockMarkers {
+            let source = (textStorage?.string ?? "") as NSString
+            definitionElisions = (
+                parsedDocument.linkReferences.values.map(\.range)
+                    + parsedDocument.footnotes.values.map(\.range)
+            ).map { source.paragraphRange(for: $0) }
+        } else {
+            definitionElisions = []
+        }
+        fragmentContext.elision = ElisionPlan(
+            elidedRanges: RangeSet.normalized(elision.elidedRanges + definitionElisions),
+            forcedVisibleRanges: elision.forcedVisibleRanges
+        )
         applyElidedAttribute()
         if rebuildingMap {
             rebuildDisplayMap(fullRefresh: true)
@@ -965,13 +1020,23 @@ public final class MarkdownTextView: NSTextView {
         guard let storage = textStorage, storage.length > 0 else { return }
         // The common case by far is no zoom and no folds; sweeping the whole
         // document for that on every keystroke would be pure waste (§12).
-        let identity = elision.isIdentity
+        let definitionElisions: [NSRange]
+        if effectivePolicy.hidesBlockMarkers {
+            let source = storage.string as NSString
+            definitionElisions = (
+                parsedDocument.linkReferences.values.map(\.range)
+                    + parsedDocument.footnotes.values.map(\.range)
+            ).map { source.paragraphRange(for: $0) }
+        } else {
+            definitionElisions = []
+        }
+        let identity = elision.isIdentity && definitionElisions.isEmpty
         defer { elisionWasIdentity = identity }
         if identity && elisionWasIdentity { return }
         let whole = NSRange(location: 0, length: storage.length)
         storage.beginEditing()
         storage.removeAttribute(.drElided, range: whole)
-        for range in elision.elidedRanges {
+        for range in RangeSet.normalized(elision.elidedRanges + definitionElisions) {
             guard range.upperBound <= storage.length, range.length > 0 else { continue }
             storage.addAttribute(.drElided, value: true, range: range)
         }
@@ -1258,7 +1323,14 @@ public final class MarkdownTextView: NSTextView {
     public var topVisibleOffset: Int {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin
-        return sourceOffset(at: NSPoint(x: origin.x, y: max(0, visible.minY)))
+        // At the top of the document `visible.minY` sits above the text
+        // container's vertical inset. Asking AppKit for an insertion index in
+        // that empty band can return the current selection instead of the
+        // first laid-out glyph, which made the sticky breadcrumb name a far
+        // later heading while the title was on screen. Sample inside the
+        // visible text container, never inside its padding.
+        let sampleY = max(visible.minY, origin.y) + 1
+        return sourceOffset(at: NSPoint(x: origin.x + 1, y: sampleY))
     }
 
     public func scroll(toOffset offset: Int, position: ScrollPosition, animated: Bool) {

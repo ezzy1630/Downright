@@ -255,6 +255,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             let control = ToolbarPresentationControl { [weak self] selectedSegment in
                 self?.toolbarModeChanged(selectedSegment)
             }
+            toolbarPresentationControl = control
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.label = "Presentation"
@@ -276,21 +277,19 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
 
     private func toolbarModeChanged(_ selectedSegment: Int) {
         let showSource = selectedSegment == 1
-        let views = [primaryContainer?.textView, splitContainer?.textView].compactMap { $0 }
-        for view in views {
-            if showSource { view.focusEntireSource() }
-            else { view.clearSourceFocus() }
+        for pane in documentPanes {
+            if showSource {
+                pane.textView.focusEntireSource()
+            } else {
+                pane.textView.clearSourceFocus()
+            }
         }
     }
 
     func refreshSourceFocusToolbar() {
-        guard let toolbar = window?.toolbar else { return }
         let isActive = primaryContainer.textView.sourceFocus != .none
             || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)
-        guard let item = toolbar.items.first(where: { $0.itemIdentifier == Self.modeItem }),
-              let control = item.view as? ToolbarPresentationControl
-        else { return }
-        control.setSelectedSegment(isActive ? 1 : 0)
+        toolbarPresentationControl?.setSelectedSegment(isActive ? 1 : 0)
     }
 
     @objc private func toolbarShowTasks(_ sender: Any?) {

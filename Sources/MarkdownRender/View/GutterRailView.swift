@@ -118,7 +118,6 @@ public final class GutterRailView: NSView {
             attributed.draw(at: NSPoint(x: x, y: rect.minY + max(0, (style.lineHeight - size.height) / 2)))
         }
 
-        drawHeadingAnchor(style: style, textView: textView)
     }
 
     private func visibleMarkerSlice(in textView: MarkdownTextView)
@@ -191,22 +190,6 @@ public final class GutterRailView: NSView {
                 y: rect.minY + max(0, (style.lineHeight - size.height) / 2)
             ))
         }
-    }
-
-    /// §7.1: hovering a heading puts an anchor glyph in the gutter.  Click it
-    /// to copy a link to that section, ⌥-click to fold.
-    private func drawHeadingAnchor(style: StyleSheet, textView: MarkdownTextView) {
-        guard let index = textView.hoveredHeadingIndex,
-              index < textView.parsedDocument.headings.count else { return }
-        let heading = textView.parsedDocument.headings[index]
-        guard let rect = rowRect(for: heading.range, in: textView) else { return }
-        let symbol = textView.foldedHeadingSlugs.contains(heading.slug) ? "chevron.right" : "number"
-        guard let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)) else { return }
-        let box = NSRect(x: max(2, bounds.width - 8 - icon.size.width),
-                         y: rect.minY + max(0, (style.lineHeight - icon.size.height) / 2),
-                         width: icon.size.width, height: icon.size.height)
-        icon.draw(in: box, from: .zero, operation: .sourceOver, fraction: 0.85)
     }
 
     private var hoveredHeadingIsVisible: Bool { textView?.hoveredHeadingIndex != nil }

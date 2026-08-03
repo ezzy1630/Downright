@@ -53,7 +53,8 @@ public final class MarkdownContainerView: NSView {
         }
     }
 
-    /// Accessory pinned at the top; the sticky breadcrumb goes here.
+    /// Accessory in a reserved lane above the scroller. The document never
+    /// moves underneath it, so orientation chrome cannot cover prose.
     public var topAccessory: NSView? {
         didSet {
             oldValue?.removeFromSuperview()
@@ -114,7 +115,8 @@ public final class MarkdownContainerView: NSView {
 
     public override func layout() {
         super.layout()
-        let topHeight = topAccessory.map { $0.fittingSize.height > 0 ? $0.fittingSize.height : 28 } ?? 0
+        let topHeight = topAccessory.map { $0.fittingSize.height > 0 ? $0.fittingSize.height : 24 } ?? 0
+        let topLaneHeight = topHeight > 0 ? topHeight + 8 : 0
         let isFloatingDensityMap = leadingAccessory is DensityGutterView
         let leadingWidth = isFloatingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
@@ -123,16 +125,16 @@ public final class MarkdownContainerView: NSView {
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
 
         let accessoryWidth = min(max(160, textView.styleSheet.measureWidth), max(160, bounds.width - 80))
-        topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 8,
+        topAccessory?.frame = NSRect(x: (bounds.width - accessoryWidth) / 2, y: 4,
                                      width: accessoryWidth, height: topHeight)
         leadingAccessory?.frame = NSRect(x: 0, y: 0,
                                          width: leadingWidth, height: bounds.height)
         trailingAccessory?.frame = NSRect(x: bounds.width - trailingWidth, y: 0,
                                           width: trailingWidth, height: bounds.height)
 
-        scrollView.frame = NSRect(x: leadingWidth, y: 0,
+        scrollView.frame = NSRect(x: leadingWidth, y: topLaneHeight,
                                   width: contentWidth,
-                                  height: bounds.height)
+                                  height: max(0, bounds.height - topLaneHeight))
 
         // The text column is centred in the measure (§11.1). The document map
         // is intentionally kept in the quiet leading lane so it does not
@@ -163,7 +165,7 @@ public final class MarkdownContainerView: NSView {
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)
 
         let textOrigin = scrollView.frame.minX + textLeft
-        gutter.frame = NSRect(x: max(0, textOrigin - gutterWidth), y: 0,
+        gutter.frame = NSRect(x: max(0, textOrigin - gutterWidth), y: topLaneHeight,
                               width: gutterWidth, height: scrollView.frame.height)
 
         if isFloatingDensityMap, let leadingAccessory {

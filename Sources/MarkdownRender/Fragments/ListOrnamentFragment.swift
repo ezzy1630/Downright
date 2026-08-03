@@ -6,7 +6,12 @@ final class ListOrnamentFragment: DownrightFragment {
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         let lineHeight = max(style.lineHeight, layoutFragmentFrame.height)
-        let textEdge = point.x + (paragraphStyle?.headIndent ?? 0)
+        // `point.x` is the layout fragment origin; TextKit has already
+        // resolved paragraph indents inside the first line fragment. Adding
+        // `headIndent` again places the ornament on top of the first word.
+        // Read the actual glyph edge instead, so tasks, ordered markers, and
+        // bullets all share the same hanging column at every nesting level.
+        let textEdge = point.x + (textLineFragments.first?.typographicBounds.minX ?? 0)
         let centreY = point.y + min(lineHeight, layoutFragmentFrame.height) * 0.48
 
         if payload.detail.hasPrefix("task:") {
