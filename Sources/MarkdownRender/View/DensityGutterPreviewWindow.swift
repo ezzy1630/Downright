@@ -48,7 +48,13 @@ final class DensityGutterPreviewWindow: NSWindow {
     ) {
         presentationGeneration &+= 1
         let titleChanged = content.update(title: title, snippet: snippet, footer: footer)
-        let size = content.fittingSize(maxWidth: maximumWidth)
+        let alreadyPresented = isVisible && self.parent === parent
+        // Pointer movement should not trigger a new text measurement on every
+        // event. Keep the card geometry stable within a section; reflow only
+        // when a new heading arrives, where the change carries meaning.
+        let size = alreadyPresented && !titleChanged
+            ? frame.size
+            : content.fittingSize(maxWidth: maximumWidth)
 
         var origin = NSPoint(x: anchor.x + 8, y: anchor.y - size.height / 2)
         if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
@@ -56,7 +62,6 @@ final class DensityGutterPreviewWindow: NSWindow {
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
         }
         let finalFrame = NSRect(origin: origin, size: size)
-        let alreadyPresented = isVisible && self.parent === parent
 
         if alreadyPresented {
             // Once visible, the preview tracks the pointer directly. An
@@ -161,7 +166,7 @@ private final class PreviewContentView: NSView {
         guard !reduceMotion, let layer else { return }
         let transition = CATransition()
         transition.type = .fade
-        transition.duration = 0.08
+        transition.duration = 0.06
         transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
         layer.add(transition, forKey: "preview-content-change")
     }
