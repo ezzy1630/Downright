@@ -5,6 +5,13 @@ import AppKit
 /// than the default capsule treatment.
 @MainActor
 final class ToolbarPresentationControl: NSView {
+    private enum Metrics {
+        static let width: CGFloat = 252
+        static let height: CGFloat = 34
+        static let documentWidth: CGFloat = 134
+        static let sourceWidth: CGFloat = 116
+    }
+
     private static let cornerRadius: CGFloat = 9
 
     private let documentButton: ToolbarModeButton
@@ -14,11 +21,11 @@ final class ToolbarPresentationControl: NSView {
     var onChange: ((Int) -> Void)?
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 224, height: 32)
+        NSSize(width: Metrics.width, height: Metrics.height)
     }
 
     var segmentTitles: [String] {
-        [documentButton.title, sourceButton.title]
+        [documentButton.displayTitle, sourceButton.displayTitle]
     }
 
     init(onChange: @escaping (Int) -> Void) {
@@ -31,7 +38,6 @@ final class ToolbarPresentationControl: NSView {
         self.onChange = onChange
         super.init(frame: .zero)
 
-        wantsLayer = true
         documentButton.tag = 0
         sourceButton.tag = 1
         documentButton.target = self
@@ -52,7 +58,8 @@ final class ToolbarPresentationControl: NSView {
             sourceButton.bottomAnchor.constraint(equalTo: documentButton.bottomAnchor),
             sourceButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
             sourceButton.leadingAnchor.constraint(equalTo: documentButton.trailingAnchor),
-            documentButton.widthAnchor.constraint(equalTo: sourceButton.widthAnchor),
+            documentButton.widthAnchor.constraint(equalToConstant: Metrics.documentWidth),
+            sourceButton.widthAnchor.constraint(equalToConstant: Metrics.sourceWidth),
         ])
 
         setSelectedSegment(0)
@@ -96,9 +103,17 @@ final class ToolbarPresentationControl: NSView {
 /// introducing a second animation system.
 @MainActor
 private final class ToolbarModeButton: NSButton {
+    let displayTitle: String
+
+    private let iconView: NSImageView
+    private let titleView: NSTextField
+    private let contentStack: NSStackView
+
     var isSelected = false {
         didSet {
-            contentTintColor = isSelected ? .labelColor : .secondaryLabelColor
+            let color: NSColor = isSelected ? .labelColor : .secondaryLabelColor
+            iconView.contentTintColor = color
+            titleView.textColor = color
             setAccessibilityValue(isSelected ? "Selected" : "Not selected")
             needsDisplay = true
         }
@@ -109,15 +124,43 @@ private final class ToolbarModeButton: NSButton {
     }
 
     init(title: String, symbolName: String, accessibilityLabel: String) {
+        displayTitle = title
+        let image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: accessibilityLabel
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .medium))
+        iconView = NSImageView(image: image ?? NSImage())
+        titleView = NSTextField(labelWithString: title)
+        contentStack = NSStackView()
         super.init(frame: .zero)
-        self.title = title
-        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)
-        imagePosition = .imageLeading
-        imageScaling = .scaleProportionallyDown
-        alignment = .center
+
+        contentStack.orientation = .horizontal
+        contentStack.alignment = .centerY
+        contentStack.spacing = 7
+        contentStack.distribution = .fill
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        titleView.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleView.alignment = .center
+        titleView.lineBreakMode = .byClipping
+        titleView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(iconView)
+        contentStack.addArrangedSubview(titleView)
+        addSubview(contentStack)
+
+        NSLayoutConstraint.activate([
+            contentStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            contentStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+        ])
+
+        // The button's visual content is the stack above. Keep the NSButton
+        // title/image empty so AppKit cannot lay them out independently.
+        self.title = ""
         bezelStyle = .regularSquare
         controlSize = .regular
-        font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         isBordered = false
         focusRingType = .default
         setAccessibilityRole(.radioButton)
@@ -165,6 +208,12 @@ private final class ToolbarModeButton: NSButton {
 /// menu itself provide the disclosure affordance when opened.
 @MainActor
 final class ToolbarMenuButton: NSButton {
+    private enum Metrics {
+        static let width: CGFloat = 40
+        static let height: CGFloat = 32
+        static let cornerRadius: CGFloat = 8
+    }
+
     private let popupMenu: NSMenu
 
     var popupMenuItems: [NSMenuItem] { popupMenu.items }
@@ -176,7 +225,10 @@ final class ToolbarMenuButton: NSButton {
     init(menu: NSMenu) {
         popupMenu = menu
         super.init(frame: .zero)
-        image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "More actions")
+        image = NSImage(
+            systemSymbolName: "ellipsis",
+            accessibilityDescription: "More actions"
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
         bezelStyle = .accessoryBarAction
@@ -192,7 +244,7 @@ final class ToolbarMenuButton: NSButton {
     required init?(coder: NSCoder) { nil }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 32, height: 32)
+        NSSize(width: Metrics.width, height: Metrics.height)
     }
 
     override func updateTrackingAreas() {
@@ -214,7 +266,13 @@ final class ToolbarMenuButton: NSButton {
         isHovered = false
     }
 
+    private var isPressed = false {
+        didSet { needsDisplay = true }
+    }
+
     override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        defer { isPressed = false }
         popupMenu.popUp(positioning: nil, at: NSPoint(x: bounds.maxX, y: bounds.minY), in: self)
     }
 
@@ -224,12 +282,26 @@ final class ToolbarMenuButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isHovered || isHighlighted {
-            let rect = bounds.insetBy(dx: 1, dy: 1)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
-            NSColor.labelColor.withAlphaComponent(0.1).setFill()
-            path.fill()
-        }
+        let rect = bounds.insetBy(dx: 1, dy: 1)
+        let path = NSBezierPath(
+            roundedRect: rect,
+            xRadius: Metrics.cornerRadius,
+            yRadius: Metrics.cornerRadius
+        )
+        let isInteractive = isHovered || isHighlighted || isPressed
+        NSColor.controlBackgroundColor.withAlphaComponent(isInteractive ? 1 : 0.94).setFill()
+        path.fill()
+        NSColor.separatorColor.withAlphaComponent(isInteractive ? 0.9 : 0.78).setStroke()
+        path.lineWidth = 1
+        path.stroke()
         super.draw(dirtyRect)
+
+        let chevron = NSBezierPath()
+        chevron.move(to: NSPoint(x: bounds.maxX - 11, y: bounds.midY + 2))
+        chevron.line(to: NSPoint(x: bounds.maxX - 8, y: bounds.midY - 1))
+        chevron.line(to: NSPoint(x: bounds.maxX - 5, y: bounds.midY + 2))
+        chevron.lineWidth = 1.25
+        NSColor.secondaryLabelColor.setStroke()
+        chevron.stroke()
     }
 }
