@@ -428,6 +428,9 @@ extension MarkdownTextView {
 
         let oldParagraphs = paragraphIndex
         let oldHiddenRanges = currentDisplayMap.baseHiddenRangesForEditProjection
+        let deletedText = storage.attributedSubstring(from: clamped).string
+        let preservesParagraphStructure = !containsParagraphSeparator(deletedText)
+            && !containsParagraphSeparator(replacement)
         beginSourceEdit()
         storage.replaceCharacters(in: clamped, with: replacement)
         let inserted = (replacement as NSString).length
@@ -437,7 +440,8 @@ extension MarkdownTextView {
             clamped,
             insertedLength: inserted,
             oldParagraphs: oldParagraphs,
-            oldHiddenRanges: oldHiddenRanges
+            oldHiddenRanges: oldHiddenRanges,
+            preservesParagraphStructure: preservesParagraphStructure
         )
         didChangeText()
         endSourceEdit()
@@ -447,6 +451,17 @@ extension MarkdownTextView {
         setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
         handleSelectionChanged()
         return true
+    }
+
+    private func containsParagraphSeparator(_ string: String) -> Bool {
+        string.unicodeScalars.contains {
+            switch $0.value {
+            case 0x0A, 0x0D, 0x0085, 0x2028, 0x2029:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private func adjustScopedSourceFocus(forEdit edit: NSRange, insertedLength: Int) {

@@ -207,9 +207,25 @@ struct SmartPasteIntegrationTests {
 
         let projected = view.currentDisplayMap.hiddenRanges
         let editedParagraph = view.paragraphIndex.paragraphRange(containing: body.location)
-        #expect(projected.allSatisfy { NSIntersectionRange($0, editedParagraph).length == 0 })
+        #expect(projected.contains { NSIntersectionRange($0, editedParagraph).length > 0 })
         #expect(projected.contains { $0.location >= tailMarker + 7 })
         #expect(view.currentDisplayMap.paragraphs.length == view.textStorage?.length)
+    }
+
+    @Test("typing in a heading never flashes its source marker")
+    func transientHeadingEditKeepsMarkerHidden() throws {
+        let source = "# Title\n\nBody\n"
+        let view = view(for: source)
+        let marker = NSRange(location: 0, length: 2)
+
+        #expect(view.currentDisplayMap.hiddenRanges.contains(marker))
+        #expect(view.performSourceEdit(
+            range: NSRange(location: (source as NSString).range(of: "Title").upperBound, length: 0),
+            replacement: " grows"
+        ))
+
+        #expect(view.currentDisplayMap.hiddenRanges.contains(marker))
+        #expect(view.textStorage?.attribute(.drHidden, at: 0, effectiveRange: nil) != nil)
     }
 
     @Test("an edit keeps unrelated hard-wrapped blocks reflowed until async parse commits")
@@ -243,8 +259,8 @@ struct SmartPasteIntegrationTests {
         #expect(projectedBreaks.contains(laterBreak.location + 6 + delta))
     }
 
-    @Test("an edit invalidates only its own hard-wrapped block")
-    func transientEditProjectionDropsTouchedHardWrapBlock() throws {
+    @Test("ordinary typing keeps its own hard-wrapped block reflowed")
+    func transientEditProjectionKeepsTouchedHardWrapBlock() throws {
         let source = """
         # Title
 
@@ -268,8 +284,36 @@ struct SmartPasteIntegrationTests {
         let projectedBreaks = view.currentDisplayMap.substitutions
             .filter(\.isHardWrapReflow)
             .map(\.sourceRange.location)
-        #expect(!projectedBreaks.contains(firstBreak.location + 6))
+        #expect(projectedBreaks.contains(firstBreak.location + 6 + delta))
         #expect(projectedBreaks.contains(secondBreak.location + 6 + delta))
+    }
+
+    @Test("a newline edit invalidates its touched hard-wrapped block")
+    func transientStructuralEditDropsTouchedHardWrapBlock() throws {
+        let source = """
+        # Title
+
+        First prose line wraps in the source
+        but remains one rendered paragraph.
+
+        Second prose line also wraps in the source
+        and stays rendered while the first changes.
+        """
+        let view = view(for: source)
+        let firstBreak = (source as NSString).range(of: "source\nbut")
+        let secondBreak = (source as NSString).range(of: "source\nand")
+        let edit = (source as NSString).range(of: "First")
+
+        #expect(view.performSourceEdit(
+            range: NSRange(location: edit.upperBound, length: 0),
+            replacement: "\n"
+        ))
+
+        let projectedBreaks = view.currentDisplayMap.substitutions
+            .filter(\.isHardWrapReflow)
+            .map(\.sourceRange.location)
+        #expect(!projectedBreaks.contains(firstBreak.location + 6))
+        #expect(projectedBreaks.contains(secondBreak.location + 7))
     }
 
     @Test("code, math, and front matter keep clipboard text literal")

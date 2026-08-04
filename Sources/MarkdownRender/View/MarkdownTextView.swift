@@ -976,20 +976,26 @@ public final class MarkdownTextView: NSTextView {
         _ edit: NSRange,
         insertedLength: Int,
         oldParagraphs: ParagraphIndex,
-        oldHiddenRanges: [NSRange]
+        oldHiddenRanges: [NSRange],
+        preservesParagraphStructure: Bool
     ) {
         let projection = SourceEditProjection(
             edit: edit,
             insertedLength: insertedLength,
             oldParagraphs: oldParagraphs
         )
-        let projectedHidden = oldHiddenRanges.compactMap(projection.project)
+        let projectedHidden = oldHiddenRanges.compactMap(projection.projectUnchanged)
         let projectedHardWrapRanges = RangeSet.normalized(
-            hardWrapRanges.compactMap(projection.project)
+            hardWrapRanges.compactMap {
+                projection.projectContainer(
+                    $0,
+                    preservingStructure: preservesParagraphStructure
+                )
+            }
         )
         let projectedHardWrapSubstitutions = hardWrapSubstitutions.compactMap {
             substitution -> DisplaySubstitution? in
-            guard let range = projection.project(substitution.sourceRange),
+            guard let range = projection.projectUnchanged(substitution.sourceRange),
                   RangeSet.covers(projectedHardWrapRanges, range.location) else {
                 return nil
             }
@@ -1024,10 +1030,10 @@ public final class MarkdownTextView: NSTextView {
         let affected = first.union(last).intersection(NSRange(location: 0, length: storage.length))
         guard let affected, affected.length > 0 else { return }
         storage.beginEditing()
-        storage.removeAttribute(.drHidden, range: affected)
         storage.removeAttribute(.drFragment, range: affected)
         storage.removeAttribute(.drElided, range: affected)
         storage.endEditing()
+        applyHiddenAttribute(projectedHidden, scope: affected)
         invalidateFragments(in: affected)
     }
 

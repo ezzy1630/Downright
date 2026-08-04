@@ -242,12 +242,14 @@ public enum RangeSet {
 /// asynchronous parse commit. Ranges outside the touched physical paragraphs
 /// remain valid; later ranges move by the edit delta; touched ranges expire.
 struct SourceEditProjection: Sendable {
+    let edit: NSRange
     let invalidatedRange: NSRange
     let delta: Int
 
     init(edit: NSRange, insertedLength: Int, oldParagraphs: ParagraphIndex) {
         let location = Swift.max(0, Swift.min(edit.location, oldParagraphs.length))
         let end = Swift.max(location, Swift.min(edit.upperBound, oldParagraphs.length))
+        self.edit = NSRange(location: location, length: end - location)
         let first = oldParagraphs.index(containing: location)
         let last = oldParagraphs.index(containing: Swift.max(location, end - 1))
         invalidatedRange = NSUnionRange(
@@ -263,6 +265,34 @@ struct SourceEditProjection: Sendable {
             return NSRange(location: range.location + delta, length: range.length)
         }
         return nil
+    }
+
+    /// Projects a coordinate-stable substitution. Only a substitution whose
+    /// own source bytes were edited expires; siblings in the same paragraph
+    /// remain safe and must not flash back to literal Markdown.
+    func projectUnchanged(_ range: NSRange) -> NSRange? {
+        if range.upperBound <= edit.location { return range }
+        if range.location >= edit.upperBound {
+            return NSRange(location: range.location + delta, length: range.length)
+        }
+        return nil
+    }
+
+    /// Projects a grouped layout range through an ordinary character edit.
+    /// Adding or removing a paragraph separator changes element topology, so
+    /// callers must opt out and use the conservative paragraph invalidation.
+    func projectContainer(_ range: NSRange, preservingStructure: Bool) -> NSRange? {
+        if range.upperBound <= edit.location { return range }
+        if range.location >= edit.upperBound {
+            return NSRange(location: range.location + delta, length: range.length)
+        }
+        guard preservingStructure,
+              edit.location > range.location,
+              edit.upperBound < range.upperBound,
+              range.length + delta > 0 else {
+            return nil
+        }
+        return NSRange(location: range.location, length: range.length + delta)
     }
 }
 
