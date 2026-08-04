@@ -10,6 +10,7 @@ cd "$ROOT"
 
 CONFIGURATION="${CONFIGURATION:-Release}"
 SCRATCH="${SCRATCH:-.build-xcode}"
+BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 command -v xcodegen >/dev/null || {
     echo "xcodegen is required. Install it with: brew install xcodegen" >&2
@@ -26,8 +27,9 @@ xcodebuild \
     -configuration "$CONFIGURATION" \
     -derivedDataPath "$SCRATCH" \
     CODE_SIGN_IDENTITY="-" \
-    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_ALLOWED=YES \
     CODE_SIGNING_REQUIRED=NO \
+    CURRENT_PROJECT_VERSION="$BUILD" \
     build
 
 APP="$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Downright.app"

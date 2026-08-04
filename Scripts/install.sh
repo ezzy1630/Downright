@@ -29,10 +29,25 @@ fi
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
     -f "$APP_DEST" 2>/dev/null || true
 
+if command -v pluginkit >/dev/null 2>&1; then
+    if [ -d "$APP_DEST/Contents/PlugIns/DownrightQL.appex" ]; then
+        pluginkit -a "$APP_DEST/Contents/PlugIns/DownrightQL.appex" 2>/dev/null || true
+        pluginkit -e use -i com.ezzyrappeport.downright.quicklook 2>/dev/null || true
+    fi
+    if [ -d "$APP_DEST/Contents/PlugIns/DownrightThumb.appex" ]; then
+        pluginkit -a "$APP_DEST/Contents/PlugIns/DownrightThumb.appex" 2>/dev/null || true
+        pluginkit -e use -i com.ezzyrappeport.downright.thumbnail 2>/dev/null || true
+    fi
+fi
+
+if command -v qlmanage >/dev/null 2>&1; then
+    qlmanage -r 2>/dev/null || true
+    qlmanage -r cache 2>/dev/null || true
+fi
+
 echo
 echo "Installed."
 echo "  down PLAN.md            open a file"
 echo "  md PLAN.md              same thing"
 echo
-echo "Quick Look: launch Downright once, then enable it under"
-echo "System Settings → General → Login Items & Extensions → Quick Look."
+echo "Quick Look: Downright preview and thumbnail extensions registered."

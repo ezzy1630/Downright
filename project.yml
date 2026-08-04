@@ -49,6 +49,7 @@ targets:
         PRODUCT_NAME: DownrightQL
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
+        ENABLE_APP_SANDBOX: YES
         INFOPLIST_FILE: Config/DownrightQL-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0
@@ -68,6 +69,7 @@ targets:
         PRODUCT_NAME: DownrightThumb
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
+        ENABLE_APP_SANDBOX: YES
         INFOPLIST_FILE: Config/DownrightThumb-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0

@@ -12,12 +12,14 @@ WebView (spec §3.3).
 **This is the number one support question for every app in this category**, so
 it is documented up front rather than in a FAQ:
 
-First build and embed the extension bundles with the steps below. Then:
+Build and install with `Scripts/bundle-xcode-app.sh` followed by
+`Scripts/install.sh`. The installer registers and enables both embedded
+extensions and resets Quick Look's cache. If you copy the app manually,
+follow these steps:
 
-1. **Launch Downright once.** Quick Look extensions only register with the
-   system after the host app has been run at least once. A freshly copied
-   `.app` that has never been opened contributes no extensions.
-2. If previews still don't appear, enable the extension manually:
+1. **Launch Downright once.** A freshly copied `.app` that has never been
+   opened may not contribute its extensions to the system.
+2. If previews don't appear, enable the extension manually:
    **System Settings → General → Login Items & Extensions → Quick Look**, then
    tick **Downright**.
 3. If a preview is still stale, reset the Quick Look daemon:
