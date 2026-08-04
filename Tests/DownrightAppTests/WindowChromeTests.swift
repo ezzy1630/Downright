@@ -67,16 +67,16 @@ struct WindowChromeTests {
     }
 
     @Test
-    func breadcrumbFloatsWithoutTakingDocumentSpace() {
+    func breadcrumbReservesAStableTextSafeLane() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
         let crumb = BreadcrumbView()
         crumb.trail = [(0, "Root", 1), (1, "Section", 2)]
         container.topAccessory = crumb
-        container.topAccessoryOverlaysContent = true
+        container.topAccessoryOverlaysContent = false
         container.setFrameSize(NSSize(width: 900, height: 600))
         container.layout()
-        #expect(container.scrollView.frame.minY == 0)
-        #expect(crumb.frame.minY > container.scrollView.frame.minY)
+        #expect(container.scrollView.frame.minY > 0)
+        #expect(crumb.frame.maxY <= container.scrollView.frame.minY)
     }
 
     @Test
@@ -84,19 +84,22 @@ struct WindowChromeTests {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "Hello"))
         let crumb = BreadcrumbView()
         container.topAccessory = crumb
-        container.topAccessoryOverlaysContent = true
+        container.topAccessoryOverlaysContent = false
         container.setFrameSize(NSSize(width: 900, height: 600))
         container.layout()
         #expect(!crumb.isPresentedForTesting)
 
         crumb.trail = [(0, "Section", 1)]
-        crumb.presentTransiently()
+        crumb.showCurrentSection()
         container.layout()
         #expect(crumb.isPresentedForTesting)
-        #expect(container.scrollView.frame.minY == 0)
+        let documentOrigin = container.scrollView.frame.minY
+        #expect(documentOrigin > 0)
 
-        crumb.hideImmediately()
+        crumb.hideCurrentSection()
         #expect(!crumb.isPresentedForTesting)
+        container.layout()
+        #expect(container.scrollView.frame.minY == documentOrigin)
     }
 
     @Test

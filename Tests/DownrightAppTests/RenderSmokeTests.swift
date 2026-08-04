@@ -159,20 +159,21 @@ struct RenderSmokeTests {
         #expect(container.textView.textContainer?.size.width == documentMeasure)
     }
 
-    @Test("Floating breadcrumb leaves the document viewport full height")
-    func breadcrumbOverlaysWithoutResizingDocument() {
+    @Test("Breadcrumb lane keeps navigation out of the document viewport")
+    func breadcrumbReservesDocumentSafeArea() {
         let container = MarkdownContainerView(storage: NSTextStorage(string: "# Heading\n\nText"))
         let breadcrumb = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         container.topAccessory = breadcrumb
-        container.topAccessoryOverlaysContent = true
+        container.topAccessoryOverlaysContent = false
         container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         container.layoutSubtreeIfNeeded()
 
-        #expect(container.scrollView.frame.minY == 0)
+        #expect(container.scrollView.frame.minY > 0)
         let textOrigin = container.scrollView.frame.minX
             + container.scrollView.contentInsets.left
             + RenderMetrics.revealSlack
         #expect(abs(breadcrumb.frame.minX - textOrigin) < 0.5)
+        #expect(breadcrumb.frame.maxY <= container.scrollView.frame.minY)
         #expect(container.scrollView.frame.maxY == container.bounds.maxY)
     }
 

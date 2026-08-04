@@ -12,14 +12,15 @@ protocol BreadcrumbDelegate: AnyObject {
 /// The document title already lives in the toolbar. Repeating every ancestor
 /// here makes the quiet reading lane look like a second title bar, so the
 /// control shows only the section the reader is in. The complete path remains
-/// one click away in a native menu.
+/// one click away in a native menu. Its host reserves a quiet navigation lane:
+/// orientation chrome must never cover the prose it describes.
 final class BreadcrumbView: NSView {
     private enum Metrics {
         /// Fixed chrome height. An empty or temporarily reparsing heading list
         /// must never move the document under the reader's eyes.
         static let height: CGFloat = 28
         static let buttonHeight: CGFloat = 24
-        static let maximumButtonWidth: CGFloat = 360
+        static let maximumButtonWidth: CGFloat = 420
         static let horizontalContentAllowance: CGFloat = 26
         static let sectionChangeDuration: CFTimeInterval = 0.12
     }
@@ -44,11 +45,10 @@ final class BreadcrumbView: NSView {
     }
 
     private let sectionButton = ToolbarInteractiveButton(frame: .zero)
-    private let material = NSVisualEffectView()
     private var sectionAction: ButtonAction?
-    private var dismissWorkItem: DispatchWorkItem?
+    private var isCuePresented = false
 
-    var isPresentedForTesting: Bool { !isHidden }
+    var isPresentedForTesting: Bool { !isHidden && isCuePresented }
 
     var currentTitleOrigin: CGFloat {
         let titleRect = (sectionButton.cell as? NSButtonCell)?.titleRect(forBounds: sectionButton.bounds)
@@ -81,15 +81,6 @@ final class BreadcrumbView: NSView {
         self.styleSheet = styleSheet
         super.init(frame: .zero)
 
-        material.material = .hudWindow
-        material.blendingMode = .withinWindow
-        material.state = .followsWindowActiveState
-        material.wantsLayer = true
-        material.layer?.cornerRadius = 7
-        material.layer?.cornerCurve = .continuous
-        material.layer?.masksToBounds = true
-        addSubview(material)
-
         let action = ButtonAction { [weak self] in self?.showPathMenu() }
         sectionAction = action
         sectionButton.feedbackInsetX = 0
@@ -107,14 +98,14 @@ final class BreadcrumbView: NSView {
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Current section")
-        isHidden = true
+        // Keep the lane in layout even when the cue itself is absent. Toggling
+        // `isHidden` here would move the whole document at the first scroll.
+        isHidden = false
         alphaValue = 0
         rebuild(animated: false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    deinit { dismissWorkItem?.cancel() }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Metrics.maximumButtonWidth, height: Metrics.height)
@@ -128,7 +119,7 @@ final class BreadcrumbView: NSView {
             sectionButton.attributedTitle = NSAttributedString()
             sectionButton.image = nil
             setAccessibilityLabel("Current section")
-            hideImmediately()
+            hideCurrentSection()
             needsLayout = true
             return
         }
@@ -151,42 +142,25 @@ final class BreadcrumbView: NSView {
         needsLayout = true
     }
 
-    func presentTransiently() {
+    func showCurrentSection() {
         guard !trail.isEmpty else { return }
-        dismissWorkItem?.cancel()
-        isHidden = false
-        superview?.needsLayout = true
+        guard !isCuePresented else { return }
+        isCuePresented = true
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if reduceMotion {
             alphaValue = 1
         } else {
-            animator().alphaValue = 1
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                context.timingFunction = ToolbarChromePolicy.timingFunction()
+                animator().alphaValue = 1
+            }
         }
-        let work = DispatchWorkItem { [weak self] in self?.dismissTransiently() }
-        dismissWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
-    func hideImmediately() {
-        dismissWorkItem?.cancel()
-        dismissWorkItem = nil
+    func hideCurrentSection() {
+        isCuePresented = false
         alphaValue = 0
-        isHidden = true
-    }
-
-    private func dismissTransiently() {
-        dismissWorkItem = nil
-        guard !isHidden else { return }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            hideImmediately()
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            self?.isHidden = true
-        }
     }
 
     private func styledTitle(_ text: String) -> NSAttributedString {
@@ -233,8 +207,6 @@ final class BreadcrumbView: NSView {
         // the control, not its text, so the visible title shares the document's
         // exact leading axis while the hit target and feedback stay native.
         sectionButton.frame.origin.x -= currentTitleOrigin
-        material.frame = sectionButton.frame.insetBy(dx: -7, dy: 0)
-
         discardCursorRects()
         window?.invalidateCursorRects(for: self)
     }

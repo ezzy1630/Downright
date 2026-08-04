@@ -102,9 +102,9 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         updateBreadcrumbAndGutter()
         if let first = markdownDocument.parsed.headings.first,
            view.topVisibleOffset > first.range.upperBound {
-            breadcrumbView.presentTransiently()
+            breadcrumbView.showCurrentSection()
         } else {
-            breadcrumbView.hideImmediately()
+            breadcrumbView.hideCurrentSection()
         }
         updateFocusDimmingViews()
     }

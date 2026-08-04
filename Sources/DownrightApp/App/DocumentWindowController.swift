@@ -344,7 +344,9 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.markdownDelegate = self
         primaryContainer.textView.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
-        primaryContainer.topAccessoryOverlaysContent = true
+        // The current-section cue lives in a stable orientation lane. A
+        // reader must never trade the first line of prose for navigation.
+        primaryContainer.topAccessoryOverlaysContent = false
         // Keep the document map on the leading edge of the document surface.
         // It reads as contents there; on the trailing edge it looks like an
         // unexplained second scrollbar.
