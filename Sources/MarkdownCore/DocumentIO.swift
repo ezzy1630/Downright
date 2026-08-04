@@ -47,9 +47,15 @@ public enum DocumentIO {
     /// Hex SHA-256 of raw bytes.  Shared by snapshot objects and sibling
     /// fingerprinting so every content-addressed path uses one digester.
     public static func contentHash(_ data: Data) -> String {
-        SHA256.hash(data: data)
-            .map { String(format: "%02x", $0) }
-            .joined()
+        let hex = Array("0123456789abcdef".utf8)
+        let digest = SHA256.hash(data: data)
+        var out = ""
+        out.reserveCapacity(64)
+        for byte in digest {
+            out.append(Character(UnicodeScalar(hex[Int(byte >> 4)])))
+            out.append(Character(UnicodeScalar(hex[Int(byte & 0x0F)])))
+        }
+        return out
     }
 
     // MARK: Decoding

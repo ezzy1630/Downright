@@ -235,7 +235,15 @@ struct KeyBinding: Codable, Hashable {
 
     init(_ key: String, _ modifiers: NSEvent.ModifierFlags = []) {
         self.key = key
-        self.modifiers = modifiers
+        self.modifiers = KeyBinding.normalized(modifiers)
+    }
+
+    /// Modifier bits that actually mean something to a shortcut.  Caps Lock and
+    /// Fn are sticky state, not a chord, and an enabled Caps Lock must not make
+    /// `⌘S` stop matching.  Applied on construction and on every equality/hash
+    /// so a stored binding and an incoming event always agree.
+    static func normalized(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        flags.intersection([.command, .shift, .option, .control, .numericPad])
     }
 
     // MARK: Serialisation
@@ -281,12 +289,12 @@ struct KeyBinding: Codable, Hashable {
     }
 
     static func == (a: KeyBinding, b: KeyBinding) -> Bool {
-        a.key == b.key && a.modifiers.intersection(.deviceIndependentFlagsMask) == b.modifiers.intersection(.deviceIndependentFlagsMask)
+        a.key == b.key && KeyBinding.normalized(a.modifiers) == KeyBinding.normalized(b.modifiers)
     }
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(key)
-        hasher.combine(modifiers.intersection(.deviceIndependentFlagsMask).rawValue)
+        hasher.combine(KeyBinding.normalized(modifiers).rawValue)
     }
 
     // MARK: Display

@@ -48,10 +48,19 @@ final class SiblingScanner {
     private let scanQueue = DispatchQueue(label: "com.ezzyrappeport.downright.sibling-scan", qos: .utility)
     private var scanGeneration: UInt64 = 0
 
+    /// Files above this size are not content-hashed for the "changed since you
+    /// last looked" dot: reading and SHA-256-ing them on open would stall the
+    /// first frame for a dot that carries no real signal.
+    private let changeHashMaxBytes = 2 * 1024 * 1024
+
     init(documentURL: URL, extraDirectories: [String]) {
         self.documentURL = documentURL.resolvingSymlinksInPath()
         self.extraDirectories = extraDirectories
-        scan(synchronously: true)
+        // First pass: pure directory listing, no content hashing — instant for
+        // the first paint.  The second pass computes unseen-change dots off the
+        // scan queue so a folder of agent output never blocks opening the file.
+        scan(synchronously: true, computeChanges: false)
+        scan(synchronously: false, computeChanges: true)
         startWatching()
     }
 
@@ -59,10 +68,11 @@ final class SiblingScanner {
 
     // MARK: - Scanning
 
-    /// Directory listing + content hashing.  Watcher-driven rescans run off the
-    /// main thread; the initial open path stays synchronous so the sidebar has
-    /// rows before the first paint.
-    func scan(synchronously: Bool = false) {
+    /// Directory listing; `computeChanges: true` additionally reads and hashes
+    /// each sibling for the "changed since you last looked" dot.  Watcher-driven
+    /// rescans run off the main thread; the initial open path stays synchronous
+    /// so the sidebar has rows before the first paint, but *listing only*.
+    func scan(synchronously: Bool = false, computeChanges: Bool = true) {
         if synchronously {
             scanGeneration &+= 1
             var cache = contentHashCache
@@ -72,6 +82,7 @@ final class SiblingScanner {
                 extraDirectories: extraDirectories,
                 markdownExtensions: markdownExtensions,
                 limit: limit,
+                computeChanges: computeChanges,
                 cache: &cache,
                 order: &order
             )
@@ -97,6 +108,7 @@ final class SiblingScanner {
                 extraDirectories: extraDirectories,
                 markdownExtensions: markdownExtensions,
                 limit: limit,
+                computeChanges: computeChanges,
                 cache: &cache,
                 order: &order
             )
@@ -115,6 +127,7 @@ final class SiblingScanner {
         extraDirectories: [String],
         markdownExtensions: Set<String>,
         limit: Int,
+        computeChanges: Bool,
         cache: inout [ContentFingerprint: String],
         order: inout [ContentFingerprint]
     ) -> [Sibling] {
@@ -122,7 +135,8 @@ final class SiblingScanner {
         var found: [Sibling] = []
         found.append(contentsOf: markdownFiles(
             in: directory, group: nil, documentURL: documentURL,
-            markdownExtensions: markdownExtensions, cache: &cache, order: &order
+            markdownExtensions: markdownExtensions, computeChanges: computeChanges,
+            cache: &cache, order: &order
         ))
 
         for name in extraDirectories {
@@ -132,7 +146,8 @@ final class SiblingScanner {
                   isDirectory.boolValue else { continue }
             found.append(contentsOf: markdownFiles(
                 in: sub, group: name, documentURL: documentURL,
-                markdownExtensions: markdownExtensions, cache: &cache, order: &order
+                markdownExtensions: markdownExtensions, computeChanges: computeChanges,
+                cache: &cache, order: &order
             ))
         }
 
@@ -148,6 +163,7 @@ final class SiblingScanner {
         group: String?,
         documentURL: URL,
         markdownExtensions: Set<String>,
+        computeChanges: Bool,
         cache: inout [ContentFingerprint: String],
         order: inout [ContentFingerprint]
     ) -> [Sibling] {
@@ -163,11 +179,14 @@ final class SiblingScanner {
 
             let modified = values.contentModificationDate ?? .distantPast
             let state = DocumentStateStore.shared.state(for: url)
+            let size = values.fileSize ?? 0
             let unseen: Bool
             if state.lastSeenHash.isEmpty {
                 unseen = false
+            } else if !computeChanges || size > changeHashMaxBytes {
+                unseen = false
             } else if let hash = contentHash(
-                for: url, modified: modified, byteCount: values.fileSize ?? 0,
+                for: url, modified: modified, byteCount: size,
                 cache: &cache, order: &order
             ) {
                 unseen = hash != state.lastSeenHash
@@ -179,7 +198,7 @@ final class SiblingScanner {
                 url: url,
                 displayName: url.deletingPathExtension().lastPathComponent,
                 modified: modified,
-                byteCount: values.fileSize ?? 0,
+                byteCount: size,
                 hasUnseenChanges: unseen && url.resolvingSymlinksInPath() != documentURL,
                 group: group,
                 isCurrent: url.resolvingSymlinksInPath() == documentURL

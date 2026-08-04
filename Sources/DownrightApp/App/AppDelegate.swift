@@ -169,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onClose = { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
-            self.saveSession()
+            self.scheduleSessionSave()
             if self.windowControllers.isEmpty {
                 self.showStartWindow()
             }
@@ -271,6 +271,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Every window reopens with its mode, zoom level, scroll position, fold
     /// state, and sidebar state (§9.3) — the per-document parts come back from
     /// `DocumentStateStore`, so only the window geometry lives in the session.
+    /// Closing several windows in a row rewrites the whole session file each
+    /// time; coalesce to one write once the burst settles.
+    private var sessionSaveWorkItem: DispatchWorkItem?
+
+    private func scheduleSessionSave() {
+        sessionSaveWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.sessionSaveWorkItem = nil
+            self?.saveSession()
+        }
+        sessionSaveWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
     @discardableResult
     private func restoreSession() -> Bool {
         guard let data = try? Data(contentsOf: AppPaths.sessionFile),
@@ -439,6 +453,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = CompareWindowController(left: panel.urls[0], right: panel.urls[1])
         controller.showWindow(nil)
         comparisonWindows.append(controller)
+        // A Compare window is a temporary surface; drop its controller the moment
+        // the window closes so repeated comparisons do not accumulate objects
+        // (and their notification observers) for the app's lifetime.
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: controller.window,
+            queue: .main
+        ) { [weak self, weak controller] _ in
+            // Remove the observer unconditionally so the cycle always unwinds,
+            // even if the owner is gone by the time the window closes.
+            if let token { NotificationCenter.default.removeObserver(token) }
+            guard let self, let controller else { return }
+            self.comparisonWindows.removeAll { $0 === controller }
+        }
     }
 
     private var comparisonWindows: [CompareWindowController] = []

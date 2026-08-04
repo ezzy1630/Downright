@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Testing
 import MarkdownCore
 import MarkdownRender
@@ -351,6 +352,28 @@ struct AppLayerTests {
             let binding = try #require(KeyBinding(parsing: source), "failed to parse \(source)")
             #expect(KeyBinding(parsing: binding.serialized) == binding)
         }
+    }
+
+    /// Caps Lock and Fn are sticky state, not part of a chord.  A binding must
+    /// compare equal to an event carrying them, or every shortcut silently dies
+    /// when the user's caps lock is on (§7.2).
+    @Test func keyBindingsIgnoreCapsLockAndFunctionFlags() {
+        let binding = KeyBinding("s", .command)
+        let withCapsLock = KeyBinding("s", [.command, .capsLock, .function])
+        #expect(binding == withCapsLock)
+        #expect(binding.hashValue == withCapsLock.hashValue)
+
+        // The event-driven lookup must resolve ⌘S while Caps Lock is held.
+        let store = KeybindingStore.shared
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero,
+            modifierFlags: [.command, .capsLock],
+            timestamp: 0, windowNumber: 0, context: nil,
+            characters: "s", charactersIgnoringModifiers: "s",
+            isARepeat: false, keyCode: 0
+        )
+        let resolved = event.flatMap { store.command(for: $0, scope: .live) }
+        #expect(resolved == .save)
     }
 
     @Test func defaultBindingsMatchTheSpecTable() {

@@ -206,4 +206,59 @@ import Testing
     @Test func givesUpBeyondTheDistanceCap() {
         #expect(Myers.diff([1, 2, 3, 4], [5, 6, 7, 8], maxDistance: 2) == nil)
     }
+
+    /// Edge trimming: only the middle of the arrays is worked; the assembled
+    /// script must still be complete and in document order.
+    @Test func trimmedEdgesStillProduceACompleteScript() {
+        let old: [UInt64] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        let new: [UInt64] = [0, 1, 2, 99, 100, 7, 8, 9]
+        let script = try! #require(Myers.diff(old, new))
+        let deletes = script.filter { if case .delete = $0 { true } else { false } }.count
+        let inserts = script.filter { if case .insert = $0 { true } else { false } }.count
+        let equals = script.filter { if case .equal = $0 { true } else { false } }.count
+        #expect(deletes == 4)
+        #expect(inserts == 2)
+        #expect(equals == 6)
+        // Replay the script: equal/delete walk old, equal/insert walk new, and
+        // the equals must land on matching elements.
+        var oi = 0, ni = 0
+        for step in script {
+            switch step {
+            case .equal(let o, let n):
+                #expect(old[o] == new[n])
+                #expect(o == oi)
+                #expect(n == ni)
+                oi += 1; ni += 1
+            case .delete(let o):
+                #expect(o == oi); oi += 1
+            case .insert(let n):
+                #expect(n == ni); ni += 1
+            }
+        }
+        #expect(oi == old.count)
+        #expect(ni == new.count)
+    }
+
+    /// A large pair with no common lines must bail to nil (whole-document
+    /// hunk) without building the O(D²) trace — the memory spike the
+    /// lower-bound check exists to prevent.
+    @Test func largeDisjointInputsBailWithoutBuildingTheTrace() {
+        let old = (0..<4000).map { UInt64($0) }
+        let new = (0..<4000).map { UInt64($0 + 1_000_000) }
+        let start = Date()
+        let result = Myers.diff(old, new)
+        #expect(result == nil)
+        #expect(Date().timeIntervalSince(start) < 1.0)
+    }
+
+    /// Reordering large shared content stays solvable despite the length: the
+    /// overlap bound must not reject a document that is genuinely the same
+    /// lines in a different order.
+    @Test func largeReordersRemainDiffable() {
+        let base = (0..<2000).map { "chunk \($0)" }
+        let old = (base + Array(base.prefix(500).reversed())).map { FNV.hash($0) }
+        let new = (Array(base.prefix(500).reversed()) + base).map { FNV.hash($0) }
+        let result = Myers.diff(old, new)
+        #expect(result != nil)
+    }
 }
