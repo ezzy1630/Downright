@@ -3,6 +3,28 @@ import AppKit
 /// Typographic list markers. Markdown syntax remains hidden while the semantic
 /// ornament sits in the hanging indent in Read and Live modes.
 final class ListOrnamentFragment: DownrightFragment {
+    static let taskBoxSide: CGFloat = 14
+    static let taskHitTargetSide: CGFloat = 28
+
+    static func taskHitRect(textEdge: CGFloat, centreY: CGFloat, bodySize: CGFloat) -> CGRect {
+        let box = taskBoxRect(textEdge: textEdge, centreY: centreY, bodySize: bodySize)
+        return CGRect(
+            x: box.midX - taskHitTargetSide / 2,
+            y: box.midY - taskHitTargetSide / 2,
+            width: taskHitTargetSide,
+            height: taskHitTargetSide
+        )
+    }
+
+    static func taskBoxRect(textEdge: CGFloat, centreY: CGFloat, bodySize: CGFloat) -> CGRect {
+        CGRect(
+            x: textEdge - taskBoxSide - bodySize * 0.5,
+            y: centreY - taskBoxSide / 2,
+            width: taskBoxSide,
+            height: taskBoxSide
+        )
+    }
+
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         let lineHeight = max(style.lineHeight, layoutFragmentFrame.height)
@@ -12,7 +34,7 @@ final class ListOrnamentFragment: DownrightFragment {
         // Read the actual glyph edge instead, so tasks, ordered markers, and
         // bullets all share the same hanging column at every nesting level.
         let textEdge = point.x + (textLineFragments.first?.typographicBounds.minX ?? 0)
-        let centreY = point.y + min(lineHeight, layoutFragmentFrame.height) * 0.48
+        let centreY = point.y + min(lineHeight, layoutFragmentFrame.height) * 0.44
 
         if payload.detail.hasPrefix("task:") {
             drawTask(checked: payload.detail == "task:checked", textEdge: textEdge,
@@ -50,9 +72,12 @@ final class ListOrnamentFragment: DownrightFragment {
         style: StyleSheet,
         in cg: CGContext
     ) {
-        let side: CGFloat = 10
-        var box = CGRect(x: textEdge - side - style.bodyFont().pointSize * 0.5,
-                         y: centreY - side / 2, width: side, height: side)
+        let side = Self.taskBoxSide
+        var box = Self.taskBoxRect(
+            textEdge: textEdge,
+            centreY: centreY,
+            bodySize: style.bodyFont().pointSize
+        )
 
         // Micro-feedback: the box pops and a ring fades out, so a toggle is
         // answered in place even when the new state is a single dark tick (§7.1).
@@ -71,7 +96,7 @@ final class ListOrnamentFragment: DownrightFragment {
             }
         }
 
-        let path = CGPath(roundedRect: box, cornerWidth: 3, cornerHeight: 3, transform: nil)
+        let path = CGPath(roundedRect: box, cornerWidth: 3.5, cornerHeight: 3.5, transform: nil)
         cg.addPath(path)
         if checked {
             cg.setFillColor(style.accent.cgColor)
@@ -86,7 +111,7 @@ final class ListOrnamentFragment: DownrightFragment {
             cg.strokePath()
         } else {
             cg.setStrokeColor(style.textFaint.cgColor)
-            cg.setLineWidth(1.5)
+            cg.setLineWidth(1.25)
             cg.strokePath()
         }
 

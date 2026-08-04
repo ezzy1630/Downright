@@ -218,7 +218,8 @@ struct WindowChromeTests {
         controller.showConflictBar("Changed on disk")
         controller.window?.contentView?.layoutSubtreeIfNeeded()
 
-        #expect(controller.barStack.arrangedSubviews.count == 2)
+        #expect(controller.barStack.arrangedSubviews.count == 1)
+        #expect(controller.changeSummaryBar?.superview !== controller.barStack)
         #expect(controller.barStack.frame.height > 0)
         #expect(controller.primaryContainer.frame.minY >= controller.barStack.frame.maxY - 0.5)
     }
@@ -228,7 +229,7 @@ struct WindowChromeTests {
         let bar = ChangeSummaryBarView()
         bar.configure(message: "Updated on disk", changeCount: 4)
         #expect(bar.intrinsicContentSize.height == PanelMetrics.reviewBarHeight)
-        #expect(bar.positionStatusForTesting == "4 unread")
+        #expect(bar.positionStatusForTesting.isEmpty)
     }
 
     @Test

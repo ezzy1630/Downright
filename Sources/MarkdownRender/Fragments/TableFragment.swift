@@ -58,6 +58,8 @@ struct TableLayout {
     var alignments: [NSTextAlignment]
     var rowHeights: [CGFloat]
     var totalWidth: CGFloat
+    var isStacked: Bool
+    var stackedLabelWidth: CGFloat
 
     /// §11.3: numeric columns are right-aligned automatically.  A column
     /// counts as numeric when most of its non-empty body cells parse as a
@@ -108,9 +110,12 @@ struct TableLayout {
         let floor = min(28, available / CGFloat(columns))
         var widths = minimums.map { max(floor, $0) }
         let minimumTotal = widths.reduce(0, +)
-        if minimumTotal > available {
-            let correction = available / minimumTotal
-            widths = widths.map { max(1, $0 * correction) }
+        let isStacked = minimumTotal > available
+        if isStacked {
+            // Never squeeze a word below its readable width. On a narrow
+            // measure, transpose rows into labeled fields instead of turning
+            // `Source` into `Sourc/e` or introducing a nested scroll view.
+            widths = [CGFloat](repeating: available / CGFloat(columns), count: columns)
         } else if natural.reduce(0, +) > 0 {
             // Give remaining space only to columns that can use it. This keeps
             // a compact label column intact beside a long prose column.
@@ -155,9 +160,31 @@ struct TableLayout {
             }
         }
 
+        let stackedLabelWidth = min(150, max(72, width * 0.30))
+        let stackedValueWidth = max(40, width - stackedLabelWidth - RenderMetrics.tableColumnGap)
         var rowHeights: [CGFloat] = []
         rowHeights.reserveCapacity(data.rows.count)
         for row in data.rows {
+            if isStacked {
+                guard !row.isHeader else {
+                    rowHeights.append(0)
+                    continue
+                }
+                let cellsHeight = row.cells.reduce(CGFloat.zero) { partial, cell in
+                    let value = TableCellPresentation.plainText(for: cell, in: storage)
+                    return partial + stackedCellHeight(
+                        value: value,
+                        width: stackedValueWidth,
+                        font: style.bodyFont(),
+                        style: style
+                    )
+                }
+                rowHeights.append(RenderMetrics.snap(
+                    cellsHeight + RenderMetrics.tableRowPadding * 2,
+                    grid: max(1, style.baselineGrid)
+                ))
+                continue
+            }
             var lines: CGFloat = 1
             for (index, cell) in row.cells.enumerated() where index < widths.count {
                 let value = TableCellPresentation.plainText(for: cell, in: storage)
@@ -176,7 +203,24 @@ struct TableLayout {
         }
         return TableLayout(columnX: xs, columnWidths: widths, alignments: alignments,
                            rowHeights: rowHeights,
-                           totalWidth: min(width, max(0, cursor - RenderMetrics.tableColumnGap)))
+                           totalWidth: min(width, max(0, cursor - RenderMetrics.tableColumnGap)),
+                           isStacked: isStacked,
+                           stackedLabelWidth: stackedLabelWidth)
+    }
+
+    static func stackedCellHeight(
+        value: String,
+        width: CGFloat,
+        font: NSFont,
+        style: StyleSheet
+    ) -> CGFloat {
+        let rect = (value as NSString).boundingRect(
+            with: CGSize(width: width, height: style.lineHeight * 4),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        let lines = min(CGFloat(4), max(1, ceil(rect.height / max(1, style.lineHeight))))
+        return lines * style.lineHeight + style.baselineGrid
     }
 
     private static func isNumeric(_ text: String) -> Bool {
@@ -261,6 +305,11 @@ final class TableRowFragment: DownrightFragment {
             cg.fillRect(frame, color: style.text.withAlphaComponent(0.04))
         }
 
+        if layout.isStacked {
+            drawStackedRow(row, frame: frame, layout: layout, style: style, in: cg)
+            return
+        }
+
         for (index, cell) in row.cells.enumerated() where index < layout.columnX.count {
             let source: NSAttributedString
             if let storage = context?.storage {
@@ -299,5 +348,67 @@ final class TableRowFragment: DownrightFragment {
                                width: frame.width, height: RenderMetrics.tableRuleWidth),
                         color: style.rule)
         }
+    }
+
+    private func drawStackedRow(
+        _ row: TableRow,
+        frame: CGRect,
+        layout: TableLayout,
+        style: StyleSheet,
+        in cg: CGContext
+    ) {
+        guard !row.isHeader, let storage = context?.storage else { return }
+        let header = data.rows.first(where: \.isHeader)
+        let valueX = frame.minX + layout.stackedLabelWidth + RenderMetrics.tableColumnGap
+        let valueWidth = max(40, frame.maxX - valueX)
+        var y = frame.minY + RenderMetrics.tableRowPadding
+
+        for (index, cell) in row.cells.enumerated() {
+            let label = header.flatMap { index < $0.cells.count ? $0.cells[index] : nil }
+                .map { TableCellPresentation.plainText(for: $0, in: storage) }
+                .flatMap { $0.isEmpty ? nil : $0 }
+                ?? "Column \(index + 1)"
+            let value = NSMutableAttributedString(
+                attributedString: TableCellPresentation.attributedContent(for: cell, in: storage)
+            )
+            let valueString = value.string
+            let cellHeight = TableLayout.stackedCellHeight(
+                value: valueString,
+                width: valueWidth,
+                font: style.bodyFont(),
+                style: style
+            )
+
+            let labelText = NSAttributedString(string: label.uppercased(), attributes: [
+                .font: NSFont.systemFont(ofSize: max(10, style.bodyFont().pointSize * 0.72), weight: .semibold),
+                .foregroundColor: style.textSecondary,
+                .kern: style.bodyFont().pointSize * 0.045,
+            ])
+            cg.drawText(
+                labelText,
+                in: CGRect(x: frame.minX, y: y + 1,
+                           width: layout.stackedLabelWidth, height: style.lineHeight),
+                flipped: true
+            )
+
+            if value.length > 0 {
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.lineBreakMode = .byWordWrapping
+                value.addAttribute(.paragraphStyle, value: paragraph,
+                                   range: NSRange(location: 0, length: value.length))
+                cg.drawText(
+                    value,
+                    in: CGRect(x: valueX, y: y, width: valueWidth, height: cellHeight),
+                    flipped: true
+                )
+            }
+            y += cellHeight
+        }
+
+        cg.fillRect(
+            CGRect(x: frame.minX, y: frame.maxY - RenderMetrics.tableRuleWidth,
+                   width: frame.width, height: RenderMetrics.tableRuleWidth),
+            color: style.rule.withAlphaComponent(0.65)
+        )
     }
 }

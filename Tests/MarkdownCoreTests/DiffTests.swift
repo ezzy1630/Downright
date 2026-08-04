@@ -62,6 +62,16 @@ import Testing
         #expect(new.substring(dirty.ranges[0]) == "TWO")
     }
 
+    @Test func togglingTaskMarkerDirtiesTheListItem() {
+        let old = MarkdownParser.parse("- [ ] Ship the fix\n")
+        let new = MarkdownParser.parse("- [x] Ship the fix\n")
+        let dirty = ASTDiff.dirtySet(old: old, new: new)
+
+        #expect(!dirty.isWholesale)
+        #expect(dirty.ranges.count == 1)
+        #expect(new.substring(dirty.ranges[0]) == "- [x] Ship the fix")
+    }
+
     @Test func majorStructuralChangeGoesWholesale() {
         let old = MarkdownParser.parse(Corpus.manyBlocks(count: 40))
         let new = MarkdownParser.parse("# Completely different\n")

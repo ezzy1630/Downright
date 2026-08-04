@@ -18,7 +18,7 @@ enum PanelMetrics {
     static let gutterWidth: CGFloat = 14
     static let headerHeight: CGFloat = 32
     static let barHeight: CGFloat = 32
-    static let reviewBarHeight: CGFloat = 36
+    static let reviewBarHeight: CGFloat = 30
     static let rowHeight: CGFloat = 24
     static let groupRowHeight: CGFloat = 22
     static let inset: CGFloat = 10

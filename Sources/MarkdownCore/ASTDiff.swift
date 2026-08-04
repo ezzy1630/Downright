@@ -72,7 +72,14 @@ public enum ASTDiff {
             let before = old[index], after = new[index]
             let sameKind = BlockIdentifier.discriminator(before.content)
                 == BlockIdentifier.discriminator(after.content)
-            if sameKind, !before.children.isEmpty, !after.children.isEmpty {
+            let sameContainerSemantics = containerSemanticsMatch(
+                before.content,
+                after.content
+            )
+            if sameKind,
+               sameContainerSemantics,
+               !before.children.isEmpty,
+               !after.children.isEmpty {
                 var nested: [NSRange] = []
                 if reconcile(old: before.children, new: after.children, into: &nested) {
                     ranges.append(contentsOf: nested)
@@ -80,6 +87,33 @@ public enum ASTDiff {
                 }
             }
             ranges.append(after.range)
+        }
+    }
+
+    /// Child hashes do not describe a container's own marker metadata. A task
+    /// toggle, list start change, or callout-kind edit can leave every child
+    /// byte unchanged while still requiring the parent decoration to refresh.
+    private static func containerSemanticsMatch(
+        _ old: BlockContent,
+        _ new: BlockContent
+    ) -> Bool {
+        switch (old, new) {
+        case let (.callout(oldKind, oldTitle), .callout(newKind, newTitle)):
+            return oldKind == newKind && oldTitle == newTitle
+        case let (
+            .list(oldOrdered, oldStart, oldTight, oldMarker),
+            .list(newOrdered, newStart, newTight, newMarker)
+        ):
+            return oldOrdered == newOrdered
+                && oldStart == newStart
+                && oldTight == newTight
+                && oldMarker == newMarker
+        case let (.listItem(oldOrdinal, oldBox), .listItem(newOrdinal, newBox)):
+            return oldOrdinal == newOrdinal && oldBox?.isChecked == newBox?.isChecked
+        case let (.footnoteDefinition(oldID), .footnoteDefinition(newID)):
+            return oldID == newID
+        default:
+            return true
         }
     }
 

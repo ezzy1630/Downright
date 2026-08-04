@@ -86,8 +86,18 @@ final class CodeBlockFragment: DownrightFragment {
     }
 
     private func drawRule(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
-        cg.fillRect(CGRect(x: band.minX, y: band.minY, width: RenderMetrics.codeRuleWidth, height: band.height),
-                    color: style.codeRule)
+        let topInset: CGFloat = role == .openChrome ? 4 : 0
+        let bottomInset: CGFloat = role == .closeChrome ? 4 : 0
+        cg.fillRect(
+            CGRect(
+                x: band.minX,
+                y: band.minY + topInset,
+                width: RenderMetrics.codeRuleWidth,
+                height: max(1, band.height - topInset - bottomInset)
+            ),
+            color: style.codeRule,
+            radius: RenderMetrics.codeRuleWidth / 2
+        )
     }
 
     private func drawChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {

@@ -680,7 +680,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(!rendered.contains("Hidden definition"))
 }
 
-@Test func listTextAndWrappedLinesShareOneContentEdge() {
+@Test @MainActor func listTextAndWrappedLinesShareOneContentEdge() {
     let text = "- [ ] A task with enough words to wrap onto another visual line in a narrow measure.\n"
     let storage = NSTextStorage(string: text)
     let view = MarkdownTextView(
@@ -698,6 +698,31 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(style != nil)
     #expect(style?.firstLineHeadIndent == style?.headIndent)
     #expect((style?.headIndent ?? 0) > 0, "the ornament still needs a hanging column")
+    #expect((style?.paragraphSpacing ?? 0) > 0, "task controls need breathing room")
+}
+
+@Test func checkedTasksHaveAQuietCompletionTreatment() {
+    let source = "- [x] shipped\n"
+    let document = MarkdownParser.parse(source)
+    let storage = NSTextStorage(string: source)
+    let sheet = styleSheet()
+    let renderer = DecorationEngine(styleSheet: sheet)
+    renderer.policy = RenderMode.read.policy
+    renderer.decorate(storage, document: document, dirty: .wholesale)
+
+    let content = (source as NSString).range(of: "shipped")
+    #expect(storage.attribute(.strikethroughStyle, at: content.location, effectiveRange: nil) as? Int
+        == NSUnderlineStyle.single.rawValue)
+    #expect((storage.attribute(.foregroundColor, at: content.location, effectiveRange: nil) as? NSColor)?
+        .isEqual(sheet.textSecondary) == true)
+}
+
+@Test func taskCheckboxUsesAMacSizedHitTargetAroundTheDrawnBox() {
+    let hit = ListOrnamentFragment.taskHitRect(textEdge: 100, centreY: 40, bodySize: 16)
+    #expect(hit.width == 28)
+    #expect(hit.height == 28)
+    #expect(hit.contains(NSPoint(x: 86, y: 40)))
+    #expect(!hit.contains(NSPoint(x: 101, y: 40)))
 }
 
 // MARK: - §6.1a Gutter markers
@@ -816,6 +841,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
 
     #expect(layout.totalWidth <= 220)
     #expect(layout.columnWidths.reduce(0, +) + gaps <= 220.001)
+    #expect(layout.isStacked)
     #expect(layout.rowHeights.last ?? 0 > styleSheet().lineHeight)
 }
 
@@ -862,6 +888,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     ).size().width
 
     #expect(layout.columnWidths.count == 2)
+    #expect(!layout.isStacked)
     #expect(layout.columnWidths[0] >= labelWidth - 0.5)
     #expect(layout.columnWidths[1] > layout.columnWidths[0])
 }

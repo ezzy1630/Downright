@@ -21,10 +21,10 @@ public enum RenderMetrics {
     public static let verticalInset: CGFloat = 56
 
     /// Padding inside a code block's tinted band.
-    public static let codeInsetX: CGFloat = 16
-    public static let codeInsetY: CGFloat = 10
+    public static let codeInsetX: CGFloat = 18
+    public static let codeInsetY: CGFloat = 14
     public static let codeRuleWidth: CGFloat = 2
-    public static let codeCornerRadius: CGFloat = 6
+    public static let codeCornerRadius: CGFloat = 10
 
     /// One-line chip a long code block collapses to in Read mode (§5.1).
     public static let chipHeight: CGFloat = 30
@@ -34,6 +34,8 @@ public enum RenderMetrics {
     public static let calloutRuleWidth: CGFloat = 3
     public static let calloutInsetX: CGFloat = 16
     public static let calloutIconInsetX: CGFloat = 34
+    public static let calloutInsetY: CGFloat = 8
+    public static let calloutCornerRadius: CGFloat = 8
     public static let quoteRuleWidth: CGFloat = 2
 
     public static let tableRowPadding: CGFloat = 6

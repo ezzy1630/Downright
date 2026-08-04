@@ -50,20 +50,37 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     // MARK: - QLPreviewingController
 
-    func preparePreviewOfFile(at url: URL) async throws {
-        let (text, _) = try DocumentIO.read(contentsOf: url)
-        let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? text.utf8.count
-
-        await MainActor.run {
-            resetPreview()
-            if case .prefix = QuickLookPolicy.presentation(forByteCount: byteCount) {
-                presentTruncated(text, url: url)
-            } else {
-                present(text, url: url)
+    func preparePreviewOfFile(
+        at url: URL,
+        completionHandler handler: @escaping (Error?) -> Void
+    ) {
+        Task { [weak self] in
+            guard let self else {
+                handler(CocoaError(.coderInvalidValue))
+                return
             }
-            startMemoryWatch()
-            if PreviewViewController.residentBytes() > memoryCeiling {
-                fallBackToPlainText()
+
+            do {
+                let (text, _) = try DocumentIO.read(contentsOf: url)
+                let byteCount =
+                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                    ?? text.utf8.count
+
+                await MainActor.run {
+                    self.resetPreview()
+                    if case .prefix = QuickLookPolicy.presentation(forByteCount: byteCount) {
+                        self.presentTruncated(text, url: url)
+                    } else {
+                        self.present(text, url: url)
+                    }
+                    self.startMemoryWatch()
+                    if PreviewViewController.residentBytes() > self.memoryCeiling {
+                        self.fallBackToPlainText()
+                    }
+                }
+                handler(nil)
+            } catch {
+                handler(error)
             }
         }
     }

@@ -78,21 +78,21 @@ struct DensityRailTests {
         ) == 1)
     }
 
-    @Test("Proximity falloff is smooth and level widths encode depth")
+    @Test("Proximity falloff is smooth and heading marks share one rhythm")
     func proximityAndHeadingWidths() {
         #expect(DensityGutterView.proximityInfluence(distance: 0) == 1)
         #expect(DensityGutterView.proximityInfluence(distance: 36) == 0)
         let mid = DensityGutterView.proximityInfluence(distance: 18)
         #expect(mid > 0.4 && mid < 0.6)
 
-        #expect(DensityGutterView.headingMarkWidth(level: 1) == 26)
-        #expect(DensityGutterView.headingMarkWidth(level: 2) == 20)
-        #expect(DensityGutterView.headingMarkWidth(level: 3) == 14)
-        #expect(DensityGutterView.headingMarkWidth(level: 4) == 10)
+        #expect(DensityGutterView.headingMarkWidth(level: 1) == 24)
+        #expect(DensityGutterView.headingMarkWidth(level: 2) == 24)
+        #expect(DensityGutterView.headingMarkWidth(level: 3) == 24)
+        #expect(DensityGutterView.headingMarkWidth(level: 4) == 24)
         #expect(DensityGutterView.headingMarkWidth(level: 1, emphasized: true) == 30)
-        #expect(DensityGutterView.headingMarkWidth(level: 2, emphasized: true) == 26)
-        #expect(DensityGutterView.headingMarkWidth(level: 3, emphasized: true) == 20)
-        #expect(DensityGutterView.headingMarkWidth(level: 4, emphasized: true) == 14)
+        #expect(DensityGutterView.headingMarkWidth(level: 2, emphasized: true) == 30)
+        #expect(DensityGutterView.headingMarkWidth(level: 3, emphasized: true) == 30)
+        #expect(DensityGutterView.headingMarkWidth(level: 4, emphasized: true) == 30)
     }
 
     @Test("Neighbourhood dim softens distant marks under hover")

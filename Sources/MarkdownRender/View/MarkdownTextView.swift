@@ -329,6 +329,9 @@ public final class MarkdownTextView: NSTextView {
     var checkboxPulseTimer: Timer?
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: Int?
+    /// One-shot camera lock for semantic controls such as checkboxes. Their
+    /// edit changes source bytes but is not a navigation request.
+    private var nextDocumentUpdateViewportY: CGFloat?
     private var resizeNeedsRepair = false
     /// Presentation already applied to storage. Keeping this lifecycle explicit
     /// prevents Document-mode parse commits from sweeping `.drSourceFocus`
@@ -468,6 +471,8 @@ public final class MarkdownTextView: NSTextView {
     public func update(document: ParsedDocument, dirty: DirtySet) {
         let selection = sourceSelectedRanges
         let anchor = topVisibleOffset
+        let lockedViewportY = nextDocumentUpdateViewportY
+        nextDocumentUpdateViewportY = nil
         let followsLocalEdit = shouldFollowCaretAfterLocalEdit
         let followsCaret = followsLocalEdit && configuration.typewriterScrolling
         shouldFollowCaretAfterLocalEdit = false
@@ -514,7 +519,9 @@ public final class MarkdownTextView: NSTextView {
         }
         requestContentResize(
             resizeRequest,
-            anchor: resizeRequest == .immediate || followsLocalEdit ? nil : anchor
+            anchor: resizeRequest == .immediate || followsLocalEdit || lockedViewportY != nil
+                ? nil
+                : anchor
         )
 
         // Async parses replace only the tree and decorations. Keep the same
@@ -532,9 +539,25 @@ public final class MarkdownTextView: NSTextView {
         // TextKit geometry and makes the whole page shudder. Vertical metrics
         // are fixed for inline edits, so leave the pixel viewport untouched;
         // real line growth still flows through the coalesced resize path.
-        if !followsCaret, !followsLocalEdit {
+        if let lockedViewportY {
+            restoreViewport(y: lockedViewportY)
+        } else if !followsCaret, !followsLocalEdit {
             scroll(toOffset: min(max(0, anchor), document.length), position: .top, animated: false)
         }
+    }
+
+    /// Keep the current pixel camera through the next parse/decorate commit.
+    /// Used by rendered controls whose mutation must answer in place.
+    public func preserveViewportOnNextDocumentUpdate() {
+        nextDocumentUpdateViewportY = enclosingScrollView?.contentView.bounds.origin.y
+    }
+
+    private func restoreViewport(y: CGFloat) {
+        guard let scrollView = enclosingScrollView else { return }
+        let clip = scrollView.contentView
+        let maxY = max(0, frame.height - clip.bounds.height)
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(max(0, y), maxY)))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     /// Size the document view to the height layout actually used.

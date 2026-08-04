@@ -314,7 +314,7 @@ public struct StyleSheet {
 
     public func calloutSymbol(_ kind: CalloutKind) -> String {
         switch kind {
-        case .note: return "note.text"
+        case .note: return "text.alignleft"
         case .tip: return "lightbulb"
         case .important: return "exclamationmark.circle"
         case .warning: return "exclamationmark.triangle"

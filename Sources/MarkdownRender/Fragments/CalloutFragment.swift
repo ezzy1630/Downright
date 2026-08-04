@@ -21,24 +21,54 @@ final class CalloutFragment: DownrightFragment {
 
     required init?(coder: NSCoder) { nil }
 
+    override var verticalPadding: (top: CGFloat, bottom: CGFloat) {
+        guard kind != nil else { return (0, 0) }
+        let headerHeight = title.isEmpty ? 0 : (styleSheet?.lineHeight ?? 24)
+        return (
+            isFirstParagraphOfBlock ? RenderMetrics.calloutInsetY + headerHeight : 0,
+            isLastParagraphOfBlock ? RenderMetrics.calloutInsetY : 0
+        )
+    }
+
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard let style = styleSheet else { return }
         let frame = layoutFragmentFrame
-        let indent = max(0, (paragraphStyle?.headIndent ?? RenderMetrics.calloutInsetX) - RenderMetrics.calloutInsetX)
+        let reservedInset = kind == nil
+            ? RenderMetrics.calloutInsetX
+            : RenderMetrics.calloutIconInsetX
         let color = kind.map { style.calloutColor($0) } ?? style.quoteRule
         let width = kind == nil ? RenderMetrics.quoteRuleWidth : RenderMetrics.calloutRuleWidth
+        let textEdge = point.x + (textLineFragments.first?.typographicBounds.minX ?? 0)
 
+        // TextKit's fragment point is the actual glyph edge after hidden
+        // marker substitution. Put semantic chrome in the reserved column to
+        // its left; drawing it inside `point.x` covers the first word.
+        let band = CGRect(
+            x: textEdge - reservedInset,
+            y: point.y,
+            width: max(1, contentWidth + reservedInset),
+            height: frame.height
+        )
         if kind != nil {
-            cg.fillRect(CGRect(x: point.x + indent, y: point.y,
-                               width: max(1, contentWidth - indent), height: frame.height),
-                        color: color.withAlphaComponent(0.05))
+            cg.fillRect(band, color: color.withAlphaComponent(0.055),
+                        radius: RenderMetrics.calloutCornerRadius)
         }
 
-        cg.fillRect(CGRect(x: point.x + indent, y: point.y, width: width, height: frame.height),
-                    color: color, radius: width / 2)
+        let ruleInset: CGFloat = kind == nil ? 0 : 4
+        cg.fillRect(
+            CGRect(
+                x: band.minX,
+                y: band.minY + ruleInset,
+                width: width,
+                height: max(1, band.height - ruleInset * 2)
+            ),
+            color: color,
+            radius: width / 2
+        )
 
-        // The icon rides on the callout's first line only.
-        guard let kind, isFirstParagraphOfBlock else { return }
+        // Untitled callouts stay typographic: rule + tint, no floating badge.
+        // A symbol only earns space when it is paired with a real title.
+        guard let kind, isFirstParagraphOfBlock, !title.isEmpty else { return }
         let symbol = style.calloutSymbol(kind)
         guard let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else { return }
         let side = style.bodyFont().pointSize
@@ -50,11 +80,15 @@ final class CalloutFragment: DownrightFragment {
             rect.fill(using: .sourceAtop)
             return true
         }
-        let top = point.y + max(0, (style.lineHeight - configured.size.height) / 2)
-        draw(image: tinted,
-             in: CGRect(x: point.x + indent + width + 5, y: top,
-                        width: configured.size.width, height: configured.size.height),
-             in: cg)
+        let top = point.y + RenderMetrics.calloutInsetY
+            + max(0, (style.lineHeight - configured.size.height) / 2)
+        let iconX = band.minX + width + 7
+        draw(
+            image: tinted,
+            in: CGRect(x: iconX, y: top,
+                       width: configured.size.width, height: configured.size.height),
+            in: cg
+        )
 
         if !title.isEmpty {
             let label = NSAttributedString(string: title, attributes: [
@@ -62,8 +96,9 @@ final class CalloutFragment: DownrightFragment {
                 .foregroundColor: color,
             ])
             cg.drawText(label,
-                        in: CGRect(x: point.x + indent + RenderMetrics.calloutIconInsetX,
-                                   y: point.y, width: max(40, contentWidth - indent - RenderMetrics.calloutIconInsetX),
+                        in: CGRect(x: band.minX + RenderMetrics.calloutIconInsetX,
+                                   y: point.y + RenderMetrics.calloutInsetY,
+                                   width: max(40, contentWidth - RenderMetrics.calloutIconInsetX),
                                    height: style.lineHeight),
                         flipped: true)
         }

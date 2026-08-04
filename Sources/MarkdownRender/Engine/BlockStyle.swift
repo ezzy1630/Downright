@@ -121,9 +121,19 @@ final class BlockStyleFactory {
     }
 
     func indent(for content: BlockContent, context: BlockContext) -> CGFloat {
-        var levels = CGFloat(context.listDepth + context.quoteDepth)
+        // The first list level needs only its ornament column. Additional
+        // levels earn one structural indent each; charging the top-level item
+        // for both made task text drift far right of surrounding prose.
+        var levels = CGFloat(max(0, context.listDepth - 1) + context.quoteDepth)
         if case .codeBlock = content { levels += 0 }
-        return levels * indentUnit
+        var result = levels * indentUnit
+        if context.calloutKind != nil {
+            // A callout consumes one quote level, but its semantic icon needs
+            // a wider column than a plain quote rule. Replace that level's
+            // ordinary indent instead of stacking both values.
+            result += RenderMetrics.calloutIconInsetX - indentUnit
+        }
+        return result
     }
 
     func paragraphStyle(for block: MDBlock, context: BlockContext) -> NSParagraphStyle {
@@ -153,9 +163,11 @@ final class BlockStyleFactory {
             style.paragraphSpacing = 0
             style.firstLineHeadIndent = indent + RenderMetrics.codeInsetX
             style.headIndent = indent + RenderMetrics.codeInsetX
-        case .listItem:
+        case .listItem(_, let checkbox):
             style.paragraphSpacingBefore = 0
-            style.paragraphSpacing = 0
+            // Task rows are controls, not compressed prose. One grid unit
+            // separates their hit targets and makes nested groups scannable.
+            style.paragraphSpacing = checkbox == nil ? 0 : grid
             if context.listDepth > 0 {
                 // The semantic ornament is drawn in the hanging column by
                 // `ListOrnamentFragment`; the source marker is not inline.
@@ -170,10 +182,16 @@ final class BlockStyleFactory {
         case .table, .thematicBreak:
             style.paragraphSpacingBefore = 0
             style.paragraphSpacing = 0
-        case .callout, .blockQuote:
-            let inset = context.calloutKind == nil
-                ? RenderMetrics.calloutInsetX
-                : RenderMetrics.calloutIconInsetX
+        case .callout:
+            // The block marker owns the paragraph's effective style. Reserve
+            // the icon column here even before child content overrides run.
+            let inset = RenderMetrics.calloutIconInsetX
+            style.firstLineHeadIndent = indent + inset
+            style.headIndent = indent + inset
+            style.paragraphSpacingBefore = 0
+            style.paragraphSpacing = 0
+        case .blockQuote:
+            let inset = RenderMetrics.calloutInsetX
             style.firstLineHeadIndent = indent + inset
             style.headIndent = indent + inset
             style.paragraphSpacingBefore = 0

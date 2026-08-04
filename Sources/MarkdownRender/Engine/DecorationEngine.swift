@@ -366,7 +366,7 @@ public final class DecorationEngine {
 
         case .callout(let kind, let title):
             emitFragment(.callout, block: block,
-                         detail: kind.rawValue + "|" + (title ?? kind.rawValue.capitalized), state: &state)
+                         detail: kind.rawValue + "|" + (title ?? ""), state: &state)
             childContext.quoteDepth += 1
             childContext.calloutKind = kind
             applyBase(block, context: context, state: &state)
@@ -402,7 +402,11 @@ public final class DecorationEngine {
                 walk(block.children[childIndex], context: childContext, state: &state)
             }
             if checkbox?.isChecked == true {
-                apply([.foregroundColor: styleSheet.textSecondary], to: block.contentRange, state: &state)
+                apply([
+                    .foregroundColor: styleSheet.textSecondary,
+                    .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                    .strikethroughColor: styleSheet.textFaint,
+                ], to: block.contentRange, state: &state)
             }
             return
 

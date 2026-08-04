@@ -723,7 +723,7 @@ final class DocumentWindowController: NSWindowController {
             pathResolver?.invalidate()
             scheduleFindRefresh()
             guard !hunks.isEmpty else { return }
-            showChangeSummary("Updated on disk — \(hunks.count) block\(hunks.count == 1 ? "" : "s") changed")
+            showChangeSummary("\(hunks.count) new change\(hunks.count == 1 ? "" : "s")")
 
         case .conflict(let conflict):
             pendingConflict = conflict
@@ -740,7 +740,7 @@ final class DocumentWindowController: NSWindowController {
     private func presentUnreadChanges() {
         let count = markdownDocument.changes.count
         guard count > 0 else { return }
-        showChangeSummary("\(count) change\(count == 1 ? "" : "s") since you last read this")
+        showChangeSummary("\(count) new change\(count == 1 ? "" : "s")")
         refreshChangeDecorations()
     }
 
@@ -750,8 +750,12 @@ final class DocumentWindowController: NSWindowController {
             bar.delegate = self
             bar.styleSheet = activeStyleSheet
             changeSummaryBar = bar
-            barStack.addArrangedSubview(bar)
-            bar.widthAnchor.constraint(equalTo: barStack.widthAnchor).isActive = true
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            rootView.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
+                bar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -12),
+            ])
         }
         changeSummaryBar?.configure(message: message, changeCount: markdownDocument.changes.count)
         rootView.needsLayout = true
@@ -782,7 +786,6 @@ final class DocumentWindowController: NSWindowController {
 
     func dismissChangeSummary() {
         if let changeSummaryBar {
-            barStack.removeArrangedSubview(changeSummaryBar)
             changeSummaryBar.removeFromSuperview()
         }
         changeSummaryBar = nil
@@ -821,6 +824,7 @@ final class DocumentWindowController: NSWindowController {
 
     private func openTaskPanel(_ panel: TaskPanelView) {
         guard panel.superview !== rootView else { return }
+        progressRing.isActive = true
         panel.removeFromSuperview()
         panel.translatesAutoresizingMaskIntoConstraints = false
         panel.wantsLayer = true
@@ -853,6 +857,7 @@ final class DocumentWindowController: NSWindowController {
 
     private func closeTaskPanel() {
         guard let panel = taskPanel, panel.superview === rootView else { return }
+        progressRing.isActive = false
         guard !activeStyleSheet.reduceMotion else {
             panel.removeFromSuperview()
             return

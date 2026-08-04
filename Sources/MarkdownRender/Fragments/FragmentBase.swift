@@ -252,8 +252,22 @@ public class DownrightFragment: NSTextLayoutFragment {
         return NSRange(location: location, length: max(0, end - location))
     }
 
-    var isFirstParagraphOfBlock: Bool { elementSourceRange.location <= payload.sourceRange.location }
-    var isLastParagraphOfBlock: Bool { elementSourceRange.upperBound >= payload.sourceRange.upperBound }
+    /// Compare paragraph identity, not raw starts. Hidden block markers can
+    /// move a rendered element's start past the source block's start even
+    /// though both still belong to the same first paragraph.
+    var isFirstParagraphOfBlock: Bool {
+        guard let context else { return elementSourceRange.location <= payload.sourceRange.location }
+        return context.paragraphIndex.index(containing: elementSourceRange.location)
+            == context.paragraphIndex.index(containing: payload.sourceRange.location)
+    }
+
+    var isLastParagraphOfBlock: Bool {
+        guard let context else { return elementSourceRange.upperBound >= payload.sourceRange.upperBound }
+        let elementLast = max(elementSourceRange.location, elementSourceRange.upperBound - 1)
+        let blockLast = max(payload.sourceRange.location, payload.sourceRange.upperBound - 1)
+        return context.paragraphIndex.index(containing: elementLast)
+            == context.paragraphIndex.index(containing: blockLast)
+    }
 }
 
 /// Zero height, draws nothing.  The one mechanism behind every collapse in the

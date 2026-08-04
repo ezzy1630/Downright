@@ -292,23 +292,13 @@ public final class DensityGutterView: NSView {
         return t * t * (3 - 2 * t) // smoothstep
     }
 
-    /// Resting tick length encodes heading level. Emphasised (current / hover)
-    /// steps one notch longer so structure still scans without colour.
+    /// Every resting heading uses one length. The old level-encoded staircase
+    /// made a short outline look like randomly broken rules; heading depth is
+    /// already explicit in the hover outline. Current / hover state grows the
+    /// mark without moving its shared centre line.
     static func headingMarkWidth(level: Int, emphasized: Bool = false) -> CGFloat {
-        let base: CGFloat
-        switch max(1, level) {
-        case 1: base = 26
-        case 2: base = 20
-        case 3: base = 14
-        default: base = 10
-        }
-        guard emphasized else { return base }
-        switch max(1, level) {
-        case 1: return 30
-        case 2: return 26
-        case 3: return 20
-        default: return 14
-        }
+        _ = level
+        return emphasized ? 30 : 24
     }
 
     /// Resting gap: short documents breathe so two lonely ticks do not look broken.

@@ -44,18 +44,19 @@ final class ChangeSummaryBarView: MessageBarView {
             self.delegate?.changeSummaryBar(self, didRequestJump: true)
         }
         for button in [previousButton, nextButton] {
-            button.widthAnchor.constraint(equalToConstant: 26).isActive = true
+            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
         }
         self.previousButton = previousButton
         self.nextButton = nextButton
 
-        let reviewedButton = addAction("Mark as reviewed") { [weak self] in
+        let reviewedButton = addSymbolAction(
+            "checkmark",
+            label: "Mark changes as reviewed"
+        ) { [weak self] in
             guard let self else { return }
             self.delegate?.changeSummaryBarDidRequestMarkReviewed(self)
         }
         reviewedButton.isBordered = false
-        reviewedButton.bezelStyle = .accessoryBarAction
-        reviewedButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         reviewedButton.toolTip = "Clear unread change marks"
         self.reviewedButton = reviewedButton
         onDismiss = { [weak self] in
@@ -69,7 +70,7 @@ final class ChangeSummaryBarView: MessageBarView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: PanelMetrics.reviewBarHeight)
+        NSSize(width: 320, height: PanelMetrics.reviewBarHeight)
     }
 
     func configure(message: String, changeCount: Int) {
@@ -81,8 +82,7 @@ final class ChangeSummaryBarView: MessageBarView {
     }
 
     var positionStatusForTesting: String {
-        currentPosition.map { "\($0) of \(changeCount)" }
-            ?? (changeCount > 0 ? "\(changeCount) unread" : "")
+        currentPosition.map { "\($0) of \(changeCount)" } ?? ""
     }
 
     private func advancePosition(forward: Bool) {
@@ -106,5 +106,23 @@ final class ChangeSummaryBarView: MessageBarView {
         previousButton?.contentTintColor = styleSheet.textFaint
         nextButton?.contentTintColor = styleSheet.textFaint
         reviewedButton?.contentTintColor = styleSheet.textSecondary
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let shape = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+        styleSheet.background.withAlphaComponent(0.96).setFill()
+        shape.fill()
+        styleSheet.rule.withAlphaComponent(0.8).setStroke()
+        shape.lineWidth = 1
+        shape.stroke()
+
+        stripeColor.setFill()
+        NSBezierPath(ovalIn: NSRect(
+            x: rect.minX + 8,
+            y: rect.midY - 2,
+            width: 4,
+            height: 4
+        )).fill()
     }
 }

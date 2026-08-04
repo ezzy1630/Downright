@@ -6,6 +6,12 @@ import MarkdownCore
 // caret and *all* of this still works.
 extension MarkdownTextView {
 
+    private struct CheckboxHit {
+        var markOffset: Int
+        var checked: Bool
+        var blockRange: NSRange
+    }
+
     // MARK: - Hit testing
 
     /// Source offset for a point in view coordinates.
@@ -79,10 +85,11 @@ extension MarkdownTextView {
             gutterRail?.needsDisplay = true
         }
 
-        let hasInteractiveTarget = attribute(.drLink, at: point) != nil
+        let hasInteractiveTarget = semanticCheckbox(at: point) != nil
+            || attribute(.drLink, at: point) != nil
             || attribute(.drReference, at: point) != nil
             || attribute(.drPathToken, at: point) != nil
-            || attribute(.drCheckbox, at: point) != nil
+            || (mode != .source && attribute(.drCheckbox, at: point) != nil)
         setPointerCursor(interactive: hasInteractiveTarget)
 
         // Links underline under the pointer (§7.1).  Images carry `.drLink`
@@ -160,10 +167,11 @@ extension MarkdownTextView {
 
     public override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hasInteractiveTarget = attribute(.drLink, at: point) != nil
+        let hasInteractiveTarget = semanticCheckbox(at: point) != nil
+            || attribute(.drLink, at: point) != nil
             || attribute(.drReference, at: point) != nil
             || attribute(.drPathToken, at: point) != nil
-            || attribute(.drCheckbox, at: point) != nil
+            || (mode != .source && attribute(.drCheckbox, at: point) != nil)
         setPointerCursor(interactive: hasInteractiveTarget)
     }
 
@@ -180,9 +188,18 @@ extension MarkdownTextView {
 
         if handleCodeBlockChrome(at: point) { return }
 
-        // Clicking a checkbox toggles it and the file is written immediately —
-        // §7.1 and §8.5.  Works in every mode, including Read.
-        if let hit = attribute(.drCheckbox, at: point) {
+        // The ornament lives in the hanging indent, outside the hidden source
+        // marker's glyph rect. Hit-test the same 28pt control that is drawn,
+        // so Document mode does not require a trip to Source. In Source mode
+        // the literal `[ ]` remains ordinary editable text.
+        if let hit = semanticCheckbox(at: point) {
+            markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.markOffset)
+            fragmentContext.beginCheckboxPulse(hit.blockRange, checked: !hit.checked)
+            driveCheckboxPulseRedraw()
+            return
+        }
+
+        if mode != .source, let hit = attribute(.drCheckbox, at: point) {
             let wasChecked = (hit.value as? Bool) ?? false
             markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.range.location)
             if let blockRange = fragmentPayload(at: point)?.payload.sourceRange {
@@ -242,6 +259,32 @@ extension MarkdownTextView {
             }
         }
         handleSelectionChanged(allowTypewriterScrolling: false)
+    }
+
+    private func semanticCheckbox(at point: NSPoint) -> CheckboxHit? {
+        guard mode != .source else { return nil }
+        let bodySize = styleSheet.bodyFont().pointSize
+        for task in parsedDocument.tasks {
+            if let focus = sourceFocus.range,
+               focus.contains(offset: task.markRange.location) {
+                continue
+            }
+            guard let textRect = rect(forOffset: task.contentRange.location) else { continue }
+            let centreY = textRect.minY + min(styleSheet.lineHeight, textRect.height) * 0.44
+            let target = ListOrnamentFragment.taskHitRect(
+                textEdge: textRect.minX,
+                centreY: centreY,
+                bodySize: bodySize
+            )
+            guard target.contains(point) else { continue }
+            let block = parsedDocument.root.block(at: task.markRange.location)
+            return CheckboxHit(
+                markOffset: task.markRange.location,
+                checked: task.isChecked,
+                blockRange: block?.range ?? task.contentRange
+            )
+        }
+        return nil
     }
 
     public override func cancelOperation(_ sender: Any?) {

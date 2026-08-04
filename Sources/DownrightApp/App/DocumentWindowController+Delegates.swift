@@ -62,6 +62,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int) {
         // Writes the file immediately (§7.1, §8.5).
+        primaryContainer.textView.preserveViewportOnNextDocumentUpdate()
+        splitContainer?.textView.preserveViewportOnNextDocumentUpdate()
         markdownDocument.toggleTask(atMarkOffset: offset)
     }
 
@@ -338,6 +340,8 @@ extension DocumentWindowController: OutlinePanelDelegate {
 extension DocumentWindowController: TaskPanelDelegate {
     func taskPanel(_ panel: TaskPanelView, didToggleTaskAt markOffset: Int) {
         markdownDocument.ensureParsedCurrent()
+        primaryContainer.textView.preserveViewportOnNextDocumentUpdate()
+        splitContainer?.textView.preserveViewportOnNextDocumentUpdate()
         markdownDocument.toggleTask(atMarkOffset: markOffset)
     }
 
