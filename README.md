@@ -9,7 +9,7 @@ an agent workflow it is neither. It's a file that gets rewritten under you while
 you're reading it, that arrives 3,000 words long when you needed 200, and that
 makes claims about your codebase you can't verify without leaving the document.
 
-Downright opens instantly, renders anything, edits in place without ever
+Downright opens quickly, renders Markdown natively, edits in place without ever
 touching your bytes, and shows you what the agent changed while you were
 reading.
 
@@ -18,22 +18,38 @@ It opens `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`, `.mdc`, `.qmd`, and
 front matter, tables, tasks, images, and code highlighting are handled in the
 native render path.
 
+## Current status
+
+Downright is an active source build, not a packaged release. The repository
+builds the app, CLI, `MarkdownCore` and `MarkdownRender` libraries, test
+targets, and release benchmark. The SwiftPM bundle is ad hoc and does not
+include Quick Look `.appex` bundles; the XcodeGen path builds those extensions.
+Developer ID signing, notarisation, and Sparkle updates remain release work.
+
+Recent work on `main` has focused on the parts that matter during agent-heavy
+use: a file-first start window and stable document/tab workflow; viewport,
+paragraph, and hard-wrap stability while typing; unread external-change review
+with bounded diff and resource work; an interactive Quick Look preview; and a
+task worklist with progress, filtering, grouped headings, direct navigation,
+and immediate checkbox writes.
+
 ---
 
 ## What makes it different
 
 | | |
 |---|---|
-| **Rendered diff** | The file is watched. When an agent rewrites it, the view updates *in place* — scroll position held by heading anchor, changed words highlighted inside the rendered prose, `[` and `]` to jump between changes. If your buffer is dirty, nothing is clobbered: a non-modal bar offers Review / Keep mine / Take theirs. |
+| **Rendered diff** | The file is watched. When an agent rewrites it, the view updates *in place* — scroll position held by heading anchor, changed words highlighted inside the rendered prose, unread changes marked until you review them, and `[` / `]` to jump between changes. If your buffer is dirty, nothing is clobbered: a non-modal bar offers Review / Keep mine / Take theirs. |
 | **Structural zoom** | `1`–`5` change the document's *resolution in place*. Level 4 is the one that matters for agent output: every heading, the first sentence of each section, and every code block, table, and task list — none of the connective padding. |
 | **Local time travel** | Every external write is snapshotted to a content-addressed store. `⌘⇧V` scrubs through a month of an agent's rewrites, rendered, with changes highlighted between steps. Agents don't commit; git doesn't help you here. |
 | **Live path resolution** | `src/auth/session.ts:42` resolves against the document's directory and the git root. Present files are clickable and open at the right line in your editor. **Missing files get a dotted red underline** — so you can see at a glance which files an agent claims to have touched that aren't there. |
 | **Density gutter** | Replaces the scrollbar with the shape of the whole document: headings by level, code, tables, math, tasks, search hits, and changed regions. |
-| **Task panel** | `⌘T` lists every checkbox grouped by heading. Toggling writes to the file immediately. A plan document becomes something you work through. |
+| **Task worklist** | `⌘T` opens a floating worklist with completion progress, All / Open filtering, and every checkbox grouped by heading. Select a row to jump to it; toggle its checkbox to write to the file immediately. |
 | **Sibling sidebar** | Agents write six files into a folder, not one. `⌘0` shows the others, newest first, with dots for changed-since-you-last-looked. No index, no vault, no "open folder" ceremony. |
 | **Adaptive document surface** | Read rendered Markdown and edit it in place without switching modes. Selection stays rendered; a caret reveals local syntax; scoped and full Source Focus expose exact Markdown on demand. |
 | **Reading chrome that stays out of the way** | The current heading trail owns a slim lane above the page instead of floating over prose. Block and list markers use one aligned ornament column; wrapped list text keeps one content edge. |
 | **Document inspectors** | Outline, tasks, search, history, workspace, health, render-target checks, assets, and document-lens views keep review work beside the document instead of in modal dialogs. |
+| **Native system surfaces** | Quick Look previews, Finder thumbnails, the `down` / `md` CLI, macOS Services, App Intents, and Spotlight indexing for opened documents keep Markdown available from the places you already work. |
 
 And the things it deliberately **is not**: no vault, no sync, no collaboration,
 no plugin system, no rich-text document model, no code execution, and — load
@@ -155,17 +171,20 @@ Look releases prior render graphs and falls back to plain text when it crosses
 its memory ceiling. Workspace indexing streams files through a small worker
 pool with 10 MB per-file and 100 MB total-byte limits.
 
-Latest local release benchmark (`drbench`, arm64 macOS):
+Latest local release benchmark (`drbench`, measured 2026-08-02):
 
 | Metric | p95 | Budget |
 |---|---:|---:|
-| Typing response | 0.15 ms | 8 ms |
-| Incremental decoration | 0.106 ms | 8 ms |
-| Semantic convergence | 47.54 ms | 100 ms |
-| 100 KB cold parse | 16.56 ms | 250 ms |
+| Typing response | 0.149 ms | 8 ms |
+| Incremental decoration | 0.118 ms | 8 ms |
+| Semantic convergence | 46.726 ms | 100 ms |
+| 100 KB cold parse | 16.413 ms | 250 ms |
 
-Run the complete validation suite with `Scripts/check.sh`. The current suite
-covers 443 tests in 54 suites and fails if the test runner executes nothing.
+Run the complete validation suite with `Scripts/check.sh`. At the current
+commit it covers 510 tests in 56 suites, builds every product, runs the debug
+benchmark, and fails if the test runner executes nothing. See
+[Docs/PERFORMANCE.md](Docs/PERFORMANCE.md) for the full baseline and its
+measurement limits.
 
 ## CLI
 
@@ -205,7 +224,7 @@ Keys, which is generated from the same command table as the menus.
 | `⌘⇧E` | Toggle full Source Focus | `⌘⇧O` | Jump to heading |
 | `⌘0` | Sibling sidebar | `[` / `]` | Previous / next change |
 | `⌘⌥1` | Outline panel | `1`–`5` | Structural zoom in the outline |
-| `⌘T` | Task panel | `⌘F` | Find |
+| `⌘T` | Task worklist | `⌘F` | Find |
 | `⌘⇧V` | Version timeline | `⌘G` / `⌘⇧G` | Next / previous match |
 | `⌘\` | Split view | `⌘⇧F` | Search sibling files |
 | `⌘C` / `⌘⇧C` | Copy visible text / Markdown | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |
@@ -215,8 +234,13 @@ Settings → Keys.
 
 ## Quick Look
 
-The repository contains native preview and thumbnail providers. They can give
-`.md` files full previews and Finder icons that show the first heading.
+The repository contains native preview and thumbnail providers. They give
+`.md` files full previews and Finder icons that show the first heading, opening
+line, and — for plans — task progress. The preview is interactive: when the
+panel is at least 520pt wide, its leading density gutter shows the current
+section and reading metrics, scrubs on click or drag, and opens the outline on
+dwell. Arrow keys scroll; `n` / `p` jump between headings; text is selectable
+and copyable.
 
 The default SwiftPM app bundle does not include the required `.appex` bundles.
 With Xcode and `xcodegen` installed, run `Scripts/bundle-xcode-app.sh` to
@@ -224,6 +248,13 @@ generate the Xcode project, build the host app, and embed the preview and
 thumbnail extensions. `Scripts/install.sh` registers and enables the embedded
 extensions and resets Quick Look's cache. See
 [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for details.
+
+## Privacy and AI
+
+Open, read, edit, search, save, watch, diff, and export work offline without
+an account, telemetry, or a remote model. Optional Apple Intelligence actions
+are on-device, off by default, and receive only text the user selects. AI is
+never required for the document path. See [Docs/PRIVACY.md](Docs/PRIVACY.md).
 
 ## Themes
 
