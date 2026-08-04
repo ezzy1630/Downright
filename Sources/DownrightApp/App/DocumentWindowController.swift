@@ -802,8 +802,8 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func toggleTaskPanel() {
-        if inspectorHost?.selectedSection == .tasks, !inspectorItem.isCollapsed {
-            closeInspector()
+        if taskPanel?.superview === rootView {
+            closeTaskPanel()
             return
         }
         let panel = taskPanel ?? TaskPanelView()
@@ -814,8 +814,57 @@ final class DocumentWindowController: NSWindowController {
         }
         panel.tasks = markdownDocument.parsed.tasks
         panel.headings = markdownDocument.parsed.headings
-        showInInspector(panel, section: .tasks)
+        panel.onClose = { [weak self] in self?.closeTaskPanel() }
+        openTaskPanel(panel)
         panel.reload()
+    }
+
+    private func openTaskPanel(_ panel: TaskPanelView) {
+        guard panel.superview !== rootView else { return }
+        panel.removeFromSuperview()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.wantsLayer = true
+        panel.layer?.cornerRadius = 10
+        panel.layer?.masksToBounds = false
+        panel.layer?.shadowColor = NSColor.shadowColor.cgColor
+        panel.layer?.shadowOpacity = 0.22
+        panel.layer?.shadowRadius = 8
+        panel.layer?.shadowOffset = NSSize(width: -2, height: 0)
+        rootView.addSubview(panel, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            panel.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
+            panel.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -8),
+            panel.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -8),
+            panel.widthAnchor.constraint(equalToConstant: panel.preferredWidth),
+        ])
+        rootView.layoutSubtreeIfNeeded()
+
+        guard !activeStyleSheet.reduceMotion else {
+            panel.alphaValue = 1
+            return
+        }
+        panel.alphaValue = 0
+        panel.layer?.transform = CATransform3DMakeTranslation(18, 0, 0)
+        Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
+            panel.animator().alphaValue = 1
+            panel.animator().layer?.transform = CATransform3DIdentity
+        }
+    }
+
+    private func closeTaskPanel() {
+        guard let panel = taskPanel, panel.superview === rootView else { return }
+        guard !activeStyleSheet.reduceMotion else {
+            panel.removeFromSuperview()
+            return
+        }
+        Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in
+            panel.animator().alphaValue = 0
+            panel.animator().layer?.transform = CATransform3DMakeTranslation(12, 0, 0)
+        } completion: {
+            panel.removeFromSuperview()
+            panel.alphaValue = 1
+            panel.layer?.transform = CATransform3DIdentity
+        }
     }
 
     func toggleSiblingSidebar() {
@@ -1394,6 +1443,7 @@ final class DocumentWindowController: NSWindowController {
                 focusModeApplied = true
             }
             closeNavigationOverlay()
+            closeTaskPanel()
             sidebarItem.isCollapsed = true
             inspectorItem.isCollapsed = true
             window?.toolbar?.isVisible = false

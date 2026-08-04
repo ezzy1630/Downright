@@ -434,7 +434,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         for item in menu.items {
             switch item.title {
-            case "Tasks": item.state = inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed ? .on : .off
+            case "Tasks": item.state = taskPanel?.superview != nil ? .on : .off
             case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
             default: break
             }

@@ -34,6 +34,38 @@ struct PanelAccessibilityTests {
     }
 
     @Test
+    func taskPanelFiltersCompletedWorkWithoutLosingProgress() {
+        let view = TaskPanelView()
+        view.tasks = [
+            TaskItem(
+                isChecked: true,
+                markRange: NSRange(location: 3, length: 1),
+                contentRange: NSRange(location: 0, length: 12),
+                text: "Done",
+                headingIndex: nil,
+                indentLevel: 0
+            ),
+            TaskItem(
+                isChecked: false,
+                markRange: NSRange(location: 16, length: 1),
+                contentRange: NSRange(location: 13, length: 12),
+                text: "Open",
+                headingIndex: nil,
+                indentLevel: 0
+            ),
+        ]
+
+        #expect(view.progress == (done: 1, total: 2))
+        #expect(view.visibleTaskCountForTesting == 2)
+        #expect(view.preferredWidth == 336)
+
+        view.showsIncompleteOnly = true
+
+        #expect(view.visibleTaskCountForTesting == 1)
+        #expect(view.progress == (done: 1, total: 2))
+    }
+
+    @Test
     func searchResultsExposeSearchingAndEmptyStates() {
         let view = SearchResultsPanelView()
         view.isSearching = true
