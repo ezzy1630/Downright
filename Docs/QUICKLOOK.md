@@ -31,8 +31,10 @@ qlmanage -r && qlmanage -r cache && killall Finder
 ## What the preview does
 
 - Read-mode rendering with the app's full typography.
-- The density gutter, when the panel is wide enough (≥ 520pt).
-- Arrow keys scroll, `n`/`p` jump between headings.
+- The leading-edge density gutter, when the panel is wide enough (≥ 520pt).
+  Hover shows the current section and reading metrics; click or drag scrubs the
+  document; dwelling opens the outline.
+- Arrow keys scroll; `n`/`p` jump between headings.
 - Text is selectable and copyable. Most Quick Look previews are dead surfaces;
   this one isn't.
 

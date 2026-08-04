@@ -8,6 +8,8 @@ public enum QuickLookPolicy {
     public static let memoryCeilingBytes = 60 * 1024 * 1024
     public static let largeFileThresholdBytes = 2 * 1024 * 1024
     public static let prefixBlockCount = 60
+    /// Below this width the 72pt document map leaves too little useful measure.
+    public static let minimumDensityGutterWidth: CGFloat = 520
 
     public enum Presentation: Equatable, Sendable {
         case full
