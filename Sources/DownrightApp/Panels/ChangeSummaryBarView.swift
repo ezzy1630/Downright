@@ -20,6 +20,9 @@ final class ChangeSummaryBarView: MessageBarView {
     weak var delegate: ChangeSummaryBarDelegate?
     private var changeCount = 0
     private var currentPosition: Int?
+    private weak var previousButton: NSButton?
+    private weak var nextButton: NSButton?
+    private weak var reviewedButton: NSButton?
 
     /// Hosts build panels before they have a theme in hand and assign
     /// `styleSheet` immediately afterwards.
@@ -27,22 +30,34 @@ final class ChangeSummaryBarView: MessageBarView {
 
     init(styleSheet: StyleSheet) {
         super.init(styleSheet: styleSheet, stripeColor: styleSheet.changeColor(.inserted))
+        useReviewBarLayout()
 
         message = "Updated on disk"
-        addSymbolAction("chevron.up", label: "Previous change") { [weak self] in
+        let previousButton = addSymbolAction("chevron.up", label: "Previous change") { [weak self] in
             guard let self else { return }
             self.advancePosition(forward: false)
             self.delegate?.changeSummaryBar(self, didRequestJump: false)
         }
-        addSymbolAction("chevron.down", label: "Next change") { [weak self] in
+        let nextButton = addSymbolAction("chevron.down", label: "Next change") { [weak self] in
             guard let self else { return }
             self.advancePosition(forward: true)
             self.delegate?.changeSummaryBar(self, didRequestJump: true)
         }
-        addAction("Mark reviewed") { [weak self] in
+        for button in [previousButton, nextButton] {
+            button.widthAnchor.constraint(equalToConstant: 26).isActive = true
+        }
+        self.previousButton = previousButton
+        self.nextButton = nextButton
+
+        let reviewedButton = addAction("Mark as reviewed") { [weak self] in
             guard let self else { return }
             self.delegate?.changeSummaryBarDidRequestMarkReviewed(self)
         }
+        reviewedButton.isBordered = false
+        reviewedButton.bezelStyle = .accessoryBarAction
+        reviewedButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        reviewedButton.toolTip = "Clear unread change marks"
+        self.reviewedButton = reviewedButton
         onDismiss = { [weak self] in
             guard let self else { return }
             self.delegate?.changeSummaryBarDidRequestDismiss(self)
@@ -52,6 +67,10 @@ final class ChangeSummaryBarView: MessageBarView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: PanelMetrics.reviewBarHeight)
+    }
 
     func configure(message: String, changeCount: Int) {
         self.message = message
@@ -84,5 +103,8 @@ final class ChangeSummaryBarView: MessageBarView {
     override func applyStyle() {
         stripeColor = styleSheet.changeColor(.inserted)
         super.applyStyle()
+        previousButton?.contentTintColor = styleSheet.textFaint
+        nextButton?.contentTintColor = styleSheet.textFaint
+        reviewedButton?.contentTintColor = styleSheet.textSecondary
     }
 }

@@ -18,11 +18,21 @@ enum PanelMetrics {
     static let gutterWidth: CGFloat = 14
     static let headerHeight: CGFloat = 32
     static let barHeight: CGFloat = 32
+    static let reviewBarHeight: CGFloat = 36
     static let rowHeight: CGFloat = 24
     static let groupRowHeight: CGFloat = 22
     static let inset: CGFloat = 10
     static let cornerRadius: CGFloat = 6
     static let hairline: CGFloat = 1
+}
+
+/// A count in transient chrome is context, not another action.  Give it a
+/// quiet, fixed shape so it cannot be confused with the neighbouring buttons.
+private final class PanelStatusBadge: NSTextField {
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + 12, height: 20)
+    }
 }
 
 /// A transient side surface.  `preferredWidth` exists so a host can animate the
@@ -342,7 +352,7 @@ class MessageBarView: NSView {
     var onDismiss: (() -> Void)?
 
     private let label = NSTextField(labelWithString: "")
-    private let statusLabel = NSTextField(labelWithString: "")
+    private let statusLabel = PanelStatusBadge(labelWithString: "")
     private let actionStack = NSStackView()
     private var actions: [ButtonAction] = []
     private let stripeWidth: CGFloat = 2
@@ -360,6 +370,9 @@ class MessageBarView: NSView {
 
         statusLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         statusLabel.textColor = styleSheet.textFaint
+        statusLabel.alignment = .center
+        statusLabel.wantsLayer = true
+        statusLabel.layer?.cornerRadius = 5
         statusLabel.isHidden = true
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -427,9 +440,18 @@ class MessageBarView: NSView {
         statusLabel.setAccessibilityLabel(text)
     }
 
+    func useReviewBarLayout() {
+        label.font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+        actionStack.spacing = 3
+        invalidateIntrinsicContentSize()
+    }
+
     func applyStyle() {
         label.textColor = styleSheet.text
         statusLabel.textColor = styleSheet.textFaint
+        statusLabel.layer?.backgroundColor = styleSheet.text
+            .withAlphaComponent(styleSheet.increaseContrast ? 0.11 : 0.06)
+            .cgColor
         needsDisplay = true
     }
 

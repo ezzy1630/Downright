@@ -227,7 +227,7 @@ struct WindowChromeTests {
     func changeSummaryUsesCompactCountedNavigation() {
         let bar = ChangeSummaryBarView()
         bar.configure(message: "Updated on disk", changeCount: 4)
-        #expect(bar.intrinsicContentSize.height == 32)
+        #expect(bar.intrinsicContentSize.height == PanelMetrics.reviewBarHeight)
         #expect(bar.positionStatusForTesting == "4 unread")
     }
 
