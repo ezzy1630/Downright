@@ -14,6 +14,7 @@ import QuickLookUI
 final class PreviewViewController: NSViewController, QLPreviewingController {
     private let storage = NSTextStorage()
     private var container: MarkdownContainerView?
+    private var parsedDocument: ParsedDocument?
     private var fallbackTextView: NSTextView?
 
     /// Well under the ~120MB kill threshold, per §10's non-negotiable budget.
@@ -70,11 +71,13 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         if view.bounds.width >= DensityGutterView.minimumHostWidth {
             let gutter = DensityGutterView(styleSheet: container.textView.styleSheet)
             gutter.bands = DensityGutterView.bands(for: document, changes: [], searchHits: [])
-            container.trailingAccessory = gutter
+            gutter.delegate = self
+            container.leadingAccessory = gutter
         }
 
         install(container)
         self.container = container
+        parsedDocument = document
     }
 
     @MainActor
@@ -121,6 +124,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         memoryTimer = nil
         view.subviews.forEach { $0.removeFromSuperview() }
         container = nil
+        parsedDocument = nil
         fallbackTextView = nil
         if storage.length > 0 {
             storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: "")
@@ -211,5 +215,30 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             total += Int(statistics.size_in_use)
         }
         return total
+    }
+}
+
+@available(macOS 14.0, *)
+extension PreviewViewController: DensityGutterDelegate {
+    func densityGutter(_ gutter: DensityGutterView, didRequestScrollToFraction fraction: CGFloat) {
+        guard let document = parsedDocument else { return }
+        let offset = Int(fraction * CGFloat(document.length))
+        container?.textView.scroll(toOffset: offset, position: .top, animated: !gutter.isScrubbing)
+    }
+
+    func densityGutter(
+        _ gutter: DensityGutterView, previewAtFraction fraction: CGFloat
+    ) -> (title: String, snippet: String)? {
+        guard let document = parsedDocument else { return nil }
+        let offset = min(document.length, Int(fraction * CGFloat(document.length)))
+        guard let heading = document.headings.last(where: { $0.range.location <= offset }) else {
+            let length = min(120, document.length)
+            return ("Top", document.substring(NSRange(location: 0, length: length)))
+        }
+        let snippetLength = min(160, max(0, document.length - offset))
+        return (
+            heading.title,
+            document.substring(NSRange(location: offset, length: snippetLength))
+        )
     }
 }
