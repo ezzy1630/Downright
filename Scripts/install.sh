@@ -4,13 +4,26 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRATCH="${SCRATCH:-.build-main}"
-APP_SOURCE="$ROOT/$SCRATCH/bundle/Downright.app"
+SWIFTPM_APP="$ROOT/$SCRATCH/bundle/Downright.app"
+XCODE_APP="$ROOT/.build-xcode/Build/Products/Release/Downright.app"
+APP_SOURCE="${APP_SOURCE:-}"
 APP_DEST="${APP_DEST:-/Applications/Downright.app}"
 BIN_DEST="${BIN_DEST:-/usr/local/bin}"
+
+if [ -z "$APP_SOURCE" ]; then
+    if [ -d "$XCODE_APP/Contents/PlugIns/DownrightQL.appex" ] \
+        && { [ ! -d "$SWIFTPM_APP" ] \
+            || [ "$XCODE_APP/Contents/Info.plist" -nt "$SWIFTPM_APP/Contents/Info.plist" ]; }; then
+        APP_SOURCE="$XCODE_APP"
+    else
+        APP_SOURCE="$SWIFTPM_APP"
+    fi
+fi
 
 if [ ! -d "$APP_SOURCE" ]; then
     echo "Downright.app not built yet — running Scripts/bundle-app.sh"
     "$ROOT/Scripts/bundle-app.sh"
+    APP_SOURCE="$SWIFTPM_APP"
 fi
 
 echo "==> Installing to $APP_DEST"
@@ -19,11 +32,16 @@ cp -R "$APP_SOURCE" "$APP_DEST"
 
 echo "==> Linking CLI into $BIN_DEST"
 mkdir -p "$BIN_DEST"
-ln -sf "$APP_DEST/Contents/MacOS/down" "$BIN_DEST/down"
+DOWN_TARGET="$APP_DEST/Contents/MacOS/down"
+if [ "$(readlink "$BIN_DEST/down" 2>/dev/null || true)" != "$DOWN_TARGET" ]; then
+    ln -sf "$DOWN_TARGET" "$BIN_DEST/down" \
+        || echo "    warning: could not update $BIN_DEST/down"
+fi
 # §3.4 calls the terminal launcher `md`; ship both names and let the user keep
 # whichever fits their muscle memory.
 if [ ! -e "$BIN_DEST/md" ]; then
-    ln -sf "$APP_DEST/Contents/MacOS/down" "$BIN_DEST/md"
+    ln -sf "$DOWN_TARGET" "$BIN_DEST/md" \
+        || echo "    warning: could not create $BIN_DEST/md"
 fi
 
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
@@ -47,7 +65,11 @@ fi
 
 echo
 echo "Installed."
-echo "  down PLAN.md            open a file"
-echo "  md PLAN.md              same thing"
+if [ -x "$BIN_DEST/down" ]; then
+    echo "  down PLAN.md            open a file"
+fi
+if [ -x "$BIN_DEST/md" ]; then
+    echo "  md PLAN.md              same thing"
+fi
 echo
 echo "Quick Look: Downright preview and thumbnail extensions registered."

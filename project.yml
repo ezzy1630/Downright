@@ -15,6 +15,10 @@ targets:
     platform: macOS
     sources:
       - path: Sources/DownrightApp
+      - path: Resources/AppIcon.png
+        buildPhase: resources
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
     dependencies:
       - package: Downright
         product: MarkdownCore

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Resources/AppIcon.png" width="160" height="160" alt="Downright app icon">
+</p>
+
 # Downright
 
 A native macOS markdown reader and editor, built for a world where most

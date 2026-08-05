@@ -16,7 +16,7 @@ SCRATCH="${SCRATCH:-.build-main}"
 APP_NAME="Downright"
 BUNDLE_ID="com.ezzyrappeport.downright"
 VERSION="1.0.0"
-BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+BUILD="$("$ROOT/Scripts/build-number.sh")"
 
 OUT="$ROOT/$SCRATCH/bundle"
 APP="$OUT/$APP_NAME.app"
@@ -24,7 +24,10 @@ CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
-echo "==> Building ($CONFIGURATION)"
+echo "==> Generating app icon"
+"$ROOT/Scripts/make-icon.sh" "$ROOT/Resources/AppIcon.icns"
+
+echo "==> Building ($CONFIGURATION, build $BUILD)"
 swift build -c "$CONFIGURATION" --scratch-path "$SCRATCH" --product Downright
 swift build -c "$CONFIGURATION" --scratch-path "$SCRATCH" --product down
 
@@ -137,11 +140,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
-    cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
-elif [ -x "$ROOT/Scripts/make-icon.sh" ]; then
-    "$ROOT/Scripts/make-icon.sh" "$RESOURCES/AppIcon.icns" || true
-fi
+cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
+cp "$ROOT/Resources/AppIcon.png" "$RESOURCES/AppIcon.png"
 
 echo "==> Signing (ad-hoc)"
 # Ad-hoc is enough to run locally and to keep the Quick Look extension host
