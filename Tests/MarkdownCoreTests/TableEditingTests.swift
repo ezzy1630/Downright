@@ -79,6 +79,25 @@ import Testing
         #expect(edit.applying(to: source) == "| A | B |\r\n|---|---|\r\n| three | four |\r\n| one | two |\r\n")
     }
 
+    /// Regression: a file that does not end in a newline has a last record with
+    /// no terminator.  Inserting a row after it used to glue the new line onto
+    /// its content (`| one | two || x | y |`).  The missing final newline is a
+    /// byte-fidelity concern handled by `DocumentIO` at save time, so the
+    /// proposal only needs to separate the rows.
+    @Test func insertRowAfterTerminatorLessLastRowDoesNotGlue() throws {
+        let source = "| A | B |\n|---|---|\n| one | two |"
+        let edit = try proposal(source, .insertRow(index: 2, cells: ["x", "y"]))
+        #expect(edit.applying(to: source) == "| A | B |\n|---|---|\n| one | two |\n| x | y |\n")
+    }
+
+    /// Regression: moving the terminator-less last row into the middle used to
+    /// glue it onto its new neighbour.
+    @Test func moveRowWithTerminatorLessLastRowDoesNotGlue() throws {
+        let source = "| A | B |\n|---|---|\n| one | two |\n| three | four |"
+        let edit = try proposal(source, .moveRow(from: 2, to: 1))
+        #expect(edit.applying(to: source) == "| A | B |\n|---|---|\n| three | four |\n| one | two |\n")
+    }
+
     @Test func blockquoteTableKeepsQuotePrefix() throws {
         let source = "> | A | B |\n> |---|---|\n> | one | two |\n"
         let edit = try proposal(source, .setCell(row: 1, column: 1, text: "changed"))

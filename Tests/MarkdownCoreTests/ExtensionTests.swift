@@ -267,6 +267,15 @@ import Testing
         // resolves, not the parser.
         #expect(paths("See imaginary/nowhere/at/all.ts here.\n") == ["imaginary/nowhere/at/all.ts"])
     }
+
+    /// Regression: a non-ASCII character such as an emoji in a code span used
+    /// to force-unwrap `UnicodeScalar` on a UTF-16 surrogate half and trap on
+    /// the per-keystroke reparse.  It must be skipped, not crash.
+    @Test func emojiInCodeSpanDoesNotCrash() {
+        #expect(paths("Run `config.🚀` next.\n").isEmpty)
+        // A real extension after the emoji still resolves.
+        #expect(paths("Edit `src/cache.🚀.ts`.\n") == ["src/cache.🚀.ts"])
+    }
 }
 
 @Suite struct FenceLanguageTests {

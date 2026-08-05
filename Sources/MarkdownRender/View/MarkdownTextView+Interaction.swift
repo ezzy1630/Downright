@@ -311,9 +311,17 @@ extension MarkdownTextView {
             return true
         }
 
+        // `payload.sourceRange` can point past the end of the storage in the
+        // window between an edit and the async parse committing — a large
+        // deletion shrinks the buffer before the parse lands, and `attribute(at:)`
+        // beyond the storage raises an uncatchable NSRangeException.  Every
+        // other consumer of this storage clamps; do the same here.
+        guard let storage = textStorage, storage.length > 0 else { return false }
+        var styleLocation = payload.sourceRange.location
+        styleLocation = min(max(0, styleLocation), storage.length - 1)
         let indent = max(
             0,
-            ((textStorage?.attribute(.paragraphStyle, at: payload.sourceRange.location, effectiveRange: nil)
+            ((storage.attribute(.paragraphStyle, at: styleLocation, effectiveRange: nil)
                 as? NSParagraphStyle)?.headIndent ?? RenderMetrics.codeInsetX) - RenderMetrics.codeInsetX
         )
         let band = CGRect(

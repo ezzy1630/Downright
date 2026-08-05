@@ -13,6 +13,11 @@ import Foundation
 // Hence the shape rules below, which are deliberately conservative in prose and
 // relaxed inside a code span, where the backticks are themselves strong
 // evidence.
+//
+// This pass runs over every `.text` span on every parse, and most tokens are
+// plain words that get rejected.  All shape decisions therefore happen on the
+// raw UTF-16 buffer — no intermediate `String` — and the path String is only
+// materialised for a token that actually matches.
 
 enum PathTokenScanner {
     /// Extensions common enough in agent output that seeing one is sufficient
@@ -67,65 +72,182 @@ enum PathTokenScanner {
             range.length -= 1
         }
         guard range.length > 1 else { return nil }
-        var body = text.substring(with: range)
 
         // `file.ts:42` and `file.ts:42:8` — split the location suffix off first
-        // so the shape rules below see just the path.
-        var line: Int?
-        var column: Int?
-        let segments = body.split(separator: ":", omittingEmptySubsequences: false)
-        if segments.count >= 2, let last = Int(segments[segments.count - 1]), last > 0 {
-            if segments.count >= 3, let middle = Int(segments[segments.count - 2]), middle > 0 {
-                line = middle
-                column = last
-                body = segments.dropLast(2).joined(separator: ":")
-            } else {
-                line = last
-                body = segments.dropLast().joined(separator: ":")
-            }
-            // `range` deliberately keeps the `:42` suffix: the app underlines
-            // and opens the whole token, and only `rawPath` needs the path.
-        }
+        // so the shape rules below see just the path.  All of this runs on the
+        // UTF-16 buffer; only a real match pays for a `String`.
+        let (pathRange, line, column) = stripLocationSuffix(text, range: range)
+        guard pathRange.length > 0, !isURL(text, range: pathRange) else { return nil }
+        guard isPathShaped(text, range: pathRange, relaxed: relaxed) else { return nil }
 
-        guard !body.isEmpty, !isURL(body) else { return nil }
-        guard isPathShaped(body, relaxed: relaxed) else { return nil }
+        // `range` deliberately keeps the `:42` suffix: the app underlines
+        // and opens the whole token, and only `rawPath` needs the path.
+        let body = text.substring(with: pathRange)
         return Match(range: range, token: PathToken(rawPath: body, line: line, column: column))
+    }
+
+    /// Splits a trailing `:line` or `:line:column` suffix off `range`, matching
+    /// the original rule: only a suffix whose last colon-delimited segment is a
+    /// positive integer is split, so inner colons in a path are preserved.
+    private static func stripLocationSuffix(
+        _ text: NSString, range: NSRange
+    ) -> (pathRange: NSRange, line: Int?, column: Int?) {
+        let start = range.location
+        let end = range.upperBound
+        var segStart = end - 1
+        while segStart >= start, isDigit(text.character(at: segStart)) { segStart -= 1 }
+        guard segStart >= start, text.character(at: segStart) == 0x3A,
+              let line = parseDigits(text, from: segStart + 1, to: end), line > 0
+        else { return (range, nil, nil) }
+
+        var colStart = segStart - 1
+        while colStart >= start, isDigit(text.character(at: colStart)) { colStart -= 1 }
+        if colStart >= start, text.character(at: colStart) == 0x3A,
+           let column = parseDigits(text, from: colStart + 1, to: segStart), column > 0 {
+            return (NSRange(location: start, length: colStart - start), line, column)
+        }
+        return (NSRange(location: start, length: segStart - start), line, nil)
     }
 
     /// The conservative shape test.  A `/` alone is not enough — `and/or`,
     /// `read/write` and `he/him` all have one.
-    private static func isPathShaped(_ path: String, relaxed: Bool) -> Bool {
-        if path.hasPrefix("//") { return false }
-        let slashes = path.filter { $0 == "/" }.count
-        let hasExtension = knownExtensions.contains(fileExtension(of: path))
+    private static func isPathShaped(_ text: NSString, range: NSRange, relaxed: Bool) -> Bool {
+        let start = range.location
+        let end = range.upperBound
+        let length = range.length
+        if length >= 2, text.character(at: start) == 0x2F, text.character(at: start + 1) == 0x2F {
+            return false
+        }
+
+        var slashes = 0
+        var lastDot = -1
+        var index = start
+        while index < end {
+            let c = text.character(at: index)
+            if c == 0x2F {
+                slashes += 1
+                lastDot = -1  // a `/` after the last dot kills an extension
+            } else if c == 0x2E {
+                lastDot = index
+            }
+            index += 1
+        }
+        var hasExtension = false
+        if lastDot > start, lastDot + 1 < end, let ext = extensionAfter(text, dot: lastDot, end: end) {
+            hasExtension = knownExtensions.contains(ext)
+        }
 
         if relaxed { return slashes > 0 || hasExtension }
         if hasExtension { return true }
         guard slashes > 0 else { return false }
-        if path.hasPrefix("./") || path.hasPrefix("../") || path.hasPrefix("/") || path.hasPrefix("~/") {
-            return true
-        }
+        if isAnchored(text, start: start, end: end) { return true }
         if slashes >= 2 { return true }
         // One slash, no anchor: only accept when a segment carries a dot, which
         // is what separates `pkg/mod.go` from `and/or`.
-        return path.split(separator: "/").contains { $0.contains(".") }
+        return segmentContainsDot(text, start: start, end: end)
     }
 
-    private static func fileExtension(of path: String) -> String {
-        guard let dot = path.lastIndex(of: "."), dot != path.startIndex else { return "" }
-        let ext = String(path[path.index(after: dot)...]).lowercased()
-        return ext.contains("/") ? "" : ext
+    /// Lowercased file extension after the last dot, or `nil` when the dot is
+    /// not the last one on the line or the extension is empty.
+    private static func extensionAfter(_ text: NSString, dot: Int, end: Int) -> String? {
+        var out = ""
+        for index in (dot + 1)..<end {
+            let c = text.character(at: index)
+            if c == 0x2F { return nil }  // a later `/` means the dot isn't an extension separator
+            // A surrogate half (a non-ASCII character such as an emoji arrives
+            // here as two UTF-16 units) can't become a UnicodeScalar — guard so
+            // the whole scan can't trap on `config.🚀`, where the surrogate is
+            // neither a known extension nor a slash and must simply be skipped.
+            guard let scalar = UnicodeScalar(asciiLower(c)) else { continue }
+            out.append(Character(scalar))
+        }
+        return out.isEmpty ? nil : out
     }
 
-    private static func isURL(_ path: String) -> Bool {
-        if path.contains("://") { return true }
-        if path.lowercased().hasPrefix("www.") { return true }
-        // `mailto:x@y.com`, `http:` and friends — a scheme before any slash.
-        if let colon = path.firstIndex(of: ":") {
-            let scheme = path[path.startIndex..<colon]
-            if !scheme.isEmpty, scheme.allSatisfy({ $0.isLetter }), scheme.count > 1 { return true }
+    private static func isAnchored(_ text: NSString, start: Int, end: Int) -> Bool {
+        guard start < end else { return false }
+        switch text.character(at: start) {
+        case 0x2E:  // ./
+            if start + 1 < end, text.character(at: start + 1) == 0x2F { return true }
+            // ../
+            if start + 2 < end, text.character(at: start + 1) == 0x2E, text.character(at: start + 2) == 0x2F {
+                return true
+            }
+            return false
+        case 0x2F:  // absolute
+            return true
+        case 0x7E:  // ~/
+            return start + 1 < end && text.character(at: start + 1) == 0x2F
+        default:
+            return false
+        }
+    }
+
+    private static func segmentContainsDot(_ text: NSString, start: Int, end: Int) -> Bool {
+        var segmentStart = start
+        var index = start
+        while index <= end {
+            if index == end || text.character(at: index) == 0x2F {
+                for probe in segmentStart..<index where text.character(at: probe) == 0x2E {
+                    return true
+                }
+                segmentStart = index + 1
+            }
+            index += 1
         }
         return false
+    }
+
+    private static func isURL(_ text: NSString, range: NSRange) -> Bool {
+        let start = range.location
+        let end = range.upperBound
+        // `://` anywhere in the token.
+        for index in start..<(end - 2) where text.character(at: index) == 0x3A {
+            if text.character(at: index + 1) == 0x2F, text.character(at: index + 2) == 0x2F {
+                return true
+            }
+        }
+        // `www.` prefix, case-insensitive.
+        if end - start >= 4, asciiLower(text.character(at: start)) == 0x77 {
+            var matches = true
+            for (offset, expected) in [UInt16(0x77), 0x77, 0x77, 0x2E].enumerated() {
+                if asciiLower(text.character(at: start + offset)) != expected { matches = false; break }
+            }
+            if matches { return true }
+        }
+        // A scheme is everything before the first colon; letters only, and more
+        // than one character (`a:b` reads as a path, `mailto:` as a URL).
+        for colon in start..<end where text.character(at: colon) == 0x3A {
+            if colon - start > 1 {
+                var allLetters = true
+                for index in start..<colon where !isASCIILetter(text.character(at: index)) {
+                    allLetters = false
+                    break
+                }
+                if allLetters { return true }
+            }
+            break
+        }
+        return false
+    }
+
+    private static func parseDigits(_ text: NSString, from start: Int, to end: Int) -> Int? {
+        var value = 0
+        for index in start..<end {
+            let digit = Int(text.character(at: index)) - 0x30
+            if value > (Int.max - digit) / 10 { return nil }
+            value = value * 10 + digit
+        }
+        return value
+    }
+
+    @inline(__always) private static func isDigit(_ ch: unichar) -> Bool { ch >= 0x30 && ch <= 0x39 }
+    @inline(__always) private static func isASCIILetter(_ ch: unichar) -> Bool {
+        (ch >= 0x41 && ch <= 0x5A) || (ch >= 0x61 && ch <= 0x7A)
+    }
+    /// Lowercases an ASCII letter; returns other units unchanged.
+    @inline(__always) private static func asciiLower(_ ch: unichar) -> unichar {
+        ch >= 0x41 && ch <= 0x5A ? ch + 0x20 : ch
     }
 
     private static func isTokenCharacter(_ ch: unichar) -> Bool {

@@ -127,9 +127,14 @@ struct HTMLExporter {
             return "<hr>\n"
 
         case .htmlBlock:
-            // Passed through verbatim: it was HTML in the source and the
-            // exporter's job is fidelity, not sanitising the user's own file.
-            return document.substring(block.range) + "\n"
+            // Exported documents are standalone files opened outside the app,
+            // and the whole point of the product is reviewing untrusted agent
+            // output.  Inline HTML is escaped for the same reason (see
+            // `.inlineHTML`), so a raw block that ships verbatim would let a
+            // `<script>` in the source execute on open — a stored XSS hole.
+            // Render the block as escaped source text, not as live markup.
+            let html = document.substring(block.range)
+            return "<div class=\"code\"><pre><code>\(escape(html))</code></pre></div>\n"
 
         case .frontMatter(let matter):
             guard !matter.fields.isEmpty else { return "" }

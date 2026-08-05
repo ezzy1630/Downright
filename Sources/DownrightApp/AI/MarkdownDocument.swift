@@ -118,10 +118,17 @@ final class MarkdownDocument: NSObject {
         isClosed = false
         enqueueParseControl { await $0.resume() }
         cancelParseWork()
-        let (text, fidelity) = try DocumentIO.read(contentsOf: fileURL)
-        self.url = fileURL
+        // Canonicalise once, up front.  A `.atomic` write renames a new file
+        // over the destination, which would *replace a symlink with a regular
+        // file* while the link's target kept its stale content.  Resolving here
+        // makes the identity, the watcher, and the write path agree, so saving
+        // a file opened through a symlink edits the target it points at rather
+        // than clobbering the link itself (§8.1).
+        let canonical = fileURL.resolvingSymlinksInPath()
+        let (text, fidelity) = try DocumentIO.read(contentsOf: canonical)
+        self.url = canonical
         self.fidelity = fidelity
-        self.state = DocumentStateStore.shared.state(for: fileURL)
+        self.state = DocumentStateStore.shared.state(for: canonical)
 
         suppressReparse = true
         storage.beginEditing()
@@ -138,8 +145,8 @@ final class MarkdownDocument: NSObject {
         let structure = MarkdownParser.parse(text, options: .structureOnly)
         parsed = structure
 
-        SnapshotStore.shared.record(text, for: fileURL, kind: .baseline)
-        DocumentStateStore.shared.noteOpened(fileURL, document: structure)
+        SnapshotStore.shared.record(text, for: canonical, kind: .baseline)
+        DocumentStateStore.shared.noteOpened(canonical, document: structure)
 
         // Unread-since-last-read (§8.2): if the bytes moved while the app was
         // closed, mark up what changed and offer to jump to the first one.
@@ -149,7 +156,7 @@ final class MarkdownDocument: NSObject {
             if !hunks.isEmpty { changes.apply(hunks: hunks) }
         }
 
-        startWatching(fileURL)
+        startWatching(canonical)
         forceNextDirtyWholesale = true
         startAsyncReparse()
     }

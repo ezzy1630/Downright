@@ -167,7 +167,14 @@ public enum TableEditing {
             return makeWhole(document, range: records[rowIndices[index]].fullRange, directReplacement: "", summary: "Delete table row", expected: source.substring(with: records[rowIndices[index]].fullRange))
         case let .moveRow(from, to):
             guard from > 0, to > 0, from < rowIndices.count, to < rowIndices.count else { return fail(.invalidRow) }
-            var output = records.map(\.rawWithTerminator)
+            let ending = records.first?.terminator ?? "\n"
+            // `rawWithTerminator` has no trailing terminator for the last record
+            // of a file that does not end in a newline.  A move can place that
+            // record in the middle, which would glue it onto its new neighbour
+            // — normalise every record to a terminator first (§3.6 editor; a
+            // missing final newline is `DocumentIO`'s fidelity concern at save
+            // time).
+            var output = records.map { hasTerminator($0.rawWithTerminator) ? $0.rawWithTerminator : $0.rawWithTerminator + ending }
             let moved = output.remove(at: rowIndices[from])
             output.insert(moved, at: rowIndices[to])
             return make(document, range: tableRange, replacement: output.joined(), summary: "Move table row", expected: expected)
@@ -244,10 +251,22 @@ public enum TableEditing {
         _ document: ParsedDocument, range: NSRange, records: [LineRecord], replacementAt: Int,
         inserted: [String], summary: String, expected: String
     ) -> TableEditResult {
-        var output = records.map(\.rawWithTerminator)
         let ending = records.first?.terminator ?? "\n"
+        var output = records.map(\.rawWithTerminator)
+        // The last record of a file that does not end in a newline has an empty
+        // terminator.  Inserting after it would glue the new line straight onto
+        // its content (`| one | two || x | y |`), so give the record preceding
+        // the insertion a terminator first.  A missing final newline is a
+        // byte-fidelity concern handled by `DocumentIO` at save time, not here.
+        if replacementAt > 0, replacementAt <= output.count, !hasTerminator(output[replacementAt - 1]) {
+            output[replacementAt - 1] += ending
+        }
         output.insert(contentsOf: inserted.map { $0 + ending }, at: replacementAt)
         return make(document, range: range, replacement: output.joined(), summary: summary, expected: expected)
+    }
+
+    private static func hasTerminator(_ line: String) -> Bool {
+        !line.isEmpty && (line.hasSuffix("\n") || line.hasSuffix("\r"))
     }
 
     private static func makeWhole(
