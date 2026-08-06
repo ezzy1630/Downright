@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import MarkdownCore
 import MarkdownRender
 
@@ -474,6 +475,408 @@ class MessageBarView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyStyle()
+    }
+}
+
+// MARK: - Themed segmented control
+
+/// A quiet, animated two-or-more-way filter.  The default `NSSegmentedControl`
+/// ships a clunky two-piece border that reads as a template control against the
+/// panel's themed backdrop; this one draws its own track with a sliding thumb
+/// so selection feels sprung rather than swapped, and scrubbing across the
+/// control picks up neighbours as the pointer moves (§11.4).
+@MainActor
+final class PanelSegmentedControl: NSView {
+    private let items: [String]
+    var styleSheet: StyleSheet { didSet { applyStyle() } }
+    private(set) var selectedIndex: Int
+    var onChange: ((Int) -> Void)?
+
+    static let controlHeight: CGFloat = 26
+    private static let segmentWidth: CGFloat = 56
+
+    private let backgroundLayer = CALayer()
+    private let thumbLayer = CALayer()
+    private var textLayers: [CATextLayer] = []
+    private var trackingArea: NSTrackingArea?
+    private var isPointerInside = false
+    private var hoveredIndex: Int?
+    private var isScrubbing = false
+    private var thumbIdleColor: NSColor = .clear
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.segmentWidth * CGFloat(items.count), height: Self.controlHeight)
+    }
+
+    init(items: [String], selectedIndex: Int = 0, styleSheet: StyleSheet) {
+        self.items = items
+        self.selectedIndex = min(max(selectedIndex, 0), max(0, items.count - 1))
+        self.styleSheet = styleSheet
+        super.init(frame: .zero)
+        wantsLayer = true
+
+        backgroundLayer.cornerRadius = 7
+        layer?.addSublayer(backgroundLayer)
+
+        thumbLayer.cornerRadius = 5
+        layer?.addSublayer(thumbLayer)
+
+        for item in items {
+            let textLayer = CATextLayer()
+            textLayer.alignmentMode = .center
+            textLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+            textLayer.string = item
+            layer?.addSublayer(textLayer)
+            textLayers.append(textLayer)
+        }
+
+        applyStyle()
+        setAccessibilityElement(true)
+        setAccessibilityRole(.radioGroup)
+        setAccessibilityLabel(items.joined(separator: "/"))
+        setAccessibilityValue(items[selectedIndex])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func setSelectedIndex(_ index: Int, animated: Bool = true) {
+        let normalized = min(max(index, 0), max(0, items.count - 1))
+        guard normalized != selectedIndex else { return }
+        selectedIndex = normalized
+        setAccessibilityValue(items[selectedIndex])
+        updateThumb(animated: animated)
+        applySelectionColors()
+    }
+
+    // MARK: - Layout & drawing
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let segmentWidth = bounds.width / CGFloat(items.count)
+        backgroundLayer.frame = bounds
+        thumbLayer.frame = thumbFrame(segmentWidth: segmentWidth)
+        for (index, textLayer) in textLayers.enumerated() {
+            textLayer.frame = NSRect(x: CGFloat(index) * segmentWidth, y: 0, width: segmentWidth, height: bounds.height)
+        }
+        CATransaction.commit()
+    }
+
+    private func thumbFrame(segmentWidth: CGFloat) -> NSRect {
+        NSRect(
+            x: CGFloat(selectedIndex) * segmentWidth + 1,
+            y: 1,
+            width: segmentWidth - 2,
+            height: bounds.height - 2
+        )
+    }
+
+    private func updateThumb(animated: Bool) {
+        let segmentWidth = bounds.width / CGFloat(items.count)
+        let target = thumbFrame(segmentWidth: segmentWidth)
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard animated, !reduce, window != nil else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            thumbLayer.frame = target
+            CATransaction.commit()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(Motion.standard)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.22, 0.82, 0.28, 1))
+        thumbLayer.frame = target
+        CATransaction.commit()
+    }
+
+    private func applySelectionColors() {
+        for (index, textLayer) in textLayers.enumerated() {
+            let selected = index == selectedIndex
+            textLayer.font = (selected
+                ? NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+                : NSFont.systemFont(ofSize: 11.5, weight: .medium)) as CTFont
+            textLayer.fontSize = 11.5
+            textLayer.foregroundColor = color(forSegment: index, selected: selected)
+                .withAlphaComponent(selected ? 1 : dimmedAlpha(for: index)).cgColor
+        }
+    }
+
+    private func color(forSegment index: Int, selected: Bool) -> NSColor {
+        selected ? styleSheet.text : styleSheet.textSecondary
+    }
+
+    private func dimmedAlpha(for index: Int) -> CGFloat {
+        let contrast = styleSheet.increaseContrast
+        if isPointerInside, hoveredIndex == index { return contrast ? 0.92 : 0.78 }
+        return contrast ? 0.82 : 0.62
+    }
+
+    private func applyStyle() {
+        let contrast = styleSheet.increaseContrast
+        backgroundLayer.backgroundColor = styleSheet.text
+            .panelAlpha(0.06, increaseContrast: contrast).cgColor
+        thumbIdleColor = styleSheet.text.panelAlpha(0.13, increaseContrast: contrast)
+        thumbLayer.backgroundColor = thumbIdleColor.cgColor
+        applySelectionColors()
+        needsDisplay = true
+    }
+
+    /// The thumb recesses while the pointer holds it — the one physical read in
+    /// the control — and springs back past full size on release, so switching
+    /// segments lands rather than just sliding.  Scrubbing keeps it held down
+    /// while the thumb travels under the pointer.
+    private func setThumbPressed(_ pressed: Bool) {
+        let contrast = styleSheet.increaseContrast
+        let pressedColor = styleSheet.text.panelAlpha(
+            contrast ? 0.22 : 0.18,
+            increaseContrast: contrast
+        )
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard !reduce, window != nil else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            thumbLayer.transform = CATransform3DIdentity
+            thumbLayer.backgroundColor = thumbIdleColor.cgColor
+            CATransaction.commit()
+            return
+        }
+
+        if pressed {
+            let press = CABasicAnimation(keyPath: "transform")
+            press.fromValue = thumbLayer.presentation()?.transform ?? thumbLayer.transform
+            press.toValue = CATransform3DMakeScale(0.92, 0.92, 1)
+            press.duration = ToolbarChromePolicy.pressInDuration
+            press.timingFunction = ToolbarChromePolicy.timingFunction()
+            let color = CABasicAnimation(keyPath: "backgroundColor")
+            color.fromValue = thumbLayer.backgroundColor
+            color.toValue = pressedColor.cgColor
+            color.duration = ToolbarChromePolicy.pressInDuration
+            thumbLayer.removeAnimation(forKey: "thumb-settle")
+            thumbLayer.add(press, forKey: "thumb-press")
+            thumbLayer.add(color, forKey: "thumb-press-color")
+            thumbLayer.transform = CATransform3DMakeScale(0.92, 0.92, 1)
+            thumbLayer.backgroundColor = pressedColor.cgColor
+        } else {
+            let from = thumbLayer.presentation()?.transform ?? thumbLayer.transform
+            let settle = CAKeyframeAnimation(keyPath: "transform")
+            settle.values = [
+                NSValue(caTransform3D: from),
+                NSValue(caTransform3D: CATransform3DMakeScale(1.06, 1.06, 1)),
+                NSValue(caTransform3D: CATransform3DIdentity),
+            ]
+            settle.keyTimes = [0, 0.45, 1]
+            settle.duration = Motion.standard
+            settle.timingFunctions = [
+                CAMediaTimingFunction(controlPoints: 0.22, 0.82, 0.28, 1),
+                CAMediaTimingFunction(name: .easeOut),
+            ]
+            let color = CABasicAnimation(keyPath: "backgroundColor")
+            color.fromValue = thumbLayer.backgroundColor
+            color.toValue = thumbIdleColor.cgColor
+            color.duration = Motion.quick
+            thumbLayer.removeAnimation(forKey: "thumb-press")
+            thumbLayer.removeAnimation(forKey: "thumb-press-color")
+            thumbLayer.add(settle, forKey: "thumb-settle")
+            thumbLayer.add(color, forKey: "thumb-color-settle")
+            thumbLayer.transform = CATransform3DIdentity
+            thumbLayer.backgroundColor = thumbIdleColor.cgColor
+        }
+    }
+
+    // MARK: - Interaction
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isPointerInside = true
+        hoveredIndex = segment(at: convert(event.locationInWindow, from: nil).x)
+        applySelectionColors()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isPointerInside = false
+        hoveredIndex = nil
+        applySelectionColors()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isScrubbing = true
+        setThumbPressed(true)
+        selectIfChanged(convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        hoveredIndex = segment(at: convert(event.locationInWindow, from: nil).x)
+        applySelectionColors()
+        selectIfChanged(convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isScrubbing = false
+        setThumbPressed(false)
+        hoveredIndex = nil
+        isPointerInside = bounds.contains(convert(event.locationInWindow, from: nil))
+        selectIfChanged(convert(event.locationInWindow, from: nil).x)
+        applySelectionColors()
+    }
+
+    private func segment(at x: CGFloat) -> Int {
+        guard bounds.width > 0 else { return 0 }
+        return min(max(Int(floor(x / (bounds.width / CGFloat(items.count)))), 0), items.count - 1)
+    }
+
+    private func selectIfChanged(_ x: CGFloat) {
+        let index = segment(at: x)
+        let previous = selectedIndex
+        setSelectedIndex(index)
+        if selectedIndex != previous {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            onChange?(selectedIndex)
+        }
+    }
+
+    override func accessibilityPerformIncrement() -> Bool {
+        guard selectedIndex < items.count - 1 else { return false }
+        setSelectedIndex(selectedIndex + 1, animated: true)
+        onChange?(selectedIndex)
+        return true
+    }
+
+    override func accessibilityPerformDecrement() -> Bool {
+        guard selectedIndex > 0 else { return false }
+        setSelectedIndex(selectedIndex - 1, animated: true)
+        onChange?(selectedIndex)
+        return true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyStyle()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        for textLayer in textLayers {
+            textLayer.contentsScale = scale
+        }
+    }
+}
+
+// MARK: - Progress bar
+
+/// A thin, animated completion bar used by the task panel header.  Two quiet
+/// shapes — a faint track and an accent fill — make completed-fraction readable
+/// at a glance without a ring or a number, and the fill glides rather than
+/// jumps when the count changes (§8.5).
+@MainActor
+final class PanelProgressBar: NSView {
+    var styleSheet: StyleSheet { didSet { applyStyle() } }
+    var fraction: CGFloat = 0 {
+        didSet {
+            let clamped = min(max(fraction, 0), 1)
+            guard clamped != oldValue else { return }
+            fraction = clamped
+            placeFill(animated: window != nil)
+        }
+    }
+
+    private let trackLayer = CALayer()
+    private let fillLayer = CALayer()
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 4)
+    }
+
+    init(styleSheet: StyleSheet) {
+        self.styleSheet = styleSheet
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(trackLayer)
+        layer?.addSublayer(fillLayer)
+        applyStyle()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        trackLayer.frame = bounds
+        trackLayer.cornerRadius = bounds.height / 2
+        fillLayer.cornerRadius = bounds.height / 2
+        placeFill(animated: false)
+        CATransaction.commit()
+    }
+
+    private func placeFill(animated: Bool) {
+        let width = bounds.width * fraction
+        let target = NSRect(x: 0, y: 0, width: max(0, width), height: bounds.height)
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard animated, !reduce, window != nil else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            fillLayer.frame = target
+            CATransaction.commit()
+            return
+        }
+        // Implicit animation of bounds/position gives a single smooth glide.
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(Motion.deliberate)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.22, 0.82, 0.28, 1))
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        fillLayer.frame = target
+        CATransaction.commit()
+    }
+
+    private func applyStyle() {
+        let contrast = styleSheet.increaseContrast
+        trackLayer.backgroundColor = styleSheet.text
+            .panelAlpha(0.08, increaseContrast: contrast).cgColor
+        fillLayer.backgroundColor = styleSheet.accent.cgColor
+        needsDisplay = true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyStyle()
+    }
+}
+
+// MARK: - Row selection
+
+/// Row selection drawn in the panel's own language instead of the system
+/// accent.  AppKit's default highlight is cobalt; against a warm themed panel
+/// it reads as "the system made this", which is exactly what the panels refuse
+/// to feel.  A short, rounded, faint fill replaces it (§11.4).
+final class PanelSelectionRowView: NSTableRowView {
+    var styleSheet: StyleSheet = .current {
+        didSet { needsDisplay = true }
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        // Transparent: the panel backdrop shows through the table.
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        let contrast = styleSheet.increaseContrast
+        styleSheet.selection.panelAlpha(contrast ? 0.30 : 0.18, increaseContrast: contrast).setFill()
+        NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 3, dy: 1),
+            xRadius: 6, yRadius: 6
+        ).fill()
     }
 }
 

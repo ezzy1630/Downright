@@ -353,14 +353,27 @@ public struct InlineSpan: Sendable {
 // MARK: - Document
 
 public enum TextEncodingKind: String, Sendable {
-    case utf8, utf16LE, utf16BE, latin1
+    case utf8, utf16LE, utf16BE, utf32LE, utf32BE, latin1
 
     public var stringEncoding: String.Encoding {
         switch self {
         case .utf8: return .utf8
         case .utf16LE: return .utf16LittleEndian
         case .utf16BE: return .utf16BigEndian
+        case .utf32LE: return .utf32LittleEndian
+        case .utf32BE: return .utf32BigEndian
         case .latin1: return .isoLatin1
+        }
+    }
+
+    /// Approximate width of one code unit in bytes, used to repair a file that
+    /// was truncated mid-code-unit (a torn UTF-16 surrogate pair or a UTF-32
+    /// word sliced at a non-word boundary).
+    var codeUnitWidth: Int {
+        switch self {
+        case .utf16LE, .utf16BE: return 2
+        case .utf32LE, .utf32BE: return 4
+        default: return 1
         }
     }
 }

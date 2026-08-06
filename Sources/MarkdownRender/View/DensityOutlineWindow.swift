@@ -25,7 +25,12 @@ final class DensityOutlineWindow: NSPanel, NSTableViewDataSource, NSTableViewDel
     static let hideDuration: TimeInterval = 0.09
 
     var styleSheet: StyleSheet { didSet { backdrop.styleSheet = styleSheet; table.reloadData() } }
-    var entries: [DensityOutlineEntry] = [] { didSet { table.reloadData() } }
+    var entries: [DensityOutlineEntry] = [] {
+        didSet {
+            guard isVisible || entries.isEmpty != oldValue.isEmpty else { return }
+            table.reloadData()
+        }
+    }
     var onSelect: ((CGFloat) -> Void)?
     var onPointerPresence: ((Bool) -> Void)?
 

@@ -80,8 +80,6 @@ public final class GutterRailView: NSView {
         style.background.setFill()
         dirtyRect.intersection(bounds).fill()
 
-        let caret = textView.primarySourceCaret
-        let activeBlock = caret.flatMap { textView.parsedDocument.root.block(at: $0) }
         let visible = convert(textView.visibleRect, from: textView)
 
         if textView.mode == .source {
@@ -89,10 +87,11 @@ public final class GutterRailView: NSView {
         }
 
         // §8.1: changed blocks get a coloured bar in the margin.
+        let changeBarHeight = style.lineHeight
         for bar in changeBars {
             guard let rect = rowRect(for: bar.range, in: textView), rect.intersects(visible) else { continue }
             let color = style.changeColor(bar.kind)
-            NSBezierPath(roundedRect: NSRect(x: bounds.maxX - 5, y: rect.minY, width: 2.5, height: rect.height),
+            NSBezierPath(roundedRect: NSRect(x: bounds.maxX - 5, y: rect.minY, width: 2.5, height: max(changeBarHeight, rect.height)),
                          xRadius: 1.25, yRadius: 1.25).fill(with: color)
         }
 
@@ -118,6 +117,14 @@ public final class GutterRailView: NSView {
             attributed.draw(at: NSPoint(x: x, y: rect.minY + max(0, (style.lineHeight - size.height) / 2)))
         }
 
+    }
+
+    /// Lazily resolved active block; computed once per draw pass so the
+    /// marker loop does not walk the AST for every marker.
+    private var activeBlock: MDBlock? {
+        guard let textView else { return nil }
+        let caret = textView.primarySourceCaret
+        return caret.flatMap { textView.parsedDocument.root.block(at: $0) }
     }
 
     private func visibleMarkerSlice(in textView: MarkdownTextView)

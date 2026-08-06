@@ -25,8 +25,6 @@ extension DocumentWindowController {
         let current = markdownDocument.parsed.headings.lastIndex(where: {
             $0.range.location <= containerTextView.topVisibleOffset
         })
-        outlinePanel?.currentHeadingIndex = current
-        navigationPanel?.currentHeadingIndex = current
         let length = max(1, markdownDocument.parsed.length)
         let top = CGFloat(containerTextView.topVisibleOffset) / CGFloat(length)
         let activeContainer = documentPanes.first { $0.textView === containerTextView } ?? primaryContainer!
@@ -35,11 +33,18 @@ extension DocumentWindowController {
         let span = min(1, visibleHeight / documentHeight)
         densityGutterView.visibleRange = top...min(1, top + span)
         densityGutterView.readProgress = max(densityGutterView.readProgress, min(1, top + span))
-        densityGutterView.outlineEntries = densityGutterView.outlineEntries.enumerated().map { index, entry in
-            var updated = entry
-            updated.isCurrent = index == current
-            return updated
+        // Only update outline entries / panel indices when the current heading
+        // actually changes, to avoid creating a new array on every scroll frame.
+        let previousCurrent = densityGutterView.outlineEntries.firstIndex(where: \.isCurrent)
+        if previousCurrent != current {
+            densityGutterView.outlineEntries = densityGutterView.outlineEntries.enumerated().map { index, entry in
+                var updated = entry
+                updated.isCurrent = index == current
+                return updated
+            }
         }
+        outlinePanel?.currentHeadingIndex = current
+        navigationPanel?.currentHeadingIndex = current
     }
 
     // MARK: - Activity cue (§12)
@@ -246,6 +251,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
     private static let activityItem = NSToolbarItem.Identifier("activity")
     private static let tasksItem = NSToolbarItem.Identifier("tasks-progress")
+    private static let updateItem = NSToolbarItem.Identifier("update-pill")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
@@ -255,6 +261,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             .flexibleSpace,
             Self.activityItem,
             Self.tasksItem,
+            Self.updateItem,
             Self.overflowItem,
         ]
     }
@@ -325,6 +332,17 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             progressRing.onVisibilityChange = { [weak self] _ in
                 self?.window?.toolbar?.validateVisibleItems()
             }
+            return item
+
+        case Self.updateItem:
+            let pill = updateStatusPill ?? UpdateStatusPill()
+            updateStatusPill = pill
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = pill
+            item.isBordered = false
+            item.label = "Updates"
+            item.toolTip = "Software updates"
+            item.visibilityPriority = .high
             return item
 
         default:
@@ -434,7 +452,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         for item in menu.items {
             switch item.title {
-            case "Tasks": item.state = taskPanel?.superview != nil ? .on : .off
+            case "Tasks": item.state = (inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed) ? .on : .off
             case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
             default: break
             }

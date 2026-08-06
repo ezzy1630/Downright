@@ -22,44 +22,68 @@ struct SourceScanner {
     private(set) var linkReferences: [String: LinkReference] = [:]
 
     init(map: SourceMap) {
+        let text = map.text
         var line = 0
         var fence: String?
         while line < map.lineCount {
             defer { line += 1 }
-            let text = map.string(ofLine: line)
-            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            let lineRange = map.contentRange(ofLine: line)
+            let start = lineRange.location
+            let end = lineRange.upperBound
+
+            // Measure the leading indent and land on the first non-whitespace
+            // offset in one pass over the UTF-16 buffer.  No line String is
+            // materialised unless a `[` definition candidate actually shows up.
+            var trimmedStart = start
+            var indentColumns = 0
+            while trimmedStart < end {
+                let c = text.character(at: trimmedStart)
+                if c == 0x20 {
+                    trimmedStart += 1
+                    indentColumns += 1
+                } else if c == 0x09 {
+                    trimmedStart += 1
+                    indentColumns += 4 - (indentColumns % 4)
+                } else {
+                    break
+                }
+            }
+            let trimmedLength = end - trimmedStart
 
             if let open = fence {
-                if trimmed.hasPrefix(open) { fence = nil }
+                if hasPrefix(text, at: trimmedStart, length: trimmedLength, open) { fence = nil }
                 continue
             }
-            if trimmed.hasPrefix("```") { fence = "```"; continue }
-            if trimmed.hasPrefix("~~~") { fence = "~~~"; continue }
-            guard text.indentColumns < 4, trimmed.hasPrefix("[") else { continue }
-
-            guard let close = closingBracket(trimmed),
-                  trimmed.index(after: close) < trimmed.endIndex,
-                  trimmed[trimmed.index(after: close)] == ":"
+            if hasPrefix(text, at: trimmedStart, length: trimmedLength, "```") { fence = "```"; continue }
+            if hasPrefix(text, at: trimmedStart, length: trimmedLength, "~~~") { fence = "~~~"; continue }
+            guard indentColumns < 4, trimmedLength > 0,
+                  text.character(at: trimmedStart) == 0x5B
             else { continue }
 
-            let label = String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
+            guard let close = closingBracket(text, from: trimmedStart, to: end),
+                  close + 1 < end,
+                  text.character(at: close + 1) == 0x3A
+            else { continue }
+
+            let labelStart = trimmedStart + 1
+            guard close > labelStart else { continue }
+            let label = text.substring(with: NSRange(location: labelStart, length: close - labelStart))
             guard !label.isEmpty else { continue }
-            let lineRange = map.contentRange(ofLine: line)
-            let markerLength = trimmed.distance(from: trimmed.startIndex, to: close) + 2
-            let indent = text.utf16.count - trimmed.utf16.count == 0 ? 0 : text.leadingIndent.utf16.count
+            let markerLength = (close - trimmedStart) + 2
+            let indent = trimmedStart - start
             let bodyStart = lineRange.location + indent + markerLength
-            let body = String(trimmed[trimmed.index(close, offsetBy: 2)...])
+            let body = text.substring(with: NSRange(
+                location: min(bodyStart, end), length: max(0, end - min(bodyStart, end))
+            ))
 
             if label.hasPrefix("^") {
                 let identifier = String(label.dropFirst())
                 guard !identifier.isEmpty else { continue }
                 var last = line
-                while last + 1 < map.lineCount {
-                    let next = map.string(ofLine: last + 1)
-                    guard !next.isBlankLine, next.indentColumns >= 4 || next.hasPrefix("\t") else { break }
+                while last + 1 < map.lineCount, isIndentedContinuation(map, line: last + 1) {
                     last += 1
                 }
-                let end = map.contentRange(ofLine: last).upperBound
+                let end_ = map.contentRange(ofLine: last).upperBound
                 let leadingSpace = body.hasPrefix(" ") ? 1 : 0
                 footnoteDefinitions.append(FootnoteDefinition(
                     identifier: identifier,
@@ -67,7 +91,7 @@ struct SourceScanner {
                         location: lineRange.location,
                         length: bodyStart + leadingSpace - lineRange.location
                     ),
-                    range: NSRange(location: lineRange.location, length: max(0, end - lineRange.location))
+                    range: NSRange(location: lineRange.location, length: max(0, end_ - lineRange.location))
                 ))
                 line = last
                 continue
@@ -81,22 +105,57 @@ struct SourceScanner {
         }
     }
 
-    private func closingBracket(_ text: String) -> String.Index? {
+    /// Whether `text[trimmedStart..<trimmedStart+length]` begins with `prefix`.
+    /// All prefixes in play are ASCII, so UTF-16 units can be compared directly.
+    private func hasPrefix(_ text: NSString, at offset: Int, length: Int, _ prefix: String) -> Bool {
+        var index = 0
+        for unit in prefix.utf16 { // lazy UTF-16 view, no array allocation
+            guard index < length, text.character(at: offset + index) == unit else { return false }
+            index += 1
+        }
+        return true
+    }
+
+    private func closingBracket(_ text: NSString, from start: Int, to end: Int) -> Int? {
         var depth = 0
-        var index = text.startIndex
-        while index < text.endIndex {
-            switch text[index] {
-            case "[": depth += 1
-            case "]":
+        var index = start
+        while index < end {
+            switch text.character(at: index) {
+            case 0x5B: depth += 1
+            case 0x5D:
                 depth -= 1
                 if depth == 0 { return index }
-            case "\\": index = text.index(after: index)
+            case 0x5C: index += 1
             default: break
             }
-            guard index < text.endIndex else { break }
-            index = text.index(after: index)
+            index += 1
         }
         return nil
+    }
+
+    /// A footnote definition's continuation line: non-blank and indented at
+    /// least four columns (a leading tab counts as four, per CommonMark).
+    private func isIndentedContinuation(_ map: SourceMap, line: Int) -> Bool {
+        let range = map.contentRange(ofLine: line)
+        let text = map.text
+        var columns = 0
+        var sawContent = false
+        var index = range.location
+        let end = range.upperBound
+        while index < end {
+            let c = text.character(at: index)
+            if c == 0x20 {
+                columns += 1
+            } else if c == 0x09 {
+                columns += 4 - (columns % 4)
+            } else {
+                sawContent = true
+                break
+            }
+            index += 1
+        }
+        guard sawContent else { return false }
+        return columns >= 4
     }
 
     private func destinationAndTitle(_ body: String) -> (String, String?) {
@@ -157,31 +216,78 @@ struct DerivedStructures {
                 isChecked: checkbox.isChecked,
                 markRange: checkbox.markRange,
                 contentRange: block.contentRange,
-                text: PlainText.of(block, in: map.text).trimmingCharacters(in: .whitespacesAndNewlines),
+                text: Self.taskLabel(for: block, in: map.text),
                 headingIndex: headings.lastIndex { $0.range.location < block.range.location },
                 indentLevel: indent
             )
         }
     }
 
+    /// A task's label is its *own* source line, from just after the `[ ]`
+    /// marker to that line's terminator.  `PlainText.of` recurses into child
+    /// blocks when a list item carries no inline spans of its own, and a
+    /// list item's `contentRange` spans its whole subtree — both would make a
+    /// parent task read "Notarise and publish  Sparkle appcast  Ad-hoc signing
+    /// for local runs".  The line-scoped slice ends the label at its own line
+    /// terminator, so six source tasks stay six distinct labels.
+    private static func taskLabel(for block: MDBlock, in text: NSString) -> String {
+        let line = text.lineRange(for: NSRange(location: block.range.location, length: 0))
+        let start = min(max(line.location, block.contentRange.location), line.upperBound)
+        guard line.upperBound > start else { return "" }
+        let label = text.substring(with: NSRange(location: start, length: line.upperBound - start))
+        return Self.plainInlineText(label)
+    }
+
+    /// Strips the light markdown that commonly decorates a task label so the
+    /// panel reads like the document without the `**`/`` ` `` scaffolding.
+    private static func plainInlineText(_ source: String) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = trimmed.replacingOccurrences(of: "**", with: "")
+        text = text.replacingOccurrences(of: "__", with: "")
+        text = text.replacingOccurrences(of: "*", with: "")
+        text = text.replacingOccurrences(of: "`", with: "")
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
     private static func outline(_ blocks: [MDBlock], root: MDBlock, map: SourceMap) -> [HeadingNode] {
         var nodes: [HeadingNode] = []
         var slugs: [String: Int] = [:]
+        guard !blocks.isEmpty else { return [] }
+
+        // A section runs until the next heading at the same level or above.
+        // Found for every heading in O(H) with a monotonic stack, instead of a
+        // per-heading forward scan over the rest of the list (O(H²)).
+        var sectionEnds = [Int](repeating: map.length, count: blocks.count)
+        var stack: [(level: Int, lineStart: Int)] = []
+        for index in blocks.indices.reversed() {
+            guard case .heading(let level) = blocks[index].content else { continue }
+            while let top = stack.last, top.level > level { stack.removeLast() }
+            sectionEnds[index] = stack.last?.lineStart ?? map.length
+            stack.append((
+                level: level,
+                lineStart: map.text.lineStart(before: blocks[index].range.location)
+            ))
+        }
+
+        // Each heading's own-prose word count (subsections excluded) is derived
+        // in one tree walk, not one walk per heading.
+        var spans: [NSRange] = []
+        spans.reserveCapacity(blocks.count)
+        for (index, block) in blocks.enumerated() {
+            let ownEnd = index + 1 < blocks.count
+                ? map.text.lineStart(before: blocks[index + 1].range.location)
+                : map.length
+            spans.append(NSRange(
+                location: block.range.upperBound,
+                length: max(0, ownEnd - block.range.upperBound)
+            ))
+        }
+        let wordCounts = PlainText.prosePerSection(in: root, spans: spans, text: map.text)
+            .map { Metrics.wordCount($0) }
 
         for (index, block) in blocks.enumerated() {
             guard case .heading(let level) = block.content else { continue }
             let lineStart = map.text.lineStart(before: block.range.location)
-
-            // A section runs until the next heading at the same level or above.
-            var sectionEnd = map.length
-            for next in blocks[(index + 1)...] {
-                guard case .heading(let nextLevel) = next.content else { continue }
-                if nextLevel <= level {
-                    sectionEnd = map.text.lineStart(before: next.range.location)
-                    break
-                }
-            }
-            // Its own prose stops at the next heading of any level.
             let ownEnd = index + 1 < blocks.count
                 ? map.text.lineStart(before: blocks[index + 1].range.location)
                 : map.length
@@ -200,23 +306,23 @@ struct DerivedStructures {
                 title: title,
                 range: block.range,
                 contentRange: block.contentRange,
-                sectionRange: NSRange(location: lineStart, length: max(0, sectionEnd - lineStart)),
+                sectionRange: NSRange(location: lineStart, length: max(0, sectionEnds[index] - lineStart)),
                 parentIndex: nil,
                 childIndices: [],
                 slug: count == 0 ? base : "\(base)-\(count)",
-                wordCount: Metrics.wordCount(PlainText.prose(in: root, range: ownRange, text: map.text))
+                wordCount: wordCounts[index]
             ))
         }
 
         // Parent/child links, resolved once the levels are all known.
-        var stack: [Int] = []
+        var parentStack: [Int] = []
         for index in nodes.indices {
-            while let top = stack.last, nodes[top].level >= nodes[index].level { stack.removeLast() }
-            if let parent = stack.last {
+            while let top = parentStack.last, nodes[top].level >= nodes[index].level { parentStack.removeLast() }
+            if let parent = parentStack.last {
                 nodes[index].parentIndex = parent
                 nodes[parent].childIndices.append(index)
             }
-            stack.append(index)
+            parentStack.append(index)
         }
         return nodes
     }

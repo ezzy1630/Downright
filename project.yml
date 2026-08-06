@@ -9,6 +9,9 @@ options:
 packages:
   Downright:
     path: .
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.5
 targets:
   Downright:
     type: application
@@ -19,11 +22,16 @@ targets:
         buildPhase: resources
       - path: Resources/AppIcon.icns
         buildPhase: resources
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: Downright
         product: MarkdownCore
       - package: Downright
         product: MarkdownRender
+      - package: Sparkle
+        product: Sparkle
+        embed: true
       - target: DownrightQL
         embed: true
       - target: DownrightThumb
@@ -37,11 +45,16 @@ targets:
         INFOPLIST_FILE: Config/Downright-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - '@executable_path/../Frameworks'
   DownrightQL:
     type: app-extension
     platform: macOS
     sources:
       - path: Sources/DownrightQL
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: Downright
         product: MarkdownCore
@@ -62,6 +75,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources/DownrightThumb
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: Downright
         product: MarkdownCore

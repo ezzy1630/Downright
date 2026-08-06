@@ -13,8 +13,8 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        #expect(window.minSize == NSSize(width: 680, height: 500))
-        #expect(window.maxSize == NSSize(width: 680, height: 500))
+        #expect(window.minSize == NSSize(width: 680, height: 576))
+        #expect(window.maxSize == NSSize(width: 680, height: 576))
         #expect(!window.styleMask.contains(.resizable))
         #expect(window.titleVisibility == .hidden)
         #expect(window.contentView?.accessibilityLabel() == "Downright start window")
@@ -343,6 +343,67 @@ struct StartWindowTests {
         #expect(openedPanel)
         #expect(created)
         #expect(openedURL?.path == recent.path)
+    }
+
+    @Test
+    func arrowKeysMoveFocusAcrossRecentRowsAndReturnOpens() throws {
+        let first = RecentDocument(
+            path: "/tmp/downright-kb-first.md",
+            displayName: "note",
+            firstHeading: "",
+            lastOpened: Date(),
+            wordCount: 1
+        )
+        let second = RecentDocument(
+            path: "/tmp/downright-kb-second.md",
+            displayName: "other",
+            firstHeading: "",
+            lastOpened: Date().addingTimeInterval(-10),
+            wordCount: 1
+        )
+        let controller = StartWindowController(recents: [first, second])
+        defer { controller.close() }
+
+        var openedURL: URL?
+        controller.onOpen = { openedURL = $0 }
+
+        let window = try #require(controller.window)
+        let content = try #require(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let open = try #require(
+            buttons(in: content).first { $0.accessibilityLabel() == "Open File" }
+        )
+        window.makeFirstResponder(open)
+
+        func key(_ keyCode: UInt16) -> NSEvent {
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil,
+                characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+                keyCode: keyCode
+            )!
+        }
+
+        func focusedLabel() -> String? {
+            (window.firstResponder as? NSView)?.accessibilityLabel()
+        }
+
+        // Down lands on the first recent row.
+        content.keyDown(with: key(125))
+        #expect(focusedLabel() == "Open note")
+
+        // Down again moves to the second row.
+        content.keyDown(with: key(125))
+        #expect(focusedLabel() == "Open other")
+
+        // Up returns to the first.
+        content.keyDown(with: key(126))
+        #expect(focusedLabel() == "Open note")
+
+        // Return opens the focused row.
+        content.keyDown(with: key(36))
+        #expect(openedURL?.path == first.path)
     }
 
     private func buttons(in view: NSView?) -> [NSButton] {

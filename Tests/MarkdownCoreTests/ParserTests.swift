@@ -155,7 +155,9 @@ import Testing
             #expect(task.markRange.length == 1)
             #expect(["x", " "].contains(doc.substring(task.markRange).lowercased()))
         }
-        #expect(doc.tasks.map(\.text) == ["alpha", "beta nested", "nested"])
+        // A task's label ends at its own line terminator: the parent never
+        // swallows its nested children's text (§8.5).
+        #expect(doc.tasks.map(\.text) == ["alpha", "beta", "nested"])
         #expect(doc.tasks.allSatisfy { $0.headingIndex == 0 })
         #expect(doc.tasks[2].indentLevel == 1)
     }

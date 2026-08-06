@@ -8,6 +8,9 @@ public enum QuickLookPolicy {
     public static let memoryCeilingBytes = 60 * 1024 * 1024
     public static let largeFileThresholdBytes = 2 * 1024 * 1024
     public static let prefixBlockCount = 60
+    /// Bounded head read for oversized files — enough bytes to render the first
+    /// `prefixBlockCount` blocks without ever loading the whole file.
+    public static let prefixReadLimitBytes = 8 * 1024 * 1024
     /// Below this width the 72pt document map leaves too little useful measure.
     public static let minimumDensityGutterWidth: CGFloat = 520
 

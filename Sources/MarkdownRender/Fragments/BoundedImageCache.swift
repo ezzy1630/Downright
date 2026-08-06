@@ -94,12 +94,15 @@ final class BoundedImageCache<Key: Hashable> {
     }
 }
 
-/// Identity of a typeset formula in the shared math cache.
+/// Identity of a typeset formula in the shared math cache.  `padding` is part
+/// of the identity: a block formula padded with 8pt of air is a different
+/// bitmap from the same formula typeset inline without padding.
 struct MathRendererCacheKey: Hashable {
     let source: String
     let display: Bool
     let pointSize: CGFloat
     let colorToken: String
+    let padding: CGFloat
 }
 
 /// Identity of a rendered diagram.  `scale` is the backing pixel scale the

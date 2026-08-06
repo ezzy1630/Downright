@@ -11,6 +11,62 @@ extension DocumentWindowController: CommandResponder {
         perform(command)
     }
 
+    /// Wires the text view's `keyDown` into the binding store — the one layer
+    /// that previously had zero call sites, leaving the bare 1–5 zoom keys,
+    /// the read-mode `space`/`n`/`p` keys, `⌥↓`/`⌥↑` change jumps, and the vim
+    /// layer unreachable.  The scope mirrors the surface's real state: an
+    /// editable surface has a caret, so bare single-letter read bindings defer
+    /// to typing there and only modified chords run; a read-only surface uses
+    /// `.read`, where those bare keys are exactly what §7.2 spends them on.
+    @MainActor
+    func wireKeyEventHandler(_ textView: MarkdownTextView) {
+        textView.keyEventHandler = { [weak self] event in
+            guard let self else { return false }
+            return self.dispatchKeyEvent(event, in: textView)
+        }
+    }
+
+    private func dispatchKeyEvent(_ event: NSEvent, in textView: MarkdownTextView) -> Bool {
+        let scope: CommandScope
+        if textView.sourceFocus != .none {
+            scope = .source
+        } else if !textView.isEditable {
+            scope = .read
+        } else {
+            scope = .live
+        }
+        guard let command = KeybindingStore.shared.command(for: event, scope: scope) else { return false }
+
+        // An editable surface has a caret, so an unmodified key is input, not a
+        // command (§7.2's whole premise).  Without this guard the read-layer
+        // extras that share the default scope — notably the `[`/`]` change
+        // navigation — would swallow literal typing.  Read mode has no caret,
+        // so bare keys (space, 1–5, n, p, j/k/g/G, `[`/`]`) fire there.
+        if scope != .read, event.modifierFlags.intersection([.option, .control]).isEmpty {
+            return false
+        }
+
+        switch command {
+        case .scrollDown:
+            textView.scrollLineDown(nil)
+            return true
+        case .scrollUp:
+            textView.scrollLineUp(nil)
+            return true
+        case .pageDown:
+            textView.scrollPageDown(nil)
+            return true
+        case .pageUp:
+            textView.scrollPageUp(nil)
+            return true
+        case .cycleFocusable, .activateFocused:
+            // Link focus traversal lives in the view's own key handling.
+            return false
+        default:
+            return perform(command)
+        }
+    }
+
     @discardableResult
     func perform(_ command: Command) -> Bool {
         switch command {
@@ -147,7 +203,7 @@ extension DocumentWindowController: CommandResponder {
 
         // MARK: Application-level
         case .newDocument, .open, .preferences, .showKeybindings, .reloadTheme,
-             .toggleVimKeys, .compareFiles:
+             .toggleVimKeys, .compareFiles, .checkForUpdates:
             return (NSApp.delegate as? AppDelegate)?.handleApplicationCommand(command) ?? false
         }
         return true

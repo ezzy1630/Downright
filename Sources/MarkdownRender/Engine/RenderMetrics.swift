@@ -21,10 +21,27 @@ public enum RenderMetrics {
     public static let verticalInset: CGFloat = 56
 
     /// Padding inside a code block's tinted band.
-    public static let codeInsetX: CGFloat = 18
+    public static let codeInsetX: CGFloat = 22
+    /// Bottom chrome (closing fence) height.
     public static let codeInsetY: CGFloat = 14
+    /// Real header row for the language chip and copy control (§11.3) — tall
+    /// enough that a 17pt badge plus its vertical padding sits fully inside,
+    /// never clipped by the band's top edge.
+    public static let codeHeaderHeight: CGFloat = 36
     public static let codeRuleWidth: CGFloat = 2
     public static let codeCornerRadius: CGFloat = 10
+
+    /// §11.3 task-checkbox geometry, shared by the document renderer and the
+    /// task panel so one task state looks the same everywhere (§8.5).  The
+    /// marker column the paragraph reserves for a checkbox is exactly the box
+    /// plus the gap plus the left clearance, so the box can never touch or
+    /// cross the text column's left edge.
+    public static let taskBoxSide: CGFloat = 20
+    public static let taskBoxGap: CGFloat = 11
+    public static let taskBoxClearance: CGFloat = 4
+    public static var taskMarkerColumn: CGFloat {
+        taskBoxSide + taskBoxGap + taskBoxClearance
+    }
 
     /// One-line chip a long code block collapses to in Read mode (§5.1).
     public static let chipHeight: CGFloat = 30

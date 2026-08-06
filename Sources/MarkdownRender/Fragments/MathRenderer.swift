@@ -18,14 +18,21 @@ public enum MathRenderer {
     /// body font measured against its x-height rather than its raw point size.
     /// §11.3: most apps render formulas visibly too large next to their body
     /// text because they pass the point size straight through.
-    public static func image(latex: String, display: Bool, pointSize: CGFloat, color: NSColor) -> NSImage? {
+    public static func image(
+        latex: String,
+        display: Bool,
+        pointSize: CGFloat,
+        color: NSColor,
+        padding: CGFloat = 0
+    ) -> NSImage? {
         let trimmed = latex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let key = MathRendererCacheKey(
             source: trimmed,
             display: display,
             pointSize: (pointSize * 4).rounded() / 4,
-            colorToken: colorToken(color))
+            colorToken: colorToken(color),
+            padding: (padding * 2).rounded())
         return MarkdownFragmentImageCaches.math.image(for: key, keyCost: key.source.utf8.count) {
             let renderer = MTMathImage(
                 latex: trimmed,
@@ -36,7 +43,23 @@ public enum MathRenderer {
             let (error, image) = renderer.asImage()
             // A malformed formula is agent output, not a crash: it falls back
             // to its source text in the fragment.
-            return error == nil ? image : nil
+            guard error == nil, let image, image.size.width > 0, image.size.height > 0 else {
+                return nil
+            }
+            guard padding > 0 else { return image }
+            // SwiftMath crops its bitmap tightly to the glyph bounds, so a
+            // formula can sit flush against (or past) its own frame.  The
+            // block fragment asks for 8pt of air on every edge; without it a
+            // tall integral or fraction clips through the top of the line box.
+            let size = NSSize(
+                width: image.size.width + padding * 2,
+                height: image.size.height + padding * 2)
+            let padded = NSImage(size: size)
+            padded.lockFocus()
+            image.draw(in: NSRect(x: padding, y: padding, width: image.size.width,
+                                  height: image.size.height))
+            padded.unlockFocus()
+            return padded
         }
     }
 
@@ -46,3 +69,4 @@ public enum MathRenderer {
                       rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent)
     }
 }
+

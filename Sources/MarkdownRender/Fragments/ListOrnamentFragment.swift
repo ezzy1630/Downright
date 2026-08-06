@@ -3,7 +3,7 @@ import AppKit
 /// Typographic list markers. Markdown syntax remains hidden while the semantic
 /// ornament sits in the hanging indent in Read and Live modes.
 final class ListOrnamentFragment: DownrightFragment {
-    static let taskBoxSide: CGFloat = 14
+    static let taskBoxSide: CGFloat = RenderMetrics.taskBoxSide
     static let taskHitTargetSide: CGFloat = 28
 
     static func taskHitRect(textEdge: CGFloat, centreY: CGFloat, bodySize: CGFloat) -> CGRect {
@@ -17,8 +17,12 @@ final class ListOrnamentFragment: DownrightFragment {
     }
 
     static func taskBoxRect(textEdge: CGFloat, centreY: CGFloat, bodySize: CGFloat) -> CGRect {
+        // The paragraph reserves `taskMarkerColumn` (box + gap + clearance) as
+        // its head indent, so the box's right edge meets the label's left edge
+        // after exactly one gap and the box itself starts ≥ 4pt inside the
+        // fragment — never on or past the fragment origin (P1-6/7).
         CGRect(
-            x: textEdge - taskBoxSide - bodySize * 0.5,
+            x: textEdge - taskBoxSide - RenderMetrics.taskBoxGap,
             y: centreY - taskBoxSide / 2,
             width: taskBoxSide,
             height: taskBoxSide
@@ -96,22 +100,26 @@ final class ListOrnamentFragment: DownrightFragment {
             }
         }
 
-        let path = CGPath(roundedRect: box, cornerWidth: 3.5, cornerHeight: 3.5, transform: nil)
+        // One checkbox look everywhere (§8.5): a rounded square, accent-filled
+        // when checked with a tick in the surface colour, neutral border when
+        // open — the same stroke weight, radius, and tick geometry the task
+        // panel draws.
+        let path = CGPath(roundedRect: box, cornerWidth: 5, cornerHeight: 5, transform: nil)
         cg.addPath(path)
         if checked {
             cg.setFillColor(style.accent.cgColor)
             cg.fillPath()
             cg.setStrokeColor(NSColor.white.cgColor)
-            cg.setLineWidth(1.5)
+            cg.setLineWidth(1.8)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
-            cg.move(to: CGPoint(x: box.minX + 2.1, y: box.midY))
-            cg.addLine(to: CGPoint(x: box.minX + 4.2, y: box.maxY - 2.2))
-            cg.addLine(to: CGPoint(x: box.maxX - 1.8, y: box.minY + 2.2))
+            cg.move(to: CGPoint(x: box.minX + 2.6, y: box.midY))
+            cg.addLine(to: CGPoint(x: box.minX + 5.2, y: box.maxY - 2.6))
+            cg.addLine(to: CGPoint(x: box.maxX - 2.2, y: box.minY + 2.6))
             cg.strokePath()
         } else {
             cg.setStrokeColor(style.textFaint.cgColor)
-            cg.setLineWidth(1.25)
+            cg.setLineWidth(1.4)
             cg.strokePath()
         }
 

@@ -17,6 +17,7 @@ final class PreferencesWindowController: NSWindowController {
             ("Typography", "textformat", PreferencesForms.typography()),
             ("Editor", "square.and.pencil", PreferencesForms.editor()),
             ("History", "clock.arrow.circlepath", PreferencesForms.history()),
+            ("Updates", "arrow.down.circle", PreferencesForms.updates()),
         ]
         for (title, symbol, rows) in panes {
             let pane = PreferencesPane(title: title, symbol: symbol, rows: rows)
@@ -41,6 +42,7 @@ enum PreferenceRow {
     case stepper(String, help: String?, range: ClosedRange<Double>, step: Double, get: () -> Double, set: (Double) -> Void)
     case choice(String, help: String?, options: [String], get: () -> Int, set: (Int) -> Void)
     case text(String, help: String?, get: () -> String, set: (String) -> Void)
+    case button(String, () -> Void)
     case section(String)
     case note(String)
 }
@@ -176,6 +178,14 @@ final class PreferencesPane: NSViewController {
             row.orientation = .horizontal
             row.spacing = 8
             return labelled(row, help: help)
+
+        case .button(let title, let action):
+            let button = NSButton(title: title, target: nil, action: nil)
+            let handler = ActionHandler(action)
+            button.target = handler
+            button.action = #selector(ActionHandler.run)
+            objc_setAssociatedObject(button, &PreferencesPane.handlerKey, handler, .OBJC_ASSOCIATION_RETAIN)
+            return button
         }
     }
 
@@ -379,6 +389,30 @@ enum PreferencesForms {
                      range: 1...1024, step: 1,
                      get: { Double(Preferences.shared.values.largeFileThresholdMegabytes) },
                      set: { value in Preferences.shared.update { $0.largeFileThresholdMegabytes = Int(value) } }),
+        ]
+    }
+
+    @MainActor static func updates() -> [PreferenceRow] {
+        let coordinator = UpdateCoordinator.shared
+        guard coordinator.isUpdateConfigurationPresent else {
+            return [
+                .note("This build carries no update configuration, so automatic updates are disabled. Install a release build to see update settings here."),
+            ]
+        }
+        return [
+            .section("Sparkle"),
+            .note("Downright checks the signed update feed over HTTPS. Downloaded updates install when Downright quits; active editing sessions are never interrupted."),
+            .toggle("Automatically check for updates",
+                    help: "Checks the feed once a day. The menu command still works while this is off.",
+                    get: { UpdateCoordinator.shared.automaticallyChecksForUpdates },
+                    set: { value in UpdateCoordinator.shared.automaticallyChecksForUpdates = value }),
+            .toggle("Automatically download and install updates",
+                    help: "Downloads in the background and installs on the next normal quit. Turn it off to review each update first.",
+                    get: { UpdateCoordinator.shared.automaticallyDownloadsUpdates },
+                    set: { value in UpdateCoordinator.shared.automaticallyDownloadsUpdates = value }),
+            .button("Check Now") { UpdateCoordinator.shared.checkForUpdates() },
+            .section("Status"),
+            .note(UpdateCoordinator.shared.statusLine()),
         ]
     }
 

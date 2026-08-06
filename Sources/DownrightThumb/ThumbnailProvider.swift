@@ -20,7 +20,7 @@ final class ThumbnailProvider: QLThumbnailProvider {
         // Only the head of the file matters for a thumbnail, and reading 64KB
         // instead of a 4MB agent transcript is the difference between an icon
         // that appears and one that doesn't.
-        guard let head = ThumbnailProvider.readHead(of: request.fileURL, limit: 64 * 1024) else {
+        guard let head = DocumentIO.readHead(contentsOf: request.fileURL, limit: 64 * 1024) else {
             handler(nil, CocoaError(.fileReadCorruptFile))
             return
         }
@@ -128,19 +128,6 @@ final class ThumbnailProvider: QLThumbnailProvider {
     }
 
     // MARK: - Reading
-
-    private static func readHead(of url: URL, limit: Int) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: limit) else { return nil }
-        if let text = String(data: data, encoding: .utf8) { return text }
-        // A truncated read can split a multi-byte scalar; trim and retry before
-        // falling back to a lossy encoding.
-        for drop in 1...3 where data.count > drop {
-            if let text = String(data: data.dropLast(drop), encoding: .utf8) { return text }
-        }
-        return String(data: data, encoding: .isoLatin1)
-    }
 
     private static func firstProseLine(in document: ParsedDocument) -> String? {
         for block in document.root.children {

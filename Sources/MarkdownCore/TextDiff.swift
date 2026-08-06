@@ -21,8 +21,8 @@ public enum TextDiff {
         let newLines = lines(of: newNS)
 
         guard let script = Myers.diff(
-            oldLines.map { FNV.hash(oldNS.substring(with: $0)) },
-            newLines.map { FNV.hash(newNS.substring(with: $0)) }
+            oldLines.map { FNV.hash(oldNS, range: $0) },
+            newLines.map { FNV.hash(newNS, range: $0) }
         ) else {
             // Beyond the distance cap the documents have nothing in common;
             // one whole-document hunk is both true and instant.
@@ -116,8 +116,8 @@ public enum TextDiff {
         let newNS = new as NSString
 
         guard let script = Myers.diff(
-            oldWords.map { FNV.hash(oldNS.substring(with: $0)) },
-            newWords.map { FNV.hash(newNS.substring(with: $0)) },
+            oldWords.map { FNV.hash(oldNS, range: $0) },
+            newWords.map { FNV.hash(newNS, range: $0) },
             maxDistance: 2048
         ) else {
             return [newRange]

@@ -65,6 +65,51 @@ enum PlainText {
         }
         return pieces.joined(separator: "\n")
     }
+
+    /// Prose per section span, computed in a single tree walk.  `spans` must be
+    /// ordered by location and non-overlapping (each heading's own prose, i.e.
+    /// subsections excluded).  A block belongs to the section whose span it
+    /// overlaps; blocks that overlap none (preamble, the headings themselves)
+    /// contribute nothing, matching `prose(in:range:)` exactly.
+    static func prosePerSection(in root: MDBlock, spans: [NSRange], text: NSString) -> [String] {
+        guard !spans.isEmpty else { return [] }
+        var buffers = [String](repeating: "", count: spans.count)
+
+        root.walkPruning { block in
+            switch block.content {
+            case .document, .blockQuote, .callout, .list, .listItem:
+                return true
+            default:
+                let location = block.range.location
+                let upper = block.range.upperBound
+                // Largest span whose start precedes the block; the only span that
+                // can overlap it, since spans never start mid-block.
+                var lo = 0, hi = spans.count - 1, best = -1
+                while lo <= hi {
+                    let mid = (lo + hi) / 2
+                    if spans[mid].location <= location {
+                        best = mid
+                        lo = mid + 1
+                    } else {
+                        hi = mid - 1
+                    }
+                }
+                if best >= 0, upper > spans[best].location, location < spans[best].upperBound {
+                    let piece = of(block, in: text)
+                    if !piece.isEmpty {
+                        if buffers[best].isEmpty {
+                            buffers[best] = piece
+                        } else {
+                            buffers[best].append("\n")
+                            buffers[best].append(piece)
+                        }
+                    }
+                }
+                return false
+            }
+        }
+        return buffers
+    }
 }
 
 // MARK: - Reading metadata (§9.6)
@@ -88,18 +133,18 @@ public enum Metrics {
     /// tell you where the bulk of a document actually is (§9.6).
     public static func sectionMetrics(_ doc: ParsedDocument) -> [ReadingMetrics] {
         let text = doc.text as NSString
-        return doc.headings.enumerated().map { index, heading in
-            let end = index + 1 < doc.headings.count
-                ? doc.headings[index + 1].range.location
+        let headings = doc.headings
+        guard !headings.isEmpty else { return [] }
+        var spans: [NSRange] = []
+        spans.reserveCapacity(headings.count)
+        for (index, heading) in headings.enumerated() {
+            let end = index + 1 < headings.count
+                ? headings[index + 1].range.location
                 : doc.length
             let start = heading.range.upperBound
-            guard end > start else { return .zero }
-            return metrics(of: PlainText.prose(
-                in: doc.root,
-                range: NSRange(location: start, length: end - start),
-                text: text
-            ))
+            spans.append(NSRange(location: start, length: max(0, end - start)))
         }
+        return PlainText.prosePerSection(in: doc.root, spans: spans, text: text).map { metrics(of: $0) }
     }
 
     /// Readable word count for the whole document, excluding code/math/HTML.

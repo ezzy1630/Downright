@@ -51,7 +51,7 @@ final class CodeBlockFragment: DownrightFragment {
 
     override var overrideHeight: CGFloat? {
         switch role {
-        case .openChrome: return RenderMetrics.codeInsetY
+        case .openChrome: return RenderMetrics.codeHeaderHeight
         case .closeChrome: return RenderMetrics.codeInsetY
         case .collapsedChip: return RenderMetrics.chipHeight
         case .body: return nil
@@ -103,13 +103,13 @@ final class CodeBlockFragment: DownrightFragment {
     private func drawChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
         if !language.isEmpty {
             let chip = Self.chipRect(in: band, style: style, language: language)
-            cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.16), radius: 4)
+            cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
             cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
         }
 
         if context?.hoveredFragmentRange == payload.sourceRange {
             let copy = Self.copyButtonRect(in: band, style: style, language: language)
-            cg.fillRect(copy, color: style.codeRule.withAlphaComponent(0.16), radius: 4)
+            cg.fillRect(copy, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
             let copied = context?.copiedCodeRange == payload.sourceRange
             let symbol = copied ? "checkmark" : "doc.on.doc"
             let description = copied ? "Copied" : "Copy code"
@@ -161,14 +161,17 @@ final class CodeBlockFragment: DownrightFragment {
 
     static func chipRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
         let width = chipText(language, style: style).size().width + 12
-        return CGRect(x: band.maxX - width - RenderMetrics.codeInsetX,
-                      y: band.minY + 3, width: width, height: 17)
+        // Vertically centred in the header row so the badge never touches the
+        // band's top edge (§11.3).
+        let y = band.minY + max(0, (band.height - 17) / 2)
+        return CGRect(x: band.maxX - width - RenderMetrics.codeInsetX, y: y, width: width, height: 17)
     }
 
     static func copyButtonRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
         let width: CGFloat = 24
         let chip = language.isEmpty ? band.maxX - RenderMetrics.codeInsetX : chipRect(in: band, style: style, language: language).minX
-        return CGRect(x: chip - width - 6, y: band.minY + 3, width: width, height: 17)
+        let y = band.minY + max(0, (band.height - 17) / 2)
+        return CGRect(x: chip - width - 6, y: y, width: width, height: 17)
     }
 }
 

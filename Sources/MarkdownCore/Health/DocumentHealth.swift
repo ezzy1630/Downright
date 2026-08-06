@@ -137,8 +137,8 @@ private struct HealthPass {
     let options: DocumentHealthOptions
     let resolver: DocumentHealthResolver?
     let source: NSString
-    let ignored: [NSRange]
-    let inlineCode: [NSRange]
+    let ignored: IntervalIndex
+    let inlineCode: IntervalIndex
 
     init(document: ParsedDocument, options: DocumentHealthOptions, resolver: DocumentHealthResolver?) {
         self.document = document
@@ -160,8 +160,11 @@ private struct HealthPass {
                 }
             }
         }
-        self.ignored = ignored
-        self.inlineCode = inlineCode
+        // Both sets are disjoint, so a binary-search index (rather than a
+        // linear `contains`) keeps prose/reference passes sub-linear per
+        // finding on large documents.
+        self.ignored = IntervalIndex(ignored)
+        self.inlineCode = IntervalIndex(inlineCode)
     }
 
     func run() -> [DocumentHealthDiagnostic] {
@@ -181,6 +184,7 @@ private struct HealthPass {
     // MARK: Structure
 
     private func structure(_ out: inout [DocumentHealthDiagnostic]) {
+        detectMalformedFrontMatter(&out)
         var previousLevel = 0
         var h1Seen = false
         var slugs: [String: Int] = [:]
@@ -245,6 +249,55 @@ private struct HealthPass {
                     explanation: "Put introductory content under a heading, or keep only a short document preamble."
                 ))
             }
+    }
+
+    /// A line that looks like a front-matter delimiter but is not the exact
+    /// `---` opener — a stray character in front of it (`t---`), or an opener
+    /// that never closes — leaves the YAML fields to render as ordinary prose.
+    /// Report it explicitly instead of letting the leak style itself as body
+    /// content (§5.1).
+    private func detectMalformedFrontMatter(_ out: inout [DocumentHealthDiagnostic]) {
+        guard document.frontMatter == nil else { return }
+        let text = document.text as NSString
+        guard text.length > 0 else { return }
+        let firstLine = text.lineRange(for: NSRange(location: 0, length: 0))
+        let first = text.substring(with: firstLine).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // `t---`, `-x--`, … a stray character in front of an opener.  `----`
+        // and longer dash runs are thematic breaks and are left alone.
+        if first.count >= 4, first.hasPrefix("---") == false, first.dropFirst().hasPrefix("---") {
+            out.append(diagnostic(
+                id: "frontmatter.malformed-delimiter", severity: .warning, category: .structure,
+                range: NSRange(location: firstLine.location, length: 4),
+                message: "Front-matter opener has a stray character before `---`",
+                explanation: "A valid YAML front-matter block opens with `---` on the very first line. "
+                    + "`\(first)` is not a valid opener, so the metadata below renders as body prose "
+                    + "instead of a metadata card."
+            ))
+            return
+        }
+
+        // `---` opener that never closes, when the lines between look like a
+        // field list rather than a plain thematic break.
+        if first == "---" {
+            var sawField = false
+            var cursor = firstLine.upperBound
+            while cursor < text.length {
+                let line = text.lineRange(for: NSRange(location: cursor, length: 0))
+                let trimmed = text.substring(with: line).trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed == "---" { return }  // closed: valid front matter
+                if !trimmed.isEmpty && trimmed.contains(":") { sawField = true }
+                cursor = line.upperBound
+            }
+            if sawField {
+                out.append(diagnostic(
+                    id: "frontmatter.unclosed", severity: .warning, category: .structure,
+                    range: firstLine, message: "Front-matter block is never closed",
+                    explanation: "A YAML front-matter block needs a closing `---` line; without it the "
+                        + "metadata below renders as ordinary prose."
+                ))
+            }
+        }
     }
 
     // MARK: References
@@ -439,7 +492,7 @@ private struct HealthPass {
                 ))
             }
             for sentence in sentenceRanges(in: block.range)
-                where !inlineCode.contains(where: { $0.intersection(sentence) == sentence })
+                where !inlineCode.contains(range: sentence)
                 && wordCount(source.substring(with: sentence)) > options.maxSentenceWords {
                 out.append(diagnostic(
                     id: "sentence.long", severity: .info, category: .prose, range: sentence,
@@ -448,7 +501,7 @@ private struct HealthPass {
             }
             for match in matches(#"(?i)\b([a-z][a-z'’-]*)\s+\1\b"#, in: text) {
                 let range = NSRange(location: block.range.location + match.range.location, length: match.range.length)
-                guard !inlineCode.contains(where: { $0.contains(offset: range.location) }) else { continue }
+                guard !inlineCode.contains(offset: range.location) else { continue }
                 out.append(diagnostic(
                     id: "prose.repeated-word", severity: .warning, category: .prose, range: range,
                     message: "Repeated adjacent word", explanation: "Remove the accidental duplicate unless the repetition is intentional."
@@ -468,7 +521,7 @@ private struct HealthPass {
         }
     }
 
-    private func isIgnored(_ range: NSRange) -> Bool { ignored.contains { $0.intersection(range) == range } }
+    private func isIgnored(_ range: NSRange) -> Bool { ignored.contains(range: range) }
     private func isBlank(_ range: NSRange) -> Bool { source.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private func isLocal(_ value: String) -> Bool {
         guard !value.hasPrefix("#"), !value.hasPrefix("//") else { return false }
@@ -537,5 +590,48 @@ private struct HealthPass {
         range: NSRange, message: String, explanation: String, fix: TextEdit? = nil
     ) -> DocumentHealthDiagnostic {
         DocumentHealthDiagnostic(id: id, severity: severity, category: category, range: range, message: message, explanation: explanation, fix: fix)
+    }
+}
+
+/// A binary-search index over a set of disjoint non-empty ranges.
+///
+/// The health pass used to answer every "am I inside a code span / ignored
+/// block?" query with a linear scan, which on a document with many code spans
+/// and blocks turned a prose/reference pass into roughly O(fragments × ranges)
+/// work — quadratic-ish on large documents.  Both queries the pass makes —
+/// "does some stored range fully contain this range" and "does some stored
+/// range contain this offset" — collapse to one floor lookup because stored
+/// ranges are disjoint.
+private struct IntervalIndex {
+    let ranges: [NSRange]
+
+    init(_ ranges: [NSRange]) {
+        self.ranges = ranges
+            .filter { $0.location >= 0 && $0.length > 0 }
+            .sorted { $0.location < $1.location }
+    }
+
+    /// The stored range with the greatest start ≤ `offset`.
+    private func floor(_ offset: Int) -> NSRange? {
+        var low = 0, high = ranges.count
+        while low < high {
+            let mid = (low + high) / 2
+            if ranges[mid].location <= offset { low = mid + 1 } else { high = mid }
+        }
+        guard low > 0 else { return nil }
+        return ranges[low - 1]
+    }
+
+    func contains(offset: Int) -> Bool {
+        guard let floor = floor(offset) else { return false }
+        return floor.location <= offset && offset < floor.upperBound
+    }
+
+    /// True when a stored range fully covers `query` (start and end inside one
+    /// range, which is the only way a disjoint set can contain a query that
+    /// does not itself span a gap).
+    func contains(range query: NSRange) -> Bool {
+        guard query.length > 0, let floor = floor(query.location) else { return false }
+        return floor.upperBound >= query.upperBound
     }
 }

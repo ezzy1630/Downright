@@ -72,6 +72,21 @@ import Testing
         #expect(new.substring(dirty.ranges[0]) == "- [x] Ship the fix")
     }
 
+    /// The trailing `>` of a multi-line quote belongs to the blockquote's own
+    /// bytes, not to any child, so adding or removing it must dirty the quote
+    /// even though every child paragraph is byte-identical.
+    @Test func blankQuoteMarkerEditDirtiesTheQuote() {
+        let old = MarkdownParser.parse("> a\n> b\n>\n")
+        let new = MarkdownParser.parse("> a\n> b\n")
+        let dirty = ASTDiff.dirtySet(old: old, new: new)
+        #expect(!dirty.isWholesale)
+        #expect(!dirty.isEmpty)
+
+        let reverse = ASTDiff.dirtySet(old: new, new: old)
+        #expect(!reverse.isWholesale)
+        #expect(!reverse.isEmpty)
+    }
+
     @Test func majorStructuralChangeGoesWholesale() {
         let old = MarkdownParser.parse(Corpus.manyBlocks(count: 40))
         let new = MarkdownParser.parse("# Completely different\n")
@@ -270,5 +285,22 @@ import Testing
         let new = (Array(base.prefix(500).reversed()) + base).map { FNV.hash($0) }
         let result = Myers.diff(old, new)
         #expect(result != nil)
+    }
+
+    /// A large pair whose total length sits just under the distance cap used to
+    /// slip past the lower-bound gate (which demanded `n + m > maxDistance`)
+    /// and build the full O(D²) trace even though they share almost nothing.
+    /// The gate now covers that band, so a mostly-disjoint near-cap pair must
+    /// bail to nil instantly rather than spike memory.
+    @Test func nearCapDisjointInputsBailWithoutBuildingTheTrace() {
+        let count = 2050  // n + m = 4100, within the widen-margin of the 4096 cap
+        let old = (0..<count).map { UInt64($0) }
+        // Share a single line so the overlap lower-bound is far below the
+        // distance cap — success is provably impossible, so the answer is nil.
+        let new = (1..<count).map { UInt64($0 + 1_000_000) } + [0]
+        let start = Date()
+        let result = Myers.diff(old, new)
+        #expect(result == nil)
+        #expect(Date().timeIntervalSince(start) < 1.0)
     }
 }

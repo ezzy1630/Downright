@@ -33,8 +33,10 @@ enum WikilinkScanner {
                 continue
             }
             let inner = NSRange(location: i + 2, length: close - (i + 2))
-            let body = text.substring(with: inner)
-            if !body.isEmpty, !body.contains("\n") {
+            // Reject empty or multi-line bodies on the raw UTF-16 buffer before
+            // paying for a substring and a split.
+            if inner.length > 0, !containsNewline(text, range: inner) {
+                let body = text.substring(with: inner)
                 let parts = body.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
                 let target = parts[0].trimmingCharacters(in: .whitespaces)
                 let label = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : nil
@@ -63,5 +65,12 @@ enum WikilinkScanner {
             i += 1
         }
         return nil
+    }
+
+    private static func containsNewline(_ text: NSString, range: NSRange) -> Bool {
+        for index in range.location..<range.upperBound where text.character(at: index) == 0x0A {
+            return true
+        }
+        return false
     }
 }

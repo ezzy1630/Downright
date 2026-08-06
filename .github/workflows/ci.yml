@@ -10,13 +10,18 @@ permissions:
 jobs:
   swift:
     runs-on: macos-14
-    timeout-minutes: 20
+    # check.sh with RUN_DRBENCH=1 builds debug + runs all suites + builds
+    # drbench in release and enforces the §12 budgets; that is three full
+    # build graphs, so leave generous headroom.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Build and test
+      # The §12 performance budget is the product promise; RUN_DRBENCH makes
+      # check.sh treat it as a gate (release numbers, exit non-zero on a miss).
+      # The separate release `swift build` step is folded into this run.
+      - name: Build, test, and enforce the §12 performance budget
         env:
           SCRATCH: .build-ci-main
           TEST_SCRATCH: .build-ci-test
+          RUN_DRBENCH: "1"
         run: ./Scripts/check.sh
-      - name: Check release benchmark target
-        run: swift build -c release --scratch-path .build-ci-release --product drbench

@@ -3,6 +3,24 @@ import Foundation
 import MarkdownCore
 import MarkdownRender
 
+/// How a save request is allowed to behave when the on-disk version is newer.
+enum SaveIntent {
+    /// Refuses to overwrite an unacknowledged external change and surfaces the
+    /// conflict instead of deciding silently.  Used by every implicit save
+    /// path: occlusion autosave, quit, checkbox toggle, and the close alert.
+    case normal
+    /// An explicit "keep my changes and write them over the file" decision,
+    /// made by the user through the conflict bar.
+    case keepMine
+}
+
+enum SaveError: Error {
+    /// The save was refused because writing the buffer would clobber a newer
+    /// on-disk version whose conflict had not been resolved.  The conflict has
+    /// already been surfaced via `onExternalEvent`.
+    case blockedByExternalConflict
+}
+
 /// The document: raw text, the tree over it, and everything that watches it.
 ///
 /// §3.1 is enforced here and nowhere else needs to worry about it — the
@@ -38,6 +56,11 @@ final class MarkdownDocument: NSObject {
     private(set) var isDirty = false
     /// Hash of what is currently on disk, as far as we know.
     private(set) var diskHash: String = ""
+    /// An external write the buffer has not yet been reconciled with.  Non-nil
+    /// while a conflict bar is showing — and, critically, stays non-nil even if
+    /// that bar is dismissed — so an implicit save never silently writes the
+    /// buffer over the newer on-disk version.
+    private(set) var pendingConflict: Conflict?
 
     let changes = ChangeTracker()
     var state: DocumentState
@@ -118,6 +141,9 @@ final class MarkdownDocument: NSObject {
         isClosed = false
         enqueueParseControl { await $0.resume() }
         cancelParseWork()
+        // In-place hops reuse this document; change marks from the previous
+        // file must not decorate the next one.
+        changes.clear()
         // Canonicalise once, up front.  A `.atomic` write renames a new file
         // over the destination, which would *replace a symlink with a regular
         // file* while the link's target kept its stale content.  Resolving here
@@ -177,26 +203,84 @@ final class MarkdownDocument: NSObject {
         isDirty = false
     }
 
-    func save() throws {
-        do {
-            guard let url else { throw CocoaError(.fileNoSuchFile) }
-            let text = storage.string
-            watcher?.suppressOwnWrite()
-            defer { watcher?.acknowledgeOwnWrite() }
-            try DocumentIO.write(text, to: url, fidelity: fidelity)
+    func save(intent: SaveIntent = .normal) throws {
+        guard let url else {
+            let error = CocoaError(.fileNoSuchFile)
+            onSaveFailure?(error)
+            throw error
+        }
+        let text = storage.string
 
-            diskHash = DocumentIO.contentHash(text)
-            SnapshotStore.shared.record(text, for: url, kind: .local)
-            setDirty(false)
-            persistState()
+        // §8.1: a save that would overwrite a newer-on-disk version must not
+        // happen silently.  Every implicit save path (occlusion autosave, quit,
+        // checkbox toggle, close alert) funnels through here, and none of them
+        // may make the keep-mine call for the user.  Surface any unresolved
+        // conflict — or one detected right now — and refuse to write.
+        if intent == .normal, isDirty {
+            if let conflict = pendingConflict {
+                throw presentBlockingConflict(conflict, incoming: conflict.incomingText, incomingHash: nil)
+            }
+            if let detected = detectExternalChange() {
+                let conflict = Conflict(
+                    incomingText: detected.text,
+                    hunks: detected.hunks,
+                    changedBlockCount: detected.hunks.count
+                )
+                throw presentBlockingConflict(
+                    conflict, incoming: detected.text,
+                    incomingHash: SnapshotStore.hash(detected.text)
+                )
+            }
+        }
+
+        watcher?.suppressOwnWrite()
+        defer { watcher?.acknowledgeOwnWrite() }
+        do {
+            try DocumentIO.write(text, to: url, fidelity: fidelity)
         } catch {
             onSaveFailure?(error)
             throw error
         }
+
+        diskHash = DocumentIO.contentHash(text)
+        pendingConflict = nil
+        SnapshotStore.shared.record(text, for: url, kind: .local)
+        setDirty(false)
+        persistState()
+    }
+
+    /// Re-reads the file and decides whether saving the buffer would clobber
+    /// bytes on disk that are newer than the last state we acknowledged.  A
+    /// plain dirty buffer (unsaved edits, file untouched) returns `nil`.
+    private func detectExternalChange() -> (text: String, hunks: [ChangeHunk])? {
+        guard let url, let (incoming, _) = try? DocumentIO.read(contentsOf: url) else { return nil }
+        let incomingHash = SnapshotStore.hash(incoming)
+        guard incomingHash != diskHash else { return nil }
+        // If the disk already holds the buffer's bytes, writing is a no-op and
+        // there is nothing being clobbered.
+        guard incomingHash != SnapshotStore.hash(storage.string) else {
+            diskHash = incomingHash
+            return nil
+        }
+        return (incoming, TextDiff.hunks(old: storage.string, new: incoming))
+    }
+
+    /// Records the external snapshot, marks the conflict pending, publishes the
+    /// conflict event, and returns the blocking error that cancels the save.
+    /// The event (conflict bar) is the only surface — no `onSaveFailure` alert,
+    /// because a refused save here is a deliberate, visible outcome.
+    private func presentBlockingConflict(
+        _ conflict: Conflict, incoming: String, incomingHash: String?
+    ) -> SaveError {
+        pendingConflict = conflict
+        if let incomingHash { diskHash = incomingHash }
+        if let url { SnapshotStore.shared.record(incoming, for: url, kind: .external) }
+        onExternalEvent?(.conflict(conflict))
+        return .blockedByExternalConflict
     }
 
     @discardableResult
-    func saveIfNeeded() -> Result<Void, Error> {
+    func saveIfNeeded(intent: SaveIntent = .normal) -> Result<Void, Error> {
         guard isDirty else { return .success(()) }
         guard url != nil else {
             let error = CocoaError(.fileNoSuchFile)
@@ -204,7 +288,7 @@ final class MarkdownDocument: NSObject {
             return .failure(error)
         }
         do {
-            try save()
+            try save(intent: intent)
             return .success(())
         } catch {
             return .failure(error)
@@ -214,6 +298,9 @@ final class MarkdownDocument: NSObject {
     func close() {
         isClosed = true
         cancelParseWork()
+        // Discard change marks owned by a torn-down document so they cannot
+        // leak across to the next file opened in the same window.
+        changes.clear()
         enqueueParseControl { await $0.suspend() }
         persistState()
         watcher?.stop()
@@ -447,13 +534,18 @@ final class MarkdownDocument: NSObject {
 
         if isDirty {
             // Never clobber (§8.1).  The bar is non-modal; the buffer is
-            // untouched until the user picks.
-            onExternalEvent?(.conflict(Conflict(
+            // untouched until the user picks.  Track it at the document level
+            // so implicit saves refuse to clobber even after the bar is
+            // dismissed.
+            let conflict = Conflict(
                 incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
-            )))
+            )
+            pendingConflict = conflict
+            onExternalEvent?(.conflict(conflict))
             return
         }
 
+        pendingConflict = nil
         fidelity = freshFidelity
         applyExternalText(incoming, hunks: hunks)
         onExternalEvent?(.applied(hunks: hunks))
@@ -462,6 +554,8 @@ final class MarkdownDocument: NSObject {
     /// Replaces the buffer in place, holding the reader's position by anchoring
     /// to the nearest unchanged heading rather than to a byte offset (§8.1).
     func applyExternalText(_ incoming: String, hunks: [ChangeHunk]) {
+        // Adopting the on-disk version resolves any outstanding conflict.
+        pendingConflict = nil
         let topOffset = currentTopOffsetProvider?() ?? 0
         let anchor = ScrollAnchoring.anchor(for: topOffset, in: parsed)
 
@@ -488,8 +582,11 @@ final class MarkdownDocument: NSObject {
     /// Conflict resolution: keep the buffer and write it over the file.
     @discardableResult
     func resolveConflictKeepingMine() -> Result<Void, Error> {
-        let result = saveIfNeeded()
-        if case .success = result { changes.clear() }
+        let result = saveIfNeeded(intent: .keepMine)
+        if case .success = result {
+            pendingConflict = nil
+            changes.clear()
+        }
         return result
     }
 

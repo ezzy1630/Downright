@@ -46,7 +46,7 @@ enum Command: String, CaseIterable, Codable {
     case speakDocument, stopSpeaking
 
     // App
-    case preferences, reloadTheme, showKeybindings, toggleVimKeys
+    case preferences, reloadTheme, showKeybindings, toggleVimKeys, checkForUpdates
 
     var title: String {
         switch self {
@@ -155,6 +155,7 @@ enum Command: String, CaseIterable, Codable {
         case .reloadTheme: return "Reload Themes"
         case .showKeybindings: return "Keyboard Shortcuts…"
         case .toggleVimKeys: return "Vim-style Keys"
+        case .checkForUpdates: return "Check for Updates…"
         }
     }
 
@@ -197,7 +198,7 @@ enum Command: String, CaseIterable, Codable {
             return .document
         case .splitView, .pinWindow:
             return .window
-        case .preferences, .showKeybindings, .toggleVimKeys:
+        case .preferences, .showKeybindings, .toggleVimKeys, .checkForUpdates:
             return .help
         }
     }

@@ -15,7 +15,12 @@ CONFIGURATION="${CONFIGURATION:-release}"
 SCRATCH="${SCRATCH:-.build-main}"
 APP_NAME="Downright"
 BUNDLE_ID="com.ezzyrappeport.downright"
-VERSION="1.0.0"
+# shellcheck disable=SC1091
+source "$ROOT/Config/version.env"
+VERSION="$MARKETING_VERSION"
+# PRODUCTION=1 adds the Sparkle feed configuration; dev bundles omit it, which
+# disables the updater (see UpdateCoordinator.isConfigured).
+PRODUCTION="${PRODUCTION:-0}"
 BUILD="$("$ROOT/Scripts/build-number.sh")"
 
 OUT="$ROOT/$SCRATCH/bundle"
@@ -142,16 +147,66 @@ PLIST
 
 cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 cp "$ROOT/Resources/AppIcon.png" "$RESOURCES/AppIcon.png"
+# Privacy manifest: required-reason APIs (UserDefaults, file timestamps) must
+# be declared per bundle.  Xcode builds get this via project.yml resources;
+# the SwiftPM bundle copies it here so both pipelines ship the same manifest.
+cp "$ROOT/Resources/PrivacyInfo.xcprivacy" "$RESOURCES/PrivacyInfo.xcprivacy"
+
+echo "==> Embedding Sparkle.framework"
+FRAMEWORKS="$CONTENTS/Frameworks"
+mkdir -p "$FRAMEWORKS"
+if [ -d "$BIN_DIR/Sparkle.framework" ]; then
+    cp -R "$BIN_DIR/Sparkle.framework" "$FRAMEWORKS/"
+    # SwiftPM links the executable against the framework with an rpath that
+    # points into the scratch build directory.  Inside a relocated bundle that
+    # rpath is wrong, so add the bundle-relative one; the stale entry is
+    # harmless.
+    install_name_tool -add_rpath @executable_path/../Frameworks "$MACOS/$APP_NAME" 2>/dev/null || true
+else
+    echo "    WARNING: Sparkle.framework not found in SwiftPM products; bundle has no updater."
+fi
+
+if [ "$PRODUCTION" = "1" ]; then
+    [ -n "${SPARKLE_ED25519_PUBLIC_KEY:-}" ] || {
+        echo "PRODUCTION=1 requires SPARKLE_ED25519_PUBLIC_KEY" >&2
+        exit 1
+    }
+    /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUAutomaticallyUpdate bool true" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUScheduledCheckInterval integer 86400" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUVerifyUpdateBeforeExtraction bool true" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SURequireSignedFeed bool true" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUEnableSystemProfiling bool false" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://ezzy1630.github.io/Downright/appcast.xml" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_ED25519_PUBLIC_KEY" "$CONTENTS/Info.plist"
+else
+    echo "    updater disabled: no Sparkle Info.plist keys in this dev bundle"
+fi
 
 echo "==> Signing (ad-hoc)"
-# Ad-hoc is enough to run locally and to keep the Quick Look extension host
-# happy.  Real distribution needs a Developer ID plus notarisation — see
-# Docs/RELEASE.md.
-codesign --force --deep --sign - "$APP" 2>/dev/null || echo "    (codesign unavailable, continuing unsigned)"
+# Sign Sparkle separately first (its XPC helpers are nested code), then the
+# app without --deep so the framework's signature is preserved.  --deep is a
+# development convenience only; the release pipeline signs every nested item
+# explicitly (spec: no --deep as the production strategy).
+if [ -d "$FRAMEWORKS/Sparkle.framework" ]; then
+    codesign --force --deep --sign - "$FRAMEWORKS/Sparkle.framework" 2>/dev/null \
+        || echo "    (codesign unavailable, continuing unsigned)"
+fi
+codesign --force --sign - "$APP" 2>/dev/null || echo "    (codesign unavailable, continuing unsigned)"
 
 echo "==> Registering with Launch Services"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
     -f "$APP" 2>/dev/null || true
+
+echo
+echo "==> Verifying bundle layout"
+# ${VAR:+x} expands for ANY non-empty value (including "0"), so guard on the
+# exact value: a dev bundle must not run the production feed/key checks.
+if [ "$PRODUCTION" = "1" ]; then
+    "$ROOT/Scripts/verify-bundle.sh" "$APP" --production
+else
+    "$ROOT/Scripts/verify-bundle.sh" "$APP"
+fi
 
 echo
 echo "Built $APP"

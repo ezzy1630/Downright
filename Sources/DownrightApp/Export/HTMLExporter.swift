@@ -28,6 +28,11 @@ struct HTMLExporter {
     /// the screen theme (§9.5).
     var forPrint: Bool = false
 
+    /// Largest local asset inlined as a data URI.  Beyond this the exporter
+    /// renders the source path instead of embedding, so a hostile (or merely
+    /// enormous) document cannot bloat the export or slurp a file wholesale.
+    static let maxEmbeddedAssetBytes = 5 * 1024 * 1024
+
     func html() -> String {
         var body = ""
         for child in document.root.children {
@@ -271,15 +276,48 @@ struct HTMLExporter {
             return "<figure><img src=\"\(escape(source))\" alt=\"\(escape(alt))\">\(caption)</figure>"
         }
         guard let base = baseDirectory else {
+            // No document folder to resolve against: keep the reference as-is
+            // rather than guessing a path to read.
             return "<figure><img src=\"\(escape(source))\" alt=\"\(escape(alt))\">\(caption)</figure>"
         }
-        let url = base.appendingPathComponent(source).standardizedFileURL
-        guard let data = try? Data(contentsOf: url) else {
-            return "<figure class=\"missing\"><span>\(escape(source))</span>\(caption)</figure>"
+        // Confined to `baseDirectory`.  No containment check here and a source
+        // of `../../.ssh/id_rsa` would resolve (and be base64-inlined) into the
+        // export — exporting a hostile document is a silent local-file leak.
+        // Resolve with symlinks followed so a link inside the folder that
+        // points out of it is treated as outside too, never embedded.
+        guard let url = confinedURL(for: source, relativeTo: base) else {
+            return missingImage(source: source, alt: alt, caption: caption)
+        }
+        // Cap the embed size: a data URI must not balloon to hundreds of
+        // megabytes for one (or many) assets.  Oversized files stay referenced
+        // by path rather than inlined.
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? Int.max
+        guard size > 0, size <= Self.maxEmbeddedAssetBytes, let data = try? Data(contentsOf: url) else {
+            return missingImage(source: source, alt: alt, caption: caption)
         }
         let mime = HTMLExporter.mimeType(forExtension: url.pathExtension)
         let uri = "data:\(mime);base64,\(data.base64EncodedString())"
         return "<figure><img src=\"\(uri)\" alt=\"\(escape(alt))\">\(caption)</figure>"
+    }
+
+    /// Resolves a relative image source against `baseDirectory` only if the
+    /// result stays inside it.  Returns `nil` for absolute paths, traversal
+    /// that escapes the folder, and symlink hops that land outside it — none of
+    /// which may be lifted into a self-contained export.
+    private func confinedURL(for source: String, relativeTo base: URL) -> URL? {
+        guard !source.hasPrefix("/") else { return nil }
+        let candidate = base
+            .appendingPathComponent(source)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let basePath = base.resolvingSymlinksInPath().standardizedFileURL.path
+        let prefix = basePath.hasSuffix("/") ? basePath : basePath + "/"
+        return candidate.path.hasPrefix(prefix) ? candidate : nil
+    }
+
+    private func missingImage(source: String, alt: String, caption: String) -> String {
+        "<figure class=\"missing\"><span>\(escape(source))</span>\(caption)</figure>"
     }
 
     private func dataURI(for image: NSImage) -> String? {

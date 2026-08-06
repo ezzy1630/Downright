@@ -26,12 +26,14 @@ public enum ASTDiff {
         if larger > 0, abs(oldTop.count - newTop.count) * 2 > larger { return .wholesale }
 
         var ranges: [NSRange] = []
-        guard reconcile(old: oldTop, new: newTop, into: &ranges) else { return .wholesale }
+        guard reconcile(old: oldTop, new: newTop, into: &ranges, text: new.text as NSString) else { return .wholesale }
         return DirtySet(ranges: coalesce(ranges), isWholesale: false)
     }
 
     /// Returns false when the diff gave up and the caller should go wholesale.
-    private static func reconcile(old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange]) -> Bool {
+    private static func reconcile(
+        old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], text: NSString
+    ) -> Bool {
         guard let script = Myers.diff(old.map(\.subtreeHash), new.map(\.subtreeHash)) else {
             return false
         }
@@ -41,7 +43,7 @@ public enum ASTDiff {
         var newRun: [MDBlock] = []
 
         func flush() {
-            pair(old: oldRun, new: newRun, into: &ranges)
+            pair(old: oldRun, new: newRun, into: &ranges, text: text)
             oldRun.removeAll(keepingCapacity: true)
             newRun.removeAll(keepingCapacity: true)
         }
@@ -62,8 +64,12 @@ public enum ASTDiff {
 
     /// Pairs a run of changed old blocks against a run of changed new blocks.
     /// Same-kind pairs recurse so an edit inside one list item dirties that item
-    /// rather than the list; everything else is dirty in full.
-    private static func pair(old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange]) {
+    /// rather than the list; everything else is dirty in full.  When the
+    /// container's own bytes (markers, blank quote lines) changed underneath
+    /// unchanged children, the container itself is dirtied too.
+    private static func pair(
+        old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], text: NSString
+    ) {
         for index in new.indices {
             guard index < old.count else {
                 ranges.append(new[index].range)
@@ -81,7 +87,11 @@ public enum ASTDiff {
                !before.children.isEmpty,
                !after.children.isEmpty {
                 var nested: [NSRange] = []
-                if reconcile(old: before.children, new: after.children, into: &nested) {
+                if reconcile(old: before.children, new: after.children, into: &nested, text: text) {
+                    if SubtreeHasher.frameworkHash(before, in: text)
+                        != SubtreeHasher.frameworkHash(after, in: text) {
+                        ranges.append(after.range)
+                    }
                     ranges.append(contentsOf: nested)
                     continue
                 }

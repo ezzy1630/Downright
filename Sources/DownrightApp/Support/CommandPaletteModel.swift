@@ -62,6 +62,22 @@ final class UserDefaultsCommandPaletteRecentStore: CommandPaletteRecentStore {
 
 /// Pure search and selection state for the command palette.
 struct CommandPaletteModel {
+    private final class PaletteResultCache {
+        var resultsQuery: String?
+        var results: [CommandPaletteEntry]?
+        var quickQuery: String?
+        var quickResults: [QuickOpenResult]?
+
+        func invalidate() {
+            resultsQuery = nil
+            results = nil
+            quickQuery = nil
+            quickResults = nil
+        }
+    }
+
+    private let cache = PaletteResultCache()
+
     private(set) var entries: [CommandPaletteEntry]
     private(set) var recentCommands: [Command]
     private(set) var providers: [any QuickOpenProvider]
@@ -100,6 +116,16 @@ struct CommandPaletteModel {
     }
 
     var results: [CommandPaletteEntry] {
+        if cache.results == nil || cache.resultsQuery != query {
+            cache.results = Self.computeResults(entries: entries, recentCommands: recentCommands, query: query)
+            cache.resultsQuery = query
+        }
+        return cache.results!
+    }
+
+    private static func computeResults(
+        entries: [CommandPaletteEntry], recentCommands: [Command], query: String
+    ) -> [CommandPaletteEntry] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             let byCommand = Dictionary(uniqueKeysWithValues: entries.map { ($0.command, $0) })
@@ -131,17 +157,35 @@ struct CommandPaletteModel {
 
     /// One ranked list for commands and every injected Quick Open provider.
     var quickResults: [QuickOpenResult] {
+        if cache.quickResults == nil || cache.quickQuery != query {
+            cache.quickResults = Self.computeQuickResults(
+                entries: entries, recentCommands: recentCommands, providers: providers, query: query
+            )
+            cache.quickQuery = query
+        }
+        return cache.quickResults!
+    }
+
+    private static func computeQuickResults(
+        entries: [CommandPaletteEntry],
+        recentCommands: [Command],
+        providers: [any QuickOpenProvider],
+        query: String
+    ) -> [QuickOpenResult] {
         let parsed = QuickOpenQuery(query)
         var candidates: [QuickOpenResult] = []
         if parsed.filter == .all || parsed.filter == .commands {
-            candidates += commandResults(for: parsed.terms).map { entry in
-                QuickOpenResult(
-                    id: "command:\(entry.command.rawValue)", kind: .command,
-                    title: entry.title,
-                    subtitle: [entry.binding, entry.scopeLabel].compactMap { $0 }.joined(separator: "  ·  "),
-                    action: .command(entry.command)
-                )
-            }
+            candidates += Self.commandResults(
+                for: parsed.terms, entries: entries, recentCommands: recentCommands, query: query
+            )
+            .map { entry in
+                    QuickOpenResult(
+                        id: "command:\(entry.command.rawValue)", kind: .command,
+                        title: entry.title,
+                        subtitle: [entry.binding, entry.scopeLabel].compactMap { $0 }.joined(separator: "  ·  "),
+                        action: .command(entry.command)
+                    )
+                }
         }
         candidates += providers.flatMap { $0.results(for: parsed) }
         let scored = candidates.map { result in
@@ -161,6 +205,20 @@ struct CommandPaletteModel {
             .map(\.result)
     }
 
+    private static func commandResults(
+        for terms: String, entries: [CommandPaletteEntry], recentCommands: [Command], query: String
+    ) -> [CommandPaletteEntry] {
+        guard !terms.isEmpty else {
+            return computeResults(entries: entries, recentCommands: recentCommands, query: query)
+        }
+        let trimmed = terms.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scored: [(score: Int, entry: CommandPaletteEntry)] = entries.compactMap { entry in
+            guard let score = PaletteFuzzyMatcher.score(trimmed, in: entry) else { return nil }
+            return (score: score, entry: entry)
+        }
+        return scored.sorted { lhs, rhs in lhs.score > rhs.score }.map(\.entry)
+    }
+
     var selectedResult: QuickOpenResult? {
         let values = quickResults
         guard values.indices.contains(selectedIndex) else { return nil }
@@ -171,6 +229,7 @@ struct CommandPaletteModel {
         guard query != value else { return }
         query = value
         selectedIndex = 0
+        cache.invalidate()
     }
 
     mutating func moveSelection(by offset: Int) {
@@ -187,6 +246,7 @@ struct CommandPaletteModel {
     mutating func record(_ command: Command) {
         recentCommands.removeAll { $0 == command }
         recentCommands.insert(command, at: 0)
+        cache.invalidate()
     }
 
     private static func unique(_ commands: [Command]) -> [Command] {
@@ -244,6 +304,7 @@ private enum CommandPaletteSynonyms {
         .revealInFinder: ["show file", "folder", "locate"],
         .preferences: ["settings", "options", "configuration"],
         .showKeybindings: ["shortcuts", "keys", "keyboard"],
+        .checkForUpdates: ["update", "updates", "upgrade", "refresh"],
     ]
 }
 

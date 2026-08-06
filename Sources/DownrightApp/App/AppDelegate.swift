@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Start the Sparkle updater after launch, as the spec requires.  Dev
+        // bundles without the Sparkle Info.plist block make this a no-op.
+        UpdateCoordinator.shared.start()
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesDidChange),
             name: Preferences.didChange, object: nil
@@ -72,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return opened > 0
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows && windowControllers.isEmpty { showStartWindow() }
@@ -170,9 +173,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
             self.scheduleSessionSave()
-            if self.windowControllers.isEmpty {
-                self.showStartWindow()
-            }
         }
     }
 
@@ -210,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onOpen = { [weak self] url in self?.open(url) }
         controller.onOpenPanel = { [weak self] in self?.showOpenPanel() }
         controller.onNew = { [weak self] in self?.newDocument() }
+        controller.onClearRecents = { [weak self] in self?.clearRecentDocuments(nil) }
         startWindow = controller
         controller.showWindow(nil)
     }
@@ -402,6 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Preferences.shared.update { $0.vimKeys.toggle() }
             return true
         case .compareFiles: showComparePanel(); return true
+        case .checkForUpdates: UpdateCoordinator.shared.checkForUpdates(); return true
         default: return false
         }
     }

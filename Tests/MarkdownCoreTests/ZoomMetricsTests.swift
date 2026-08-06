@@ -172,6 +172,52 @@ import Testing
         #expect(abs(metrics.readMinutes - 1.0) < 0.0001)
     }
 
+    /// §9.6 regression: soft and hard line breaks inside a paragraph must count
+    /// as word separators, not vanish and merge their lines into run-on words.
+    @Test func hardWrappedParagraphsCountEveryWord() {
+        let disposed = Metrics.metrics(for: "alpha beta\ngamma delta\n")
+        #expect(disposed.words == 4)
+        // A two-space hard break is still a single word gap.
+        let spaces = Metrics.metrics(for: "one two  \nthree four\n")
+        #expect(spaces.words == 4)
+        let paragraph = MarkdownParser.parse("one two  \nthree four\n").root.children.first
+        #expect(paragraph?.inlines.contains { if case .lineBreak = $0.kind { return true }; return false } == true)
+    }
+
+    @Test func hardWrapBreaksBecomeBreakSpans() {
+        let source = "alpha beta\ngamma delta\n"
+        let doc = MarkdownParser.parse(source)
+        let paragraph = try! #require(doc.root.children.first)
+        let kinds = paragraph.inlines.map(\.kind)
+        #expect(kinds.contains { if case .softBreak = $0 { return true }; return false })
+        #expect(kinds.contains(where: { if case .text = $0 { return true }; return false }))
+    }
+
+    @Test func explicitLineBreaksAreClassifiedLineBreakSpans() {
+        let doc = MarkdownParser.parse("one  \ntwo\n")
+        let paragraph = try! #require(doc.root.children.first)
+        #expect(paragraph.inlines.contains { if case .lineBreak = $0.kind { return true }; return false })
+    }
+
+    /// §9.6 regression: swift-markdown anchors the continuation Text of a
+    /// backslash hard break at the newline with a zero-length range (the line
+    /// advance is lost), collapsing the rest of the line into one run-on word.
+    /// `fillBreaks` must re-anchor it to the physical next line.
+    @Test func backslashHardBreaksCountEveryWord() {
+        let disposed = Metrics.metrics(for: "one two\\\nthree four\n")
+        #expect(disposed.words == 4, "word count was \(disposed.words)")
+        let doc = MarkdownParser.parse("one two\\\nthree four\n")
+        let paragraph = try! #require(doc.root.children.first)
+        let kinds = paragraph.inlines.map(\.kind)
+        #expect(kinds.contains { if case .lineBreak = $0 { return true }; return false })
+        let source = doc.text as NSString
+        let three = paragraph.inlines.first {
+            guard case .text = $0.kind else { return false }
+            return source.substring(with: $0.range) == "three four"
+        }
+        #expect(three != nil)
+    }
+
     @Test func emptyTextIsZero() {
         #expect(Metrics.metrics(for: "").words == 0)
         #expect(Metrics.metrics(for: "").readMinutes == 0)

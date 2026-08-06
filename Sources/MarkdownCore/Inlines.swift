@@ -166,23 +166,94 @@ struct InlineBuilder {
         return min(count, range.length / 2)
     }
 
-    /// `SoftBreak` and `LineBreak` carry no source range, so reconstruct them
-    /// from the hole they leave between their siblings.  Without this the
-    /// newline between two lines of a paragraph belongs to no span at all.
-    private func fillBreaks(_ spans: inout [InlineSpan], bounds: NSRange) {
+    /// `SoftBreak` and `LineBreak` carry no source range, so `span(for:)` can
+    /// never build one and they are absent from the child list.  Reconstruct
+    /// them from the newline gaps between siblings: a gap between two spans
+    /// that contains a line terminator is exactly where the break sits.
+    /// Without this the newline belongs to no span at all — word counts read a
+    /// hard-wrapped paragraph as one run-on word, and read-time inherits it.
+    private mutating func fillBreaks(_ spans: inout [InlineSpan], bounds: NSRange) {
+        guard spans.count > 1 else { return }
+        var out: [InlineSpan] = []
         var cursor = bounds.location
-        for index in spans.indices {
-            let span = spans[index]
-            switch span.kind {
-            case .softBreak, .lineBreak:
-                let next = index + 1 < spans.count ? spans[index + 1].range.location : bounds.upperBound
-                let start = min(cursor, next)
-                spans[index].range = NSRange(location: start, length: max(0, next - start))
-                spans[index].contentRange = spans[index].range
-            default:
-                cursor = span.range.upperBound
+        for (index, span) in spans.enumerated() {
+            if span.range.location > cursor {
+                let gap = NSRange(location: cursor, length: span.range.location - cursor)
+                if let kind = breakKind(in: gap) {
+                    out.append(InlineSpan(kind: kind, range: gap, contentRange: gap))
+                }
             }
+            // A backslash (or other) hard break makes swift-markdown anchor the
+            // continuation Text at the consumed newline with a zero-length
+            // range — the line advance is lost and `offset(line:column:)`
+            // clamps it to the end of the *wrong* (previous) line.  Re-anchor
+            // it to the physical line the break actually started and give the
+            // break a real span.  Guarded by `span.kind == .text` + anchor-is-
+            // newline so legitimately empty spans are never touched.
+            let nextLocation = index + 1 < spans.count ? spans[index + 1].range.location : NSNotFound
+            if let (breakRange, fixed) = reanchoredTextSpan(span, nextLocation: nextLocation, bounds: bounds) {
+                out.append(InlineSpan(kind: .lineBreak, range: breakRange, contentRange: breakRange))
+                out.append(fixed)
+                cursor = fixed.range.upperBound
+                continue
+            }
+            out.append(span)
+            cursor = span.range.upperBound
         }
+        spans = out
+    }
+
+    /// Re-anchor a degenerate `.text` span whose range collapsed to zero-length
+    /// onto the line its content actually lives on.  Returns the `LineBreak`
+    /// span to insert for the consumed terminator and the corrected text span.
+    private func reanchoredTextSpan(
+        _ span: InlineSpan, nextLocation: Int, bounds: NSRange
+    ) -> (breakRange: NSRange, span: InlineSpan)? {
+        guard case .text = span.kind, span.range.length == 0 else { return nil }
+        let anchor = span.range.location
+        guard anchor >= bounds.location, anchor < bounds.upperBound, isNewline(at: anchor) else { return nil }
+        // The break's marker is the newline, plus a trailing backslash if the
+        // source wrote one — cover both so the marker is not read as content.
+        var breakStart = anchor
+        if anchor > bounds.location, text.character(at: anchor - 1) == 0x5C { breakStart = anchor - 1 }
+        var breakEnd = anchor + 1
+        while breakEnd < bounds.upperBound, isNewline(at: breakEnd) { breakEnd += 1 }
+        // The continuation runs to the next physical line end, stopped early by
+        // a following sibling span when one is nearer.
+        var lineEnd = breakEnd
+        while lineEnd < bounds.upperBound, !isNewline(at: lineEnd) { lineEnd += 1 }
+        let stop = min(nextLocation > breakEnd ? min(lineEnd, nextLocation) : lineEnd, bounds.upperBound)
+        guard stop > breakEnd else { return nil }
+        var fixed = span
+        fixed.range = NSRange(location: breakEnd, length: stop - breakEnd)
+        fixed.contentRange = fixed.range
+        return (NSRange(location: breakStart, length: breakEnd - breakStart), fixed)
+    }
+
+    private func isNewline(at location: Int) -> Bool {
+        let unicode = text.character(at: location)
+        return unicode == 0x0A || unicode == 0x0D || unicode == 0x2028 || unicode == 0x2029
+    }
+
+    /// The kind of line break a span gap represents, or `nil` if the gap holds
+    /// no terminator.  A two-space (or trailing backslash) run before the
+    /// terminator is the explicit `LineBreak`; everything else is `SoftBreak`.
+    /// The marker spaces may already sit inside the preceding text span (the
+    /// gap is often just the newline), so the test looks at the source too.
+    private func breakKind(in gap: NSRange) -> InlineKind? {
+        guard gap.length > 0 else { return nil }
+        let source = text.substring(with: gap)
+        guard source.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) }) else { return nil }
+        let offset = gap.location
+        let twoSpacesBefore = offset >= 2
+            && text.character(at: offset - 1) == 0x20
+            && text.character(at: offset - 2) == 0x20
+        let backslashBefore = offset >= 1 && text.character(at: offset - 1) == 0x5C
+        let before = source.trimmingCharacters(in: .newlines)
+        if before.hasSuffix("  ") || before.hasSuffix("\\") || twoSpacesBefore || backslashBefore {
+            return .lineBreak
+        }
+        return .softBreak
     }
 
     // MARK: Extension passes
@@ -273,7 +344,7 @@ struct InlineBuilder {
                     location: match.range.location + 2,
                     length: max(0, match.range.length - 4)
                 )
-                let targetLength = (match.target as NSString).length
+                let targetLength = match.targetRange.length
                 let hasLabel = match.label != nil
                 let leadingLength = hasLabel ? 2 + targetLength + 1 : 2
                 let content = hasLabel

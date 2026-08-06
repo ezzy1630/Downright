@@ -6,12 +6,26 @@ import QuickLookThumbnailing
 private let startRecentDisplayLimit = 6
 
 private enum StartLayout {
-    static let windowSize = NSSize(width: 680, height: 500)
-    static let horizontalInset: CGFloat = 56
-    static let bottomInset: CGFloat = 32
-    static let sectionSpacing: CGFloat = 26
-    static let contentWidth: CGFloat = 568
+    // A fixed, non-resizable welcome surface.  44pt side gutters keep the
+    // column calm without dead air; the extra height (vs. the old 500) lets the
+    // six recent rows breathe under the hero.
+    static let windowSize = NSSize(width: 680, height: 576)
+    static let horizontalInset: CGFloat = 44
+    static let bottomInset: CGFloat = 40
+    static let sectionSpacing: CGFloat = 22
+    static let contentWidth: CGFloat = 592
     static let actionWidth: CGFloat = 164
+    static let buttonHeight: CGFloat = 38
+    static let rowHeight: CGFloat = 40
+    static let cornerRadius: CGFloat = 7
+}
+
+/// The start window draws from the app's selected theme so the welcome surface
+/// agrees with the editor it hands off to.  One factory, three users.
+private enum StartTheme {
+    static func makeSheet() -> StyleSheet {
+        StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
+    }
 }
 
 @MainActor
@@ -21,6 +35,12 @@ final class StartWindowController: NSWindowController {
     var onOpen: ((URL) -> Void)?
     var onOpenPanel: (() -> Void)?
     var onNew: (() -> Void)?
+    var onClearRecents: (() -> Void)?
+
+    /// Quiet text-button target for the recents header's Clear action.
+    @objc func clearRecents(_ sender: Any?) {
+        onClearRecents?()
+    }
 
     private var startView: StartView? { window?.contentView as? StartView }
     fileprivate var isHandingOff = false
@@ -112,11 +132,20 @@ final class StartWindowController: NSWindowController {
 
 // MARK: - Root
 
+/// One task path: choose an action, then a recent file.  The start window is a
+/// single left-aligned column — brand, title, actions, recents — so the eye
+/// travels once, top-down, instead of choosing between two visual centres.
+/// Colours come from the app's `StyleSheet` so the welcome surface agrees with
+/// the editor it hands off to.
 private final class StartView: NSView {
     private weak var owner: StartWindowController?
-    private let background = StartBackgroundView()
     private let recentPanel: RecentDocumentsPanel
     private let hero: StartHeroView
+    private let dropOverlay = StartDropOverlay()
+    private let contentStack = NSStackView()
+    private let updatePill = UpdateStatusPill()
+    private var sheet: StyleSheet
+    private var didPlayEntrance = false
     /// Clear of traffic lights; keep content below chrome.
     private static let titlebarClearance: CGFloat = 44
 
@@ -124,17 +153,15 @@ private final class StartView: NSView {
 
     init(recents: [RecentDocument], owner: StartWindowController) {
         self.owner = owner
-        self.recentPanel = RecentDocumentsPanel(recents: recents, owner: owner)
-        self.hero = StartHeroView(owner: owner)
+        self.sheet = StartView.makeSheet()
+        self.recentPanel = RecentDocumentsPanel(recents: recents, owner: owner, sheet: sheet)
+        self.hero = StartHeroView(owner: owner, sheet: sheet)
         super.init(frame: .zero)
 
         wantsLayer = true
         registerForDraggedTypes([.fileURL])
         setAccessibilityRole(.group)
         setAccessibilityLabel("Downright start window")
-
-        background.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(background)
 
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -145,36 +172,28 @@ private final class StartView: NSView {
         scroll.scrollerStyle = .overlay
         addSubview(scroll)
 
-        let canvas = NSView()
+        let canvas = StartCanvasView()
         canvas.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = canvas
 
-        // One task path: choose an action, then a recent file. The old split
-        // hero/card composition made two unrelated visual centres.
-        let content = NSStackView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.orientation = .vertical
-        content.alignment = .width
-        content.distribution = .fill
-        content.spacing = StartLayout.sectionSpacing
-        canvas.addSubview(content)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.orientation = .vertical
+        contentStack.alignment = .width
+        contentStack.distribution = .fill
+        contentStack.spacing = StartLayout.sectionSpacing
+        canvas.addSubview(contentStack)
 
         hero.translatesAutoresizingMaskIntoConstraints = false
         recentPanel.translatesAutoresizingMaskIntoConstraints = false
-        content.addArrangedSubview(hero)
-        content.addArrangedSubview(recentPanel)
+        contentStack.addArrangedSubview(hero)
+        contentStack.addArrangedSubview(recentPanel)
 
-        let centerY = content.centerYAnchor.constraint(equalTo: canvas.centerYAnchor, constant: -2)
+        let centerY = contentStack.centerYAnchor.constraint(equalTo: canvas.centerYAnchor, constant: -2)
         centerY.priority = .defaultHigh
-        let centerX = content.centerXAnchor.constraint(equalTo: canvas.centerXAnchor)
+        let centerX = contentStack.centerXAnchor.constraint(equalTo: canvas.centerXAnchor)
         centerX.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
-            background.leadingAnchor.constraint(equalTo: leadingAnchor),
-            background.trailingAnchor.constraint(equalTo: trailingAnchor),
-            background.topAnchor.constraint(equalTo: topAnchor),
-            background.bottomAnchor.constraint(equalTo: bottomAnchor),
-
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: topAnchor),
@@ -186,38 +205,149 @@ private final class StartView: NSView {
             canvas.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             canvas.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
 
-            content.leadingAnchor.constraint(
+            contentStack.leadingAnchor.constraint(
                 greaterThanOrEqualTo: canvas.leadingAnchor,
                 constant: StartLayout.horizontalInset
             ),
-            content.trailingAnchor.constraint(
+            contentStack.trailingAnchor.constraint(
                 lessThanOrEqualTo: canvas.trailingAnchor,
                 constant: -StartLayout.horizontalInset
             ),
-            content.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
-            content.bottomAnchor.constraint(
+            contentStack.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
+            contentStack.bottomAnchor.constraint(
                 lessThanOrEqualTo: canvas.bottomAnchor,
                 constant: -StartLayout.bottomInset
             ),
             centerX,
             centerY,
-            content.widthAnchor.constraint(equalToConstant: StartLayout.contentWidth),
-            hero.widthAnchor.constraint(equalTo: content.widthAnchor),
-            recentPanel.widthAnchor.constraint(equalTo: content.widthAnchor),
+            contentStack.widthAnchor.constraint(equalToConstant: StartLayout.contentWidth),
+            hero.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            recentPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+        ])
+
+        // The drop affordance is a non-interactive accent frame that appears
+        // while a file is dragged anywhere over the window.
+        dropOverlay.translatesAutoresizingMaskIntoConstraints = false
+        dropOverlay.isHidden = true
+        addSubview(dropOverlay)
+        NSLayoutConstraint.activate([
+            dropOverlay.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            dropOverlay.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            dropOverlay.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            dropOverlay.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+
+        // The update pill sits in the transparent titlebar strip, clear of the
+        // hero and the traffic lights, and stays collapsed to zero width until
+        // the coordinator has something to say.
+        updatePill.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(updatePill)
+        NSLayoutConstraint.activate([
+            updatePill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            updatePill.topAnchor.constraint(equalTo: topAnchor, constant: 7),
         ])
     }
 
     required init?(coder: NSCoder) { nil }
+
+    private static func makeSheet() -> StyleSheet { StartTheme.makeSheet() }
 
     func reloadRecents(_ recents: [RecentDocument]) {
         guard let owner else { return }
         recentPanel.reload(recents: recents, owner: owner)
     }
 
+    // MARK: - Keyboard navigation
+
+    /// Arrow keys move focus through the recent rows; Space opens the focused
+    /// row natively, Return is handled here so keyboard-only users get both
+    /// keys.  One focus model, no separate selection state: the row under the
+    /// first responder draws the accent ring (§row focus).
+    override func keyDown(with event: NSEvent) {
+        // Key codes rather than `specialKey`: the latter is resolved through
+        // the active keyboard layout, so synthetic events and unusual layouts
+        // can report nil for arrow keys.  Key codes are stable.
+        switch event.keyCode {
+        case 125: // ↓
+            moveRecentFocus(+1)
+            return
+        case 126: // ↑
+            moveRecentFocus(-1)
+            return
+        case 36, 76: // ⏎ and keypad enter
+            if let row = window?.firstResponder as? RecentDocumentButton {
+                row.performClick(nil)
+                return
+            }
+        default:
+            break
+        }
+        super.keyDown(with: event)
+    }
+
+    private func moveRecentFocus(_ delta: Int) {
+        let rows = recentPanel.rowButtons
+        guard !rows.isEmpty, let window else { return }
+        // No focus yet: Down lands on the first row, Up on the last.
+        let current = rows.firstIndex { $0 === window.firstResponder }
+            ?? (delta > 0 ? -1 : rows.count)
+        let next = min(max(current + delta, 0), rows.count - 1)
+        window.makeFirstResponder(rows[next])
+    }
+
+    /// Escape returns focus to the primary action, unwinding the recents
+    /// selection without opening anything.
+    override func cancelOperation(_ sender: Any?) {
+        if window?.firstResponder is RecentDocumentButton {
+            window?.makeFirstResponder(hero.openButton)
+        } else {
+            super.cancelOperation(sender)
+        }
+    }
+
+    // MARK: - Entrance
+
+    /// A short fade-up for first layout (DESIGN §Motion): the column lands as
+    /// one unit, then the recent rows settle in beneath it.  Input stays live
+    /// throughout — the first responder is set before the animation runs.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.backgroundColor = sheet.background
+        if !didPlayEntrance, window != nil {
+            didPlayEntrance = true
+            playEntrance()
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        sheet = Self.makeSheet()
+        window?.backgroundColor = sheet.background
+        hero.apply(sheet: sheet)
+        recentPanel.apply(sheet: sheet)
+        dropOverlay.apply(sheet: sheet)
+    }
+
+    private func playEntrance() {
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard !reduce else { return }
+        contentStack.wantsLayer = true
+        contentStack.layer?.opacity = 0
+        contentStack.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: 10))
+        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .spring) { _ in
+            self.contentStack.layer?.opacity = 1
+            self.contentStack.layer?.setAffineTransform(.identity)
+        }
+        recentPanel.revealRows()
+    }
+
+    // MARK: - Drag & drop
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let urls = droppedURLs(from: sender.draggingPasteboard)
         let ok = !urls.isEmpty
         hero.setDropActive(ok)
+        dropOverlay.setActive(ok)
         return ok ? .copy : []
     }
 
@@ -227,11 +357,18 @@ private final class StartView: NSView {
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         hero.setDropActive(false)
+        dropOverlay.setActive(false)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        hero.setDropActive(false)
+        dropOverlay.setActive(false)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = droppedURLs(from: sender.draggingPasteboard)
         hero.setDropActive(false)
+        dropOverlay.setActive(false)
         guard !urls.isEmpty else { return false }
         guard owner?.beginHandoff() == true else { return false }
         urls.forEach { owner?.onOpen?($0) }
@@ -253,22 +390,73 @@ private final class StartView: NSView {
     }
 }
 
-private final class StartBackgroundView: NSView {
+/// A quiet accent frame that acknowledges a drag before the drop.  It draws
+/// nothing on its own state — just a filled border that appears and fades,
+/// and it never takes a hit so the content underneath stays interactive.
+private final class StartDropOverlay: NSView {
+    private var isActive = false
+    private var sheet = StartTheme.makeSheet()
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.borderWidth = 1.5
+        layer?.opacity = 0
+        apply(sheet: sheet)
     }
 
     required init?(coder: NSCoder) { nil }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        dirtyRect.fill()
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func apply(sheet: StyleSheet) {
+        self.sheet = sheet
+        let contrast = sheet.increaseContrast
+        layer?.borderColor = sheet.accent.cgColor
+        layer?.backgroundColor = sheet.accent
+            .withAlphaComponent(contrast ? 0.12 : 0.07).cgColor
+    }
+
+    func setActive(_ active: Bool) {
+        guard active != isActive else { return }
+        isActive = active
+        isHidden = false
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let apply = { self.layer?.opacity = active ? 1 : 0 }
+        if reduce {
+            apply()
+            if !active { isHidden = true }
+        } else {
+            Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in apply() }
+            if !active {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Motion.quick) { [weak self] in
+                    guard let self, !self.isActive else { return }
+                    self.isHidden = true
+                }
+            }
+        }
+    }
+}
+
+/// The scroll canvas takes keyboard focus when clicked, so a blank-area click
+/// does not strand arrow-key navigation (the content view is covered by the
+/// scroll view and cannot grab focus itself).
+private final class StartCanvasView: NSView {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 }
 
 // MARK: - Hero
 
+/// The welcome column: brand, one clear sentence, two entry paths, and a quiet
+/// drop hint.  The primary action is the only filled accent shape in the hero
+/// (Von Restorff: one strong cue per screen), and the hint under it is passive
+/// copy, not a third button (Hick: two choices at the decision point).
 private final class StartHeroView: NSView {
     let openButton: StartActionButton
     private let newButton: StartActionButton
@@ -277,32 +465,29 @@ private final class StartHeroView: NSView {
     private let subtitleLabel = NSTextField(
         wrappingLabelWithString: "Read, edit, and review it in one focused place."
     )
-    private let dropHint = NSTextField(labelWithString: "You can also drop a file anywhere")
+    private let dropHint = NSTextField(labelWithString: "")
+    private let dropIcon = NSImageView()
+    private let brand: BrandMarkView
+    private var sheet: StyleSheet
     private var isDropActive = false
     private static let idleDropHint = "You can also drop a file anywhere"
 
-    init(owner: StartWindowController) {
-        // No trailing ellipsis on the start screen — it reads as truncated text.
-        // Menus keep the HIG "…" for dialogs.
+    init(owner: StartWindowController, sheet: StyleSheet) {
         openButton = StartActionButton(
-            title: "Open File",
-            shortcut: "⌘O",
-            kind: .primary,
-            target: owner,
+            title: "Open File", icon: "folder", shortcut: "⌘O",
+            kind: .primary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.openPanel(_:))
         )
         newButton = StartActionButton(
-            title: "New Document",
-            shortcut: "⌘N",
-            kind: .secondary,
-            target: owner,
+            title: "New Document", icon: "doc", shortcut: "⌘N",
+            kind: .secondary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.newDocument(_:))
         )
+        brand = BrandMarkView()
+        self.sheet = sheet
         super.init(frame: .zero)
 
-        let brand = BrandMarkView()
         brand.translatesAutoresizingMaskIntoConstraints = false
-
         brandLabel.translatesAutoresizingMaskIntoConstraints = false
         brandLabel.setContentHuggingPriority(.required, for: .horizontal)
         configurePassiveLabel(brandLabel)
@@ -310,7 +495,7 @@ private final class StartHeroView: NSView {
         let brandRow = NSStackView(views: [brand, brandLabel])
         brandRow.orientation = .horizontal
         brandRow.alignment = .centerY
-        brandRow.spacing = 9
+        brandRow.spacing = 12
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.maximumNumberOfLines = 1
@@ -329,15 +514,21 @@ private final class StartHeroView: NSView {
         actions.spacing = 8
         actions.distribution = .fill
 
+        dropIcon.translatesAutoresizingMaskIntoConstraints = false
+        dropIcon.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: nil)
+        dropIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        dropIcon.setContentHuggingPriority(.required, for: .horizontal)
+
         dropHint.translatesAutoresizingMaskIntoConstraints = false
         dropHint.font = .systemFont(ofSize: 12, weight: .regular)
-        dropHint.textColor = .secondaryLabelColor
         dropHint.alignment = .left
         configurePassiveLabel(dropHint)
 
-        let dropSlot = NSView()
+        let dropSlot = NSStackView(views: [dropIcon, dropHint])
+        dropSlot.orientation = .horizontal
+        dropSlot.alignment = .centerY
+        dropSlot.spacing = 6
         dropSlot.translatesAutoresizingMaskIntoConstraints = false
-        dropSlot.addSubview(dropHint)
 
         let stack = NSStackView(views: [brandRow, titleLabel, subtitleLabel, actions, dropSlot])
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -347,18 +538,15 @@ private final class StartHeroView: NSView {
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            brand.widthAnchor.constraint(equalToConstant: 22),
-            brand.heightAnchor.constraint(equalToConstant: 22),
-            openButton.heightAnchor.constraint(equalToConstant: 36),
-            newButton.heightAnchor.constraint(equalToConstant: 36),
+            brand.widthAnchor.constraint(equalToConstant: 38),
+            brand.heightAnchor.constraint(equalToConstant: 38),
+            openButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight),
+            newButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight),
             openButton.widthAnchor.constraint(equalToConstant: StartLayout.actionWidth),
             newButton.widthAnchor.constraint(equalToConstant: StartLayout.actionWidth),
             titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
             dropSlot.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            dropHint.leadingAnchor.constraint(equalTo: dropSlot.leadingAnchor),
-            dropHint.topAnchor.constraint(equalTo: dropSlot.topAnchor),
-            dropHint.bottomAnchor.constraint(equalTo: dropSlot.bottomAnchor),
 
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -366,27 +554,52 @@ private final class StartHeroView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        stack.setCustomSpacing(14, after: brandRow)
-        stack.setCustomSpacing(5, after: titleLabel)
-        stack.setCustomSpacing(17, after: subtitleLabel)
+        stack.setCustomSpacing(16, after: brandRow)
+        stack.setCustomSpacing(4, after: titleLabel)
+        stack.setCustomSpacing(20, after: subtitleLabel)
         stack.setCustomSpacing(9, after: actions)
 
-        applyTextColors()
+        apply(sheet: sheet)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Downright welcome")
     }
 
     required init?(coder: NSCoder) { nil }
 
+    func apply(sheet: StyleSheet) {
+        self.sheet = sheet
+        openButton.apply(sheet: sheet)
+        newButton.apply(sheet: sheet)
+        brandLabel.attributedStringValue = NSAttributedString(
+            string: "Downright",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: sheet.text,
+            ]
+        )
+        titleLabel.attributedStringValue = NSAttributedString(
+            string: "Open a Markdown file",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 24, weight: .semibold),
+                .foregroundColor: sheet.text,
+                .kern: -0.3,
+            ]
+        )
+        subtitleLabel.textColor = sheet.textSecondary
+        dropHint.textColor = isDropActive ? sheet.accent : sheet.textSecondary
+        dropIcon.contentTintColor = isDropActive ? sheet.accent : sheet.textFaint
+        if !isDropActive { dropHint.stringValue = Self.idleDropHint }
+        needsDisplay = true
+    }
+
     func setDropActive(_ active: Bool) {
         guard active != isDropActive else { return }
         isDropActive = active
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let changes = {
-            self.dropHint.textColor = active ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
-            self.dropHint.stringValue = active
-                ? "Release to open"
-                : Self.idleDropHint
+            self.dropHint.textColor = active ? self.sheet.accent : self.sheet.textSecondary
+            self.dropIcon.contentTintColor = active ? self.sheet.accent : self.sheet.textFaint
+            self.dropHint.stringValue = active ? "Release to open" : Self.idleDropHint
         }
         if reduceMotion {
             changes()
@@ -394,35 +607,6 @@ private final class StartHeroView: NSView {
             Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in changes() }
         }
     }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        applyTextColors()
-    }
-
-    private func applyTextColors() {
-        let titleParagraph = NSMutableParagraphStyle()
-        titleParagraph.lineSpacing = 0
-        brandLabel.attributedStringValue = NSAttributedString(
-            string: "Downright",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-            ]
-        )
-        titleLabel.attributedStringValue = NSAttributedString(
-            string: "Open a Markdown file",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 22, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-                .kern: -0.2,
-                .paragraphStyle: titleParagraph,
-            ]
-        )
-        subtitleLabel.textColor = .secondaryLabelColor
-        dropHint.textColor = isDropActive ? .controlAccentColor : .secondaryLabelColor
-    }
-
 }
 
 private func configurePassiveLabel(_ field: NSTextField) {
@@ -435,37 +619,82 @@ private func configurePassiveLabel(_ field: NSTextField) {
 
 // MARK: - Recents
 
+/// The recents list: a quiet header (label, count, clear) over equal-height
+/// rows.  Uniform row height and tight spacing make the list read as one
+/// gestalt group; the title carries the weight and the trailing detail stays
+/// faint so names are found pre-attentively.
 private final class RecentDocumentsPanel: NSView {
     private weak var owner: StartWindowController?
     private let headerLabel = NSTextField(labelWithString: "Recent files")
+    private let countLabel = NSTextField(labelWithString: "")
+    private let clearButton: StartTextButton
+    private let divider = NSView()
     private let list = NSStackView()
+    private var rowViews: [RecentDocumentButton] = []
     private var displayedRecents: [RecentDocument] = []
+    private var sheet: StyleSheet
+    private var clearAction: ButtonAction?
 
-    init(recents: [RecentDocument], owner: StartWindowController) {
+    init(recents: [RecentDocument], owner: StartWindowController, sheet: StyleSheet) {
         self.owner = owner
+        self.sheet = sheet
+        let clear = StartTextButton(title: "Clear")
+        self.clearButton = clear
         super.init(frame: .zero)
 
+        let action = ButtonAction { [weak owner] in owner?.onClearRecents?() }
+        clearAction = action
+        clear.target = action
+        clear.action = #selector(ButtonAction.fire(_:))
+        clear.setAccessibilityLabel("Clear recent files")
+        clear.toolTip = "Clear the recent files list"
+
+        // A hairline rule separates the decide phase (hero) from the continue
+        // phase (recents); two kinds of work should not share one silent gap.
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.wantsLayer = true
+        addSubview(divider)
+
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        headerLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        headerLabel.textColor = .secondaryLabelColor
+        headerLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         configurePassiveLabel(headerLabel)
+
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
+        configurePassiveLabel(countLabel)
+
+        let header = NSStackView(views: [headerLabel, countLabel])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 7
+        header.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header)
+
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(clearButton)
 
         list.translatesAutoresizingMaskIntoConstraints = false
         list.orientation = .vertical
         list.alignment = .width
         list.spacing = 2
-
-        addSubview(headerLabel)
         addSubview(list)
 
         NSLayoutConstraint.activate([
-            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            headerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            headerLabel.topAnchor.constraint(equalTo: topAnchor),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.topAnchor.constraint(equalTo: topAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            header.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 12),
+
+            clearButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            clearButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            clearButton.leadingAnchor.constraint(greaterThanOrEqualTo: header.trailingAnchor, constant: 12),
 
             list.leadingAnchor.constraint(equalTo: leadingAnchor),
             list.trailingAnchor.constraint(equalTo: trailingAnchor),
-            list.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 9),
+            list.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
             list.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             widthAnchor.constraint(equalToConstant: StartLayout.contentWidth),
@@ -473,6 +702,7 @@ private final class RecentDocumentsPanel: NSView {
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Recent Markdown documents")
+        apply(sheet: sheet)
         rebuild(recents: recents)
     }
 
@@ -484,9 +714,36 @@ private final class RecentDocumentsPanel: NSView {
         rebuild(recents: recents)
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        headerLabel.textColor = .secondaryLabelColor
+    func apply(sheet: StyleSheet) {
+        self.sheet = sheet
+        divider.layer?.backgroundColor = sheet.rule
+            .withAlphaComponent(sheet.increaseContrast ? 0.6 : 0.4).cgColor
+        headerLabel.textColor = sheet.textSecondary
+        countLabel.textColor = sheet.textFaint
+        clearButton.apply(sheet: sheet)
+        for row in rowViews {
+            row.apply(sheet: sheet)
+        }
+    }
+
+    /// The recent rows, in display order.  StartView walks this for the
+    /// arrow-key focus navigation.
+    var rowButtons: [RecentDocumentButton] { rowViews }
+
+    func revealRows() {
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard !reduce, !rowViews.isEmpty else { return }
+        for (index, row) in rowViews.enumerated() {
+            row.wantsLayer = true
+            row.layer?.opacity = 0
+            let delay = 0.05 + Double(index) * 0.04
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak row] in
+                guard let row else { return }
+                Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
+                    row.layer?.opacity = 1
+                }
+            }
+        }
     }
 
     private func rebuild(recents: [RecentDocument]) {
@@ -494,12 +751,16 @@ private final class RecentDocumentsPanel: NSView {
             list.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        rowViews = []
         displayedRecents = recents
 
         guard let owner else { return }
+        countLabel.stringValue = recents.isEmpty ? "" : "\(recents.count)"
+        countLabel.isHidden = recents.isEmpty
+        clearButton.isHidden = recents.isEmpty
 
         if recents.isEmpty {
-            let empty = RecentEmptyState()
+            let empty = RecentEmptyState(sheet: sheet)
             empty.translatesAutoresizingMaskIntoConstraints = false
             list.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
@@ -509,41 +770,103 @@ private final class RecentDocumentsPanel: NSView {
         } else {
             let titles = RecentRowCopy.disambiguatedTitles(for: recents)
             for (index, recent) in recents.prefix(StartWindowController.recentDisplayLimit).enumerated() {
-                let card = RecentDocumentButton(
+                let row = RecentDocumentButton(
                     recent: recent,
                     title: titles[index],
-                    target: owner
+                    target: owner,
+                    sheet: sheet
                 )
-                card.translatesAutoresizingMaskIntoConstraints = false
-                card.heightAnchor.constraint(equalToConstant: 38).isActive = true
-                list.addArrangedSubview(card)
-                card.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+                row.translatesAutoresizingMaskIntoConstraints = false
+                row.heightAnchor.constraint(equalToConstant: StartLayout.rowHeight).isActive = true
+                list.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+                rowViews.append(row)
             }
         }
     }
 }
 
+/// A quiet text button (header-level Clear) with its own hover: faint at rest,
+/// a step brighter under the pointer, always a plain label — never a bezel.
+private final class StartTextButton: NSButton {
+    private var isHovered = false
+    private var sheet: StyleSheet = StartTheme.makeSheet()
+
+    init(title: String) {
+        super.init(frame: .zero)
+        self.title = title
+        isBordered = false
+        setButtonType(.momentaryChange)
+        focusRingType = .none
+        font = .systemFont(ofSize: 11.5, weight: .regular)
+        setAccessibilityRole(.button)
+        wantsLayer = true
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+        apply(sheet: sheet)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: ceil(title.size(withAttributes: [.font: font ?? .systemFont(ofSize: 11.5)]).width), height: 20)
+    }
+
+    func apply(sheet: StyleSheet) {
+        self.sheet = sheet
+        attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11.5, weight: .regular),
+                .foregroundColor: isHovered ? sheet.textSecondary : sheet.textFaint,
+            ]
+        )
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        apply(sheet: sheet)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        apply(sheet: sheet)
+    }
+
+    override func highlight(_ flag: Bool) {}
+}
+
 private final class RecentEmptyState: NSView {
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(sheet: StyleSheet) {
+        super.init(frame: .zero)
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 26, weight: .light)
+        icon.contentTintColor = sheet.textFaint
+
         let title = NSTextField(labelWithString: "No recent files")
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.textColor = .secondaryLabelColor
+        title.textColor = sheet.textSecondary
         title.translatesAutoresizingMaskIntoConstraints = false
 
         let detail = NSTextField(wrappingLabelWithString: "Open a Markdown file to see it here.")
         detail.font = .systemFont(ofSize: 12)
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = sheet.textFaint
         detail.alignment = .center
         detail.maximumNumberOfLines = 2
         detail.translatesAutoresizingMaskIntoConstraints = false
         configurePassiveLabel(detail)
         configurePassiveLabel(title)
 
-        let stack = NSStackView(views: [title, detail])
+        let stack = NSStackView(views: [icon, title, detail])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 6
+        stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
@@ -559,18 +882,35 @@ private final class RecentEmptyState: NSView {
 
 // MARK: - Action button
 
+/// A large, calm target with an icon, a label, and the shortcut visible at the
+/// far edge.  The shell is the only painted thing — the button itself stays
+/// transparent — and pressed/hover/focus are all expressed on that shell so
+/// the state is one step instead of three.  Pointer events use the simple
+/// down/dragged/up cycle rather than an event-draining loop, so the click
+/// resolves as soon as the user lets go.
 private final class StartActionButton: NSButton {
     enum Kind { case primary, secondary }
 
     private let kind: Kind
     private let shell = NSView()
+    private let iconView = NSImageView()
     private let titleLabel: NSTextField
     private let shortcutLabel: NSTextField
     private var isHovered = false
     private var isPressed = false
+    private var sheet: StyleSheet
 
-    init(title: String, shortcut: String, kind: Kind, target: AnyObject, action: Selector) {
+    init(
+        title: String,
+        icon: String,
+        shortcut: String,
+        kind: Kind,
+        sheet: StyleSheet,
+        target: AnyObject,
+        action: Selector
+    ) {
         self.kind = kind
+        self.sheet = sheet
         titleLabel = NSTextField(labelWithString: title)
         shortcutLabel = NSTextField(labelWithString: shortcut)
         super.init(frame: .zero)
@@ -580,7 +920,7 @@ private final class StartActionButton: NSButton {
         setButtonType(.momentaryPushIn)
         isBordered = false
         self.title = ""
-        focusRingType = .exterior
+        focusRingType = .none
         setAccessibilityRole(.button)
         setAccessibilityLabel(title)
         setAccessibilityHelp(shortcut)
@@ -588,9 +928,14 @@ private final class StartActionButton: NSButton {
 
         shell.translatesAutoresizingMaskIntoConstraints = false
         shell.wantsLayer = true
-        shell.layer?.cornerRadius = 6
+        shell.layer?.cornerRadius = StartLayout.cornerRadius
         shell.layer?.masksToBounds = true
         addSubview(shell)
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+        shell.addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -610,7 +955,12 @@ private final class StartActionButton: NSButton {
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            titleLabel.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 14),
+            iconView.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 14),
+            iconView.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 7),
             titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
 
             shortcutLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 12),
@@ -638,72 +988,114 @@ private final class StartActionButton: NSButton {
 
     required init?(coder: NSCoder) { nil }
 
+    func apply(sheet: StyleSheet) {
+        self.sheet = sheet
+        updateSurface(animated: false)
+    }
+
     override var mouseDownCanMoveWindow: Bool { false }
 
     override var intrinsicContentSize: NSSize {
         let titleW = titleLabel.intrinsicContentSize.width
         let shortW = shortcutLabel.intrinsicContentSize.width
         // Trailing shortcut sits at the far edge; leave room so labels never clip.
-        return NSSize(width: ceil(14 + titleW + 12 + shortW + 14), height: 34)
+        return NSSize(width: ceil(14 + 14 + 7 + titleW + 12 + shortW + 14), height: 34)
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { self }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        return bounds.contains(local) ? self : nil
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
 
     override func mouseDown(with event: NSEvent) {
-        guard isEnabled, let window else { return }
+        guard isEnabled else { return }
+        window?.makeFirstResponder(self)
         isPressed = true
+        isHovered = true
         updateSurface(animated: false)
+    }
 
-        var keepTracking = true
-        while keepTracking {
-            guard let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) else { break }
-            let local = convert(next.locationInWindow, from: nil)
-            let inside = bounds.contains(local)
-            switch next.type {
-            case .leftMouseDragged:
-                isPressed = inside
-                updateSurface(animated: false)
-            case .leftMouseUp:
-                isPressed = false
-                isHovered = inside
-                updateSurface(animated: true)
-                if inside { sendAction(action, to: target) }
-                keepTracking = false
-            default:
-                break
-            }
-        }
+    override func mouseDragged(with event: NSEvent) {
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        isPressed = inside
+        isHovered = inside
+        updateSurface(animated: false)
     }
 
     override func mouseUp(with event: NSEvent) {
-        // mouseDown owns the tracking loop.
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        isPressed = false
+        isHovered = inside
+        updateSurface(animated: true)
+        if inside { sendAction(action, to: target) }
     }
 
     override func mouseEntered(with event: NSEvent) {
+        guard !isPressed else { return }
         isHovered = true
         updateSurface(animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
+        guard !isPressed else { return }
         isHovered = false
-        isPressed = false
         updateSurface(animated: true)
     }
 
     override func highlight(_ flag: Bool) {
-        // Custom mouseDown/Up owns pressed state so AppKit highlight can't desync clicks.
+        // Custom mouseDown/Dragged/Up owns pressed state so AppKit highlight can't desync clicks.
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        defer { updateSurface(animated: false) }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        defer { updateSurface(animated: false) }
+        return super.resignFirstResponder()
+    }
+
+    private var keyObservers: [NSObjectProtocol] = []
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        keyObservers.forEach(NotificationCenter.default.removeObserver)
+        keyObservers = []
+        guard let window else { return }
+        // Token-based so cleanup touches only the two observers we own.
+        keyObservers = [
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.windowKeyStateChanged() },
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.windowKeyStateChanged() },
+        ]
+        updateSurface(animated: false)
+    }
+
+    deinit {
+        keyObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    private func windowKeyStateChanged() {
         updateSurface(animated: false)
     }
 
     private func updateSurface(animated: Bool) {
-        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let sheet = self.sheet
+        let contrast = sheet.increaseContrast
+        let isFocused = window?.firstResponder === self && window?.isKeyWindow == true
         let changes = {
             if self.kind == .primary {
-                let accent = NSColor.controlAccentColor
+                let accent = sheet.accent
                 let fill: NSColor
                 if self.isPressed {
                     fill = accent.blended(withFraction: 0.18, of: .black) ?? accent
@@ -713,23 +1105,27 @@ private final class StartActionButton: NSButton {
                     fill = accent
                 }
                 self.shell.layer?.backgroundColor = fill.cgColor
-                self.shell.layer?.borderWidth = 0
+                self.shell.layer?.borderWidth = isFocused ? 2 : 0
+                self.shell.layer?.borderColor = NSColor.white.withAlphaComponent(0.72).cgColor
                 self.titleLabel.textColor = .white
                 self.shortcutLabel.textColor = .white
+                self.iconView.contentTintColor = .white
             } else {
-                let alpha: CGFloat = self.isHovered ? 1 : (increaseContrast ? 1 : 0.88)
-                self.shell.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(alpha).cgColor
-                self.shell.layer?.borderWidth = 1
-                self.shell.layer?.borderColor = NSColor.separatorColor
-                    .withAlphaComponent(increaseContrast ? 0.55 : 0.35).cgColor
-                self.titleLabel.textColor = .labelColor
-                self.shortcutLabel.textColor = .secondaryLabelColor
+                let fillAlpha: CGFloat = self.isPressed ? 0.11 : (self.isHovered ? 0.075 : 0.045)
+                self.shell.layer?.backgroundColor = sheet.text
+                    .withAlphaComponent(contrast ? max(fillAlpha, 0.12) : fillAlpha).cgColor
+                self.shell.layer?.borderWidth = isFocused ? 2 : 1
+                self.shell.layer?.borderColor = (isFocused ? sheet.accent : sheet.rule)
+                    .withAlphaComponent(isFocused ? 0.9 : (contrast ? 0.55 : 0.35)).cgColor
+                self.titleLabel.textColor = sheet.text
+                self.shortcutLabel.textColor = sheet.textSecondary
+                self.iconView.contentTintColor = self.isHovered ? sheet.text : sheet.textSecondary
             }
             self.shell.layer?.setAffineTransform(
                 self.isPressed
-                    ? CGAffineTransform(scaleX: 0.985, y: 0.985)
+                    ? CGAffineTransform(scaleX: 0.98, y: 0.98)
                     : self.isHovered
-                        ? CGAffineTransform(scaleX: 1.008, y: 1.008)
+                        ? CGAffineTransform(scaleX: 1.01, y: 1.01)
                         : .identity
             )
         }
@@ -840,13 +1236,17 @@ private enum RecentRowCopy {
 private final class RecentDocumentButton: NSButton {
     let documentPath: String
     private let shell = NSView()
+    private let iconView = NSImageView()
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
+    private let chevron = NSImageView()
     private var isHovered = false
     private var isPressed = false
+    private var sheet: StyleSheet
 
-    init(recent: RecentDocument, title: String, target: StartWindowController) {
+    init(recent: RecentDocument, title: String, target: StartWindowController, sheet: StyleSheet) {
         documentPath = recent.path
+        self.sheet = sheet
         titleLabel = NSTextField(labelWithString: title)
         detailLabel = NSTextField(labelWithString: RecentRowCopy.detail(for: recent))
         super.init(frame: .zero)
@@ -857,7 +1257,7 @@ private final class RecentDocumentButton: NSButton {
         setButtonType(.momentaryChange)
         isBordered = false
         self.title = ""
-        focusRingType = .exterior
+        focusRingType = .none
         setAccessibilityRole(.button)
         setAccessibilityLabel("Open \(title)")
         setAccessibilityValue(detailLabel.stringValue)
@@ -866,13 +1266,17 @@ private final class RecentDocumentButton: NSButton {
 
         shell.translatesAutoresizingMaskIntoConstraints = false
         shell.wantsLayer = true
-        shell.layer?.cornerRadius = 7
+        shell.layer?.cornerRadius = StartLayout.cornerRadius
         shell.layer?.masksToBounds = true
         addSubview(shell)
 
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .regular)
+        shell.addSubview(iconView)
+
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         configurePassiveLabel(titleLabel)
@@ -880,11 +1284,17 @@ private final class RecentDocumentButton: NSButton {
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
         detailLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
-        detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.maximumNumberOfLines = 1
         configurePassiveLabel(detailLabel)
         shell.addSubview(detailLabel)
+
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Open")
+        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        chevron.wantsLayer = true
+        chevron.layer?.opacity = 0
+        shell.addSubview(chevron)
 
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -892,27 +1302,42 @@ private final class RecentDocumentButton: NSButton {
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            titleLabel.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 10),
+            iconView.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 12),
+            iconView.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 13),
+            iconView.heightAnchor.constraint(equalToConstant: 13),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
 
             detailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 20),
-            detailLabel.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -10),
+            detailLabel.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -6),
             detailLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+
+            chevron.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -12),
+            chevron.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 10),
+            chevron.heightAnchor.constraint(equalToConstant: 10),
         ])
 
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detailLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        updateSurface(animated: false)
         addTrackingArea(NSTrackingArea(
             rect: .zero,
             options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
             owner: self,
             userInfo: nil
         ))
+        updateSurface(animated: false)
     }
 
     required init?(coder: NSCoder) { nil }
+
+    func apply(sheet: StyleSheet) {
+        self.sheet = sheet
+        updateSurface(animated: false)
+    }
 
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -926,42 +1351,30 @@ private final class RecentDocumentButton: NSButton {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard isEnabled, let window else { return }
+        guard isEnabled else { return }
+        // Keep "selection = first responder" coherent: a click that does not
+        // complete a handoff leaves arrow navigation pointing at this row.
+        window?.makeFirstResponder(self)
         isPressed = true
+        isHovered = true
         updateSurface(animated: false)
+    }
 
-        // Track the click ourselves so the movable-background window cannot
-        // steal the drag and leave a stuck accent fill on the wrong row.
-        var keepTracking = true
-        while keepTracking {
-            guard let next = window.nextEvent(matching: [
-                .leftMouseUp, .leftMouseDragged,
-            ]) else { break }
-
-            let local = convert(next.locationInWindow, from: nil)
-            let inside = bounds.contains(local)
-
-            switch next.type {
-            case .leftMouseDragged:
-                isHovered = inside
-                isPressed = inside
-                updateSurface(animated: false)
-            case .leftMouseUp:
-                isPressed = false
-                isHovered = inside
-                updateSurface(animated: true)
-                if inside {
-                    sendAction(action, to: target)
-                }
-                keepTracking = false
-            default:
-                break
-            }
-        }
+    override func mouseDragged(with event: NSEvent) {
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        isHovered = inside
+        isPressed = inside
+        updateSurface(animated: false)
     }
 
     override func mouseUp(with event: NSEvent) {
-        // mouseDown owns the tracking loop.
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        isPressed = false
+        isHovered = inside
+        updateSurface(animated: true)
+        if inside {
+            sendAction(action, to: target)
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -980,24 +1393,47 @@ private final class RecentDocumentButton: NSButton {
         // Custom tracking owns pressed/hover so AppKit highlight can't desync.
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        detailLabel.textColor = .secondaryLabelColor
-        updateSurface(animated: false)
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        defer { updateSurface(animated: true) }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        defer { updateSurface(animated: false) }
+        return super.resignFirstResponder()
     }
 
     private func updateSurface(animated: Bool) {
-        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let sheet = self.sheet
+        let contrast = sheet.increaseContrast
+        // Keyboard focus and selection are one thing: the row under the first
+        // responder draws an accent ring, so arrow-key navigation has a clear
+        // and native-feeling destination.
+        let isFocused = window?.firstResponder === self && window?.isKeyWindow == true
+        let engaged = isHovered || isPressed || isFocused
         let fill: NSColor
         if isPressed {
-            fill = NSColor.controlAccentColor.withAlphaComponent(increaseContrast ? 0.28 : 0.18)
+            fill = sheet.accent.withAlphaComponent(contrast ? 0.28 : 0.18)
         } else if isHovered {
-            fill = NSColor.labelColor.withAlphaComponent(increaseContrast ? 0.12 : 0.07)
+            fill = sheet.text.withAlphaComponent(contrast ? 0.12 : 0.07)
+        } else if isFocused {
+            fill = sheet.accent.withAlphaComponent(contrast ? 0.12 : 0.07)
         } else {
             fill = .clear
         }
         let apply = {
             self.shell.layer?.backgroundColor = fill.cgColor
+            self.shell.layer?.borderWidth = isFocused ? 1.5 : 0
+            self.shell.layer?.borderColor = sheet.accent.cgColor
+            self.iconView.contentTintColor = engaged ? sheet.accent : sheet.textFaint
+            self.detailLabel.textColor = engaged ? sheet.textSecondary : sheet.textFaint
+            self.chevron.contentTintColor = sheet.accent
+            self.chevron.layer?.opacity = engaged ? 1 : 0
+            self.chevron.layer?.setAffineTransform(
+                engaged ? .identity : CGAffineTransform(translationX: 4, y: 0)
+            )
             self.shell.layer?.setAffineTransform(
                 self.isPressed
                     ? CGAffineTransform(scaleX: 0.992, y: 0.992)
@@ -1005,11 +1441,7 @@ private final class RecentDocumentButton: NSButton {
             )
         }
         if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
-                context.allowsImplicitAnimation = true
-                apply()
-            }
+            Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in apply() }
         } else {
             apply()
         }
@@ -1021,28 +1453,44 @@ private final class RecentDocumentButton: NSButton {
 private final class BrandMarkView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Downright app icon")
     }
 
     required init?(coder: NSCoder) { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+        guard let icon = Self.icon else { return }
+        let iconRect = bounds.insetBy(dx: 1, dy: 1)
+        let radius = iconRect.width * 0.24
 
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
-        context.setStrokeColor(NSColor.white.withAlphaComponent(0.95).cgColor)
-        context.setLineWidth(1.5)
-        context.setLineCap(.round)
-        context.setLineJoin(.round)
-        context.move(to: CGPoint(x: bounds.minX + 5.5, y: bounds.maxY - 6))
-        context.addLine(to: CGPoint(x: bounds.maxX - 5.5, y: bounds.minY + 6))
-        context.move(to: CGPoint(x: bounds.maxX - 9, y: bounds.minY + 6))
-        context.addLine(to: CGPoint(x: bounds.maxX - 5.5, y: bounds.minY + 6))
-        context.addLine(to: CGPoint(x: bounds.maxX - 5.5, y: bounds.minY + 9.5))
-        context.strokePath()
+        context.setShadow(
+            offset: CGSize(width: 0, height: -1.5),
+            blur: 3.5,
+            color: NSColor.black.withAlphaComponent(0.22).cgColor
+        )
+        NSColor.white.withAlphaComponent(0.96).setFill()
+        NSBezierPath(roundedRect: iconRect, xRadius: radius, yRadius: radius).fill()
         context.restoreGState()
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: iconRect, xRadius: radius, yRadius: radius).addClip()
+        icon.draw(
+            in: iconRect,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+        NSGraphicsContext.restoreGraphicsState()
     }
+
+    private static let icon: NSImage? = {
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/AppIcon.png")
+        return NSImage(contentsOf: url)
+    }()
 }

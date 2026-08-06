@@ -109,4 +109,105 @@ import Testing
         // than merely a change of output.
         #expect(a == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
     }
+
+    @Test func readHeadReadsOnlyTheRequestedBytes() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("big.md")
+        // 4MB, far beyond the thumbnail's 64KB head — a whole-file read here
+        // would be the exact memory spike the bounded read exists to prevent.
+        let body = Data(repeating: 0x61 /* "a" */, count: 4 * 1024 * 1024)
+        try body.write(to: url)
+
+        let head = DocumentIO.readHead(contentsOf: url, limit: 64 * 1024)
+        #expect(head != nil)
+        #expect(head!.utf8.count <= 64 * 1024)
+        #expect(head! == String(repeating: "a", count: 64 * 1024))
+    }
+
+    @Test func readHeadTrimsASplitMultibyteScalar() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("split.md")
+        // "🌊" is four UTF-8 bytes; a limit that splits it mid-scalar must not
+        // return an undecodable head.
+        let text = String(repeating: "🌊", count: 20) + "tail"
+        try Data(text.utf8).write(to: url)
+
+        let head = DocumentIO.readHead(contentsOf: url, limit: 30)
+        let expected = String(repeating: "🌊", count: 7)  // 28 bytes
+        #expect(head == expected)
+        #expect(head?.utf8.count == 28)
+    }
+
+    @Test func readHeadReturnsNilForMissingFile() {
+        #expect(DocumentIO.readHead(
+            contentsOf: URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString).md"),
+            limit: 1024
+        ) == nil)
+    }
+
+    @Test func roundTripsUTF32BOM() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+
+        var le = Data([0xFF, 0xFE, 0x00, 0x00])
+        le += "# Title\n\nBody.\n".data(using: .utf32LittleEndian)!
+        try le.write(to: url)
+        let (textLE, fidelityLE) = try DocumentIO.read(contentsOf: url)
+        #expect(textLE == "# Title\n\nBody.\n")
+        #expect(fidelityLE.encoding == .utf32LE)
+        #expect(fidelityLE.hasBOM)
+        try assertRoundTrip(le, "utf32 LE BOM")
+
+        var be = Data([0x00, 0x00, 0xFE, 0xFF])
+        be += "# Title\n".data(using: .utf32BigEndian)!
+        try be.write(to: url)
+        let (textBE, _) = try DocumentIO.read(contentsOf: url)
+        #expect(textBE == "# Title\n")
+        try assertRoundTrip(be, "utf32 BE BOM")
+    }
+
+    @Test func readsTruncatedUTF16And32() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+
+        // UTF-16 LE body with one torn trailing byte: must decode up to the
+        // last whole code unit instead of throwing.
+        let le = Data([0xFF, 0xFE]) + "# Abc\n".data(using: .utf16LittleEndian)! + Data([0x41])
+        try le.write(to: url)
+        let (text, _) = try DocumentIO.read(contentsOf: url)
+        #expect(text == "# Abc\n")
+
+        // UTF-32 LE body with three stray trailing bytes.
+        var ut32 = Data([0xFF, 0xFE, 0x00, 0x00])
+        ut32 += "Hi\n".data(using: .utf32LittleEndian)!
+        ut32 += Data([0x01, 0x02])
+        try ut32.write(to: url)
+        let (text32, _) = try DocumentIO.read(contentsOf: url)
+        #expect(text32 == "Hi\n")
+    }
+
+    @Test func readsBOMlessUTF16() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+
+        let leBody = "one\ntwo\n".data(using: .utf16LittleEndian)!
+        try leBody.write(to: url)
+        let (textLE, fidelityLE) = try DocumentIO.read(contentsOf: url)
+        #expect(textLE == "one\ntwo\n")
+        #expect(fidelityLE.encoding == .utf16LE)
+        #expect(!fidelityLE.hasBOM)
+        try assertRoundTrip(leBody, "utf16 LE no BOM")
+
+        let beBody = "one\n".data(using: .utf16BigEndian)!
+        try beBody.write(to: url)
+        let (textBE, fidelityBE) = try DocumentIO.read(contentsOf: url)
+        #expect(textBE == "one\n")
+        #expect(fidelityBE.encoding == .utf16BE)
+        try assertRoundTrip(beBody, "utf16 BE no BOM")
+    }
 }

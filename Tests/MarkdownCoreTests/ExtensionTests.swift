@@ -57,6 +57,25 @@ import Testing
         #expect(doc.frontMatter != nil)
         #expect(doc.frontMatter?["ok"] == "yes")
     }
+
+    @Test func parsesBlockScalarValues() {
+        let doc = MarkdownParser.parse("""
+        ---
+        summary: |
+          first line
+          second line
+        abstract: >
+          folded one
+          folded two
+        ok: yes
+        ---
+
+        Body
+        """)
+        #expect(doc.frontMatter?["summary"] == "first line\nsecond line")
+        #expect(doc.frontMatter?["abstract"] == "folded one folded two")
+        #expect(doc.frontMatter?["ok"] == "yes")
+    }
 }
 
 @Suite struct MathTests {
@@ -202,6 +221,29 @@ import Testing
         #expect(labelled.count == 1)
         #expect(labelled[0].0 == "Design Notes")
         #expect(labelled[0].1 == "the notes")
+    }
+
+    @Test func paddedTargetsAndLabelsTrimButKeepGeometry() {
+        let padded = wikilinks("See [[ Design Notes | the notes ]] here\n")
+        #expect(padded.count == 1)
+        #expect(padded[0].0 == "Design Notes")
+        #expect(padded[0].1 == "the notes")
+
+        let doc = MarkdownParser.parse("[[  A  ]]\n")
+        var span: (NSRange?, NSRange?, NSRange?)?
+        doc.root.walk { block in
+            for s in block.inlines {
+                s.walk { inline in
+                    if case .wikilink = inline.kind { span = (inline.leadingMarkerRange, inline.contentRange, inline.trailingMarkerRange) }
+                }
+            }
+        }
+        // markers and content must cover the written padding, not the trimmed
+        // target: `[[` is a 2-char marker, the body `  A  ` is content.
+        let (leading, content, trailing) = span!
+        #expect(leading == NSRange(location: 0, length: 2))
+        #expect(content == NSRange(location: 2, length: 5))
+        #expect(trailing == NSRange(location: 7, length: 2))
     }
 
     @Test func neverMatchesInsideCode() {

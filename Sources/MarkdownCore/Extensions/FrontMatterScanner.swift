@@ -62,6 +62,27 @@ enum FrontMatterScanner {
             let valueStart = lineRange.location + text.utf16.count - rawValue.utf16.count
             let trimmedValue = rawValue.trimmingCharacters(in: .whitespaces)
 
+            // `key: |` and `key: >` YAML block scalars span following indented
+            // lines.  A card is not a YAML engine, but a block scalar whose
+            // value was read as the literal "|" or ">" rendered the card
+            // wrong, so the continuation lines are folded into the value.
+            if isBlockScalarIndicator(trimmedValue) {
+                let style = trimmedValue.contains(">") ? BlockScalarStyle.folded : .literal
+                let (parts, consumed) = blockScalar(map, startingAt: line + 1, limit: to)
+                if !parts.isEmpty {
+                    let end = map.contentRange(ofLine: line + consumed).upperBound
+                    let value = style == .literal
+                        ? parts.joined(separator: "\n")
+                        : parts.joined(separator: " ")
+                    fields.append(FrontMatterField(
+                        key: key, value: value, keyRange: keyRange,
+                        valueRange: NSRange(location: valueStart, length: max(0, end - valueStart))
+                    ))
+                    line += consumed
+                }
+                continue
+            }
+
             if trimmedValue.isEmpty {
                 // `tags:` followed by an indented `- a` block sequence.
                 let (items, consumed) = blockSequence(map, startingAt: line + 1, limit: to)
@@ -87,6 +108,37 @@ enum FrontMatterScanner {
 
     private static func isKeyCharacter(_ ch: Character) -> Bool {
         ch.isLetter || ch.isNumber || ch == "_" || ch == "-" || ch == "." || ch == " "
+    }
+
+    private enum BlockScalarStyle {
+        case literal   // `|`: newlines kept
+        case folded    // `>`: continuation lines folded on spaces
+    }
+
+    private static func isBlockScalarIndicator(_ value: String) -> Bool {
+        let indicator = value.filter { $0 == "|" || $0 == ">" }
+        guard indicator.count == 1, value.allSatisfy({ $0 == "|" || $0 == ">" || $0 == "-" || $0 == "+" }) else {
+            return false
+        }
+        return value == "|" || value == ">" || value == "|-" || value == ">-"
+            || value == "|+" || value == ">+"
+    }
+
+    /// Consumes the indented (or blank) lines that make up a block scalar,
+    /// returning the folded content lines and how many lines were consumed.
+    private static func blockScalar(
+        _ map: SourceMap, startingAt start: Int, limit: Int
+    ) -> ([String], Int) {
+        var parts: [String] = []
+        var line = start
+        while line < limit {
+            let text = map.string(ofLine: line)
+            if text.isBlankLine { line += 1; continue }
+            guard !text.leadingIndent.isEmpty else { break }
+            parts.append(String(text.dropFirst(text.leadingIndent.count)).trimmingCharacters(in: .whitespacesAndNewlines))
+            line += 1
+        }
+        return (parts, line - start)
     }
 
     /// Consumes `  - item` lines, returning the items and how many lines they took.

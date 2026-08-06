@@ -62,6 +62,13 @@ public final class MarkdownTextView: NSTextView {
 
     public weak var markdownDelegate: MarkdownTextViewDelegate?
 
+    /// Host hook for the command/keybinding layer.  Invoked before the view's
+    /// own key handling on every `keyDown`; return `true` to claim the event
+    /// (a binding the host resolved and ran).  The host decides the scope from
+    /// the view's current editability, so bare read-mode letters only fire when
+    /// there is no caret to swallow them (§7.2).
+    public var keyEventHandler: ((NSEvent) -> Bool)?
+
     public private(set) var parsedDocument: ParsedDocument = .empty
 
     /// Instant, and preserves scroll position and selection (§3.2).
@@ -342,6 +349,13 @@ public final class MarkdownTextView: NSTextView {
     /// scroll observer clears this and settles the frame once the viewport
     /// moves away from the bottom edge.
     private var pendingShrinkRepair = false
+    /// Coalesced scroll handler: during a momentum scroll the bounds change
+    /// notification fires 30–60×/s, but the gutter, breadcrumb, and density
+    /// rail only need to update once per display refresh. We coalesce via
+    /// `DispatchQueue.main.async` so rapid-fire events fold into a single
+    /// callback per frame.
+    private var scrollCoalesceWorkItem: DispatchWorkItem?
+    private var scrollCoalesceGeneration: UInt = 0
 
     private var effectivePolicy: DecorationPolicy {
         var policy = mode.policy
@@ -442,6 +456,7 @@ public final class MarkdownTextView: NSTextView {
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         resizeWorkItem?.cancel()
+        scrollCoalesceWorkItem?.cancel()
         copiedCodeFeedbackWorkItem?.cancel()
         // A repeating 60fps timer on the main run loop would otherwise keep
         // firing forever after the view is gone: its block only ever
@@ -1438,6 +1453,15 @@ public final class MarkdownTextView: NSTextView {
         handleSelectionChanged()
     }
 
+    /// The binding layer gets first crack at a key before the caret does, so a
+    /// bound chord (⌥↓/⌥↑ change jumps, ⌘⌥ restructure, and — when the surface
+    /// is read-only — the bare 1–5 zoom / `n`/`p` / vim letters) can run.  A
+    /// key the host does not claim falls through to normal text editing.
+    public override func keyDown(with event: NSEvent) {
+        if keyEventHandler?(event) == true { return }
+        super.keyDown(with: event)
+    }
+
     /// The caret moved, so the reveal set may have.  Order matters: capture the
     /// selection in source terms *before* the map changes under it, rebuild,
     /// then put it back.  Getting this backwards is exactly the caret drift
@@ -1939,26 +1963,53 @@ public final class MarkdownTextView: NSTextView {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.gutterRail?.needsDisplay = true
-                    self.markdownDelegate?.markdownTextViewDidScroll(self)
-                    guard let scrollView = self.enclosingScrollView else { return }
-                    let viewportHeight = scrollView.contentView.bounds.height
-                    let visibleMaxY = scrollView.documentVisibleRect.maxY
-                    let repairSlack = max(24, viewportHeight * 0.15)
-                    let pinnedToBottom = visibleMaxY >= self.frame.height - repairSlack
-                    if self.pendingShrinkRepair, !pinnedToBottom {
-                        // The viewport left the bottom edge — settle an over-tall
-                        // frame whose shrink was deferred so it never dropped the
-                        // page under the user's hands.
-                        self.pendingShrinkRepair = false
-                        self.requestContentResize(.scrollRepair)
-                        return
+                    // Coalesce: batch multiple rapid scroll events into one
+                    // callback per run-loop iteration.  The gutter needs a
+                    // redraw, but the density rail, breadcrumb, and pane sync
+                    // can all wait until the next frame.
+                    self.scrollCoalesceGeneration &+= 1
+                    let generation = self.scrollCoalesceGeneration
+                    let existing = self.scrollCoalesceWorkItem
+                    self.scrollCoalesceWorkItem = DispatchWorkItem { [weak self] in
+                        guard let self, self.scrollCoalesceGeneration == generation else { return }
+                        self.scrollCoalesceWorkItem = nil
+                        self.markdownDelegate?.markdownTextViewDidScroll(self)
+                        self.handleScroll()
                     }
-                    guard self.resizeNeedsRepair, pinnedToBottom else { return }
-                    self.requestContentResize(.scrollRepair)
+                    // Cancel the previous work item first so only the latest
+                    // survives.  Posting async from the main queue means the
+                    // block runs *after* the current AppKit event loop turn,
+                    // letting all pending scroll events settle.
+                    existing?.cancel()
+                    if let item = self.scrollCoalesceWorkItem {
+                        DispatchQueue.main.async(execute: item)
+                    }
+                    // Gutter redraw is cheap (just setNeedsDisplay) and
+                    // latency-sensitive — run it immediately.
+                    self.gutterRail?.needsDisplay = true
                 }
             }
         }
+    }
+
+    /// Called once per coalesced scroll event.  The gutter rail already
+    /// redrew; this handles everything else that can wait a frame.
+    private func handleScroll() {
+        guard let scrollView = enclosingScrollView else { return }
+        let viewportHeight = scrollView.contentView.bounds.height
+        let visibleMaxY = scrollView.documentVisibleRect.maxY
+        let repairSlack = max(24, viewportHeight * 0.15)
+        let pinnedToBottom = visibleMaxY >= frame.height - repairSlack
+        if pendingShrinkRepair, !pinnedToBottom {
+            // The viewport left the bottom edge — settle an over-tall
+            // frame whose shrink was deferred so it never dropped the
+            // page under the user's hands.
+            pendingShrinkRepair = false
+            requestContentResize(.scrollRepair)
+            return
+        }
+        guard resizeNeedsRepair, pinnedToBottom else { return }
+        requestContentResize(.scrollRepair)
     }
 
     public override func updateTrackingAreas() {

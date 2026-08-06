@@ -49,8 +49,11 @@ final class MathFragment: DownrightFragment {
     private func renderedImage() -> NSImage? {
         guard let style = styleSheet else { return nil }
         let pointSize = style.mathPointSize * 1.25
+        // SwiftMath crops tightly to the glyph bounds; the padded bitmap keeps
+        // ≥ 8pt of air on every edge so a tall formula never clips through its
+        // own line box (§11.3).
         return MathRenderer.image(latex: payload.detail, display: true,
-                                  pointSize: pointSize, color: style.text)
+                                  pointSize: pointSize, color: style.text, padding: 8)
     }
 }
 
@@ -58,18 +61,7 @@ extension DownrightFragment {
     /// Draws an `NSImage` into a flipped CGContext without going through
     /// AppKit's focus stack, which is not valid inside a layout fragment.
     func draw(image: NSImage, in target: CGRect, in cg: CGContext, cornerRadius: CGFloat = 0) {
-        var proposed = target
-        guard let cgImage = image.cgImage(forProposedRect: &proposed, context: nil, hints: nil) else { return }
-        cg.saveGState()
-        if cornerRadius > 0 {
-            cg.addPath(CGPath(roundedRect: target, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil))
-            cg.clip()
-        }
-        cg.translateBy(x: 0, y: target.midY)
-        cg.scaleBy(x: 1, y: -1)
-        cg.translateBy(x: 0, y: -target.midY)
-        cg.draw(cgImage, in: target)
-        cg.restoreGState()
+        drawNSImage(image, in: target, in: cg, cornerRadius: cornerRadius)
     }
 
     func draw(image: NSImage, at origin: CGPoint, in cg: CGContext) {

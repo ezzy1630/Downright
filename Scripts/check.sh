@@ -43,6 +43,25 @@ TEST_STATUS=$?
 grep -aE "Test run|✘|Suite .* (passed|failed)|error:|failed after" "$TEST_LOG" | tail -40
 
 echo
+echo "==> Version consistency (single source: Config/version.env)"
+"$ROOT/Scripts/sync-versions.sh"
+
+echo "==> Sparkle is linked only by the host app"
+SPARKLE_IMPORTS="$(grep -rln 'import Sparkle' Sources --include='*.swift' || true)"
+if [ -z "$SPARKLE_IMPORTS" ]; then
+    echo "    FAIL: no source file imports Sparkle — the updater was not wired up"
+    exit 1
+fi
+for file in $SPARKLE_IMPORTS; do
+    case "$file" in
+        Sources/DownrightApp/Updater/*) : ;;  # the engine boundary, as designed
+        Sources/DownrightApp/*) : ;;
+        *) echo "    FAIL: Sparkle imported outside the host app: $file"; exit 1 ;;
+    esac
+done
+echo "    ok"
+
+echo
 echo "==> Sanity: the runner must actually have run something"
 COUNT=$(awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { print count + 0 }' "$TEST_LOG")
 echo "    $COUNT tests executed"

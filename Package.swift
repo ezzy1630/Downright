@@ -71,6 +71,11 @@ let package = Package(
         ),
         .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.0"),
         .package(url: "https://github.com/lukilabs/beautiful-mermaid-swift.git", from: "1.0.0"),
+        // Sparkle is a binary framework pinned exactly: update ordering, secure
+        // download, validation, extraction, authorization, atomic replacement,
+        // and relaunch are all owned by Sparkle 2.9.5.  Only the host app links
+        // it — never MarkdownCore, MarkdownRender, the CLI, or Quick Look.
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.9.5"),
     ],
     targets: [
         .target(
@@ -90,7 +95,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "DownrightApp",
-            dependencies: ["MarkdownCore", "MarkdownRender"],
+            dependencies: [
+                "MarkdownCore",
+                "MarkdownRender",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // The §12 budget, made runnable: `swift run -c release drbench`.

@@ -343,7 +343,9 @@ struct BlockBuilder {
         for index in children.indices.dropFirst() {
             let start = children[index - 1].range.location
             let span = NSRange(location: start, length: max(0, children[index].range.location - start))
-            if text.substring(with: span).hasSuffix("\n\n") { return false }
+            // Only the two trailing UTF-16 units decide; avoid a substring.
+            let end = span.upperBound
+            if end >= 2, text.character(at: end - 1) == 0x0A, text.character(at: end - 2) == 0x0A { return false }
         }
         // CommonMark: a list is loose when any item directly contains two
         // block-level elements, not only when a single item happens to.
@@ -375,14 +377,18 @@ struct BlockBuilder {
 
     private func ordinal(at offset: Int) -> Int? {
         var i = offset
-        var digits = ""
+        var value = 0
+        var sawDigit = false
         while i < text.length {
             let ch = text.character(at: i)
             guard ch >= 0x30, ch <= 0x39 else { break }
-            digits.append(Character(UnicodeScalar(ch)!))
+            sawDigit = true
+            let digit = Int(ch - 0x30)
+            if value > (Int.max - digit) / 10 { return nil }
+            value = value * 10 + digit
             i += 1
         }
-        return digits.isEmpty ? nil : Int(digits)
+        return sawDigit ? value : nil
     }
 
     /// Range of the single character between the brackets of `- [x] `, so a
@@ -623,14 +629,49 @@ enum SubtreeHasher {
 
         var h = FNV.combine(FNV.offsetBasis, UInt64(BlockIdentifier.discriminator(block.content)))
         if block.children.isEmpty {
-            h = FNV.combine(h, text.substring(with: clamp(block.range, to: text.length)))
+            h = FNV.combine(h, text, range: clamp(block.range, to: text.length))
         } else {
-            if let marker = block.markerRange {
-                h = FNV.combine(h, text.substring(with: clamp(marker, to: text.length)))
+            // A container's own source is not just its first line: blockquote,
+            // list and callout markers on continuation lines sit *between* the
+            // children, and blank quote lines (a lone `>`) carry no child at
+            // all.  Hash every gap plus the trailing gap so an edit there is
+            // visible to the diff instead of being skipped as "no child".
+            let full = clamp(block.range, to: text.length)
+            var scan = full.location
+            for child in block.children {
+                let childRange = clamp(child.range, to: text.length)
+                if childRange.location > scan {
+                    h = FNV.combine(h, text, range: NSRange(location: scan, length: childRange.location - scan))
+                }
+                h = FNV.combine(h, child.subtreeHash)
+                if childRange.upperBound > scan { scan = childRange.upperBound }
             }
-            for child in block.children { h = FNV.combine(h, child.subtreeHash) }
+            if full.upperBound > scan {
+                h = FNV.combine(h, text, range: NSRange(location: scan, length: full.upperBound - scan))
+            }
         }
         block.subtreeHash = h
+    }
+
+    /// Hashes only a container's own bytes (kind + gaps between children),
+    /// ignoring the children's hashes.  Used by the diff to detect a marker-only
+    /// edit — e.g. a blank `>` quote line being added or removed — that leaves
+    /// every child's subtree unchanged.
+    static func frameworkHash(_ block: MDBlock, in text: NSString) -> UInt64 {
+        var h = FNV.combine(FNV.offsetBasis, UInt64(BlockIdentifier.discriminator(block.content)))
+        let full = clamp(block.range, to: text.length)
+        var scan = full.location
+        for child in block.children {
+            let childRange = clamp(child.range, to: text.length)
+            if childRange.location > scan {
+                h = FNV.combine(h, text, range: NSRange(location: scan, length: childRange.location - scan))
+            }
+            if childRange.upperBound > scan { scan = childRange.upperBound }
+        }
+        if full.upperBound > scan {
+            h = FNV.combine(h, text, range: NSRange(location: scan, length: full.upperBound - scan))
+        }
+        return h
     }
 
     private static func clamp(_ range: NSRange, to length: Int) -> NSRange {

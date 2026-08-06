@@ -446,7 +446,7 @@ extension DocumentWindowController: BreadcrumbDelegate {
 }
 
 extension DocumentWindowController: FindBarDelegate {
-    func findBar(_ bar: FindBarView, didChange query: FindQuery) { runFind(query) }
+    func findBar(_ bar: FindBarView, didChange query: FindQuery) { scheduleFindQuery(query) }
 
     func findBar(_ bar: FindBarView, didRequestAdvance forward: Bool) { advanceFind(forward: forward) }
 

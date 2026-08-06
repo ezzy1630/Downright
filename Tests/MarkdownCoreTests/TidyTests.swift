@@ -79,6 +79,32 @@ import Testing
         #expect(tidied(text, rules: [.trailingWhitespace]) == text)
     }
 
+    /// §9.1 regression: trailing-whitespace and blank-lines overlap on
+    /// whitespace-only blank runs.  Previously one edit won silently, so the
+    /// collapse was dropped and the run kept every whitespace line.
+    @Test func whitespaceOnlyBlankRunsCollapseWithoutOverlap() {
+        let source = "a\n   \n\t \nb\n"
+        let edits = TidyDocument.plan(
+            MarkdownParser.parse(source),
+            rules: [.trailingWhitespace, .blankLines]
+        )
+        let sorted = edits.sorted { $0.range.location < $1.range.location }
+        for index in sorted.indices.dropFirst() {
+            #expect(sorted[index - 1].range.upperBound <= sorted[index].range.location,
+                    "overlapping tidy edits would be dropped silently")
+        }
+        let applied = TidyDocument.plan(
+            MarkdownParser.parse(source),
+            rules: [.trailingWhitespace, .blankLines]
+        ).applied(to: source)
+        #expect(applied == "a\n\nb\n", "whitespace-only blank run not collapsed: \(String(reflecting: applied))")
+    }
+
+    @Test func loneBlankWhitespaceLineStillTrimmedAlone() {
+        #expect(tidied("   \nx\n", rules: [.trailingWhitespace]) == "\nx\n")
+        #expect(tidied("   \nx\n", rules: [.trailingWhitespace, .blankLines]) == "\nx\n")
+    }
+
     // MARK: Invariants
 
     /// A rule that normalises to a form it would then re-normalise produces a

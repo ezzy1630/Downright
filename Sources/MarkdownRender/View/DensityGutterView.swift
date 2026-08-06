@@ -61,17 +61,29 @@ public final class DensityGutterView: NSView {
 
     /// Visible viewport, used to style the active prompt mark. The mark group
     /// stays centred in the viewport so scrolling never moves the rail itself.
+    ///
+    /// Scroll updates call this with `animated: false` — position changes
+    /// during momentum scrolling do not need CA animation setup on every mark.
+    /// Pointer-interaction code calls it with `animated: true` so the current
+    /// heading glow and hovered mark transitions stay smooth.
     public var visibleRange: ClosedRange<CGFloat> = 0...1 {
         didSet {
-            updateMarkLayers(animated: true)
+            // Only animate if the *current* heading changed (user landed on a
+            // new section); a simple scroll-by never animates so momentum
+            // scrolling does not create CA animation objects per mark.
+            let currentNow = currentHeadingFraction()
+            let currentChanged = currentNow != previousCurrentFraction
+            updateMarkLayers(animated: currentChanged)
         }
     }
 
     /// How far the reader has got, shaded behind everything (§5.1).
+    /// Scroll-driven updates do not animate; mark opacity changes are cheap
+    /// implicit transactions.
     public var readProgress: CGFloat = 0 {
         didSet {
             setAccessibilityValueDescription("\(Int((readProgress * 100).rounded())) percent read")
-            updateMarkLayers(animated: true)
+            updateMarkLayers(animated: false)
         }
     }
 

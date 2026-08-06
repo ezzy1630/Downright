@@ -1,0 +1,387 @@
+name: Release
+
+# A tag vX.Y.Z triggers the full production pipeline: gates → tests → signed,
+# notarized, stapled universal build → Sparkle-signed appcast → GitHub Release
+# → GitHub Pages deployment.  All secrets live in the `release` environment.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    environment: release
+    timeout-minutes: 90
+    permissions:
+      contents: write        # publish the GitHub Release + assets
+      id-token: write        # GitHub Pages deployment
+      pages: write
+
+    env:
+      MARKETING_VERSION_FILE: Config/version.env
+      SCRATCH: .build-ci-main
+      TEST_SCRATCH: .build-ci-test
+
+    steps:
+      # ---------------------------------------------------------------- gates
+      - name: Checkout full history
+        uses: actions/checkout@v4  # pin to the commit SHA of your v4 checkout tag
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag shape and version contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "TAG=$TAG"
+          # 1. Reject non-SemVer tags.
+          if ! echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::tag '$GITHUB_REF_NAME' is not SemVer X.Y.Z"; exit 1
+          fi
+          # 2. The tag must match the canonical MARKETING_VERSION.
+          # shellcheck disable=SC1091
+          source Config/version.env
+          if [ "$MARKETING_VERSION" != "$TAG" ]; then
+            echo "::error::Config/version.env says $MARKETING_VERSION, tag says $TAG"; exit 1
+          fi
+          # 3. The tag must point into protected main (reachable from origin/main).
+          git fetch origin main --depth=1
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME does not point into main"; exit 1
+          fi
+          # 4. Working tree must be clean (no generated-file drift).
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::dirty working tree:"; git status --porcelain; exit 1
+          fi
+          # 5. Numeric, monotonically increasing build number comes from the
+          #    commit count (build-number.sh); release builds must be > any
+          #    previous release.  The value is checked again after building.
+          Scripts/sync-versions.sh
+
+      - name: Resolve pinned dependencies
+        run: swift package resolve
+
+      - name: Run full check suite (all unit/UI suites + version gates)
+        env:
+          RUN_DRBENCH: "1"  # release performance budgets enforced
+        run: ./Scripts/check.sh
+
+      # ----------------------------------------------------------- build (Xcode)
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Prepare production Info.plist (inject public key from secret)
+        run: Scripts/prepare-release-info-plist.sh
+        env:
+          SPARKLE_ED25519_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
+
+      - name: Build Release archive (universal)
+        run: |
+          set -euo pipefail
+          BUILD="$(Scripts/build-number.sh)"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          xcodebuild \
+            -project Downright.xcodeproj \
+            -scheme Downright \
+            -configuration Release \
+            -derivedDataPath .build-release \
+            -archivePath .build-release/Downright.xcarchive \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            INFOPLIST_FILE=Config/Release-Info.plist \
+            MARKETING_VERSION="$TAG" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+      - name: Embed CLI, extensions, and verify layout
+        run: |
+          set -euo pipefail
+          APP=".build-release/Downright.xcarchive/Products/Applications/Downright.app"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          swift build -c release --scratch-path .build-release-spm --product down
+          cp .build-release-spm/release/down "$APP/Contents/MacOS/down"
+          Scripts/verify-bundle.sh "$APP" --production
+          # The archive already embedded Sparkle via the XcodeGen spec; prove it.
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+
+      # ---------------------------------------------------------------- signing
+      - name: Import Developer ID into ephemeral keychain
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          PASSWORD="$(openssl rand -hex 24)"
+          echo "$DEVELOPER_ID_APPLICATION_P12_BASE64" | base64 --decode > /tmp/downright-cert.p12
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security import /tmp/downright-cert.p12 -k "$KEYCHAIN" \
+            -P "$DEVELOPER_ID_APPLICATION_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$PASSWORD" "$KEYCHAIN"
+          rm -f /tmp/downright-cert.p12
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+        env:
+          DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+
+      - name: Sign every nested executable (no --deep)
+        run: |
+          set -euo pipefail
+          APP="${{ env.APP }}"
+          IDENTITY="Developer ID Application: ${{ secrets.DEVELOPER_ID_APPLICATION_NAME }} (${{ secrets.DEVELOPER_ID_APPLICATION_TEAM_ID }})"
+          sign() { codesign --force --options runtime --timestamp --sign "$IDENTITY" "$1"; }
+          # Sparkle framework + its nested XPC helpers first.  Sparkle 2.9.5
+          # ships the helpers under Versions/B/XPCServices (unversioned bundle
+          # layout inside), so discover them rather than hard-coding a path.
+          sign "$APP/Contents/Frameworks/Sparkle.framework"
+          for helper in "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc; do
+            [ -d "$helper" ] && sign "$helper"
+          done
+          # Quick Look extensions.
+          for appex in "$APP"/Contents/PlugIns/*.appex; do sign "$appex"; done
+          # The CLI lives in MacOS/ and is signed as part of the app bundle.
+          sign "$APP/Contents/MacOS/down"
+          # The host last.
+          sign "$APP"
+          # Verify each individually.
+          for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" "$APP"/Contents/PlugIns/*.appex; do
+            codesign --verify --strict --verbose=2 "$item"
+          done
+
+      - name: Notarize, staple, and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="${{ env.APP }}"
+          # Staple must happen on the app *before* zipping.
+          xcrun stapler staple "$APP"
+          # Build the distribution zip from the signed+stapled app.
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "Downright-$TAG.zip"
+          echo "$APPLE_API_PRIVATE_KEY_P8" | base64 --decode > /tmp/AuthKey.p8
+          xcrun notarytool submit "Downright-$TAG.zip" \
+            --key /tmp/AuthKey.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --wait --timeout 20m
+          rm -f /tmp/AuthKey.p8
+          # Final verification battery.
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          xcrun stapler validate "$APP"
+          lipo -info "$APP/Contents/MacOS/Downright" | grep -q "x86_64" || { echo "missing x86_64 slice"; exit 1; }
+          lipo -info "$APP/Contents/MacOS/Downright" | grep -q "arm64" || { echo "missing arm64 slice"; exit 1; }
+          Scripts/verify-bundle.sh "$APP" --production
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY_P8: ${{ secrets.APPLE_API_PRIVATE_KEY_P8 }}
+
+      - name: Package and notarise the DMG
+        # The DMG is a convenience for humans; Sparkle's update archive stays
+        # the zip.  Build it from the already-stapled app, then notarise and
+        # staple the image itself so users who run straight from it are covered.
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="${{ env.APP }}"
+          Scripts/make-dmg.sh "$APP"
+          echo "$APPLE_API_PRIVATE_KEY_P8" | base64 --decode > /tmp/AuthKey.p8
+          xcrun notarytool submit "dist/Downright-$TAG.dmg" \
+            --key /tmp/AuthKey.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --wait --timeout 20m
+          rm -f /tmp/AuthKey.p8
+          xcrun stapler staple "dist/Downright-$TAG.dmg"
+          xcrun stapler validate "dist/Downright-$TAG.dmg"
+          mv "dist/Downright-$TAG.dmg" "Downright-$TAG.dmg"
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY_P8: ${{ secrets.APPLE_API_PRIVATE_KEY_P8 }}
+
+      # ------------------------------------------------------------ artifacts
+      - name: Collect checksums, dSYMs, and release notes
+        run: |
+          set -euo pipefail
+          APP="${{ env.APP }}"
+          mkdir -p artifacts
+          shasum -a 256 "Downright-$TAG.zip" > artifacts/Downright-$TAG.zip.sha256
+          shasum -a 256 "Downright-$TAG.dmg" > artifacts/Downright-$TAG.dmg.sha256
+          echo "SHA256: $(cat artifacts/Downright-$TAG.zip.sha256)"
+          # Retain dSYMs alongside the release.
+          cp -R ".build-release/Downright.xcarchive/dSYMs" artifacts/dSYMs 2>/dev/null || true
+          # Auto-assemble release notes from the commits since the previous
+          # SemVer tag; the GitHub release keeps the full history.
+          PREV_TAG="$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')"
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS="$(git log --oneline --no-merges "${PREV_TAG}..HEAD")"
+          else
+            COMMITS="$(git log --oneline --no-merges -30 HEAD)"
+          fi
+          {
+            echo "# Downright $TAG"
+            echo
+            echo "## What's new"
+            echo
+            echo "$COMMITS" | sed 's/^/- /'
+            echo
+            echo "_Full history: https://github.com/${{ github.repository }}/releases_"
+          } > artifacts/RELEASE-NOTES.md
+          echo "APP_BASENAME=Downright-$TAG.zip" >> "$GITHUB_ENV"
+
+      - name: Fetch Sparkle signing tools (pinned version)
+        run: |
+          curl -fsSL -o /tmp/sparkle.tar.xz \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.9.5/Sparkle-2.9.5.tar.xz
+          tar xf /tmp/sparkle.tar.xz -C /tmp
+          ls /tmp/sparkle/bin/
+
+      - name: Download supported previous release zips (for deltas)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/appcast-input
+          cp "Downright-$TAG.zip" /tmp/appcast-input/
+          # Latest three previous *full archive* assets become delta sources.
+          # Delta assets are named like "Downright<build>-<fromBuild>.delta"
+          # (Sparkle's own convention) and never match the full-archive regex,
+          # so they cannot be mistaken for update archives.
+          curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases?per_page=10" \
+            | jq -r '.[] | select(.prerelease == false) | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+\\.zip$")) | .browser_download_url' \
+            | head -3 | while read -r url; do
+                curl -fsSL -L -O --output-dir /tmp/appcast-input "$url"
+              done
+          ls -la /tmp/appcast-input/
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # ----------------------------------------- appcast (private key, stdin only)
+      # generate_appcast does the whole job natively: per-archive EdDSA
+      # signatures (it reads SUPublicEDKey from the built app), Markdown release
+      # notes embedded as signed CDATA, delta updates from the previous zips, and
+      # enclosure URLs pointing at this tag's GitHub Release assets.
+      # Feed signing (SURequireSignedFeed) is the FINAL step: sign_update covers
+      # the whole XML, so nothing may rewrite the appcast afterwards.
+      - name: Generate signed appcast with deltas
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Release notes sit next to the archive so they are embedded.
+          cp artifacts/RELEASE-NOTES.md "/tmp/appcast-input/Downright-$TAG.md"
+          # The private key is fed through standard input; it is never written
+          # to disk and never echoed (masked secret).
+          # Trailing slash on the URL prefix is REQUIRED: it is used as a base
+          # URL (URL(string:relativeTo:)), and without it the last path
+          # component (the tag) is treated as a filename and dropped.
+          echo "$SPARKLE_ED25519_PRIVATE_KEY" \
+            | /tmp/sparkle/bin/generate_appcast \
+                --ed-key-file - \
+                --embed-release-notes \
+                --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/" \
+                --full-release-notes-url "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" \
+                --link "https://github.com/${{ github.repository }}" \
+                --maximum-versions 1 \
+                /tmp/appcast-input
+          # Feed signature (final mutation; nothing touches the XML after this).
+          echo "$SPARKLE_ED25519_PRIVATE_KEY" \
+            | /tmp/sparkle/bin/sign_update --ed-key-file - /tmp/appcast-input/appcast.xml
+          # Validation battery (Sparkle 2.9.5 ships no appcast_validate tool).
+          # sign_update --verify needs the private seed (it derives the public
+          # key); the public key alone is rejected.  Verification must run
+          # AFTER the feed signature above — it is the only valid end state.
+          xmllint --noout /tmp/appcast-input/appcast.xml
+          grep -q 'sparkle-signatures' /tmp/appcast-input/appcast.xml
+          echo "$SPARKLE_ED25519_PRIVATE_KEY" \
+            | /tmp/sparkle/bin/sign_update --verify --ed-key-file - /tmp/appcast-input/appcast.xml
+          mkdir -p artifacts/pages
+          cp /tmp/appcast-input/appcast.xml artifacts/pages/appcast.xml
+          cp artifacts/RELEASE-NOTES.md artifacts/pages/RELEASE-NOTES.md
+          # Delta archives referenced by the appcast must ship as assets of
+          # THIS release (the download-url-prefix points here).  Sparkle names
+          # them "<AppName><build>-<fromBuild>.delta" (e.g. Downright42-41.delta).
+          for delta in /tmp/appcast-input/*.delta; do
+            [ -f "$delta" ] && cp "$delta" artifacts/
+          done
+        env:
+          SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+
+      # --------------------------------------------------------------- publish
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2  # pin to a release-tagged SHA in production
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            Downright-${{ env.TAG }}.zip
+            Downright-${{ env.TAG }}.dmg
+            artifacts/Downright-${{ env.TAG }}.zip.sha256
+            artifacts/Downright-${{ env.TAG }}.dmg.sha256
+            artifacts/dSYMs
+            artifacts/*.delta
+          body_path: artifacts/RELEASE-NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify public asset URL
+        run: |
+          set -euo pipefail
+          URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Downright-$TAG.zip"
+          HTTP=$(curl -sIL -o /dev/null -w '%{http_code}' "$URL")
+          [ "$HTTP" = "200" ] || [ "$HTTP" = "302" ] || { echo "asset not reachable: $HTTP"; exit 1; }
+          PUBLISHED_SHA="$(curl -fsSL "$URL" | shasum -a 256 | awk '{print $1}')"
+          LOCAL_SHA="$(cat artifacts/Downright-$TAG.zip.sha256 | awk '{print $1}')"
+          [ "$PUBLISHED_SHA" = "$LOCAL_SHA" ] || { echo "checksum mismatch after publish"; exit 1; }
+          DMG_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Downright-$TAG.dmg"
+          DMG_HTTP=$(curl -sIL -o /dev/null -w '%{http_code}' "$DMG_URL")
+          [ "$DMG_HTTP" = "200" ] || [ "$DMG_HTTP" = "302" ] || { echo "dmg not reachable: $DMG_HTTP"; exit 1; }
+          PUBLISHED_DMG_SHA="$(curl -fsSL "$DMG_URL" | shasum -a 256 | awk '{print $1}')"
+          LOCAL_DMG_SHA="$(cat artifacts/Downright-$TAG.dmg.sha256 | awk '{print $1}')"
+          [ "$PUBLISHED_DMG_SHA" = "$LOCAL_DMG_SHA" ] || { echo "dmg checksum mismatch after publish"; exit 1; }
+          # Delta assets referenced by the appcast must also be reachable at
+          # their published URLs (e.g. Downright42-41.delta).
+          for delta in artifacts/*.delta; do
+            [ -f "$delta" ] || continue
+            BASE=$(basename "$delta")
+            DELTA_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$BASE"
+            DH=$(curl -sIL -o /dev/null -w '%{http_code}' "$DELTA_URL")
+            [ "$DH" = "200" ] || [ "$DH" = "302" ] || { echo "delta not reachable: $DH $BASE"; exit 1; }
+            DL=$(curl -fsSL "$DELTA_URL" | shasum -a 256 | awk '{print $1}')
+            LL=$(shasum -a 256 "$delta" | awk '{print $1}')
+            [ "$DL" = "$LL" ] || { echo "delta checksum mismatch: $BASE"; exit 1; }
+          done
+
+      - name: Upload Pages artifact (appcast + release notes)
+        uses: actions/upload-pages-artifact@v3  # pin to a release-tagged SHA in production
+        with:
+          path: artifacts/pages
+          name: github-pages
+
+      # ------------------------------------------------ deployment (final step)
+  deploy:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy signed appcast to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4  # pin to a release-tagged SHA in production

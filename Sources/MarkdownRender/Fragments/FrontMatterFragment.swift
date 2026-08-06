@@ -25,6 +25,15 @@ final class FrontMatterFragment: DownrightFragment {
 
     required init?(coder: NSCoder) { nil }
 
+    /// A card chip is one line tall; a block-scalar value that spans source
+    /// lines must not push its neighbours into a two-line chip or a clipped
+    /// string.  Interior newlines collapse to a single space.
+    private func singleLine(_ value: String) -> String {
+        let collapsed = value.replacingOccurrences(of: "\n", with: " ")
+        let squashed = collapsed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return squashed.isEmpty ? value.trimmingCharacters(in: .whitespaces) : squashed
+    }
+
     override var suppressesText: Bool { true }
 
     override var overrideHeight: CGFloat? {
@@ -37,7 +46,7 @@ final class FrontMatterFragment: DownrightFragment {
         var chipLines: CGFloat = 1
         for field in fields where !(showsTitle && field.key.lowercased() == "title") {
             let width = min(available, NSAttributedString(
-                string: "\(field.key)  \(field.value)", attributes: [.font: chipFont]
+                string: "\(field.key)  \(singleLine(field.value))", attributes: [.font: chipFont]
             ).size().width + 22)
             if used > 0, used + width > available { chipLines += 1; used = 0 }
             used += width + 6
@@ -68,7 +77,7 @@ final class FrontMatterFragment: DownrightFragment {
         let chipFont = style.bodyFont().withSize(style.bodyFont().pointSize * 0.85)
         var x = card.minX + 18
         for field in fields where !(showsTitle && field.key.lowercased() == "title") {
-            let label = "\(field.key)  \(field.value)"
+            let label = "\(field.key)  \(singleLine(field.value))"
             let text = NSAttributedString(string: label, attributes: [
                 .font: chipFont, .foregroundColor: style.textSecondary,
             ])

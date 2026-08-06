@@ -21,7 +21,7 @@ public enum TidyDocument {
         _ doc: ParsedDocument, rules: Set<TidyRule> = Set(TidyRule.allCases)
     ) -> [TextEdit] {
         guard doc.length > 0 else { return [] }
-        let context = TidyContext(doc: doc)
+        let context = TidyContext(doc: doc, rules: rules)
         var edits: [TextEdit] = []
 
         if rules.contains(.headingLevels) { edits += headingLevels(context) }
@@ -184,6 +184,10 @@ public enum TidyDocument {
             let source = context.map.string(ofLine: line)
             let trailing = source.reversed().prefix { $0 == " " || $0 == "\t" }
             guard !trailing.isEmpty else { continue }
+            // A whitespace-only blank line inside a run `.blankLines` collapses
+            // is that rule's region; trimming it here overlaps the collapse and
+            // the loser is dropped silently.
+            if context.trailingWhitespaceOwnedByBlankLines(line) { continue }
             let keptBreak = trailing.count == 2 && trailing.allSatisfy { $0 == " " }
                 && trailing.count < source.count
             guard !keptBreak else { continue }
@@ -247,15 +251,21 @@ struct TidyContext {
     let doc: ParsedDocument
     let map: SourceMap
     let text: NSString
+    /// The rules currently being planned, so a rule that would contend with
+    /// another (trailing whitespace vs blank lines on a whitespace-only blank
+    /// run) can defer to the one that owns the region instead of emitting an
+    /// overlapping edit that `applied(to:)` drops silently.
+    let rules: Set<TidyRule>
     let tables: [(block: MDBlock, table: TableData)]
     /// Code, math, HTML, front matter and table source — regions where
     /// whitespace and blank lines are content, not formatting.
     private let protectedRanges: [NSRange]
 
-    init(doc: ParsedDocument) {
+    init(doc: ParsedDocument, rules: Set<TidyRule>) {
         self.doc = doc
         self.map = SourceMap(doc.text)
         self.text = doc.text as NSString
+        self.rules = rules
 
         var tables: [(MDBlock, TableData)] = []
         var protected: [NSRange] = []
@@ -276,5 +286,24 @@ struct TidyContext {
 
     func isProtected(_ range: NSRange) -> Bool {
         protectedRanges.contains { $0.location < range.upperBound && range.location < $0.upperBound }
+    }
+
+    /// True when a whitespace-only line belongs to a run of two or more blank
+    /// lines that `.blankLines` will collapse away.  Collapsing the run removes
+    /// the whitespace with it, so a trailing-whitespace edit on this line would
+    /// overlap the collapse and be dropped silently (§9.1's "no overlaps").
+    /// A lone blank line is not owned by `.blankLines` (it is never collapsed),
+    /// so trailing whitespace there stays this rule's job.
+    func trailingWhitespaceOwnedByBlankLines(_ line: Int) -> Bool {
+        guard rules.contains(.blankLines), map.string(ofLine: line).isBlankLine else { return false }
+        let previous = line - 1
+        let next = line + 1
+        let previousBlank = previous >= 0
+            && map.string(ofLine: previous).isBlankLine
+            && !isProtected(map.fullRange(ofLine: previous))
+        let nextBlank = next < map.lineCount
+            && map.string(ofLine: next).isBlankLine
+            && !isProtected(map.fullRange(ofLine: next))
+        return previousBlank || nextBlank
     }
 }

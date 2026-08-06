@@ -89,6 +89,12 @@ public final class DecorationEngine {
         var listDepth: Int
         var quoteDepth: Int
         var length: Int
+        /// A task label reserves the checkbox column, a bullet does not
+        /// (§11.3).  Two paragraphs with identical text at the same depth hash
+        /// identically (the subtree hash covers the label, not the marker), so
+        /// the key must carry the task bit or the cache records the wrong
+        /// marker column for one of them.
+        var task: Bool
     }
 
     private var programCache: [ProgramKey: [AttributeOp]] = [:]
@@ -387,6 +393,10 @@ public final class DecorationEngine {
 
         case .listItem(let ordinal, let checkbox):
             childContext.ordinal = ordinal
+            // A task's own text is a child paragraph block; it needs the task
+            // marker column (not the bullet column) so the checkbox the list
+            // ornament draws has room (§11.3).
+            childContext.task = checkbox != nil
             applyBase(block, context: childContext, state: &state)
             applyBlockMarker(block, context: childContext, state: &state)
             let ornament: String
@@ -495,11 +505,55 @@ public final class DecorationEngine {
             paragraph.firstLineHeadIndent -= styles.font(for: block.content).pointSize * 0.34
             attributes[.paragraphStyle] = paragraph.copy() as? NSParagraphStyle ?? original
         }
-        apply(attributes, to: block.range, state: &state)
+
+        // A paragraph style must reach only paragraphs that *begin* inside this
+        // block's own content.  Applying it over `block.range` would cross into
+        // nested children's paragraphs, and NSTextStorage's paragraph fixup
+        // then flattens a child item's deeper indent back to the parent's —
+        // the nested-task indentation bug.  The split also keeps the base
+        // font/colour over the whole block, which the fixup does not touch.
+        if let paragraphStyle = attributes[.paragraphStyle] as? NSParagraphStyle {
+            var withoutParagraph = attributes
+            withoutParagraph.removeValue(forKey: .paragraphStyle)
+            apply(withoutParagraph, to: block.range, state: &state)
+            applyOwnParagraphStyle(paragraphStyle, over: block, state: &state)
+        } else {
+            apply(attributes, to: block.range, state: &state)
+        }
         apply([.drBlock: block.identity], to: block.range, state: &state)
 
         applyFirstHeadingSpacing(block, attributes: attributes, state: &state)
         applyHardWrapContinuationSpacing(block, attributes: attributes, state: &state)
+    }
+
+    /// Applies `style` paragraph by paragraph across the block, skipping any
+    /// paragraph that *begins* inside a child block.  Applying the style over
+    /// `block.range` wholesale would cross into nested children's paragraphs,
+    /// and NSTextStorage's paragraph fixup then flattens a child item's deeper
+    /// indent back to the parent's — the nested-task indentation bug.  Leaf
+    /// blocks (a fenced code block, say) have no children, so every paragraph
+    /// — fences included — keeps the block's own style.
+    private func applyOwnParagraphStyle(
+        _ style: NSParagraphStyle,
+        over block: MDBlock,
+        state: inout DecorateState
+    ) {
+        let text = state.storage.string as NSString
+        let children = block.children
+        var cursor = block.range.location
+        let end = block.range.upperBound
+        while cursor < end && cursor < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: cursor, length: 0))
+            guard paragraph.length > 0 else { break }
+            let ownedByChild = children.contains { child in
+                child.range.length > 0 && child.range.contains(offset: paragraph.location)
+            }
+            if !ownedByChild, let clipped = clip(paragraph, to: state.target), clipped.length > 0 {
+                apply([.paragraphStyle: style], to: paragraph, state: &state)
+            }
+            guard paragraph.upperBound > cursor else { break }
+            cursor = paragraph.upperBound
+        }
     }
 
     private func applyFirstHeadingSpacing(
@@ -768,7 +822,7 @@ public final class DecorationEngine {
         guard !Self.containsInlineMath(block.inlines) else { return nil }
         let key = ProgramKey(hash: block.subtreeHash, kind: BlockStyleFactory.kindCode(block.content),
                              listDepth: context.listDepth, quoteDepth: context.quoteDepth,
-                             length: block.range.length)
+                             length: block.range.length, task: context.task)
         if let hit = programCache[key] { return hit }
         guard programSeen.contains(key) else {
             programSeen.insert(key)

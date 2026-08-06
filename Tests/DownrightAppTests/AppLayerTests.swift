@@ -216,6 +216,35 @@ struct AppLayerTests {
         document.close()
     }
 
+    @MainActor
+    @Test
+    func changeMarksDoNotLeakAcrossInPlaceReopen() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-hop-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let firstURL = root.appendingPathComponent("first.md")
+        let secondURL = root.appendingPathComponent("second.md")
+        try Data("# First\n\nAlpha.\n".utf8).write(to: firstURL)
+        try Data("# Second\n\nBeta.\n".utf8).write(to: secondURL)
+
+        let document = MarkdownDocument()
+        try document.open(firstURL)
+        document.changes.apply(hunks: [
+            ChangeHunk(kind: .modified,
+                       newRange: NSRange(location: 0, length: 5),
+                       oldRange: NSRange(location: 0, length: 5)),
+        ])
+        #expect(document.changes.count == 1)
+
+        // An in-place hop reuses the same document; stale marks must not
+        // decorate the next file.
+        try document.open(secondURL)
+        #expect(document.changes.isEmpty, "change marks leaked across an in-place reopen")
+        document.close()
+    }
+
     @Test
     func preferencesValuesRoundTripEverySetting() throws {
         var values = Preferences.Values()
@@ -485,6 +514,88 @@ struct AppLayerTests {
         #expect(html.contains("font-weight: 600; letter-spacing: normal"))
         #expect(html.contains("font-weight: 600; letter-spacing: 0.04em"))
         #expect(html.contains("font-weight: 500; font-style: italic; letter-spacing: 0.06em"))
+    }
+
+    // MARK: - HTML export confinement (§9.5)
+
+    private func makeExportRoot() throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-export-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func pngData() -> Data {
+        // A 1×1 transparent PNG — small enough that embedding succeeds.
+        Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")!
+    }
+
+    private func exportHTML(_ markdown: String, baseDirectory: URL) -> String {
+        HTMLExporter(
+            document: MarkdownParser.parse(markdown),
+            theme: ThemeStore.shared.current,
+            title: "T", baseDirectory: baseDirectory, imageProvider: nil
+        ).html()
+    }
+
+    @Test @MainActor func htmlExportEmbedsOnlyImagesInsideTheBaseDirectory() throws {
+        let root = try makeExportRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try pngData().write(to: root.appendingPathComponent("inside.png"))
+        // A sibling file outside the export root — the leak that motivated the
+        // containment rule.
+        let outside = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-outside-\(UUID().uuidString).png")
+        try pngData().write(to: outside)
+        defer { try? FileManager.default.removeItem(at: outside) }
+
+        let html = exportHTML(
+            "![in](inside.png) ![leak](../\(outside.lastPathComponent)) ![abs](/etc/hosts)",
+            baseDirectory: root
+        )
+
+        // The contained image is inlined; both escapes are refused.
+        #expect(html.contains("data:image/png;base64,"))
+        #expect(html.contains("data:image/png;base64,iVBORw0KGgo"))
+        #expect(html.filter { $0 == "," }.count >= 1)  // sanity: some data URI present
+        // Only one data URI: the inlined image.  The escapes must not embed.
+        let dataURIcount = html.components(separatedBy: "data:image/").count - 1
+        #expect(dataURIcount == 1, "escapes must not be base64-embedded")
+        #expect(html.contains("class=\"missing\""))
+        // The escaped source path may appear as the broken-image label, but the
+        // file's contents (its PNG base64) must never be inlined twice more.
+        #expect(html.components(separatedBy: "class=\"missing\"").count - 1 == 2)
+    }
+
+    @Test @MainActor func htmlExportRefusesTraversalAndAbsolutePaths() throws {
+        let root = try makeExportRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secret = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-secret-\(UUID().uuidString).png")
+        try pngData().write(to: secret)
+        defer { try? FileManager.default.removeItem(at: secret) }
+
+        // `../` points at the temporary directory the secret lives in.
+        let parent = root.deletingLastPathComponent()
+        let traversal = "../\(parent.lastPathComponent)/\(secret.lastPathComponent)"
+        let html = exportHTML(
+            "![t](\(traversal)) ![a](/private/var/etc/passwd)",
+            baseDirectory: root
+        )
+
+        #expect(!html.contains("data:image/"), "no local file may be embedded")
+        #expect(html.components(separatedBy: "class=\"missing\"").count - 1 == 2)
+    }
+
+    @Test @MainActor func htmlExportDoesNotEmbedOversizedImages() throws {
+        let root = try makeExportRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let huge = root.appendingPathComponent("huge.png")
+        try Data(repeating: 0xFF, count: 5 * 1024 * 1024 + 1).write(to: huge)
+
+        let html = exportHTML("![big](huge.png)", baseDirectory: root)
+        #expect(!html.contains("data:image/"))
+        #expect(html.contains("class=\"missing\""))
     }
 
     @Test func plainTextRenderingStripsMarkup() {

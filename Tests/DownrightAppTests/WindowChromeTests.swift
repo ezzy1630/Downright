@@ -151,7 +151,7 @@ struct WindowChromeTests {
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             "document-identity", flexibleSpace,
             "presentation-mode", flexibleSpace,
-            "activity", "tasks-progress", "overflow",
+            "activity", "tasks-progress", "update-pill", "overflow",
         ])
 
         let identity = try #require(

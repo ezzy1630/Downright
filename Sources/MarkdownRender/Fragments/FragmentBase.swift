@@ -311,6 +311,29 @@ extension NSColor {
     }
 }
 
+/// Draws an `NSImage` into a CGContext without going through AppKit's focus
+/// stack, which is not valid inside a layout fragment.
+///
+/// The text view's drawing context is flipped (y=0 at the top).  `CGContext.draw`
+/// treats image row 0 as the bottom of the target rect, so the context must be
+/// mirrored around the rect's midline before drawing or the bitmap appears
+/// upside down.  The flip is isolated with `saveGState`/`restoreGState` and never
+/// leaks into the surrounding context.
+func drawNSImage(_ image: NSImage, in target: CGRect, in cg: CGContext, cornerRadius: CGFloat = 0) {
+    var proposed = target
+    guard let cgImage = image.cgImage(forProposedRect: &proposed, context: nil, hints: nil) else { return }
+    cg.saveGState()
+    if cornerRadius > 0 {
+        cg.addPath(CGPath(roundedRect: target, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil))
+        cg.clip()
+    }
+    cg.translateBy(x: 0, y: target.midY)
+    cg.scaleBy(x: 1, y: -1)
+    cg.translateBy(x: 0, y: -target.midY)
+    cg.draw(cgImage, in: target)
+    cg.restoreGState()
+}
+
 extension CGContext {
     /// Named to avoid overloading `CGContext.fill(_:)`, whose default-argument
     /// overload resolution would otherwise recurse.

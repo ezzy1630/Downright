@@ -1071,10 +1071,19 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
         #expect(map.paragraphs.length == ns.length)
     }
 
-    // The paragraph index is the other per-edit cost in the view.
-    let indexStarted = CFAbsoluteTimeGetCurrent()
-    for _ in 0..<20 { _ = ParagraphIndex(text: ns) }
-    let indexRebuild = (CFAbsoluteTimeGetCurrent() - indexStarted) * 1000 / 20
+    // The paragraph index is the other per-edit cost in the view.  Median of
+    // more samples, not a mean of few: one scheduler hitch moves the mean by
+    // several percent, which is noise, not regression.  The release-mode
+    // `drbench` gate is the authoritative §12 enforcement; this debug-mode
+    // assertion exists to catch order-of-magnitude regressions locally.
+    var indexSamples: [Double] = []
+    for _ in 0..<40 {
+        let indexStarted = CFAbsoluteTimeGetCurrent()
+        _ = ParagraphIndex(text: ns)
+        indexSamples.append((CFAbsoluteTimeGetCurrent() - indexStarted) * 1000)
+    }
+    indexSamples.sort()
+    let indexRebuild = indexSamples[indexSamples.count / 2]
 
     samples.sort()
     let p95 = samples[min(samples.count - 1, Int(Double(samples.count) * 0.95))]

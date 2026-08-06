@@ -21,48 +21,46 @@ struct CalloutMatch {
 enum CalloutScanner {
     /// Inspects the first line of a blockquote whose range starts at `start`.
     static func scan(_ map: SourceMap, quoteRange: NSRange) -> CalloutMatch? {
+        let text = map.text
         let lineIndex = map.line(containing: quoteRange.location)
         let lineRange = map.contentRange(ofLine: lineIndex)
-        let line = map.string(ofLine: lineIndex)
-        let chars = Array(line)
-        var i = 0
+        let start = lineRange.location
+        let end = lineRange.upperBound
+        var i = start
 
-        func skipSpaces() { while i < chars.count, chars[i].isMarkdownWhitespace { i += 1 } }
+        func isSpace(_ c: unichar) -> Bool { c == 0x20 || c == 0x09 }
+        while i < end, isSpace(text.character(at: i)) { i += 1 }
 
-        skipSpaces()
         // Consume the quote markers themselves; a nested `> >` callout is still
         // a callout for the innermost quote.
         var sawMarker = false
-        while i < chars.count, chars[i] == ">" {
+        while i < end, text.character(at: i) == 0x3E {
             sawMarker = true
             i += 1
-            if i < chars.count, chars[i] == " " { i += 1 }
+            if i < end, text.character(at: i) == 0x20 { i += 1 }
         }
         guard sawMarker else { return nil }
 
-        guard i + 2 < chars.count, chars[i] == "[", chars[i + 1] == "!" else { return nil }
+        guard i + 2 < end, text.character(at: i) == 0x5B, text.character(at: i + 1) == 0x21 else { return nil }
         var j = i + 2
-        var token = ""
-        while j < chars.count, chars[j] != "]" {
-            token.append(chars[j])
-            j += 1
-        }
-        guard j < chars.count, chars[j] == "]", let kind = CalloutKind(token: token) else { return nil }
+        while j < end, text.character(at: j) != 0x5D { j += 1 }
+        guard j < end, let kind = CalloutKind(token: text.substring(with: NSRange(location: i + 2, length: j - i - 2)))
+        else { return nil }
         j += 1
-        if j < chars.count, chars[j] == "+" || chars[j] == "-" { j += 1 }
+        if j < end, text.character(at: j) == 0x2B || text.character(at: j) == 0x2D { j += 1 }
 
         var titleStart = j
-        while titleStart < chars.count, chars[titleStart].isMarkdownWhitespace { titleStart += 1 }
-        let rawTitle = String(chars[min(titleStart, chars.count)...]).trimmingCharacters(in: .whitespaces)
+        while titleStart < end, isSpace(text.character(at: titleStart)) { titleStart += 1 }
+        let rawTitle = text.substring(with: NSRange(location: titleStart, length: end - titleStart))
+            .trimmingCharacters(in: .whitespaces)
 
         // The marker owns everything up to the body, which for a titled callout
         // means the title too — it renders in the panel header, not the body.
-        let markerCharacters = rawTitle.isEmpty ? j : chars.count
-        let markerUTF16 = String(chars[0..<markerCharacters]).utf16.count
+        let markerLength = rawTitle.isEmpty ? j - start : end - start
         return CalloutMatch(
             kind: kind,
             title: rawTitle.isEmpty ? nil : rawTitle,
-            markerRange: NSRange(location: lineRange.location, length: markerUTF16)
+            markerRange: NSRange(location: lineRange.location, length: markerLength)
         )
     }
 }

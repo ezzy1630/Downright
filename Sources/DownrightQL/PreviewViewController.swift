@@ -60,28 +60,41 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 return
             }
 
-            do {
-                let (text, _) = try DocumentIO.read(contentsOf: url)
-                let byteCount =
-                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-                    ?? text.utf8.count
+            // Size first, bytes second.  The ~120MB kill ceiling is a hard
+            // process limit, not a style guideline — a huge file must never be
+            // read whole before the presentation policy has refused it.
+            let byteCount =
+                (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 
-                await MainActor.run {
-                    self.resetPreview()
-                    if case .prefix = QuickLookPolicy.presentation(forByteCount: byteCount) {
-                        self.presentTruncated(text, url: url)
-                    } else {
-                        self.present(text, url: url)
+            await MainActor.run {
+                self.resetPreview()
+                switch QuickLookPolicy.presentation(forByteCount: byteCount) {
+                case .prefix:
+                    // Bounded head read (§10): only enough bytes for the first
+                    // `prefixBlockCount` blocks are ever decoded.  An agent
+                    // transcript that would take the extension down instead
+                    // previews its opening.
+                    guard let head = DocumentIO.readHead(
+                        contentsOf: url,
+                        limit: QuickLookPolicy.prefixReadLimitBytes
+                    ) else {
+                        handler(CocoaError(.fileReadCorruptFile))
+                        return
                     }
-                    self.startMemoryWatch()
-                    if PreviewViewController.residentBytes() > self.memoryCeiling {
-                        self.fallBackToPlainText()
+                    self.presentTruncated(head, url: url)
+                case .full:
+                    guard let (text, _) = try? DocumentIO.read(contentsOf: url) else {
+                        handler(CocoaError(.fileReadCorruptFile))
+                        return
                     }
+                    self.present(text, url: url)
                 }
-                handler(nil)
-            } catch {
-                handler(error)
+                self.startMemoryWatch()
+                if PreviewViewController.residentBytes() > self.memoryCeiling {
+                    self.fallBackToPlainText()
+                }
             }
+            handler(nil)
         }
     }
 

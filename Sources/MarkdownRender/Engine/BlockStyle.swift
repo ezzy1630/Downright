@@ -10,14 +10,19 @@ public struct BlockContext: Hashable, Sendable {
     public var calloutKind: CalloutKind?
     /// Ordinal of the enclosing ordered list item, for the gutter marker.
     public var ordinal: Int?
+    /// True while inside a `- [ ]` task item, so a task's text (which lives in
+    /// a child paragraph block) reserves the checkbox column, not the bullet
+    /// column (§11.3).
+    public var task: Bool
 
-    public static let root = BlockContext(listDepth: 0, quoteDepth: 0, calloutKind: nil, ordinal: nil)
+    public static let root = BlockContext(listDepth: 0, quoteDepth: 0, calloutKind: nil, ordinal: nil, task: false)
 
-    public init(listDepth: Int, quoteDepth: Int, calloutKind: CalloutKind?, ordinal: Int?) {
+    public init(listDepth: Int, quoteDepth: Int, calloutKind: CalloutKind?, ordinal: Int?, task: Bool) {
         self.listDepth = listDepth
         self.quoteDepth = quoteDepth
         self.calloutKind = calloutKind
         self.ordinal = ordinal
+        self.task = task
     }
 }
 
@@ -45,6 +50,10 @@ final class BlockStyleFactory {
         var listDepth: Int
         var quoteDepth: Int
         var ordinalDigits: Int
+        /// A task's text reserves the checkbox column, a bullet's does not
+        /// (§11.3).  Two rows at the same depth must never share a cache entry
+        /// or whichever decorates first locks the other into its column.
+        var task: Bool
     }
 
     /// Stable discriminator per block kind, so the cache never confuses a
@@ -80,7 +89,8 @@ final class BlockStyleFactory {
             level: Self.level(block.content),
             listDepth: min(context.listDepth, 8),
             quoteDepth: min(context.quoteDepth, 6),
-            ordinalDigits: context.ordinal.map { max(1, String(abs($0)).count) } ?? 0
+            ordinalDigits: context.ordinal.map { max(1, String(abs($0)).count) } ?? 0,
+            task: context.task
         )
     }
 
@@ -175,7 +185,12 @@ final class BlockStyleFactory {
                 // at the same content edge.  A split indent here makes list
                 // text visibly staircase after the first line and places the
                 // checkbox on top of the first word.
-                let contentEdge = indent + markerColumn(context: context)
+                //
+                // A task reserves the full checkbox column (§11.3): the box,
+                // the gap to the label, and 4pt of left clearance.  Anything
+                // narrower leaves the box overlapping the fragment origin,
+                // which is exactly the clipped-checkbox defect.
+                let contentEdge = indent + markerColumn(context: context, task: checkbox != nil)
                 style.firstLineHeadIndent = contentEdge
                 style.headIndent = contentEdge
             }
@@ -202,7 +217,7 @@ final class BlockStyleFactory {
             // sequence of essays.
             style.paragraphSpacing = RenderMetrics.snap(h * (context.listDepth > 0 ? 0.15 : 0.45), grid: grid)
             if context.listDepth > 0 {
-                let contentEdge = indent + markerColumn(context: context)
+                let contentEdge = indent + markerColumn(context: context, task: context.task)
                 style.firstLineHeadIndent = contentEdge
                 style.headIndent = contentEdge
             }
@@ -240,8 +255,10 @@ final class BlockStyleFactory {
 
     /// Width reserved for the visual list ornament plus a half-em gap. The
     /// source marker is hidden, so wrapped lines must start at this text edge,
-    /// not at the ornament's left edge.
-    private func markerColumn(context: BlockContext) -> CGFloat {
+    /// not at the ornament's left edge.  A task checkbox reserves its own
+    /// dedicated column (§11.3) rather than sharing the bullet column.
+    private func markerColumn(context: BlockContext, task: Bool) -> CGFloat {
+        if task { return RenderMetrics.taskMarkerColumn }
         let bodySize = styleSheet.bodyFont().pointSize
         let gap = bodySize * 0.5
         guard let ordinal = context.ordinal else {

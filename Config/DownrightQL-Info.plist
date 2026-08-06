@@ -46,6 +46,26 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Extended Markdown Document</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.ezzyrappeport.downright.markdown</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mdx</string>
+					<string>mdc</string>
+					<string>qmd</string>
+					<string>rmd</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>NSExtension</key>
 	<dict>
@@ -54,6 +74,7 @@
 		<key>QLSupportedContentTypes</key>
 		<array>
 			<string>net.daringfireball.markdown</string>
+			<string>com.ezzyrappeport.downright.markdown</string>
 		</array>
 			<key>QLSupportsSearchableItems</key>
 			<false/>

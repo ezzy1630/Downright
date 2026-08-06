@@ -26,6 +26,15 @@ enum MainMenu {
         let menu = NSMenu(title: "Downright")
 
         menu.addItem(withTitle: "About Downright", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        // Follows About per the updater spec; disabled while a check is
+        // running or when this bundle has no update configuration.
+        let checkItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(UpdateCheckMenuItem.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkItem.target = UpdateCheckMenuItem.shared
+        menu.addItem(checkItem)
         menu.addItem(.separator())
         menu.addItem(commandItem(.preferences))
         menu.addItem(commandItem(.showKeybindings))
@@ -257,6 +266,43 @@ enum MainMenu {
 @MainActor
 @objc protocol CommandResponder {
     @objc func performDownrightCommand(_ sender: Any?)
+}
+
+// MARK: - Update check item
+
+/// Target and validator for the app menu's "Check for Updates…".  The menu
+/// revalidates whenever the coordinator's state changes, so the item tracks
+/// `canCheckForUpdates` (KVO-backed by Sparkle) without polling.
+@MainActor
+final class UpdateCheckMenuItem: NSObject, NSMenuItemValidation {
+    static let shared = UpdateCheckMenuItem()
+    private var stateObserver: NSObjectProtocol?
+
+    private override init() {
+        super.init()
+        stateObserver = NotificationCenter.default.addObserver(
+            forName: UpdateCoordinator.stateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMenu() }
+        }
+    }
+
+    deinit {
+        if let stateObserver { NotificationCenter.default.removeObserver(stateObserver) }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.isEnabled = UpdateCoordinator.shared.canCheckForUpdates
+        return menuItem.isEnabled
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        UpdateCoordinator.shared.checkForUpdates()
+    }
+
+    private func refreshMenu() {
+        NSApp.mainMenu?.update()
+    }
 }
 
 // MARK: - Dynamic submenus

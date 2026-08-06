@@ -59,9 +59,12 @@ enum Myers {
         // whole point.  (Cheap O(N+M) scan — the Set is built from the smaller
         // side — and we stop counting as soon as the bound drops under the
         // cap.  The `n + m > maxDistance` gate covers the N+M ≈ cap boundary,
-        // where a disjoint pair would otherwise build the full ladder.)
+        // where a disjoint pair would otherwise build the full ladder.  It
+        // uses a small margin so a pair that sits just under the cap is caught
+        // too: that band is exactly where a large-but-dissimilar document
+        // would otherwise allocate the full O(D²) trace.)
         let smaller = Swift.min(n, m)
-        if smaller >= 256, n + m > maxDistance {
+        if smaller >= 256, n + m >= maxDistance - 4 {
             let small = n <= m ? old : new
             let large = n <= m ? new : old
             var present = Set<UInt64>()
@@ -120,11 +123,17 @@ enum Myers {
         let max = Swift.min(n + m, maxDistance)
         let offset = max
         var v = [Int](repeating: 0, count: 2 * max + 1)
+        // The trace is Myers' O(D²) memory.  Each row is stored compactly, at
+        // only the width the level actually touches (k ∈ [-d, d]) instead of
+        // the full 2·max+1 stride, which keeps a deep but *solved* search from
+        // allocating max Distance rows all at full width — the near-cap memory
+        // spike.  The total footprint stays O(D_final²) rather than
+        // O(D_final · max).
         var trace: [[Int]] = []
-        trace.reserveCapacity(max + 1)
 
         for d in 0...max {
-            trace.append(v)
+            let used = offset - d
+            trace.append(Array(v[used...used + 2 * d]))
             var k = -d
             while k <= d {
                 defer { k += 2 }
@@ -138,7 +147,7 @@ enum Myers {
                 while x < n, y < m, old[x] == new[y] { x += 1; y += 1 }
                 v[k + offset] = x
                 if x >= n && y >= m {
-                    return backtrack(trace: trace, d: d, offset: offset, n: n, m: m, base: base)
+                    return backtrack(trace: trace, d: d, n: n, m: m, base: base)
                 }
             }
         }
@@ -146,21 +155,23 @@ enum Myers {
     }
 
     private static func backtrack(
-        trace: [[Int]], d finalD: Int, offset: Int, n: Int, m: Int, base: Int
+        trace: [[Int]], d finalD: Int, n: Int, m: Int, base: Int
     ) -> [Step] {
         var steps: [Step] = []
         var x = n, y = m
         var d = finalD
         while d > 0 {
-            let v = trace[d]
+            // Row indexing is compact: row `d` holds k ∈ [-d, d] at local
+            // index k + d.
+            let row = trace[d]
             let k = x - y
             let previousK: Int
-            if k == -d || (k != d && v[k - 1 + offset] < v[k + 1 + offset]) {
+            if k == -d || (k != d && row[k - 1 + d] < row[k + 1 + d]) {
                 previousK = k + 1
             } else {
                 previousK = k - 1
             }
-            let previousX = v[previousK + offset]
+            let previousX = row[previousK + d]
             let previousY = previousX - previousK
 
             while x > previousX, y > previousY {

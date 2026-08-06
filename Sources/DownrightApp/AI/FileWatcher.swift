@@ -227,12 +227,6 @@ final class FileWatcher {
         let previous = lastSnapshot
         lastSnapshot = now
 
-        if Date() < suppressUntil {
-            // Our own write landing.  Absorb it, but keep the new baseline.
-            suppressedSnapshot = now
-            return
-        }
-
         let event: Event
         if now.size < 0 {
             event = .removed
@@ -241,6 +235,30 @@ final class FileWatcher {
         } else {
             event = .changed
         }
+
+        if Date() < suppressUntil {
+            // A change inside the suppression window.  Our own save is already
+            // reflected in `lastSnapshot`: `acknowledgeOwnWrite()` moves the
+            // baseline to exactly what we wrote *before* the coalesced check can
+            // run here, so reaching this branch means the snapshot differs from
+            // what we wrote.  That is a genuine external write racing our save
+            // (the format-on-save / agent-rewrites-right-after-us case), and
+            // swallowing it lets the next save clobber it invisibly.  Surface
+            // it; record the state so the intended match-check below can absorb
+            // a late retransmission of the very same filesystem state.
+            suppressedSnapshot = now
+            DispatchQueue.main.async { [handler] in handler(event) }
+            return
+        }
+
+        // Absorb a snapshot we already surfaced while the suppression window was
+        // open (FSEvents can retransmit), so the one external write is reported
+        // once, not repeatedly for each delivery.
+        if let suppressed = suppressedSnapshot, now == suppressed {
+            suppressedSnapshot = nil
+            return
+        }
+        suppressedSnapshot = nil
 
         DispatchQueue.main.async { [handler] in handler(event) }
     }

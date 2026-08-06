@@ -84,6 +84,15 @@ final class DocumentWindowController: NSWindowController {
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
+    /// One update pill per window; created lazily by the toolbar and owned by
+    /// the toolbar item's view.  It observes the coordinator itself, so it
+    /// needs no wiring from the controller.  Internal (not private) because
+    /// the toolbar delegate lives in a separate file.
+    var updateStatusPill: UpdateStatusPill?
+
+    /// Cached offset for the last breadcrumb rebuild, to avoid walking the
+    /// heading tree on every scroll frame when the current section hasn't changed.
+    private var lastBreadcrumbOffset: Int = -1
 
     /// Coalesces panel/metrics refresh so typing does not rebuild outline,
     /// density bands, and diagnostics on every parse commit.
@@ -199,6 +208,7 @@ final class DocumentWindowController: NSWindowController {
         cachedSectionMetrics = []
         cachedWordCount = 0
 
+        stopSpeaking()
         findSession.clear()
         for pane in documentPanes {
             pane.textView.searchHits = []
@@ -342,6 +352,7 @@ final class DocumentWindowController: NSWindowController {
     private func buildInterface() {
         primaryContainer = MarkdownContainerView(storage: markdownDocument.storage)
         primaryContainer.textView.markdownDelegate = self
+        wireKeyEventHandler(primaryContainer.textView)
         primaryContainer.textView.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
         // The current-section cue lives in a stable orientation lane. A
@@ -596,6 +607,24 @@ final class DocumentWindowController: NSWindowController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: work)
     }
 
+    /// Find-as-you-type path.  Each keystroke currently re-runs a fresh
+    /// regular-expression match over the whole document synchronously on the
+    /// main thread; coalescing them into one run per idle tick makes typing in
+    /// the search field cheap instead of O(document) per character.
+    func scheduleFindQuery(_ query: FindQuery) {
+        guard !query.isEmpty else {
+            runFind(query)  // clearing the field must take effect immediately
+            return
+        }
+        findRefreshWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.runFind(query)
+        }
+        findRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
+    }
+
     func refreshDerivedUI() {
         let parsed = markdownDocument.parsed
         let source = containerTextView
@@ -681,6 +710,12 @@ final class DocumentWindowController: NSWindowController {
 
     func refreshBreadcrumb() {
         let offset = containerTextView.topVisibleOffset
+        // Skip the heading tree walk if the offset hasn't crossed a heading
+        // boundary since the last scroll.  The breadcrumb view's own
+        // `sameTrail` guard already prevents UI rebuilds, but the tree walk
+        // (`lastIndex(where:)`) is O(headings) and measurable for large docs.
+        guard offset != lastBreadcrumbOffset else { return }
+        lastBreadcrumbOffset = offset
         let headings = markdownDocument.parsed.headings
         guard var index = headings.lastIndex(where: { $0.range.location <= offset })
             ?? headings.indices.first
@@ -805,7 +840,10 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func toggleTaskPanel() {
-        if taskPanel?.superview === rootView {
+        // The task list is a *docked* inspector (§8.5): opening it narrows the
+        // document column and the text reflows, so no content is ever left
+        // half-visible beneath the panel.
+        if inspectorHost?.selectedSection == .tasks, !inspectorItem.isCollapsed {
             closeTaskPanel()
             return
         }
@@ -818,58 +856,17 @@ final class DocumentWindowController: NSWindowController {
         panel.tasks = markdownDocument.parsed.tasks
         panel.headings = markdownDocument.parsed.headings
         panel.onClose = { [weak self] in self?.closeTaskPanel() }
-        openTaskPanel(panel)
+        showInInspector(panel, section: .tasks)
+        progressRing.isActive = true
         panel.reload()
     }
 
-    private func openTaskPanel(_ panel: TaskPanelView) {
-        guard panel.superview !== rootView else { return }
-        progressRing.isActive = true
-        panel.removeFromSuperview()
-        panel.translatesAutoresizingMaskIntoConstraints = false
-        panel.wantsLayer = true
-        panel.layer?.cornerRadius = 10
-        panel.layer?.masksToBounds = false
-        panel.layer?.shadowColor = NSColor.shadowColor.cgColor
-        panel.layer?.shadowOpacity = 0.22
-        panel.layer?.shadowRadius = 8
-        panel.layer?.shadowOffset = NSSize(width: -2, height: 0)
-        rootView.addSubview(panel, positioned: .above, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            panel.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
-            panel.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -8),
-            panel.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -8),
-            panel.widthAnchor.constraint(equalToConstant: panel.preferredWidth),
-        ])
-        rootView.layoutSubtreeIfNeeded()
-
-        guard !activeStyleSheet.reduceMotion else {
-            panel.alphaValue = 1
-            return
-        }
-        panel.alphaValue = 0
-        panel.layer?.transform = CATransform3DMakeTranslation(18, 0, 0)
-        Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
-            panel.animator().alphaValue = 1
-            panel.animator().layer?.transform = CATransform3DIdentity
-        }
-    }
-
     private func closeTaskPanel() {
-        guard let panel = taskPanel, panel.superview === rootView else { return }
+        guard let panel = taskPanel else { return }
         progressRing.isActive = false
-        guard !activeStyleSheet.reduceMotion else {
-            panel.removeFromSuperview()
-            return
-        }
-        Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in
-            panel.animator().alphaValue = 0
-            panel.animator().layer?.transform = CATransform3DMakeTranslation(12, 0, 0)
-        } completion: {
-            panel.removeFromSuperview()
-            panel.alphaValue = 1
-            panel.layer?.transform = CATransform3DIdentity
-        }
+        inspectorHost?.removeContent(panel, section: .tasks)
+        if inspectorHost?.hasContent != true { closeInspector() }
+        else { refreshToolbarSelectionState() }
     }
 
     func toggleSiblingSidebar() {
@@ -1275,6 +1272,7 @@ final class DocumentWindowController: NSWindowController {
         // synchronisation code at all (§3.1 paying off).
         let second = MarkdownContainerView(storage: markdownDocument.storage)
         second.textView.markdownDelegate = self
+        wireKeyEventHandler(second.textView)
         second.textView.styleSheet = activeStyleSheet
         second.textView.configuration = renderConfiguration
         let source = containerTextView
@@ -1363,7 +1361,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func updateFocusDimmingViews() {
-        guard isFocusModeEnabled else { return }
+        guard isFocusModeEnabled, !focusDimmingViews.isEmpty else { return }
         for overlay in focusDimmingViews {
             guard let container = overlay.superview else { continue }
             let textView = container.subviews.compactMap { $0 as? NSScrollView }
@@ -1412,6 +1410,7 @@ final class DocumentWindowController: NSWindowController {
     func documentWillClose() -> Bool {
         guard discardChangesOnClose || !markdownDocument.isDirty || saveDocument() else { return false }
         discardChangesOnClose = false
+        stopSpeaking()
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
         stopNavigationDismissalObservers()

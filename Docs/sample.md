@@ -59,8 +59,8 @@ files that aren't there says so on its face.
 
 - [x] Prove the no-mutation decoration model
 - [x] Render core and Read mode
-- [ ] Ship the Quick Look extension
-- [ ] Notarise and publish
+- [x] Ship the Quick Look extension
+- [x] Notarise and publish
   - [ ] Sparkle appcast
   - [x] Ad-hoc signing for local runs
 

@@ -24,6 +24,28 @@
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- Sparkle 2.9.5 updater configuration (spec §3.4).
+	     SUPublicEDKey is a committed placeholder: the real Ed25519 public key
+	     is injected at release build time from the SPARKLE_ED25519_PUBLIC_KEY
+	     secret (see .github/workflows/release.yml).  Dev bundles built by
+	     Scripts/bundle-app.sh omit the whole Sparkle block, which disables the
+	     updater. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://ezzy1630.github.io/Downright/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>PLACEHOLDER_DOWNRIGHT_ED25519_PUBLIC_KEY</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSHumanReadableCopyright</key>

@@ -265,8 +265,14 @@ public enum TableEditing {
         return make(document, range: range, replacement: output.joined(), summary: summary, expected: expected)
     }
 
+    /// True when the last *code unit* of the line is a line terminator.
+    /// `String.hasSuffix` cannot be used here: UAX #29 treats CRLF as a single
+    /// grapheme cluster, so `"…\r\n".hasSuffix("\n")` is false — a CRLF row
+    /// move would silently double every terminator.  Scalar comparison sees the
+    /// real last unit.
     private static func hasTerminator(_ line: String) -> Bool {
-        !line.isEmpty && (line.hasSuffix("\n") || line.hasSuffix("\r"))
+        guard let last = line.unicodeScalars.last else { return false }
+        return last == "\n" || last == "\r"
     }
 
     private static func makeWhole(

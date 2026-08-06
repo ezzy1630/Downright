@@ -38,4 +38,38 @@ enum FNV {
     static func hash(_ string: String) -> UInt64 {
         combine(offsetBasis, string)
     }
+
+    /// FNV-1a over a run of UTF-16 code units.  Hashing directly from the
+    /// NSString never materialises an intermediate `String`, which is the
+    /// dominant allocation in the per-keystroke reparse path (§3.5).
+    @inline(__always)
+    static func combine(_ hash: UInt64, utf16 units: UnsafePointer<unichar>, count: Int) -> UInt64 {
+        var h = hash
+        for i in 0..<count {
+            let unit = units[i]
+            h = combine(h, byte: UInt8(truncatingIfNeeded: unit))
+            h = combine(h, byte: UInt8(unit >> 8))
+        }
+        return h
+    }
+
+    /// FNV-1a over a UTF-16 `NSRange` of `text`, in 256-unit chunks so no
+    /// intermediate `String` or large scratch buffer is ever allocated.
+    static func combine(_ hash: UInt64, _ text: NSString, range: NSRange) -> UInt64 {
+        var h = hash
+        var buffer = [unichar](repeating: 0, count: 256)
+        var index = range.location
+        let end = min(range.upperBound, text.length)
+        while index < end {
+            let chunk = Swift.min(256, end - index)
+            text.getCharacters(&buffer, range: NSRange(location: index, length: chunk))
+            h = combine(h, utf16: buffer, count: chunk)
+            index += chunk
+        }
+        return h
+    }
+
+    static func hash(_ text: NSString, range: NSRange) -> UInt64 {
+        combine(offsetBasis, text, range: range)
+    }
 }
