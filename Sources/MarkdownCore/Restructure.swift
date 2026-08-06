@@ -85,19 +85,22 @@ public enum Restructure {
         guard destination != section.location else { return [] }
 
         let text = doc.text as NSString
+        let ending = DocumentIO.dominantLineEnding(doc.text).rawValue
         let title = doc.headings[headingIndex].title
-        let split = SectionSplit(section, in: text)
-        let leadingBlanks = blankRun(before: section.location, in: text)
+        let split = SectionSplit(section, in: text, ending: ending)
+        let leadingBlanks = blankRun(before: section.location, in: text, ending: ending)
 
         // Cut.  A section that owns a trailing blank run takes it along and the
         // separator before it survives to join its neighbours.  The last
         // section owns nothing, so the run before it — and the final newline,
-        // if the file has none of its own — go too.
+        // if the file has none of its own — go too.  `leadingBlanks` counts
+        // *lines*, so the extension must scale by the terminator's width or a
+        // CRLF separator is only half-swallowed and its stray `\r` survives.
         var cut = section
         if split.trailingBlanks > 0 || section.upperBound < doc.length {
             cut = section
         } else {
-            let extra = leadingBlanks + (split.isTerminated ? 0 : 1)
+            let extra = (leadingBlanks + (split.isTerminated ? 0 : 1)) * ending.utf16.count
             cut = NSRange(
                 location: max(0, section.location - extra),
                 length: section.length + min(extra, section.location)
@@ -110,13 +113,13 @@ public enum Restructure {
             // Appending: the separator has to go in front, since there is no
             // following section to carry one.
             let separator = split.trailingBlanks > 0
-                ? String(repeating: "\n", count: split.trailingBlanks)
-                : String(repeating: "\n", count: max(1, leadingBlanks))
+                ? String(repeating: ending, count: split.trailingBlanks)
+                : String(repeating: ending, count: max(1, leadingBlanks))
             insertion = separator + split.core
         } else {
-            var separator = blankRun(before: destination, in: text)
+            var separator = blankRun(before: destination, in: text, ending: ending)
             if separator == 0 { separator = leadingBlanks }
-            insertion = split.terminatedCore + String(repeating: "\n", count: separator)
+            insertion = split.terminatedCore + String(repeating: ending, count: separator)
         }
 
         return [
@@ -130,39 +133,48 @@ public enum Restructure {
     }
 
     /// A section's content, its terminator and the blank run that trails it.
+    /// `ending` is the document's dominant line terminator (`\n`, `\r\n` or a
+    /// lone `\r`), so a move through a classic-Mac or CRLF file never mixes
+    /// endings.
     private struct SectionSplit {
         var core: String
         var isTerminated: Bool
         var trailingBlanks: Int
+        private let ending: String
 
-        init(_ section: NSRange, in text: NSString) {
+        init(_ section: NSRange, in text: NSString, ending: String) {
+            self.ending = ending
+            let length = ending.utf16.count
             var end = section.upperBound
-            var newlines = 0
-            while end > section.location, text.character(at: end - 1) == 0x0A {
-                end -= 1
-                newlines += 1
+            var terminators = 0
+            while end - length >= section.location,
+                  text.substring(with: NSRange(location: end - length, length: length)) == ending {
+                end -= length
+                terminators += 1
             }
-            isTerminated = newlines > 0
-            let coreEnd = isTerminated ? end + 1 : end
+            isTerminated = terminators > 0
+            let coreEnd = isTerminated ? end + length : end
             core = text.substring(with: NSRange(
                 location: section.location, length: coreEnd - section.location
             ))
-            trailingBlanks = section.upperBound - coreEnd
+            trailingBlanks = max(0, terminators - (isTerminated ? 1 : 0))
         }
 
         /// The content with a line terminator, for pasting somewhere that is
         /// not the end of the document.
-        var terminatedCore: String { isTerminated ? core : core + "\n" }
+        var terminatedCore: String { isTerminated ? core : core + ending }
     }
 
     /// Blank lines immediately before `offset`, which is a line start: the run
-    /// of newlines ending there, less the previous line's own terminator.
-    private static func blankRun(before offset: Int, in text: NSString) -> Int {
+    /// of `ending` terminators there, less the previous line's own terminator.
+    private static func blankRun(before offset: Int, in text: NSString, ending: String) -> Int {
+        let length = (ending as NSString).length
         var count = 0
         var index = offset
-        while index > 0, text.character(at: index - 1) == 0x0A {
+        while index - length >= 0,
+              text.substring(with: NSRange(location: index - length, length: length)) == ending {
             count += 1
-            index -= 1
+            index -= length
         }
         return max(0, count - 1)
     }
@@ -356,10 +368,11 @@ public enum Restructure {
     public static func tableOfContents(_ doc: ParsedDocument, maxLevel: Int) -> String {
         let headings = doc.headings.filter { $0.level <= maxLevel && !$0.title.isEmpty }
         guard let minimum = headings.map(\.level).min() else { return "" }
+        let ending = DocumentIO.dominantLineEnding(doc.text).rawValue
         return headings.map { heading in
             let indent = String(repeating: "  ", count: heading.level - minimum)
             return "\(indent)- [\(escaped(heading.title))](#\(heading.slug))"
-        }.joined(separator: "\n")
+        }.joined(separator: ending)
     }
 
     private static func escaped(_ title: String) -> String {

@@ -411,7 +411,7 @@ struct BlockBuilder {
     ) -> MDBlock {
         let startLine = map.line(containing: range.location)
         let firstLine = map.string(ofLine: startLine)
-        let fenceCharacters = firstLine.trimmingCharacters(in: .whitespaces)
+        let fenceCharacters = Self.fencePrefix(of: firstLine)
         let isFenced = fenceCharacters.hasPrefix("```") || fenceCharacters.hasPrefix("~~~")
 
         var content = range
@@ -426,7 +426,7 @@ struct BlockBuilder {
             // mixture of both, or a `~~~` code block could be terminated by a
             // backtick fence and vice versa.
             let fenceChar: Character = fenceCharacters.hasPrefix("~~~") ? "~" : "`"
-            let closeLine = map.string(ofLine: endLine).trimmingCharacters(in: .whitespaces)
+            let closeLine = Self.fencePrefix(of: map.string(ofLine: endLine))
             let hasClosingFence = endLine > startLine
                 && !closeLine.isEmpty
                 && closeLine.allSatisfy { $0 == fenceChar }
@@ -461,6 +461,25 @@ struct BlockBuilder {
                 markerRange: marker, trailingMarkerRange: trailing, depth: depth, quoteDepth: quoteDepth
             )
         }
+    }
+
+    /// The fence-visible portion of a code line: leading whitespace and any
+    /// blockquote `>` markers stripped.  A fence nested inside a quote
+    /// (`> ````) otherwise reads as an indented block — the raw line begins
+    /// with `>`, so plain whitespace trimming can never reach the fence, and
+    /// the block loses its marker ranges and is marked `isFenced: false` even
+    /// though cmark parsed a real fence with a language.
+    private static func fencePrefix(of line: String) -> String {
+        var index = line.startIndex
+        while index < line.endIndex {
+            let character = line[index]
+            if character == " " || character == "\t" || character == ">" {
+                index = line.index(after: index)
+            } else {
+                break
+            }
+        }
+        return String(line[index...])
     }
 
     // MARK: Tables

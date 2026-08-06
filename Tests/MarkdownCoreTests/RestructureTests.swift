@@ -100,6 +100,23 @@ import Testing
         }
     }
 
+    /// A classic-Mac file (lone `\r` terminators) must stay all-`\r` through a
+    /// section move: the separators `moveSection` synthesises used to be hard
+    /// `\n`, mixing endings in a file `DocumentIO` will then refuse to touch.
+    @Test func moveSectionKeepsLoneCRLineEndings() {
+        let text = "# One\r\r# Two\r\r# Three\r"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 2, before: 0))
+        #expect(out == "# Three\r\r# One\r\r# Two\r")
+    }
+
+    @Test func moveSectionKeepsCRLFLineEndings() {
+        let text = "# One\r\n\r\n# Two\r\n\r\n# Three\r\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 2, before: 0))
+        #expect(out == "# Three\r\n\r\n# One\r\n\r\n# Two\r\n")
+    }
+
     // MARK: Move block
 
     @Test func moveBlockSwapsSiblingsAndKeepsTheGap() {

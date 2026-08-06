@@ -111,7 +111,10 @@ extension DocumentWindowController {
         panel.nameFieldStringValue = markdownDocument.url?.lastPathComponent ?? "Untitled.md"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try DocumentIO.write(markdownDocument.text, to: url, fidelity: .default)
+            // A "copy" must be byte-faithful to the source, not normalised to
+            // .default: a CRLF / UTF-16 / BOM / no-final-newline document saved
+            // as a copy should stay exactly that (§3.1).
+            try DocumentIO.write(markdownDocument.text, to: url, fidelity: markdownDocument.fidelity)
         } catch {
             presentOperationError("Couldn’t save a copy", error: error)
             return

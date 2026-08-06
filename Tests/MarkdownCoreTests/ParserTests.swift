@@ -147,6 +147,41 @@ import Testing
         #expect(!isFenced)
     }
 
+    /// A fence nested inside a blockquote has `> ` prefixes on every line; the
+    /// raw line starts with `>`, so plain whitespace trimming would miss the
+    /// fence entirely and drop its marker ranges.
+    @Test func quotedFencedCodeKeepsItsMarkers() {
+        let doc = MarkdownParser.parse("> ```swift\n> let x = 1\n> ```\n")
+        let quote = doc.root.children.first!
+        let block = quote.children.first!
+        guard case .codeBlock(let language, let isFenced, let content) = block.content else {
+            Issue.record("expected a code block inside the quote, got \(block.content)")
+            return
+        }
+        #expect(language == "swift")
+        #expect(isFenced)
+        // The opening marker is the fence's own characters (the block's range
+        // starts at the backtick); the closing marker runs from the line start,
+        // so it keeps the `> ` prefix — same convention as a list-nested
+        // fence keeping its indent.
+        #expect(doc.substring(block.markerRange!) == "```swift\n")
+        #expect(doc.substring(block.trailingMarkerRange!) == "> ```")
+        #expect(doc.substring(content) == "> let x = 1\n")
+    }
+
+    @Test func deeplyNestedQuotedFenceStillResolves() {
+        let doc = MarkdownParser.parse("> > ```\n> > code\n> > ```\n")
+        let outer = doc.root.children.first!
+        let inner = outer.children.first!
+        let block = inner.children.first!
+        guard case .codeBlock(_, let isFenced, _) = block.content else {
+            Issue.record("expected a code block, got \(block.content)")
+            return
+        }
+        #expect(isFenced)
+        #expect(doc.substring(block.trailingMarkerRange!) == "> > ```")
+    }
+
     @Test func tasksAreCollectedWithSingleCharacterMarkRanges() {
         let doc = MarkdownParser.parse("## Work\n\n- [ ] alpha\n- [x] beta\n  - [ ] nested\n")
         #expect(doc.tasks.count == 3)

@@ -257,12 +257,30 @@ final class MarkdownDocument: NSObject {
         let incomingHash = SnapshotStore.hash(incoming)
         guard incomingHash != diskHash else { return nil }
         // If the disk already holds the buffer's bytes, writing is a no-op and
-        // there is nothing being clobbered.
-        guard incomingHash != SnapshotStore.hash(storage.string) else {
+        // there is nothing being clobbered.  A trailing-newline-only difference
+        // is likewise not a content change: it is an artifact `DocumentIO` will
+        // reconcile on this very write, so it must not surface as a conflict or
+        // block an autosave.
+        guard incomingHash != SnapshotStore.hash(storage.string),
+              !finalNewlineDifferenceOnly(storage.string, incoming) else {
             diskHash = incomingHash
             return nil
         }
         return (incoming, TextDiff.hunks(old: storage.string, new: incoming))
+    }
+
+    /// True when `a` and `b` differ only by the presence of a single trailing
+    /// newline (LF, CRLF or lone CR are all counted).  Used to treat the final
+    /// newline as byte-fidelity rather than as content, so an external absorb
+    /// never reverts the user's trailing-newline edit and a save never blocks
+    /// on a phantom conflict for one.
+    private func finalNewlineDifferenceOnly(_ a: String, _ b: String) -> Bool {
+        func strippedNewline(_ s: String) -> String {
+            if s.hasSuffix("\r\n") { return String(s.dropLast(2)) }
+            if s.hasSuffix("\n") || s.hasSuffix("\r") { return String(s.dropLast()) }
+            return s
+        }
+        return strippedNewline(a) == strippedNewline(b)
     }
 
     /// Records the external snapshot, marks the conflict pending, publishes the
@@ -528,12 +546,24 @@ final class MarkdownDocument: NSObject {
             return
         }
 
+        // A newline is a byte-fidelity property (`DocumentIO` reconciles it at
+        // save time), not document content.  If the on-disk bytes differ from
+        // the buffer only by the presence of a final newline — the common case
+        // is an external tool touching the file while the user trimmed its
+        // trailing newline — rewriting the buffer wholesale would silently
+        // restore the newline and revert that edit.  Acknowledge the disk state
+        // and keep the buffer.
+        if finalNewlineDifferenceOnly(currentText, incoming) {
+            diskHash = incomingHash
+            fidelity = freshFidelity
+            return
+        }
+
         SnapshotStore.shared.record(incoming, for: url, kind: .external)
         let hunks = TextDiff.hunks(old: currentText, new: incoming)
         diskHash = incomingHash
 
-        if isDirty {
-            // Never clobber (§8.1).  The bar is non-modal; the buffer is
+        if isDirty {  // Never clobber (§8.1).  The bar is non-modal; the buffer is
             // untouched until the user picks.  Track it at the document level
             // so implicit saves refuse to clobber even after the bar is
             // dismissed.
