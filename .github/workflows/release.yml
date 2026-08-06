@@ -107,15 +107,22 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             archive
 
-      - name: Embed CLI, extensions, and verify layout
+      - name: Embed CLI, Sparkle, extensions, and verify layout
         run: |
           set -euo pipefail
           APP=".build-release/Downright.xcarchive/Products/Applications/Downright.app"
           echo "APP=$APP" >> "$GITHUB_ENV"
           swift build -c release --scratch-path .build-release-spm --product down
           cp .build-release-spm/release/down "$APP/Contents/MacOS/down"
+          # XcodeGen's `embed: true` for an SPM framework resolves to a bare
+          # product name and fails, so Sparkle is linked in the project and
+          # copied into the bundle by hand (matching the SwiftPM path).
+          FW=".build-release/Build/Products/Release/Sparkle.framework"
+          test -d "$FW"
+          rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
+          cp -R "$FW" "$APP/Contents/Frameworks/"
           Scripts/verify-bundle.sh "$APP" --production
-          # The archive already embedded Sparkle via the XcodeGen spec; prove it.
+          # The manual embed above put Sparkle in place; prove it.
           test -d "$APP/Contents/Frameworks/Sparkle.framework"
 
       # ---------------------------------------------------------------- signing

@@ -50,6 +50,21 @@ xcodebuild \
 
 APP="$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Downright.app"
 
+echo "==> Embedding Sparkle.framework"
+# XcodeGen's `embed: true` for an SPM framework resolves the copy phase to a
+# bare product name ("Sparkle") instead of the versioned Sparkle.framework
+# bundle, so the embed fails before the app is signed.  Link the framework in
+# the project but copy it into the bundle by hand — the same approach the
+# SwiftPM path uses, and deterministic across XcodeGen/Xcode versions.
+FRAMEWORKS="$APP/Contents/Frameworks"
+mkdir -p "$FRAMEWORKS"
+if [ -d "$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Sparkle.framework" ]; then
+    rm -rf "$FRAMEWORKS/Sparkle.framework"
+    cp -R "$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Sparkle.framework" "$FRAMEWORKS/"
+else
+    echo "    WARNING: Sparkle.framework not found in Xcode products; bundle has no updater."
+fi
+
 echo "==> Embedding down CLI"
 swift build -c release --scratch-path "$SWIFTPM_SCRATCH" --product down
 cp "$ROOT/$SWIFTPM_SCRATCH/release/down" "$APP/Contents/MacOS/down"

@@ -31,7 +31,6 @@ targets:
         product: MarkdownRender
       - package: Sparkle
         product: Sparkle
-        embed: true
       - target: DownrightQL
         embed: true
       - target: DownrightThumb
