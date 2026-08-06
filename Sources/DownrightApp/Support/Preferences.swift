@@ -92,7 +92,7 @@ final class Preferences {
     private(set) var lastPersistenceError: Error?
     var onPersistenceFailure: ((Error) -> Void)?
 
-    static let didChange = Notification.Name("com.ezzyrappeport.downright.preferencesDidChange")
+    static let didChange = Notification.Name("com.ezzy.downright.preferencesDidChange")
 
     private init() {
         lastPersistenceError = nil

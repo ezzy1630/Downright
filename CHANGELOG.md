@@ -32,7 +32,7 @@ every release; Sparkle orders updates by it.
   thumbnail bundles declaring the required-reason APIs in use (UserDefaults,
   file timestamps). No data is collected and nothing tracks.
 - **Quick Look and Finder thumbnails now cover `.mdx` / `.mdc` / `.qmd` /
-  `.rmd`** — the exported `com.ezzyrappeport.downright.markdown` UTI is declared
+  `.rmd`** — the exported `com.ezzy.downright.markdown` UTI is declared
   in both extension bundles.
 - **CI gates the §12 performance budget**: `ci.yml` runs `drbench` in release
   with budgets enforced (`RUN_DRBENCH=1`).

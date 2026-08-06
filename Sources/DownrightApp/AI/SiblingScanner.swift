@@ -45,7 +45,7 @@ final class SiblingScanner {
     private var contentHashCache: [ContentFingerprint: String] = [:]
     private var contentHashOrder: [ContentFingerprint] = []
     private let contentHashCacheLimit = 256
-    private let scanQueue = DispatchQueue(label: "com.ezzyrappeport.downright.sibling-scan", qos: .utility)
+    private let scanQueue = DispatchQueue(label: "com.ezzy.downright.sibling-scan", qos: .utility)
     private var scanGeneration: UInt64 = 0
 
     /// Files above this size are not content-hashed for the "changed since you

@@ -14,7 +14,7 @@ cd "$ROOT"
 CONFIGURATION="${CONFIGURATION:-release}"
 SCRATCH="${SCRATCH:-.build-main}"
 APP_NAME="Downright"
-BUNDLE_ID="com.ezzyrappeport.downright"
+BUNDLE_ID="com.ezzy.downright"
 # shellcheck disable=SC1091
 source "$ROOT/Config/version.env"
 VERSION="$MARKETING_VERSION"
@@ -98,7 +98,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
             <key>LSItemContentTypes</key>
             <array>
                 <string>net.daringfireball.markdown</string>
-                <string>com.ezzyrappeport.downright.markdown</string>
+                <string>com.ezzy.downright.markdown</string>
             </array>
             <key>CFBundleTypeExtensions</key>
             <array>
@@ -131,7 +131,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
-            <key>UTTypeIdentifier</key><string>com.ezzyrappeport.downright.markdown</string>
+            <key>UTTypeIdentifier</key><string>com.ezzy.downright.markdown</string>
             <key>UTTypeDescription</key><string>Extended Markdown Document</string>
             <key>UTTypeConformsTo</key><array><string>public.plain-text</string></array>
             <key>UTTypeTagSpecification</key>

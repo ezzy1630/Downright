@@ -54,7 +54,7 @@
 			<key>UTTypeDescription</key>
 			<string>Extended Markdown Document</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.ezzyrappeport.downright.markdown</string>
+			<string>com.ezzy.downright.markdown</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -74,7 +74,7 @@
 		<key>QLSupportedContentTypes</key>
 		<array>
 			<string>net.daringfireball.markdown</string>
-			<string>com.ezzyrappeport.downright.markdown</string>
+			<string>com.ezzy.downright.markdown</string>
 		</array>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>

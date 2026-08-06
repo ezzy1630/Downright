@@ -50,11 +50,11 @@ fi
 if command -v pluginkit >/dev/null 2>&1; then
     if [ -d "$APP_DEST/Contents/PlugIns/DownrightQL.appex" ]; then
         pluginkit -a "$APP_DEST/Contents/PlugIns/DownrightQL.appex" 2>/dev/null || true
-        pluginkit -e use -i com.ezzyrappeport.downright.quicklook 2>/dev/null || true
+        pluginkit -e use -i com.ezzy.downright.quicklook 2>/dev/null || true
     fi
     if [ -d "$APP_DEST/Contents/PlugIns/DownrightThumb.appex" ]; then
         pluginkit -a "$APP_DEST/Contents/PlugIns/DownrightThumb.appex" 2>/dev/null || true
-        pluginkit -e use -i com.ezzyrappeport.downright.thumbnail 2>/dev/null || true
+        pluginkit -e use -i com.ezzy.downright.thumbnail 2>/dev/null || true
     fi
 fi
 

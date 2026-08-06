@@ -131,6 +131,6 @@ enum MarkdownSmartPaste {
 public extension NSPasteboard.PasteboardType {
     /// Lossless Markdown companion to the standard visible-text clipboard.
     static let downrightMarkdown = NSPasteboard.PasteboardType(
-        "com.ezzyrappeport.downright.markdown"
+        "com.ezzy.downright.markdown"
     )
 }

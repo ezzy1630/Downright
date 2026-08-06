@@ -77,7 +77,7 @@ public enum SpotlightMetadataImporter {
     public static func contentType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {
         case "md", "markdown", "mdown", "mkd": "net.daringfireball.markdown"
-        default: "com.ezzyrappeport.downright.markdown"
+        default: "com.ezzy.downright.markdown"
         }
     }
 }
@@ -104,7 +104,7 @@ public enum SpotlightIndexer {
 
             let item = CSSearchableItem(
                 uniqueIdentifier: url.standardizedFileURL.path,
-                domainIdentifier: "com.ezzyrappeport.downright.documents",
+                domainIdentifier: "com.ezzy.downright.documents",
                 attributeSet: attributes
             )
             CSSearchableIndex.default().indexSearchableItems([item])

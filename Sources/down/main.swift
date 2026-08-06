@@ -16,7 +16,7 @@ func readInputs(_ paths: [String]) -> [(String, String)] {
             guard !data.isEmpty else { writeError("stdin is empty", status: 66) }
             return ("stdin", String(decoding: data, as: UTF8.self))
         }
-        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         guard FileManager.default.fileExists(atPath: url.path) else {
             writeError("\(path): no such file", status: 66)
         }
@@ -28,14 +28,15 @@ func readInputs(_ paths: [String]) -> [(String, String)] {
 func expandedMarkdownPaths(_ paths: [String]) -> [String] {
     paths.flatMap { path -> [String] in
         guard path != "-" else { return [path] }
+        let expanded = (path as NSString).expandingTildeInPath
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue else {
             return [path]
         }
-        guard let enumerator = FileManager.default.enumerator(atPath: path) else { return [] }
+        guard let enumerator = FileManager.default.enumerator(atPath: expanded) else { return [] }
         return enumerator.compactMap { item in
             guard let item = item as? String else { return nil }
-            let full = URL(fileURLWithPath: path).appendingPathComponent(item).path
+            let full = URL(fileURLWithPath: expanded).appendingPathComponent(item).path
             return MarkdownCLI.isMarkdownPath(full) ? full : nil
         }.sorted()
     }
@@ -63,7 +64,7 @@ func locateApp() -> URL? {
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-    process.arguments = ["kMDItemCFBundleIdentifier == 'com.ezzyrappeport.downright'"]
+    process.arguments = ["kMDItemCFBundleIdentifier == 'com.ezzy.downright'"]
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
