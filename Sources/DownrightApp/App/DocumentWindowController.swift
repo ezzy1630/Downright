@@ -312,6 +312,19 @@ final class DocumentWindowController: NSWindowController {
         ]
         FileHandle.standardError.write(Data(("\n--- Downright layout ---\n" + lines.joined(separator: "\n") + "\n").utf8))
 
+        if let toolbar = window?.toolbar {
+            for item in toolbar.items {
+                let view = item.view
+                FileHandle.standardError.write(Data((
+                    "toolbar \(item.itemIdentifier.rawValue) "
+                    + "view=\(String(describing: type(of: view))) "
+                    + "frame=\(view?.frame ?? .zero) "
+                    + "intrinsic=\(view?.intrinsicContentSize ?? .zero) "
+                    + "hidden=\(view?.isHidden ?? false)\n"
+                ).utf8))
+            }
+        }
+
         guard let directory = ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_CAPTURE"] else { return }
 
         // The titlebar, traffic lights and toolbar are drawn by the window's
@@ -353,7 +366,10 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer = MarkdownContainerView(storage: markdownDocument.storage)
         primaryContainer.textView.markdownDelegate = self
         wireKeyEventHandler(primaryContainer.textView)
-        primaryContainer.textView.styleSheet = activeStyleSheet
+        // Style through the container so `scrollView.backgroundColor` follows
+        // the theme — styling the text view directly left the scroll surface on
+        // the fallback colour and showed a seam beside the document map (§8.6).
+        primaryContainer.styleSheet = activeStyleSheet
         primaryContainer.topAccessory = breadcrumbView
         // The current-section cue lives in a stable orientation lane. A
         // reader must never trade the first line of prose for navigation.
@@ -490,8 +506,8 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func applyStyleSheet() {
-        primaryContainer.textView.styleSheet = activeStyleSheet
-        splitContainer?.textView.styleSheet = activeStyleSheet
+        primaryContainer.styleSheet = activeStyleSheet
+        splitContainer?.styleSheet = activeStyleSheet
         breadcrumbView.styleSheet = activeStyleSheet
         densityGutterView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
@@ -1073,7 +1089,16 @@ final class DocumentWindowController: NSWindowController {
         if let inspectorHost { host = inspectorHost }
         else {
             let created = InspectorHostView()
-            created.onClose = { [weak self] in self?.closeInspector() }
+            created.onClose = { [weak self] in
+                guard let self else { return }
+                if self.inspectorHost?.selectedSection == .tasks {
+                    // The panel owns the toolbar ring's on-state; closing it
+                    // through the host header must settle the ring too (§8.5).
+                    self.closeTaskPanel()
+                } else {
+                    self.closeInspector()
+                }
+            }
             install(created, in: trailingPane)
             inspectorHost = created
             host = created
@@ -1273,7 +1298,7 @@ final class DocumentWindowController: NSWindowController {
         let second = MarkdownContainerView(storage: markdownDocument.storage)
         second.textView.markdownDelegate = self
         wireKeyEventHandler(second.textView)
-        second.textView.styleSheet = activeStyleSheet
+        second.styleSheet = activeStyleSheet
         second.textView.configuration = renderConfiguration
         let source = containerTextView
         second.textView.mode = source.mode
@@ -1513,8 +1538,11 @@ extension DocumentWindowController: NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard documentWillClose() else { return }
-        onClose?()
+        // The window is gone regardless of what torn down; deregistration must
+        // always run or AppDelegate.`windowControllers` keeps a dead controller
+        // that can never be removed (§ Adapts the session registry).
+        defer { onClose?() }
+        _ = documentWillClose()
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {

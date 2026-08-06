@@ -321,7 +321,12 @@ extension NSColor {
 /// leaks into the surrounding context.
 func drawNSImage(_ image: NSImage, in target: CGRect, in cg: CGContext, cornerRadius: CGFloat = 0) {
     var proposed = target
-    guard let cgImage = image.cgImage(forProposedRect: &proposed, context: nil, hints: nil) else { return }
+    // Rasterize at this view's backing scale, not the main screen's — a
+    // drawing-handler NSImage has no representation, so `cgImage(forProposedRect:)`
+    // would otherwise sample at `NSScreen.main` and render math (and other
+    // bitmap fragments) at the wrong density on any other display.
+    let drawingContext = NSGraphicsContext(cgContext: cg, flipped: true)
+    guard let cgImage = image.cgImage(forProposedRect: &proposed, context: drawingContext, hints: nil) else { return }
     cg.saveGState()
     if cornerRadius > 0 {
         cg.addPath(CGPath(roundedRect: target, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil))

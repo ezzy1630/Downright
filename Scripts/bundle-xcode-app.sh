@@ -45,7 +45,7 @@ xcodebuild \
     CODE_SIGNING_REQUIRED=NO \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD" \
-    "${PLIST_ARG[@]}" \
+    "${PLIST_ARG[@]+"${PLIST_ARG[@]}"}" \
     build
 
 APP="$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Downright.app"

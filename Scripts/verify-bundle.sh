@@ -51,8 +51,10 @@ fi
 # --- Runtime paths -----------------------------------------------------------
 BIN="$MACOS/Downright"
 if [ -x "$BIN" ]; then
-    # otool -L prints the binary's own path as the first line; skip it.
-    BAD_DYLIBS="$(otool -L "$BIN" | tail -n +2 | grep -vE '@rpath|@executable_path|@loader_path|/usr/lib/|/System/|/Library/Frameworks/' || true)"
+    # otool -L prints the binary's own path as the first line; a universal
+    # binary repeats a per-architecture header line too. Skip both, then any
+    # path that stays must be an absolute build-machine dylib.
+    BAD_DYLIBS="$(otool -L "$BIN" | tail -n +2 | grep -vE '\(architecture [^)]*\):$|@rpath|@executable_path|@loader_path|/usr/lib/|/System/|/Library/Frameworks/' || true)"
     check "$([ -z "$BAD_DYLIBS" ] && echo 1 || echo 0)" "no absolute dylib paths (offending: $(echo "$BAD_DYLIBS" | tr '\n' ' '))"
     RPATH="$(otool -l "$BIN" | grep -c '@executable_path/../Frameworks' || true)"
     check "$([ "$RPATH" -ge 1 ] && echo 1 || echo 0)" "bundle-relative rpath present"

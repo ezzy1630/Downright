@@ -178,7 +178,12 @@ public final class MarkdownContainerView: NSView {
         let measure = min(preferredMeasure,
                           max(240, contentWidth - RenderMetrics.revealSlack * 2 - overlayThumbWidth))
         textView.applyResponsiveMeasure(measure)
-        let textLeft = max(gutterWidth + RenderMetrics.revealSlack, (scrollView.frame.width - measure) / 2)
+        // Centre the column in the *whole* surface, not just in the scroll
+        // view: the leading lane (document map) would otherwise push the text
+        // off centre by half its own width, which reads as the column being
+        // pressed against the map wall while the trailing margin stays empty.
+        let opticalLeft = max(0, (bounds.width - measure) / 2 - leadingWidth)
+        let textLeft = max(gutterWidth + RenderMetrics.revealSlack, opticalLeft)
         let columnOrigin = textLeft - RenderMetrics.revealSlack
         textView.minSize = NSSize(width: measure + RenderMetrics.revealSlack * 2, height: 0)
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)

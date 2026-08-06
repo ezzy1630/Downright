@@ -29,7 +29,10 @@ final class UpdateStatusPill: NSButton {
 
     override var intrinsicContentSize: NSSize {
         guard let currentModel, currentModel != UpdatePillModel.hidden else {
-            return NSSize(width: 0, height: Metrics.height)
+            // Absent-but-in-the-toolbar: a zero width makes AppKit log an
+            // ambiguous-layout warning on every launch. 1 is invisible yet
+            // unambiguous; the pill's own width constraint collapses it.
+            return NSSize(width: 1, height: Metrics.height)
         }
         let textWidth = ceil(label.attributedStringValue.size().width)
         let iconWidth: CGFloat = {
@@ -149,7 +152,9 @@ final class UpdateStatusPill: NSButton {
             setAccessibilityValue(label.stringValue)
         }
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let targetWidth: CGFloat = visible ? intrinsicContentSize.width : 0
+        // Collapse to 1pt, never 0: the toolbar auto-measures this view and a
+        // zero-width frame logs an ambiguous-layout warning on every launch.
+        let targetWidth: CGFloat = visible ? intrinsicContentSize.width : 1
         if reduce {
             widthConstraint.constant = targetWidth
             if !visible { isHidden = true }
@@ -254,6 +259,7 @@ final class UpdateStatusPill: NSButton {
     private func setHidden(_ hidden: Bool, animated: Bool) {
         isHidden = hidden
         shell.alphaValue = hidden ? 0 : 1
-        widthConstraint.constant = hidden ? 0 : intrinsicContentSize.width
+        // 1pt rather than 0 — see `refreshFromCoordinator`.
+        widthConstraint.constant = hidden ? 1 : intrinsicContentSize.width
     }
 }

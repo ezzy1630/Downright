@@ -143,6 +143,13 @@ final class BlockStyleFactory {
             // ordinary indent instead of stacking both values.
             result += RenderMetrics.calloutIconInsetX - indentUnit
         }
+        // A fenced block inside a list item sits at the item's content edge —
+        // the marker column — not at the structural indent, which skips the
+        // first level entirely.  Without this the nested block's band and text
+        // collide with the list marker lane (§11.3).
+        if case .codeBlock = content, context.listDepth > 0 {
+            result += markerColumn(context: context, task: false)
+        }
         return result
     }
 
@@ -221,6 +228,13 @@ final class BlockStyleFactory {
                 style.firstLineHeadIndent = contentEdge
                 style.headIndent = contentEdge
             }
+        }
+
+        // Code is the one block that keeps its glyphs in Read mode, and the
+        // column never scrolls horizontally: wrap unbreakable lines by
+        // character instead of clipping them at the measure.
+        if case .codeBlock = block.content {
+            style.lineBreakMode = .byCharWrapping
         }
 
         let frozen = style.copy() as? NSParagraphStyle ?? NSParagraphStyle.default

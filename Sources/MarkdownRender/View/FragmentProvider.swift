@@ -34,7 +34,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         }
 
         guard let storage = context.storage, source.location < storage.length,
-              let payload = storage.attribute(.drFragment, at: source.location, effectiveRange: nil) as? FragmentPayload
+              let payload = codePayload(in: storage, paragraph: source)
         else { return plain() }
 
         // Source mode never renders objects — that is the whole point of it.
@@ -117,7 +117,11 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
                                      context: context, role: .collapsedChip, lineCount: lines)
         }
 
-        let isFence = storage.attribute(.drMarker, at: source.location, effectiveRange: nil) != nil
+        // The fence's paragraph starts at the source line's indentation for a
+        // nested block — the parser leaves the leading spaces out of the
+        // block's range (e.g. 79 vs the line start 77) — so the `.drMarker`
+        // sits after the whitespace run, never at the paragraph's start.
+        let isFence = paragraphContainsFenceMarker(in: storage, paragraph: source)
         let role: CodeBlockFragment.Role
         if isFence, source.location <= block.location { role = .openChrome }
         else if isFence, source.upperBound >= block.upperBound { role = .closeChrome }
@@ -135,5 +139,77 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         // Minus the two fence lines when they are present; a block that is all
         // fence is reported as empty rather than as -1 lines.
         return max(0, last - first - 1)
+    }
+
+    /// The `.drFragment` owning a paragraph.  Usually the attribute sits at the
+    /// paragraph's start, but a nested fenced block's paragraph begins at the
+    /// source indentation *before* the block's range, and the list item's own
+    /// ornament payload wraps the whole item — so the paragraph start carries
+    /// the *surrounding* payload, not the code block's.  Probe past the leading
+    /// whitespace for a code payload that owns this line; only when none is
+    /// found does the start-of-paragraph payload win.
+    private func codePayload(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
+        if let payload = storage.attribute(.drFragment, at: source.location, effectiveRange: nil) as? FragmentPayload {
+            if isCode(payload.kind) { return payload }
+            return codePayloadAfterWhitespace(in: storage, paragraph: source) ?? payload
+        }
+        return codePayloadAfterWhitespace(in: storage, paragraph: source)
+    }
+
+    private func codePayloadAfterWhitespace(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
+        let probe = firstNonWhitespaceOffset(in: storage, paragraph: source)
+        guard probe > source.location, probe < source.upperBound,
+              let payload = storage.attribute(.drFragment, at: probe, effectiveRange: nil) as? FragmentPayload,
+              isCode(payload.kind)
+        else { return nil }
+        return payload
+    }
+
+    private func isCode(_ kind: FragmentKind) -> Bool {
+        switch kind {
+        case .codeBlock, .collapsedCodeBlock: return true
+        default: return false
+        }
+    }
+
+    /// True when the paragraph carries a fence marker (`.drMarker`), probing
+    /// past the leading whitespace a nested fence inherits from its source
+    /// line.  Only fences are marker-attributed inside a code block, so a hit
+    /// anywhere on the line means "this line is chrome".
+    private func paragraphContainsFenceMarker(in storage: NSTextStorage, paragraph source: NSRange) -> Bool {
+        let probe = firstNonWhitespaceOffset(in: storage, paragraph: source)
+        guard probe < source.upperBound else { return false }
+        return storage.attribute(.drMarker, at: probe, effectiveRange: nil) != nil
+    }
+
+    /// First offset past the paragraph's leading *marker prefix*: the source
+    /// indentation a nested block inherits, plus any blockquote `>` and list
+    /// markers the parser left on the line (`> ````, `- ````, `1. ````).  The
+    /// fence's paragraph starts at that prefix, never at the block's range.
+    /// Over-skipping is harmless — the callers only accept a *code* payload or
+    /// fence marker, and those exist solely at genuine block starts — so the
+    /// skip set is deliberately generous.
+    private func firstNonWhitespaceOffset(in storage: NSTextStorage, paragraph source: NSRange) -> Int {
+        let end = min(source.upperBound, source.location + 256)
+        let text = storage.string as NSString
+        var probe = source.location
+        var lastWasDigit = false
+        scan: while probe < end {
+            let unit = text.character(at: probe)
+            switch unit {
+            case 0x20, 0x09, 0x3E, 0x2D, 0x2A, 0x2B: // space, tab, `>`, `-`, `*`, `+`
+                lastWasDigit = false
+                probe += 1
+            case 0x30...0x39: // digit (ordered-list marker)
+                lastWasDigit = true
+                probe += 1
+            case 0x2E where lastWasDigit: // `.` terminating an ordered marker
+                lastWasDigit = false
+                probe += 1
+            default:
+                break scan
+            }
+        }
+        return probe
     }
 }

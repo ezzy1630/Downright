@@ -122,6 +122,10 @@ enum RelativeTime {
 /// effective appearance changes.
 final class PanelBackdrop: NSView {
     var styleSheet: StyleSheet { didSet { applyStyle() } }
+    /// When true, draws the theme's `surface` colour instead of vibrancy — for
+    /// panels that must read as a distinct card against the page rather than
+    /// chrome that dissolves into it (§11.4).
+    var usesSurfaceFill = false { didSet { applyStyle() } }
 
     private let effect = NSVisualEffectView()
 
@@ -148,13 +152,13 @@ final class PanelBackdrop: NSView {
     }
 
     private func applyStyle() {
-        effect.isHidden = prefersOpaque
+        effect.isHidden = prefersOpaque || usesSurfaceFill
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard prefersOpaque else { return }
-        styleSheet.background.setFill()
+        guard prefersOpaque || usesSurfaceFill else { return }
+        (usesSurfaceFill ? styleSheet.surface : styleSheet.background).setFill()
         dirtyRect.fill()
     }
 

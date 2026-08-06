@@ -102,7 +102,10 @@ final class TaskProgressRing: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var intrinsicContentSize: NSSize {
-        isHidden ? .zero : NSSize(width: Metrics.size, height: Metrics.size)
+        // Hidden toolbar items are still auto-measured by AppKit; a zero size
+        // logs an ambiguous-layout warning on every launch. 1×1 is invisible
+        // yet unambiguous, and keeps the hidden collapse to a hairline.
+        isHidden ? NSSize(width: 1, height: 1) : NSSize(width: Metrics.size, height: Metrics.size)
     }
 
     private func buildLayers() {

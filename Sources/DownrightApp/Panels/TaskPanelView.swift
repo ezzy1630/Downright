@@ -63,16 +63,16 @@ final class TaskPanelView: NSView, PanelSurface {
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Tasks")
     private let percentLabel = NSTextField(labelWithString: "")
     private let captionLabel = NSTextField(labelWithString: "")
     private let progressBar: PanelProgressBar
     private let filterControl: PanelSegmentedControl
-    private let closeButton: NSButton
     private let emptyState = TaskEmptyStateView()
-    private var closeAction: ButtonAction?
     private let table = PanelList.makeTableView(identifier: "tasks")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
+    /// Separator under the inspector host's header, so the worklist reads as a
+    /// card rather than the page (§8.5).
+    private let topHairline = NSView()
 
     private enum Row {
         case group(String)
@@ -97,15 +97,20 @@ final class TaskPanelView: NSView, PanelSurface {
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         self.progressBar = PanelProgressBar(styleSheet: styleSheet)
         self.filterControl = PanelSegmentedControl(items: ["All", "Open"], styleSheet: styleSheet)
-        self.closeButton = NSButton()
         super.init(frame: .zero)
 
+        // The panel is a card inside the inspector: a flat themed surface (the
+        // vibrancy backdrop resolved to almost the page colour) with a
+        // hairline under the host header, so it separates from the document
+        // instead of dissolving into it (§8.5).
+        backdrop.usesSurfaceFill = true
         backdrop.autoresizingMask = [.width, .height]
         backdrop.frame = bounds
-        backdrop.wantsLayer = true
-        backdrop.layer?.cornerRadius = 10
-        backdrop.layer?.masksToBounds = true
         addSubview(backdrop)
+
+        topHairline.wantsLayer = true
+        topHairline.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(topHairline)
 
         buildHeader()
         buildTable()
@@ -119,10 +124,9 @@ final class TaskPanelView: NSView, PanelSurface {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     private func buildHeader() {
-        titleLabel.font = PanelFont.header
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
-
+        // The inspector host owns the section title and the close affordance,
+        // so the panel's own header is just the worklist strip: progress,
+        // count, and the filter.  One header per surface, never two (§11.4).
         percentLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
         percentLabel.translatesAutoresizingMaskIntoConstraints = false
         percentLabel.setAccessibilityRole(.staticText)
@@ -134,20 +138,6 @@ final class TaskPanelView: NSView, PanelSurface {
         captionLabel.setAccessibilityRole(.staticText)
         captionLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         addSubview(captionLabel)
-
-        let close = ButtonAction { [weak self] in self?.onClose?() }
-        closeAction = close
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close tasks")
-        closeButton.imagePosition = .imageOnly
-        closeButton.isBordered = false
-        closeButton.bezelStyle = .accessoryBarAction
-        closeButton.focusRingType = .default
-        closeButton.target = close
-        closeButton.action = #selector(ButtonAction.fire(_:))
-        closeButton.toolTip = "Close Tasks"
-        closeButton.setAccessibilityLabel("Close Tasks")
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(closeButton)
 
         progressBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(progressBar)
@@ -165,16 +155,9 @@ final class TaskPanelView: NSView, PanelSurface {
         addSubview(emptyState)
 
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 15),
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 28),
-            closeButton.heightAnchor.constraint(equalToConstant: 28),
-
             progressBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             progressBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            progressBar.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
+            progressBar.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             progressBar.heightAnchor.constraint(equalToConstant: 4),
 
             percentLabel.leadingAnchor.constraint(equalTo: progressBar.leadingAnchor),
@@ -290,9 +273,16 @@ final class TaskPanelView: NSView, PanelSurface {
     private func staggerVisibleRows() {
         guard !styleSheet.reduceMotion, window != nil, table.numberOfRows > 0 else { return }
         let visible = table.rows(in: table.visibleRect)
-        guard visible.length > 0 else { return }
+        // Before the split view has settled, the visible rect can be empty
+        // even though rows exist — animate the whole list rather than skip.
+        let rowRange: Range<Int>
+        if visible.length > 0 {
+            rowRange = visible.location..<(visible.location + visible.length)
+        } else {
+            rowRange = 0..<table.numberOfRows
+        }
         var sequence = 0
-        for row in visible.location..<(visible.location + visible.length) {
+        for row in rowRange {
             guard row >= 0, row < rows.count else { continue }
             guard let view = table.view(atColumn: 0, row: row, makeIfNecessary: true) else { continue }
             if case .group = rows[row] {
@@ -387,8 +377,9 @@ final class TaskPanelView: NSView, PanelSurface {
     }
 
     private func applyStyle() {
-        titleLabel.textColor = styleSheet.textSecondary
         captionLabel.textColor = styleSheet.textFaint
+        topHairline.layer?.backgroundColor = styleSheet.rule
+            .withAlphaComponent(styleSheet.increaseContrast ? 0.7 : 0.45).cgColor
         table.reloadData()
     }
 
@@ -408,11 +399,26 @@ final class TaskPanelView: NSView, PanelSurface {
         guard window != nil, entranceScheduled else { return }
         entranceScheduled = false
         // The host finishes constraining the panel after this call returns, so
-        // wait one turn before asking which rows are visible.
+        // wait one turn, then give the table real geometry before asking which
+        // rows are visible.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.window != nil, !self.styleSheet.reduceMotion else { return }
+            self.scroll.layoutSubtreeIfNeeded()
+            self.table.layoutSubtreeIfNeeded()
             self.staggerVisibleRows()
         }
+    }
+
+    override func layout() {
+        super.layout()
+        topHairline.frame = NSRect(x: 0, y: isFlipped ? 0 : max(0, bounds.height - 1),
+                                   width: bounds.width, height: 1)
+        // Fallback for a panel populated while detached whose async entrance
+        // fired before the inspector gave the table its width: the next layout
+        // pass with real geometry runs the stagger instead of losing it.
+        guard entranceScheduled, window != nil, table.numberOfRows > 0, bounds.width > 1 else { return }
+        entranceScheduled = false
+        staggerVisibleRows()
     }
 
     override func cancelOperation(_ sender: Any?) { onClose?() }

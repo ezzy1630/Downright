@@ -146,7 +146,14 @@ final class CodeBlockFragment: DownrightFragment {
     func bandRect(at point: CGPoint) -> CGRect {
         let indent = max(0, (paragraphStyle?.headIndent ?? 0) - RenderMetrics.codeInsetX)
         let frame = layoutFragmentFrame
-        return CGRect(x: point.x + indent, y: point.y,
+        // TextKit bakes the paragraph head indent into the fragment origin, so
+        // `point.x` already sits `codeInsetX` right of the column edge — adding
+        // `indent` again shifted the whole band (and its chip) 22pt right of
+        // the text.  Start the band at the glyph edge minus the inset, flush
+        // with the column; the `contentWidth - indent` width keeps the right
+        // edge on the measure.
+        let textEdge = point.x + (textLineFragments.first?.typographicBounds.minX ?? 0)
+        return CGRect(x: textEdge - RenderMetrics.codeInsetX, y: point.y,
                       width: max(1, contentWidth - indent), height: frame.height)
     }
 

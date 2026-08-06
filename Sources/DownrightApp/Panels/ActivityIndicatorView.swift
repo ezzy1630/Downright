@@ -15,7 +15,10 @@ final class ActivityIndicatorView: NSView {
     var onVisibilityChange: ((Bool) -> Void)?
 
     override var intrinsicContentSize: NSSize {
-        isHidden ? .zero : NSSize(width: 18, height: 18)
+        // Hidden toolbar items are still auto-measured by AppKit; a zero size
+        // logs an ambiguous-layout warning on every launch. 1×1 is invisible
+        // yet unambiguous, and keeps the hidden collapse to a hairline.
+        isHidden ? NSSize(width: 1, height: 1) : NSSize(width: 18, height: 18)
     }
 
     init() {
