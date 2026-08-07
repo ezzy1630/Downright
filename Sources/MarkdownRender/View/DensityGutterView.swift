@@ -151,17 +151,17 @@ public final class DensityGutterView: NSView {
     //
     /// Closest two marks may sit.  Below this the stack stops reading as
     /// separate ticks and becomes a bar, so it caps the capacity instead.
-    static let minPitch: CGFloat = 9
-    /// Furthest two marks may sit.  Beyond this the cluster stops reading as
-    /// one object.
-    static let maxPitch: CGFloat = 20
+    static let minPitch: CGFloat = 8
+    /// Furthest two marks may sit.  The stack is one condensed object: beyond
+    /// this pitch the marks scatter into a list instead of reading as a cluster.
+    static let maxPitch: CGFloat = 13
     /// Share of the track the cluster may span.  The stack is a prompt index,
     /// so it must never grow to full height and become a second scrollbar.
-    static let maxSpanFraction: CGFloat = 0.62
+    static let maxSpanFraction: CGFloat = 0.5
     /// Upper bound on marks however tall the window is — past this the rail is
     /// asking to be read rather than scanned, and the hover outline is the
     /// place for detail.
-    static let stackCapacityCeiling: Int = 20
+    static let stackCapacityCeiling: Int = 16
     /// Below this the document has no shape worth indexing, so the rail draws
     /// the quiet spine instead of a stack pretending to be one.
     static let minimumStackMarks: Int = 3
@@ -429,7 +429,7 @@ public final class DensityGutterView: NSView {
     /// mark without moving its shared centre line.
     static func headingMarkWidth(level: Int, emphasized: Bool = false) -> CGFloat {
         _ = level
-        return emphasized ? 30 : 24
+        return emphasized ? 32 : 26
     }
 
     /// Cached because pointer movement must not re-derive it: the selection
@@ -611,7 +611,7 @@ public final class DensityGutterView: NSView {
         case .heading(let level):
             return BandStyle(
                 widthPoints: min(Self.headingMarkWidth(level: level, emphasized: emphasized), maxWidth),
-                minHeight: level <= 1 ? 2.5 : 2,
+                minHeight: 2.5,
                 color: styleSheet.railTick
             )
         case .searchHit:
@@ -693,8 +693,12 @@ public final class DensityGutterView: NSView {
                 bandStyle.color = styleSheet.railTickCurrent.withAlphaComponent(0.92)
                 bandStyle.minHeight = max(bandStyle.minHeight, 3)
             } else if case .heading = entry.band.kind {
+                // Every mark stays a solid line.  The deeply faded unread
+                // ticks (0.28) read as useless mini-lines next to the brighter
+                // ones, so read state is only a quiet step here — the progress
+                // wash behind the stack carries the detail.
                 bandStyle.color = styleSheet.railTick.withAlphaComponent(
-                    entry.band.startFraction <= readProgress ? 0.48 : 0.28
+                    entry.band.startFraction <= readProgress ? 0.56 : 0.44
                 )
             }
 
@@ -743,7 +747,7 @@ public final class DensityGutterView: NSView {
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            mark.cornerRadius = min(markHeight / 2, 2)
+            mark.cornerRadius = markHeight / 2
             mark.frame = frame
             mark.backgroundColor = bandStyle.color.cgColor
             mark.isHidden = false

@@ -111,14 +111,14 @@ struct DensityRailTests {
         let mid = DensityGutterView.proximityInfluence(distance: 18)
         #expect(mid > 0.4 && mid < 0.6)
 
-        #expect(DensityGutterView.headingMarkWidth(level: 1) == 24)
-        #expect(DensityGutterView.headingMarkWidth(level: 2) == 24)
-        #expect(DensityGutterView.headingMarkWidth(level: 3) == 24)
-        #expect(DensityGutterView.headingMarkWidth(level: 4) == 24)
-        #expect(DensityGutterView.headingMarkWidth(level: 1, emphasized: true) == 30)
-        #expect(DensityGutterView.headingMarkWidth(level: 2, emphasized: true) == 30)
-        #expect(DensityGutterView.headingMarkWidth(level: 3, emphasized: true) == 30)
-        #expect(DensityGutterView.headingMarkWidth(level: 4, emphasized: true) == 30)
+        #expect(DensityGutterView.headingMarkWidth(level: 1) == 26)
+        #expect(DensityGutterView.headingMarkWidth(level: 2) == 26)
+        #expect(DensityGutterView.headingMarkWidth(level: 3) == 26)
+        #expect(DensityGutterView.headingMarkWidth(level: 4) == 26)
+        #expect(DensityGutterView.headingMarkWidth(level: 1, emphasized: true) == 32)
+        #expect(DensityGutterView.headingMarkWidth(level: 2, emphasized: true) == 32)
+        #expect(DensityGutterView.headingMarkWidth(level: 3, emphasized: true) == 32)
+        #expect(DensityGutterView.headingMarkWidth(level: 4, emphasized: true) == 32)
     }
 
     @Test("Neighbourhood dim softens distant marks under hover")
@@ -150,8 +150,10 @@ struct DensityRailTests {
             let span = positions.last! - positions.first!
             // Never a second scrollbar…
             #expect(span <= trackHeight * DensityGutterView.maxSpanFraction + 0.001)
-            // …and never a lonely dash in an empty column.
-            #expect(span >= trackHeight * 0.2)
+            // …and never a lonely dash in an empty column.  The stack is
+            // deliberately condensed, so the floor is the tightest a full
+            // stack gets in a tall window: (ceiling − 1) × maxPitch.
+            #expect(span >= trackHeight * 0.12)
             // Stays inside the track it was measured against.
             #expect(positions.first! >= track.top - 0.001)
             #expect(positions.last! <= track.bottom + 0.001)
