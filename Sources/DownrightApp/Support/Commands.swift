@@ -18,7 +18,7 @@ enum Command: String, CaseIterable, Codable {
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
     case scrollDown, scrollUp, pageDown, pageUp, documentStart, documentEnd
-    case goBack, goForward, cycleFocusable, activateFocused
+    case goBack, goForward
 
     // Structural zoom (§5.2)
     case zoomLevel1, zoomLevel2, zoomLevel3, zoomLevel4, zoomLevel5, zoomIn, zoomOut
@@ -35,7 +35,6 @@ enum Command: String, CaseIterable, Codable {
 
     // Editing (§6.4)
     case toggleBold, toggleItalic, insertLink, toggleStrikethrough, toggleInlineCode
-    case addCursorBelow, addCursorAbove, selectNextOccurrence, splitSelectionIntoLines
     case indentList, outdentList, toggleTaskAtCaret
 
     // Files and export (§9.5)
@@ -86,8 +85,6 @@ enum Command: String, CaseIterable, Codable {
         case .documentEnd: return "End of Document"
         case .goBack: return "Back"
         case .goForward: return "Forward"
-        case .cycleFocusable: return "Cycle Links"
-        case .activateFocused: return "Open Focused Link"
         case .zoomLevel1: return "Zoom: Top Level"
         case .zoomLevel2: return "Zoom: Two Levels"
         case .zoomLevel3: return "Zoom: All Headings"
@@ -123,10 +120,6 @@ enum Command: String, CaseIterable, Codable {
         case .insertLink: return "Link…"
         case .toggleStrikethrough: return "Strikethrough"
         case .toggleInlineCode: return "Inline Code"
-        case .addCursorBelow: return "Add Cursor Below"
-        case .addCursorAbove: return "Add Cursor Above"
-        case .selectNextOccurrence: return "Select Next Occurrence"
-        case .splitSelectionIntoLines: return "Split Selection into Lines"
         case .indentList: return "Indent"
         case .outdentList: return "Outdent"
         case .toggleTaskAtCaret: return "Toggle Task"
@@ -160,20 +153,28 @@ enum Command: String, CaseIterable, Codable {
     }
 
     /// Where the command appears in the menu bar.
+    ///
+    /// `MainMenu` builds every menu from this, and the keybinding editor shows
+    /// it in the "Menu" column, so a command placed here is a promise about
+    /// where the user will find it.  `CommandTableTests` holds us to it.
     enum Menu: String, CaseIterable {
-        case file, edit, format, view, navigate, document, window, help
+        case application, file, edit, format, view, navigate, document, window, help
 
-        var title: String { rawValue.capitalized }
+        var title: String {
+            // The app menu is named after the app, not after the enum case;
+            // "Application" would be a lie in both the menu bar and Settings.
+            self == .application ? "Downright" : rawValue.capitalized
+        }
     }
 
     var menu: Menu {
         switch self {
         case .newDocument, .open, .save, .saveAs, .close, .revealInFinder, .openInEditor,
-             .printDocument, .exportHTML, .exportPDF, .exportSelectionAsImage, .compareFiles:
+             .printDocument, .exportHTML, .exportPDF, .exportSelectionAsImage, .compareFiles,
+             .versionTimeline:
             return .file
         case .copyAsMarkdown, .copyAsRichText, .copyAsPlainText, .copySection, .copySectionLink,
              .find, .findNext, .findPrevious, .findReplace, .findInSiblings, .useSelectionForFind,
-             .addCursorBelow, .addCursorAbove, .selectNextOccurrence, .splitSelectionIntoLines,
              .speakDocument, .stopSpeaking:
             return .edit
         case .toggleBold, .toggleItalic, .insertLink, .toggleStrikethrough, .toggleInlineCode,
@@ -183,13 +184,13 @@ enum Command: String, CaseIterable, Codable {
         case .toggleReadLive, .sourceMode, .zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4,
              .zoomLevel5, .zoomIn, .zoomOut, .increaseTextSize, .decreaseTextSize, .resetTextSize,
              .focusMode, .typewriterScrolling, .toggleSidebar, .outlinePanel, .taskPanel,
-             .versionTimeline, .reloadTheme, .commandPalette, .documentLens,
+             .reloadTheme, .commandPalette, .documentLens,
              .readerProfiles, .documentHealth, .renderTargets, .visualDebugger,
              .reviewPanel, .workspace, .localAI:
             return .view
         case .nextHeading, .previousHeading, .nextChange, .previousChange, .scrollDown, .scrollUp,
              .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward,
-             .outlineQuickOpen, .cycleFocusable, .activateFocused:
+             .outlineQuickOpen:
             return .navigate
         case .promoteHeading, .demoteHeading, .moveBlockUp, .moveBlockDown, .foldSection,
              .unfoldSection, .foldAll, .unfoldAll, .sortListAlphabetically, .sortListByState,
@@ -199,7 +200,9 @@ enum Command: String, CaseIterable, Codable {
         case .splitView, .pinWindow:
             return .window
         case .preferences, .showKeybindings, .toggleVimKeys, .checkForUpdates:
-            return .help
+            // Settings…, Keyboard Shortcuts…, and Check for Updates… live in
+            // the app menu on macOS, and that is what the editor must say.
+            return .application
         }
     }
 
@@ -207,18 +210,40 @@ enum Command: String, CaseIterable, Codable {
     var scopes: Set<CommandScope> {
         switch self {
         case .toggleBold, .toggleItalic, .insertLink, .toggleStrikethrough, .toggleInlineCode,
-             .addCursorBelow, .addCursorAbove, .selectNextOccurrence, .splitSelectionIntoLines,
              .indentList, .outdentList:
             return [.live]
-        case .scrollDown, .scrollUp, .pageDown, .pageUp, .documentStart, .documentEnd,
-             .cycleFocusable, .activateFocused, .nextHeading, .previousHeading,
-             .zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5:
+        case .scrollDown, .scrollUp, .pageDown, .pageUp, .documentStart, .documentEnd:
             // Single-letter bindings only work where there is no caret to
-            // capture them (§7.2); the ⌘-modified equivalents stay global.
+            // capture them (§7.2).  Heading jumps and structural zoom used to
+            // live here too; they now carry ⌃⌘ equivalents that work anywhere,
+            // and keep their bare read-mode keys through `readModeExtras`.
             return [.read]
         default:
             return [.read, .live, .source]
         }
+    }
+
+    /// What must hold before this command can do its job.  Menu validation is
+    /// derived from this, so an item is never enabled in a state where running
+    /// it would be a no-op.
+    var requires: CommandPrecondition {
+        switch self {
+        case .newDocument, .open, .preferences, .showKeybindings, .toggleVimKeys,
+             .reloadTheme, .compareFiles:
+            return .always
+        case .checkForUpdates:
+            return .updateCheck
+        case .revealInFinder, .openInEditor, .versionTimeline, .copySectionLink, .findInSiblings:
+            return .documentWithFile
+        case .useSelectionForFind, .exportSelectionAsImage:
+            return .selection
+        default:
+            return .document
+        }
+    }
+
+    func isEnabled(in context: CommandContext) -> Bool {
+        requires.isSatisfied(in: context)
     }
 }
 
@@ -226,12 +251,71 @@ enum CommandScope: String, Codable, CaseIterable {
     case read, live, source
 }
 
+// MARK: - Preconditions
+
+/// The one condition a command needs before it can run.  A typed value rather
+/// than a hand-written `validateMenuItem` switch, so the menu bar, the palette,
+/// and any future toolbar all agree by construction.
+enum CommandPrecondition: String, CaseIterable {
+    /// Runs with no document open — the start-window state.
+    case always
+    /// Needs a document window.
+    case document
+    /// Needs a document that exists on disk (paths, siblings, history).
+    case documentWithFile
+    /// Needs a non-empty selection.
+    case selection
+    /// Needs a configured, idle updater.
+    case updateCheck
+
+    func isSatisfied(in context: CommandContext) -> Bool {
+        switch self {
+        case .always: return true
+        case .document: return context.hasDocument
+        case .documentWithFile: return context.hasDocument && context.documentHasFile
+        case .selection: return context.hasDocument && context.hasSelection
+        case .updateCheck: return context.canCheckForUpdates
+        }
+    }
+}
+
+/// The facts a `CommandPrecondition` is evaluated against.  Callers assemble
+/// one from whatever they own; the policy above stays pure and testable.
+struct CommandContext: Equatable {
+    var hasDocument: Bool
+    var documentHasFile: Bool
+    var hasSelection: Bool
+    var canCheckForUpdates: Bool
+
+    init(
+        hasDocument: Bool = false,
+        documentHasFile: Bool = false,
+        hasSelection: Bool = false,
+        canCheckForUpdates: Bool = false
+    ) {
+        self.hasDocument = hasDocument
+        self.documentHasFile = documentHasFile
+        self.hasSelection = hasSelection
+        self.canCheckForUpdates = canCheckForUpdates
+    }
+
+    /// No document anywhere — what the app menu sees while only the start
+    /// window is up.
+    static func applicationOnly(canCheckForUpdates: Bool) -> CommandContext {
+        CommandContext(canCheckForUpdates: canCheckForUpdates)
+    }
+}
+
 // MARK: - Key bindings
 
-/// A single chord.  Parsed from and serialised to a stable string form so the
-/// keybindings file is hand-editable.
+/// A single chord.
+///
+/// Serialised as `{"key": "+", "modifiers": ["command"]}`.  The old
+/// `"cmd++"` string form is still *read* so existing files keep working, but
+/// it is never written: it could not represent `+` without ambiguity, and a
+/// binding it failed to parse took the whole keybindings file down with it.
 struct KeyBinding: Codable, Hashable {
-    var key: String                  // "e", "space", "left", "["
+    var key: String                  // "e", "space", "left", "[", "+"
     var modifiers: NSEvent.ModifierFlags
 
     init(_ key: String, _ modifiers: NSEvent.ModifierFlags = []) {
@@ -247,23 +331,62 @@ struct KeyBinding: Codable, Hashable {
         flags.intersection([.command, .shift, .option, .control, .numericPad])
     }
 
+    /// The modifier names used on disk.  A typed value, so an unknown name is
+    /// a decode error the user is told about rather than a silently dropped
+    /// modifier that changes what their shortcut does.
+    enum Modifier: String, Codable, CaseIterable {
+        case control, option, shift, command, numericPad
+
+        var flag: NSEvent.ModifierFlags {
+            switch self {
+            case .control: return .control
+            case .option: return .option
+            case .shift: return .shift
+            case .command: return .command
+            case .numericPad: return .numericPad
+            }
+        }
+
+        /// Stable order, so the file does not churn between writes.
+        static func names(in flags: NSEvent.ModifierFlags) -> [Modifier] {
+            allCases.filter { flags.contains($0.flag) }
+        }
+
+        static func flags(_ names: [Modifier]) -> NSEvent.ModifierFlags {
+            names.reduce(into: NSEvent.ModifierFlags()) { $0.insert($1.flag) }
+        }
+    }
+
     // MARK: Serialisation
 
+    private enum CodingKeys: String, CodingKey { case key, modifiers }
+
+    /// Legacy string form, kept for reading old files and for diagnostics.
+    ///
+    /// `"cmd++"` (⌘ plus the `+` key) is the case that used to be unreadable:
+    /// splitting on `+` and dropping empty parts left no key at all.
     init?(parsing string: String) {
+        var parts = string.lowercased()
+            .split(separator: "+", omittingEmptySubsequences: false)
+            .map(String.init)
+        // "+" → ["", ""] and "cmd++" → ["cmd", "", ""]: two empty tails are the
+        // literal `+` key, not two empty components.
+        if parts.count >= 2, parts[parts.count - 1].isEmpty, parts[parts.count - 2].isEmpty {
+            parts.removeLast(2)
+            parts.append("+")
+        }
+        guard let key = parts.popLast(), !key.isEmpty else { return nil }
         var flags: NSEvent.ModifierFlags = []
-        var key: String?
-        for part in string.lowercased().split(separator: "+").map(String.init) {
+        for part in parts {
             switch part {
             case "cmd", "command": flags.insert(.command)
             case "shift": flags.insert(.shift)
             case "opt", "option", "alt": flags.insert(.option)
             case "ctrl", "control": flags.insert(.control)
-            default: key = part
+            default: return nil
             }
         }
-        guard let key, !key.isEmpty else { return nil }
-        self.key = key
-        self.modifiers = flags
+        self.init(key, flags)
     }
 
     var serialized: String {
@@ -277,16 +400,31 @@ struct KeyBinding: Codable, Hashable {
     }
 
     init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        guard let parsed = KeyBinding(parsing: raw) else {
-            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bad key binding \(raw)"))
+        if let container = try? decoder.singleValueContainer(),
+           let raw = try? container.decode(String.self) {
+            guard let parsed = KeyBinding(parsing: raw) else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "bad key binding \"\(raw)\"")
+                )
+            }
+            self = parsed
+            return
         }
-        self = parsed
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let key = try container.decode(String.self, forKey: .key)
+        guard !key.isEmpty else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "key binding has an empty key")
+            )
+        }
+        let modifiers = try container.decodeIfPresent([Modifier].self, forKey: .modifiers) ?? []
+        self.init(key, Modifier.flags(modifiers))
     }
 
     func encode(to encoder: Encoder) throws {
-        var c = encoder.singleValueContainer()
-        try c.encode(serialized)
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(key, forKey: .key)
+        try container.encode(Modifier.names(in: modifiers), forKey: .modifiers)
     }
 
     static func == (a: KeyBinding, b: KeyBinding) -> Bool {

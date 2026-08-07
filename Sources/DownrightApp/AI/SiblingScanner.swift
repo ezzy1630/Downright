@@ -29,7 +29,9 @@ final class SiblingScanner {
     var onChange: (() -> Void)?
 
     private let documentURL: URL
-    private let extraDirectories: [String]
+    /// Readable so the window can tell whether a settings change actually
+    /// invalidated this scanner before rebuilding it.
+    let extraDirectories: [String]
     private var watcher: FileWatcher?
     private let markdownExtensions: Set<String> = [
         "md", "markdown", "mdown", "mkd", "mdx", "mdc", "qmd", "rmd",

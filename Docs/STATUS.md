@@ -76,7 +76,8 @@ tags (`<Foo` still colours as a type); Ruby and shell heredocs are not tracked.
 
 ### Main dependency choices from §12
 
-`swift-markdown` (cmark-gfm) for parsing, `SwiftMath` for math,
+`swift-markdown` (cmark-gfm) for parsing, `SwiftMath` for math (vendored at
+`Vendor/SwiftMath`; see its `PATCHES.md`),
 `beautiful-mermaid-swift` for diagrams, `NLTokenizer` for sentence segmentation,
 and FSEvents (directory-level) for watching. No WebView is used. The Xcode
 release path includes Quick Look. It does not include a metadata importer, a

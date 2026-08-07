@@ -5,10 +5,28 @@ import MarkdownRender
 /// Command dispatch.  One switch over the `Command` table (§7.2) — the menu,
 /// the keyboard layer, and the toolbar all arrive here, so a command behaves
 /// identically however it was invoked.
+extension DocumentWindowController: NSMenuItemValidation {
+    /// Menu state comes from the command table's preconditions, never from a
+    /// second switch that can drift out of step with it.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        MainMenu.validate(menuItem, in: commandContext)
+    }
+}
+
 extension DocumentWindowController: CommandResponder {
     @objc func performDownrightCommand(_ sender: Any?) {
         guard let item = sender as? NSMenuItem, let command = MainMenu.command(for: item) else { return }
         perform(command)
+    }
+
+    /// The facts this window contributes to command validation.
+    var commandContext: CommandContext {
+        CommandContext(
+            hasDocument: true,
+            documentHasFile: markdownDocument.url != nil,
+            hasSelection: containerTextView.sourceSelectedRange.length > 0,
+            canCheckForUpdates: UpdateCoordinator.shared.canCheckForUpdates
+        )
     }
 
     /// Wires the text view's `keyDown` into the binding store — the one layer
@@ -42,7 +60,14 @@ extension DocumentWindowController: CommandResponder {
         // extras that share the default scope — notably the `[`/`]` change
         // navigation — would swallow literal typing.  Read mode has no caret,
         // so bare keys (space, 1–5, n, p, j/k/g/G, `[`/`]`) fire there.
-        if scope != .read, event.modifierFlags.intersection([.option, .control]).isEmpty {
+        //
+        // Tab is the exception: it is bound to Indent/Outdent in `.live`, and
+        // those are the keys every editor uses for list nesting.  It stays
+        // safe because `indentSelection` reports failure when the caret is not
+        // in a list item, and the text view then inserts the literal tab.
+        if scope != .read,
+           event.modifierFlags.intersection([.option, .control]).isEmpty,
+           KeyBinding.key(for: event) != "tab" {
             return false
         }
 
@@ -59,9 +84,6 @@ extension DocumentWindowController: CommandResponder {
         case .pageUp:
             textView.scrollPageUp(nil)
             return true
-        case .cycleFocusable, .activateFocused:
-            // Link focus traversal lives in the view's own key handling.
-            return false
         default:
             return perform(command)
         }
@@ -117,10 +139,12 @@ extension DocumentWindowController: CommandResponder {
         case .documentEnd: jump(to: markdownDocument.parsed.length, label: "End")
         case .goBack: goBack()
         case .goForward: goForward()
-        case .scrollDown, .scrollUp, .pageDown, .pageUp, .cycleFocusable, .activateFocused:
-            // Handled by the text view's own key handling, where the scroll
-            // geometry lives.
-            return false
+        // Scrolling is geometry the text view owns, but the Navigate menu items
+        // arrive here, so route them rather than dropping them on the floor.
+        case .scrollDown: textView.scrollLineDown(nil)
+        case .scrollUp: textView.scrollLineUp(nil)
+        case .pageDown: textView.scrollPageDown(nil)
+        case .pageUp: textView.scrollPageUp(nil)
 
         // MARK: Structural zoom (§5.2)
         case .zoomLevel1: setZoom(.h1)
@@ -164,11 +188,11 @@ extension DocumentWindowController: CommandResponder {
         case .toggleStrikethrough: wrapSelection(with: "~~", name: "Strikethrough")
         case .toggleInlineCode: wrapSelection(with: "`", name: "Inline Code")
         case .insertLink: insertLink()
-        case .indentList: indentSelection(outdent: false)
-        case .outdentList: indentSelection(outdent: true)
+        // Report whether the caret was actually in a list item, so Tab can
+        // fall through to a literal tab when it was not.
+        case .indentList: return indentSelection(outdent: false)
+        case .outdentList: return indentSelection(outdent: true)
         case .toggleTaskAtCaret: toggleTaskAtCaret()
-        case .addCursorAbove, .addCursorBelow, .selectNextOccurrence, .splitSelectionIntoLines:
-            return false  // multiple cursors live in the text view
 
         // MARK: Files
         case .save: _ = saveDocument()
@@ -238,7 +262,10 @@ extension DocumentWindowController: CommandResponder {
             ? markdownDocument.changes.next(after: offset)
             : markdownDocument.changes.previous(before: offset)
         guard let mark else { return }
-        markdownDocument.changes.markVisited(mark.id)
+        // Arriving is not reviewing.  Marking visited here fired `onChange`,
+        // which rebuilt the decorations without this mark — so the highlight
+        // vanished at the exact moment the reader landed on it.  Departure and
+        // dwell are handled by `noteVisibleChangeMarks`.
         jump(to: mark.range.location, label: "Change")
     }
 
@@ -344,23 +371,43 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func insertLink() {
-        let range = selectionRange()
-        let selected = (markdownDocument.text as NSString).substring(with: range)
+        // Deliberately NOT `selectionRange()`.  That helper widens an empty
+        // selection to the caret's whole block, which is right for ⌘B and the
+        // convert commands and very wrong here: ⌘K with nothing selected
+        // swallowed the entire paragraph into `[…]()`.
+        let range = containerTextView.sourceSelectedRange
+        let selected = range.length > 0
+            ? (markdownDocument.text as NSString).substring(with: range)
+            : ""
         let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
         // A URL already on the clipboard is the common case and turns ⌘K into
         // a one-keystroke operation (§6.4 smart paste, applied to ⌘K).
         let destination = clipboard.hasPrefix("http") ? clipboard : ""
         let replacement = "[\(selected)](\(destination))"
         markdownDocument.replace(range, with: replacement, actionName: "Insert Link")
-        let caret = range.location + replacement.utf16.count - 1
-        textView.setSelectedRange(NSRange(location: destination.isEmpty ? caret : caret + 1, length: 0))
+        // Land the caret on whichever half the user still has to fill in.
+        let end = range.location + replacement.utf16.count
+        let caret: Int
+        if selected.isEmpty {
+            caret = range.location + 1              // inside the empty [ ]
+        } else if destination.isEmpty {
+            caret = end - 1                         // inside the empty ( )
+        } else {
+            caret = end                             // both filled: carry on typing
+        }
+        textView.setSelectedRange(NSRange(location: caret, length: 0))
     }
 
-    private func indentSelection(outdent: Bool) {
+    /// Returns false when the caret's line is not a list item, which is what
+    /// lets Tab reach the text view and type a literal tab instead.
+    @discardableResult
+    private func indentSelection(outdent: Bool) -> Bool {
         markdownDocument.ensureParsedCurrent()
         let line = (markdownDocument.text as NSString).lineRange(for: selectionRange())
         let edits = ListEditing.indent(markdownDocument.parsed, lineRange: line, outdent: outdent)
+        guard !edits.isEmpty else { return false }
         markdownDocument.apply(edits, actionName: outdent ? "Outdent" : "Indent")
+        return true
     }
 
     private func toggleTaskAtCaret() {

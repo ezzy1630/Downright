@@ -851,7 +851,12 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
         controlSize = .regular
         isBordered = false
         focusRingType = .default
-        setAccessibilityRole(.button)
+        // A real target/action is what makes Space and Return reach the menu:
+        // `mouseDown` never calls super, so without this the button had no
+        // keyboard path at all and only VoiceOver's press worked.
+        target = self
+        action = #selector(showMenu(_:))
+        setAccessibilityRole(.popUpButton)
         setAccessibilityLabel("More actions")
         setAccessibilityHelp("Open document actions")
         toolTip = "More document actions"
@@ -864,6 +869,10 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
     }
 
     override func mouseDown(with event: NSEvent) {
+        presentMenu()
+    }
+
+    @objc private func showMenu(_ sender: Any?) {
         presentMenu()
     }
 

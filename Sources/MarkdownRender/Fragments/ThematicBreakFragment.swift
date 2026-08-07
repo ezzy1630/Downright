@@ -17,8 +17,13 @@ final class ThematicBreakFragment: DownrightFragment {
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         let height = layoutFragmentFrame.height
-        let diameter: CGFloat = 3
-        let gap: CGFloat = 32
+        // Derived from the type ramp, not fixed: at 17pt body these are the
+        // original 3pt dots 32pt apart, and they keep that proportion when the
+        // reader changes size.  A hardcoded pair reads as three fat blobs at
+        // 11pt and as three specks at 28pt.
+        let bodySize = style.bodyFont().pointSize
+        let diameter = max(2, (bodySize * 0.18).rounded())
+        let gap = RenderMetrics.snap(bodySize * 1.9, grid: max(1, style.baselineGrid))
         let centre = point.x + contentWidth / 2
         let y = point.y + height / 2 - diameter / 2
         cg.setFillColor(style.textFaint.cgColor)

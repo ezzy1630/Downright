@@ -146,21 +146,52 @@ final class BreadcrumbView: NSView {
         guard !trail.isEmpty else { return }
         guard !isCuePresented else { return }
         isCuePresented = true
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if reduceMotion {
-            alphaValue = 1
-        } else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
-                context.timingFunction = ToolbarChromePolicy.timingFunction()
-                animator().alphaValue = 1
-            }
+        sectionButton.isHidden = false
+        updatePresentationState()
+        fade(to: 1)
+    }
+
+    /// Fades out over the same 0.12s the fade in takes — an instant
+    /// disappearance beside a gentle arrival reads as a glitch — and then
+    /// takes the button out of hit-testing, the cursor rects, and the
+    /// accessibility tree.  The lane's height is the view's own intrinsic
+    /// size, so the document underneath does not move (§5.1).
+    func hideCurrentSection() {
+        isCuePresented = false
+        updatePresentationState()
+        fade(to: 0) { [weak self] in
+            guard let self, !self.isCuePresented else { return }
+            self.sectionButton.isHidden = true
+            self.discardCursorRects()
+            self.window?.invalidateCursorRects(for: self)
         }
     }
 
-    func hideCurrentSection() {
-        isCuePresented = false
-        alphaValue = 0
+    private func fade(to alpha: CGFloat, completion: (() -> Void)? = nil) {
+        guard !styleSheet.reduceMotion, window != nil else {
+            alphaValue = alpha
+            completion?()
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Metrics.sectionChangeDuration
+            context.timingFunction = ToolbarChromePolicy.timingFunction()
+            animator().alphaValue = alpha
+        }, completionHandler: completion)
+    }
+
+    private func updatePresentationState() {
+        // An invisible control is not a control: no clicks, no pointing hand,
+        // and nothing for VoiceOver to land on.
+        sectionButton.setAccessibilityElement(isCuePresented)
+        discardCursorRects()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    /// Belt and braces for the fade itself: while alpha is on its way to zero
+    /// the button must already be unclickable.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isCuePresented ? super.hitTest(point) : nil
     }
 
     private func styledTitle(_ text: String) -> NSAttributedString {
@@ -177,7 +208,7 @@ final class BreadcrumbView: NSView {
     /// before the immediate title swap so old and new pixels crossfade.
     private func prepareSectionChangeTransitionIfNeeded(_ animated: Bool) {
         guard animated,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              !styleSheet.reduceMotion,
               let layer = sectionButton.layer
         else { return }
 
@@ -212,9 +243,8 @@ final class BreadcrumbView: NSView {
     }
 
     override func resetCursorRects() {
-        if !sectionButton.isHidden {
-            addCursorRect(sectionButton.frame, cursor: .pointingHand)
-        }
+        guard isCuePresented, !sectionButton.isHidden else { return }
+        addCursorRect(sectionButton.frame, cursor: .pointingHand)
     }
 
     private func showPathMenu() {

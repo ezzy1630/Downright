@@ -7,6 +7,11 @@ options:
   groupSortPosition: top
   developmentLanguage: en
 packages:
+  # The root package brings its own dependencies with it, including the
+  # vendored SwiftMath at Vendor/SwiftMath (a path dependency in Package.swift).
+  # It is deliberately not listed here: no target links it directly, and a
+  # second reference to the same local package only invites two copies of it in
+  # the resolved graph.
   Downright:
     path: .
   Sparkle:
@@ -19,6 +24,8 @@ targets:
     sources:
       - path: Sources/DownrightApp
       - path: Resources/AppIcon.png
+        buildPhase: resources
+      - path: Resources/Welcome.md
         buildPhase: resources
       - path: Resources/AppIcon.icns
         buildPhase: resources
@@ -35,6 +42,29 @@ targets:
         embed: true
       - target: DownrightThumb
         embed: true
+    # SwiftPM resource bundles: Xcode copies them into a target that links the
+    # package, but it is implicit and it does not reach app extensions at all —
+    # which is how the Quick Look extension shipped without the math fonts and
+    # trapped on the first formula.  Copy them explicitly instead, and fail the
+    # build rather than the preview when one is missing.  Runs before signing,
+    # so the copies are sealed with the rest of the bundle.
+    postBuildScripts: &embedResourceBundles
+      - name: Embed SwiftPM resource bundles
+        # No inputs/outputs to analyse: the phase is a cheap idempotent copy.
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          mkdir -p "$DEST"
+          for bundle in Downright_MarkdownRender.bundle SwiftMath_SwiftMath.bundle; do
+              SRC="${BUILT_PRODUCTS_DIR}/${bundle}"
+              if [ ! -d "$SRC" ]; then
+                  echo "error: ${bundle} is missing from ${BUILT_PRODUCTS_DIR}" >&2
+                  exit 1
+              fi
+              rm -rf "${DEST:?}/${bundle}"
+              cp -R "$SRC" "$DEST/"
+          done
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright
@@ -59,6 +89,7 @@ targets:
         product: MarkdownCore
       - package: Downright
         product: MarkdownRender
+    postBuildScripts: *embedResourceBundles
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.quicklook
@@ -81,6 +112,7 @@ targets:
         product: MarkdownCore
       - package: Downright
         product: MarkdownRender
+    postBuildScripts: *embedResourceBundles
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.thumbnail

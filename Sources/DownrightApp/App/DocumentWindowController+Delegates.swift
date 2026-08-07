@@ -80,8 +80,15 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             else { folds.insert(heading.slug) }
             setSharedFolds(folds, from: view)
         } else {
-            copySectionLink()
+            copySectionLink(index: headingIndex)
         }
+    }
+
+    func markdownTextView(_ view: MarkdownTextView, didNavigateTo destination: Int) {
+        // A footnote jump is a navigation like any other, so Back has to undo
+        // it — landing at the bottom of a long document used to be a one-way
+        // trip.
+        recordJump(to: destination, label: "Footnote")
     }
 
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool {
@@ -102,6 +109,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {
         synchronizePanes(from: view)
         updateBreadcrumbAndGutter()
+        noteVisibleChangeMarks()
         if let first = markdownDocument.parsed.headings.first,
            view.topVisibleOffset > first.range.upperBound {
             breadcrumbView.showCurrentSection()
@@ -138,7 +146,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
                 range: markdownDocument.parsed.headings[index].range
             ))
             menu.addItem(.separator())
-            add(.copySection, to: menu, title: "Copy Section as Markdown")
+            add(.copySection, to: menu)
             menu.addItem(richTextSectionItem(index: index))
             add(.copySectionLink, to: menu)
             menu.addItem(.separator())
@@ -146,9 +154,9 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             add(.demoteHeading, to: menu)
             menu.addItem(.separator())
             add(.foldSection, to: menu)
-            add(.foldAll, to: menu, title: "Fold Siblings")
-            add(.moveBlockUp, to: menu, title: "Move Section Up")
-            add(.moveBlockDown, to: menu, title: "Move Section Down")
+            add(.foldAll, to: menu)
+            add(.moveBlockUp, to: menu)
+            add(.moveBlockDown, to: menu)
 
         case .codeBlock(let range):
             menu.addItem(editMarkdownItem(view: view, range: range))
@@ -250,7 +258,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             menu.addItem(actionItem("Suggest Replacement…") { [weak self] in
                 self?.presentAddReview(kind: .suggestion)
             })
-            add(.speakDocument, to: menu, title: "Speak Selection")
+            add(.speakDocument, to: menu)
             menu.addItem(.separator())
             add(.convertToBulletList, to: menu)
             add(.convertToNumberedList, to: menu)
@@ -332,9 +340,6 @@ extension DocumentWindowController: OutlinePanelDelegate {
         setSharedFolds(folds)
     }
 
-    func outlinePanel(_ panel: OutlinePanelView, didChangeZoomLevel level: ZoomLevel) {
-        setSharedZoom(level)
-    }
 }
 
 extension DocumentWindowController: TaskPanelDelegate {

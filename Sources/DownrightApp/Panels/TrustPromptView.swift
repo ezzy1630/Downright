@@ -16,6 +16,12 @@ protocol TrustPromptViewDelegate: AnyObject {
 
 /// Non-modal, read-only prompt for an external effect.  It reports a typed
 /// decision; it never opens a URL, reads a file, or launches an application.
+///
+/// The safe answer is the default one.  `⏎` denies and `⎋` denies, so a reader
+/// clearing a stack of prompts by holding Return grants nothing — the previous
+/// arrangement, where Return meant Allow, made the fastest possible input the
+/// most dangerous one (§11.4).  Allow keeps a plain bezel so it never looks
+/// like the recommended answer.
 @MainActor
 final class TrustPromptView: NSView, PanelSurface {
     weak var delegate: TrustPromptViewDelegate?
@@ -28,17 +34,18 @@ final class TrustPromptView: NSView, PanelSurface {
         didSet { backdrop.styleSheet = styleSheet; applyStyle() }
     }
 
-    var preferredWidth: CGFloat { 360 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Permission Needed")
-    private let effectLabel = NSTextField(labelWithString: "")
+    private let titleLabel = NSTextField(wrappingLabelWithString: "Permission Needed")
     private let targetLabel = NSTextField(wrappingLabelWithString: "")
+    private let consequenceLabel = NSTextField(wrappingLabelWithString: "")
+    private let askedByLabel = NSTextField(wrappingLabelWithString: "")
+    private let denyButton = NSButton(title: "Don’t Allow", target: nil, action: nil)
     private let allowOnceButton = NSButton(title: "Allow Once", target: nil, action: nil)
-    private let allowFileButton = NSButton(title: "Allow for File", target: nil, action: nil)
-    private let allowFolderButton = NSButton(title: "Allow for Folder", target: nil, action: nil)
-    private let denyButton = NSButton(title: "Deny", target: nil, action: nil)
-    private let revokeButton = NSButton(title: "Revoke", target: nil, action: nil)
+    private let allowFileButton = NSButton(title: "Always Allow for This File", target: nil, action: nil)
+    private let allowFolderButton = NSButton(title: "Always Allow for This Folder", target: nil, action: nil)
+    private let revokeButton = NSButton(title: "Revoke Existing Permission", target: nil, action: nil)
 
     convenience init() { self.init(styleSheet: .current) }
 
@@ -50,26 +57,38 @@ final class TrustPromptView: NSView, PanelSurface {
         backdrop.frame = bounds
         addSubview(backdrop)
 
-        titleLabel.font = PanelFont.header
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.maximumNumberOfLines = 3
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
-        effectLabel.font = PanelFont.rowEmphasised
-        effectLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(effectLabel)
-
-        targetLabel.font = PanelFont.secondary
+        targetLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         targetLabel.maximumNumberOfLines = 4
         targetLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(targetLabel)
 
+        consequenceLabel.font = PanelFont.secondary
+        consequenceLabel.maximumNumberOfLines = 4
+        consequenceLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(consequenceLabel)
+
+        askedByLabel.font = PanelFont.secondary
+        askedByLabel.maximumNumberOfLines = 2
+        askedByLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(askedByLabel)
+
+        // Deny is the default and also the Esc key.  Both keys agree, and both
+        // agree with the safe answer.
+        configure(denyButton, action: #selector(deny(_:)), label: "Do not allow this action")
+        denyButton.keyEquivalent = "\r"
         configure(allowOnceButton, action: #selector(allowOnce(_:)), label: "Allow this action once")
-        configure(allowFileButton, action: #selector(allowFile(_:)), label: "Allow this action for this file")
-        configure(allowFolderButton, action: #selector(allowFolder(_:)), label: "Allow this action for this folder")
-        configure(denyButton, action: #selector(deny(_:)), label: "Deny this action")
+        configure(allowFileButton, action: #selector(allowFile(_:)), label: "Always allow this action for this file")
+        configure(allowFolderButton, action: #selector(allowFolder(_:)), label: "Always allow this action for this folder")
         configure(revokeButton, action: #selector(revoke(_:)), label: "Revoke matching trust")
 
-        let buttons = NSStackView(views: [allowOnceButton, allowFileButton, allowFolderButton, denyButton, revokeButton])
+        let buttons = NSStackView(views: [
+            denyButton, allowOnceButton, allowFileButton, allowFolderButton, revokeButton,
+        ])
         buttons.orientation = .vertical
         buttons.alignment = .leading
         buttons.spacing = 5
@@ -79,16 +98,19 @@ final class TrustPromptView: NSView, PanelSurface {
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            effectLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            effectLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            effectLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             targetLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             targetLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            targetLabel.topAnchor.constraint(equalTo: effectLabel.bottomAnchor, constant: 4),
+            targetLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            consequenceLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            consequenceLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            consequenceLabel.topAnchor.constraint(equalTo: targetLabel.bottomAnchor, constant: 8),
+            askedByLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            askedByLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            askedByLabel.topAnchor.constraint(equalTo: consequenceLabel.bottomAnchor, constant: 4),
             buttons.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             buttons.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            buttons.topAnchor.constraint(equalTo: targetLabel.bottomAnchor, constant: 14),
+            buttons.topAnchor.constraint(equalTo: askedByLabel.bottomAnchor, constant: 14),
             buttons.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PanelMetrics.inset),
         ])
 
@@ -105,20 +127,97 @@ final class TrustPromptView: NSView, PanelSurface {
         button.action = action
         button.bezelStyle = .rounded
         button.controlSize = .small
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         button.setAccessibilityLabel(label)
     }
 
+    // MARK: - Copy
+
     func reload() {
         guard let request else {
-            effectLabel.stringValue = "No pending action"
+            titleLabel.stringValue = "No pending action"
             targetLabel.stringValue = ""
+            consequenceLabel.stringValue = ""
+            askedByLabel.stringValue = ""
+            for button in allButtons { button.isHidden = true }
             return
         }
-        effectLabel.stringValue = request.effect.title
-        targetLabel.stringValue = "Target: \(request.target.displayName)"
-        effectLabel.setAccessibilityLabel(request.effect.title)
-        targetLabel.setAccessibilityLabel(targetLabel.stringValue)
+        for button in allButtons { button.isHidden = false }
+
+        // Lead with what is about to happen and to what, not with the word
+        // "Permission".  A raw URL under a generic heading tells a reader
+        // nothing they can decide on.
+        titleLabel.stringValue = Self.headline(for: request)
+        targetLabel.stringValue = request.target.displayName
+        consequenceLabel.stringValue = Self.consequence(for: request.effect)
+        askedByLabel.stringValue = request.documentPath.map {
+            "Requested by \(URL(fileURLWithPath: $0).lastPathComponent)."
+        } ?? "Requested by the current document."
+
+        allowFileButton.isHidden = documentName == nil
+        allowFileButton.title = documentName.map { "Always Allow for \($0)" } ?? "Always Allow for This File"
+        // Name the folder.  "Allow for Folder" without the folder is a grant
+        // whose scope the reader cannot see.
+        allowFolderButton.isHidden = folderName == nil
+        allowFolderButton.title = folderName.map { "Always Allow for “\($0)”" } ?? "Always Allow for This Folder"
+
+        // The group keeps its name; the specifics are its value, so VoiceOver
+        // reads "Permission Needed — Open example.com in your browser?".
+        setAccessibilityValue("\(titleLabel.stringValue) \(request.target.displayName)")
+        for button in [allowFileButton, allowFolderButton] {
+            button.setAccessibilityLabel(button.title)
+        }
     }
+
+    private var allButtons: [NSButton] {
+        [denyButton, allowOnceButton, allowFileButton, allowFolderButton, revokeButton]
+    }
+
+    private var documentName: String? {
+        request?.documentPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+    }
+
+    /// The folder a "Allow for Folder" grant would actually cover.
+    private var folderName: String? {
+        guard let request else { return nil }
+        let path = request.target.canonicalPath ?? request.documentPath
+        guard let path else { return nil }
+        let folder = URL(fileURLWithPath: path).deletingLastPathComponent()
+        return folder.lastPathComponent.isEmpty ? folder.path : folder.lastPathComponent
+    }
+
+    private static func headline(for request: TrustRequest) -> String {
+        switch request.effect {
+        case .openExternalLink:
+            return "Open \(host(of: request.target.externalURL) ?? "an external site") in your browser?"
+        case .readLocalAsset:
+            return "Read a file from outside this document’s folder?"
+        case .launchPathOrEditor:
+            return "Open this path in another application?"
+        case .automationAppIntent:
+            return "Run an app or automation from this document?"
+        }
+    }
+
+    private static func consequence(for effect: TrustEffect) -> String {
+        switch effect {
+        case .openExternalLink:
+            return "Allowing hands the address below to your default browser. Downright does not load it."
+        case .readLocalAsset:
+            return "Allowing lets this document display the file below. Downright reads it; it never writes to it."
+        case .launchPathOrEditor:
+            return "Allowing asks macOS to open the path below in the application registered for it."
+        case .automationAppIntent:
+            return "Allowing lets this document ask another application to act on your behalf."
+        }
+    }
+
+    private static func host(of urlString: String?) -> String? {
+        guard let urlString, let host = URL(string: urlString)?.host else { return nil }
+        return host
+    }
+
+    // MARK: - Decisions
 
     func chooseForTesting(_ decision: TrustPromptDecision) {
         choose(decision)
@@ -126,16 +225,8 @@ final class TrustPromptView: NSView, PanelSurface {
 
     override var acceptsFirstResponder: Bool { true }
 
-    override func keyDown(with event: NSEvent) {
-        guard request != nil else { super.keyDown(with: event); return }
-        if event.keyCode == 36 || event.keyCode == 76 {
-            choose(.allowOnce)
-        } else if event.keyCode == 53 {
-            choose(.deny)
-        } else {
-            super.keyDown(with: event)
-        }
-    }
+    /// Esc denies, matching the default button rather than fighting it.
+    override func cancelOperation(_ sender: Any?) { choose(.deny) }
 
     @objc private func allowOnce(_ sender: Any?) { choose(.allowOnce) }
     @objc private func allowFile(_ sender: Any?) { choose(.allowForFile) }
@@ -149,10 +240,14 @@ final class TrustPromptView: NSView, PanelSurface {
     }
 
     private func applyStyle() {
-        titleLabel.textColor = styleSheet.textSecondary
-        effectLabel.textColor = styleSheet.text
+        // The headline is the most important text on the panel, so it uses the
+        // primary colour — it used to use the faintest one on the surface.
+        titleLabel.textColor = styleSheet.text
         targetLabel.textColor = styleSheet.textSecondary
-        for button in [allowOnceButton, allowFileButton, allowFolderButton, denyButton, revokeButton] {
+        consequenceLabel.textColor = styleSheet.textSecondary
+        askedByLabel.textColor = styleSheet.textFaint
+        denyButton.contentTintColor = styleSheet.text
+        for button in [allowOnceButton, allowFileButton, allowFolderButton, revokeButton] {
             button.contentTintColor = styleSheet.textSecondary
         }
     }

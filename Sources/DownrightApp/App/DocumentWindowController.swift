@@ -250,7 +250,18 @@ final class DocumentWindowController: NSWindowController {
             NSRange(location: selection.location, length: min(markdownDocument.state.selectionLength, available))
         ])
         window?.makeFirstResponder(primaryContainer.textView)
-        if !markdownDocument.changes.isEmpty { presentUnreadChanges() }
+        switch markdownDocument.unreadChanges {
+        case .none:
+            break
+        case .marked:
+            presentUnreadChanges()
+        case .previousVersionUnavailable(let reason):
+            // Still say the file moved on, even when the bytes to diff against
+            // are gone — silence would read as "nothing happened".
+            showChangeSummary(reason == .corrupt
+                ? "Changed since you last read it — the previous version is damaged"
+                : "Changed since you last read it — the previous version is no longer available")
+        }
         dumpLayoutIfRequested()
 
         DispatchQueue.main.async { [weak self] in
@@ -323,6 +334,23 @@ final class DocumentWindowController: NSWindowController {
                     + "hidden=\(view?.isHidden ?? false)\n"
                 ).utf8))
             }
+        }
+
+        // The inspector is the other place a "blank rectangle" can come from:
+        // its header lives above the panel, so a header laid out behind the
+        // toolbar or at zero height reads as dead space rather than as a bug.
+        if let host = inspectorHost {
+            var lines = [
+                "inspector    pane=\(trailingPane.frame) host=\(host.frame) "
+                + "safeArea=\(host.safeAreaInsets) collapsed=\(inspectorItem.isCollapsed)",
+            ]
+            for sub in host.subviews {
+                lines.append(
+                    "  \(type(of: sub)) frame=\(sub.frame) "
+                    + "hidden=\(sub.isHidden) alpha=\(sub.alphaValue)"
+                )
+            }
+            FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
         }
 
         guard let directory = ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_CAPTURE"] else { return }
@@ -413,8 +441,8 @@ final class DocumentWindowController: NSWindowController {
         sidebar.isCollapsed = true
         let document = NSSplitViewItem(viewController: documentController)
         let inspector = NSSplitViewItem(inspectorWithViewController: inspectorController)
-        inspector.minimumThickness = 260
-        inspector.maximumThickness = 420
+        inspector.minimumThickness = InspectorWidth.minimum
+        inspector.maximumThickness = InspectorWidth.maximum
         inspector.canCollapse = true
         inspector.isCollapsed = true
         split.addSplitViewItem(sidebar)
@@ -474,11 +502,32 @@ final class DocumentWindowController: NSWindowController {
         markdownDocument.onSaveFailure = { [weak self] error in
             self?.presentSaveError(error)
         }
+        // The reading position belongs to whichever pane the reader is in, not
+        // always the primary one — in split view the anchor used to be captured
+        // from and restored to the other pane.
         markdownDocument.currentTopOffsetProvider = { [weak self] in
-            self?.primaryContainer.textView.topVisibleOffset ?? 0
+            self?.containerTextView.topVisibleOffset ?? 0
         }
         markdownDocument.restoreOffsetHandler = { [weak self] offset in
-            self?.primaryContainer.textView.scroll(toOffset: offset, position: .top, animated: false)
+            guard let self else { return }
+            for pane in self.documentPanes {
+                pane.textView.scroll(toOffset: offset, position: .top, animated: false)
+            }
+        }
+        // An external write replaces the whole buffer, which drops the
+        // selection; put it back on the same text rather than at the same
+        // offset, since the offsets have moved.
+        markdownDocument.currentSelectionProvider = { [weak self] in
+            self?.containerTextView.sourceSelectedRange ?? NSRange(location: 0, length: 0)
+        }
+        markdownDocument.restoreSelectionHandler = { [weak self] range in
+            self?.containerTextView.setSourceSelectedRanges([range])
+        }
+        markdownDocument.onExternalWriteActivity = { [weak self] busy in
+            busy ? self?.activityIndicator.begin() : self?.activityIndicator.end()
+        }
+        markdownDocument.onFileRenamed = { [weak self] newURL in
+            self?.adoptRenamedFile(newURL)
         }
         markdownDocument.changes.onChange = { [weak self] in self?.refreshChangeDecorations() }
     }
@@ -503,6 +552,36 @@ final class DocumentWindowController: NSWindowController {
         applyStyleSheet()
         applyFocusMode(Preferences.shared.values.focusMode, animated: true)
         applySiblingVisibilityPreference()
+        rebuildSiblingScannerIfFoldersChanged()
+    }
+
+    /// A rename is an identity change, not content to reconcile: the bytes are
+    /// the same, the path is not.  Following it keeps history, path resolution
+    /// and the sibling list pointing at the file the reader is actually in.
+    private func adoptRenamedFile(_ newURL: URL) {
+        window?.title = newURL.lastPathComponent
+        window?.subtitle = newURL.deletingLastPathComponent().lastPathComponent
+        window?.representedURL = newURL
+        pathResolver = PathResolver(documentURL: newURL)
+        scanner = SiblingScanner(
+            documentURL: newURL,
+            extraDirectories: Preferences.shared.values.siblingScanDirectories
+        )
+        scanner?.onChange = { [weak self] in self?.refreshSiblings() }
+        refreshSiblings()
+        dismissConflictBar()
+        showChangeSummary("Renamed to \(newURL.lastPathComponent)")
+    }
+
+    /// The scanner is otherwise built only in `open(_:mode:)`, so editing the
+    /// extra-folder list in Settings appeared to do nothing until the document
+    /// was reopened.
+    private func rebuildSiblingScannerIfFoldersChanged() {
+        let folders = Preferences.shared.values.siblingScanDirectories
+        guard let url = markdownDocument.url, scanner?.extraDirectories != folders else { return }
+        scanner = SiblingScanner(documentURL: url, extraDirectories: folders)
+        scanner?.onChange = { [weak self] in self?.refreshSiblings() }
+        refreshSiblings()
     }
 
     func applyStyleSheet() {
@@ -523,6 +602,9 @@ final class DocumentWindowController: NSWindowController {
         searchResults?.styleSheet = activeStyleSheet
         frontMatterEditor?.styleSheet = activeStyleSheet
         assetDoctorPanel?.styleSheet = activeStyleSheet
+        // The inspector header is chrome like any other panel's; it never
+        // followed the theme before because nothing assigned it one.
+        inspectorHost?.styleSheet = activeStyleSheet
         (rootView as? DocumentRootView)?.backgroundColor = activeStyleSheet.background
         applyRenderConfiguration()
     }
@@ -700,13 +782,29 @@ final class DocumentWindowController: NSWindowController {
         return metrics
     }
 
+    /// Change marks go visited on departure or after a dwell, never on
+    /// arrival — see `jumpChange`.  Driven from the scroll path so "left the
+    /// viewport" is something the reader actually did.
+    func noteVisibleChangeMarks() {
+        let view = containerTextView
+        let visible = view.enclosingScrollView?.documentVisibleRect ?? view.visibleRect
+        let origin = view.textContainerOrigin
+        let top = view.topVisibleOffset
+        let bottom = view.sourceOffset(
+            at: NSPoint(x: origin.x + 1, y: max(visible.maxY - 1, visible.minY))
+        )
+        markdownDocument.changes.noteVisibleRange(
+            NSRange(location: min(top, bottom), length: abs(bottom - top))
+        )
+    }
+
     func refreshDensityBands(metrics: [ReadingMetrics]? = nil) {
         let parsed = markdownDocument.parsed
         _ = metrics ?? sectionMetrics(for: parsed)
         let wordCount = cachedWordCount
         let readMinutes = max(1, (wordCount + 199) / 200)
         densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
-        let changes = markdownDocument.changes.visibleMarks.map { ($0.kind, $0.range) }
+        let changes = markdownDocument.changes.marks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
             for: parsed, changes: changes, searchHits: findSession.matches
         )
@@ -750,8 +848,16 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func refreshChangeDecorations() {
-        primaryContainer.textView.changeMarks = markdownDocument.changes.visibleMarks.map {
-            (kind: $0.kind, range: $0.range, words: $0.wordRanges)
+        // `marks`, not `visibleMarks`: a visited change dims rather than
+        // vanishing, so walking the review queue with ] does not erase it.
+        primaryContainer.textView.changeMarks = markdownDocument.changes.marks.map {
+            MarkdownTextView.ChangeMark(
+                kind: $0.kind,
+                range: $0.range,
+                words: $0.wordRanges,
+                visited: $0.visited,
+                deletedText: $0.deletedText
+            )
         }
         splitContainer?.textView.changeMarks = primaryContainer.textView.changeMarks
         refreshDensityBands()
@@ -789,7 +895,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func presentUnreadChanges() {
-        let count = markdownDocument.changes.count
+        let count = markdownDocument.changes.unreadCount
         guard count > 0 else { return }
         showChangeSummary("\(count) new change\(count == 1 ? "" : "s")")
         refreshChangeDecorations()
@@ -808,7 +914,7 @@ final class DocumentWindowController: NSWindowController {
                 bar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -12),
             ])
         }
-        changeSummaryBar?.configure(message: message, changeCount: markdownDocument.changes.count)
+        changeSummaryBar?.configure(message: message, changeCount: markdownDocument.changes.unreadCount)
         rootView.needsLayout = true
     }
 
@@ -1074,8 +1180,23 @@ final class DocumentWindowController: NSWindowController {
         }
     }
 
-    func installTrailing(_ view: NSView) {
+    /// The band the inspector pane is allowed to occupy.  Several panels ask
+    /// for more than the old 260pt floor, so the floor is the widest of them
+    /// and the ceiling leaves room for the table editor's working surface.
+    enum InspectorWidth {
+        static let minimum: CGFloat = 320
+        static let maximum: CGFloat = 520
+
+        static func clamp(_ width: CGFloat) -> CGFloat {
+            min(maximum, max(minimum, width))
+        }
+    }
+
+    /// `title` names the surface after the command that opened it; without one
+    /// the header keeps the section's generic name.
+    func installTrailing(_ view: NSView, title: String? = nil) {
         showInInspector(view, section: .context)
+        if let title { inspectorHost?.setTitle(title, for: .context) }
     }
 
     func dismissTrailing(_ view: NSView) {
@@ -1089,6 +1210,11 @@ final class DocumentWindowController: NSWindowController {
         if let inspectorHost { host = inspectorHost }
         else {
             let created = InspectorHostView()
+            // The host is chrome like any panel and has to be born in the
+            // document's theme; it used to be styled only on the next theme
+            // change, so a window opened under a non-default theme drew its
+            // inspector header in the default one until something moved.
+            created.styleSheet = activeStyleSheet
             created.onClose = { [weak self] in
                 guard let self else { return }
                 if self.inspectorHost?.selectedSection == .tasks {
@@ -1105,7 +1231,21 @@ final class DocumentWindowController: NSWindowController {
         }
         host.setContent(view, section: section)
         inspectorItem.isCollapsed = false
+        applyPreferredInspectorWidth(for: view)
         refreshToolbarSelectionState()
+    }
+
+    /// Opens the pane at the width the panel asked for.  `PanelSurface` has
+    /// carried `preferredWidth` all along and nothing read it, so every panel
+    /// arrived at whatever width the previous one left behind.  The divider
+    /// stays draggable afterwards: this sets a position, not a constraint.
+    private func applyPreferredInspectorWidth(for view: NSView) {
+        guard let surface = view as? PanelSurface else { return }
+        let splitView = windowSplitController.splitView
+        let dividerIndex = splitView.arrangedSubviews.count - 2
+        let width = InspectorWidth.clamp(surface.preferredWidth)
+        guard dividerIndex >= 0, splitView.bounds.width > width + splitView.dividerThickness else { return }
+        splitView.setPosition(splitView.bounds.width - width, ofDividerAt: dividerIndex)
     }
 
     func closeInspector() {

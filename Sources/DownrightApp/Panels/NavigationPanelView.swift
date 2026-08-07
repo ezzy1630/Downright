@@ -62,7 +62,7 @@ final class NavigationPanelView: NSView, PanelSurface {
     var emptyStateVisibleForTesting: Bool { !emptyState.isHidden }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Navigate")
+    private let titleLabel = NSTextField(labelWithString: Command.toggleSidebar.panelTitle)
     private let summaryLabel = NSTextField(labelWithString: "")
     private let searchField = NSSearchField()
     private let pinButton: NSButton
@@ -128,6 +128,9 @@ final class NavigationPanelView: NSView, PanelSurface {
         addSubview(closeButton)
 
         contents.delegate = self
+        // The panel header already says "Contents"; the embedded outline must
+        // not say it a second time (§7.2).
+        contents.showsTitle = false
         files.delegate = self
         sections.translatesAutoresizingMaskIntoConstraints = false
         sections.addSubview(files)
@@ -331,7 +334,6 @@ extension NavigationPanelView: OutlinePanelDelegate {
         delegate?.navigationPanel(self, didToggleFoldAt: index)
     }
 
-    func outlinePanel(_ panel: OutlinePanelView, didChangeZoomLevel level: ZoomLevel) {}
 }
 
 extension NavigationPanelView: SiblingSidebarDelegate {

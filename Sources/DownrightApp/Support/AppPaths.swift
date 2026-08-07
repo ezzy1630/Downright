@@ -37,15 +37,62 @@ enum AppPaths {
         supportDirectory.appendingPathComponent("session.json")
     }
 
+    /// What a support directory is for, in the words the user would use.  When
+    /// the directory cannot be created the warning has to name the feature that
+    /// stops working, not the path that failed.
+    enum Purpose: CaseIterable {
+        case support, history, state, themes
+
+        var directory: URL {
+            switch self {
+            case .support: return supportDirectory
+            case .history: return historyDirectory
+            case .state: return stateDirectory
+            case .themes: return themesDirectory
+            }
+        }
+
+        /// Reads as the tail of "Downright can't save …".
+        var featureDescription: String {
+            switch self {
+            case .support: return "your settings, keyboard shortcuts, or the last session"
+            case .history: return "version history, so change review has nothing to compare against"
+            case .state: return "reading positions, folds, or the recent files list"
+            case .themes: return "imported themes"
+            }
+        }
+    }
+
+    /// A directory Downright could not create, and what that costs the user.
+    struct PreparationFailure {
+        var purpose: Purpose
+        var error: Error
+    }
+
+    static func create(_ directory: URL) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    /// Best-effort creation for call sites that are about to write anyway and
+    /// will report their own write failure.  Callers that need to know use
+    /// `create(_:)`.
     @discardableResult
     static func ensure(_ directory: URL) -> URL {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? create(directory)
         return directory
     }
 
-    static func prepareAll() {
-        for dir in [supportDirectory, historyDirectory, stateDirectory, themesDirectory] {
-            ensure(dir)
+    /// Creates every directory the app needs and reports the ones it could not.
+    /// A failure here disables a whole feature for the rest of the session, so
+    /// the caller is expected to say so rather than let it fail silently.
+    static func prepareAll() -> [PreparationFailure] {
+        Purpose.allCases.compactMap { purpose in
+            do {
+                try create(purpose.directory)
+                return nil
+            } catch {
+                return PreparationFailure(purpose: purpose, error: error)
+            }
         }
     }
 }

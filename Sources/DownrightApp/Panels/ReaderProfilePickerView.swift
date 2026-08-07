@@ -17,8 +17,11 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         didSet { backdrop.styleSheet = styleSheet; applyStyle() }
     }
 
-    var preferredWidth: CGFloat { 320 }
+    var preferredWidth: CGFloat { PanelMetrics.listWidth }
     private(set) var selectedProfile: ReaderProfile
+    /// The profile that was active when the picker opened.  Every control here
+    /// previews live into the document, so there has to be a way back (§11.4).
+    private var initialProfile: ReaderProfile?
     var profiles: [ReaderProfile] { builtIns + customProfiles }
     var customProfiles: [ReaderProfile] {
         didSet { reloadProfileList() }
@@ -27,12 +30,14 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private let store: ReaderProfileStore
     private let builtIns = ReaderProfile.builtIns
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Reader profile")
+    private let titleLabel = NSTextField(labelWithString: Command.readerProfiles.panelTitle)
     private let detailLabel = NSTextField(labelWithString: "Presentation settings only")
     private let profilePopup = NSPopUpButton()
     private let nameField = NSTextField()
-    private let saveButton = NSButton(title: "Save as custom", target: nil, action: nil)
-    private let deleteButton = NSButton(title: "Delete custom", target: nil, action: nil)
+    private let saveButton = NSButton(title: "Save as Custom", target: nil, action: nil)
+    private let deleteButton = NSButton(title: "Delete Custom", target: nil, action: nil)
+    private let revertButton = NSButton(title: "Revert", target: nil, action: nil)
+    private let doneButton = NSButton(title: "Done", target: nil, action: nil)
     private var controls: [NSPopUpButton] = []
     private var controlAction: ButtonAction?
     private var saveAction: ButtonAction?
@@ -60,7 +65,11 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     func selectProfile(id: String) {
         guard let profile = profiles.first(where: { $0.id == id }) else { return }
         selectedProfile = profile
-        loadControls()
+        // The first selection is the host telling the picker what was already
+        // active; that is the state Revert returns to.
+        if initialProfile == nil { initialProfile = profile }
+        reloadProfileList()
+        updateRevertState()
         delegate?.readerProfilePicker(self, didSelect: profile)
         delegate?.readerProfilePicker(self, didPreview: profile)
     }
@@ -116,6 +125,36 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         addControl(label: "Chrome density", titles: ReaderChromeDensity.allCases.map(\.title))
         addControl(label: "Motion", titles: ReaderMotionPreference.allCases.map(\.title))
 
+        // Every control above writes straight into the live style sheet, so the
+        // panel owes the reader both a way back and a way out.
+        revertButton.bezelStyle = .rounded
+        revertButton.controlSize = .small
+        revertButton.target = self
+        revertButton.action = #selector(revert(_:))
+        revertButton.setAccessibilityLabel("Revert to the profile that was active")
+        doneButton.bezelStyle = .rounded
+        doneButton.controlSize = .small
+        doneButton.keyEquivalent = "\r"
+        doneButton.target = self
+        doneButton.action = #selector(finish(_:))
+        doneButton.setAccessibilityLabel("Close the reader profile picker")
+
+        let dismissRow = NSStackView(views: [revertButton, doneButton])
+        dismissRow.orientation = .horizontal
+        dismissRow.alignment = .centerY
+        dismissRow.spacing = 8
+        dismissRow.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dismissRow)
+
+        NSLayoutConstraint.activate([
+            dismissRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            dismissRow.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: PanelMetrics.inset),
+            dismissRow.topAnchor.constraint(
+                equalTo: (controls.last ?? saveButton).bottomAnchor, constant: 14
+            ),
+            dismissRow.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PanelMetrics.inset),
+        ])
+
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
@@ -132,9 +171,8 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
             deleteButton.trailingAnchor.constraint(equalTo: nameField.trailingAnchor),
             deleteButton.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor),
         ])
-
-        saveButton.keyEquivalent = "s"
-        saveButton.keyEquivalentModifierMask = [.command, .shift]
+        // No key equivalent here: this button used to claim ⌘⇧S and take Save
+        // As… away from the document for as long as the panel was open (§7.2).
     }
 
     private func addControl(label: String, titles: [String]) {
@@ -201,7 +239,27 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         else if controls.indices.contains(2), sender === controls[2] { profile.chromeDensity = ReaderChromeDensity.allCases[sender.indexOfSelectedItem] }
         else if controls.indices.contains(3), sender === controls[3] { profile.motionPreference = ReaderMotionPreference.allCases[sender.indexOfSelectedItem] }
         selectedProfile = profile
+        updateRevertState()
         updatePreview()
+    }
+
+    // MARK: - Revert and dismiss
+
+    @objc private func revert(_ sender: Any?) {
+        guard let initialProfile else { return }
+        selectedProfile = initialProfile
+        reloadProfileList()
+        updateRevertState()
+        delegate?.readerProfilePicker(self, didSelect: initialProfile)
+        updatePreview()
+    }
+
+    @objc private func finish(_ sender: Any?) {
+        enclosingInspectorHost?.requestClose()
+    }
+
+    private func updateRevertState() {
+        revertButton.isEnabled = initialProfile != nil && initialProfile != selectedProfile
     }
 
     @objc private func saveCustom(_ sender: Any?) {

@@ -13,23 +13,35 @@ final class MermaidFragment: DownrightFragment {
 
     override var suppressesText: Bool { true }
 
+    /// A diagram that will not render is agent output, not a crash — but it is
+    /// also not two clipped lines of grey source, which is what a fixed
+    /// two-line box gave it.  Same trust instrument as a missing image (§8.4).
+    private var failure: FailedObject {
+        FailedObject(label: "Diagram could not be rendered", source: payload.detail)
+    }
+
     override var overrideHeight: CGFloat? {
         guard isFirstParagraphOfBlock else { return 0 }
         guard let style = styleSheet else { return nil }
+        let grid = max(1, style.baselineGrid)
         let size = renderedSize()
-        guard size.height > 0 else { return style.lineHeight * 2 }
-        return RenderMetrics.snap(size.height + style.lineHeight, grid: max(1, style.baselineGrid))
+        guard size.height > 0 else {
+            return RenderMetrics.snap(
+                failedObjectHeight(failure, style: style) + style.lineHeight * 0.5, grid: grid)
+        }
+        return RenderMetrics.snap(size.height + style.lineHeight, grid: grid)
     }
 
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         guard let image = renderedImage() else {
-            let text = NSAttributedString(string: payload.detail, attributes: [
-                .font: style.monoFont(size: style.bodyFont().pointSize * 0.9),
-                .foregroundColor: style.textFaint,
-            ])
-            cg.drawText(text, in: CGRect(x: point.x, y: point.y, width: contentWidth,
-                                         height: layoutFragmentFrame.height), flipped: true)
+            drawFailedObject(
+                failure,
+                in: CGRect(x: point.x, y: point.y, width: contentWidth,
+                           height: failedObjectHeight(failure, style: style)),
+                style: style,
+                in: cg
+            )
             return
         }
         let size = renderedSize()

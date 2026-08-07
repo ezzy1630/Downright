@@ -14,6 +14,11 @@ struct CommandPaletteEntry: Identifiable, Equatable {
         var seen = Set<String>()
         return scopes.map(\.paletteTitle).filter { seen.insert($0).inserted }.joined(separator: " / ")
     }
+
+    /// Everything a query is allowed to match.  The rendered subtitle
+    /// ("⌘⇧K  ·  Document") is deliberately absent: searching it made `doc`
+    /// match nearly every command in the app.
+    var searchCandidates: [String] { [title] + synonyms }
 }
 
 extension CommandScope {
@@ -57,6 +62,36 @@ final class UserDefaultsCommandPaletteRecentStore: CommandPaletteRecentStore {
         var values = recentCommands().filter { $0 != command }
         values.insert(command, at: 0)
         defaults.set(values.prefix(limit).map(\.rawValue), forKey: key)
+    }
+}
+
+/// Fuzzy search for the palette.
+///
+/// There is one matcher in the app: `FuzzyMatcher`, the dynamic program the
+/// outline panel already uses, which scores word boundaries, prefixes, and
+/// consecutive runs and reports the positions it matched.  This wrapper only
+/// decides *which strings* a query is allowed to see and how several terms
+/// combine.
+enum PaletteSearch {
+    /// Best score across `candidates`; nil when the query matches none of them.
+    /// An empty query matches everything with score 0.
+    static func score(_ query: String, in candidates: [String]) -> Int? {
+        let terms = query.lowercased()
+            .split(whereSeparator: { $0 == " " || $0 == "\t" })
+            .map(String.init)
+        guard !terms.isEmpty else { return 0 }
+        let haystacks = candidates.filter { !$0.isEmpty }
+        guard !haystacks.isEmpty else { return nil }
+
+        // Every term must land somewhere, so `edit cells` finds the command
+        // whose title and synonyms together cover both words.
+        var total = 0
+        for term in terms {
+            let best = haystacks.compactMap { FuzzyMatcher.match(needle: term, in: $0)?.score }.max()
+            guard let best else { return nil }
+            total += best
+        }
+        return total
     }
 }
 
@@ -115,6 +150,43 @@ struct CommandPaletteModel {
         )
     }
 
+    // MARK: - Ranking
+
+    /// A candidate and the numbers it is ordered by.  One ordering serves both
+    /// result lists, so the palette cannot rank one way and the quick-open
+    /// list another — which is how recency used to be dropped on the path that
+    /// actually ran.
+    private struct Ranked<Value> {
+        var value: Value
+        var score: Int
+        var command: Command?
+        var title: String
+    }
+
+    /// Score, then recency, then title.
+    private static func ordered<Value>(_ items: [Ranked<Value>], recents: [Command]) -> [Value] {
+        items.sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            let left = lhs.command.flatMap { recents.firstIndex(of: $0) } ?? .max
+            let right = rhs.command.flatMap { recents.firstIndex(of: $0) } ?? .max
+            if left != right { return left < right }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+        .map(\.value)
+    }
+
+    private static func rankedEntries(
+        _ entries: [CommandPaletteEntry], query: String
+    ) -> [Ranked<CommandPaletteEntry>] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entries.compactMap { entry in
+            guard let score = PaletteSearch.score(trimmed, in: entry.searchCandidates) else { return nil }
+            return Ranked(value: entry, score: score, command: entry.command, title: entry.title)
+        }
+    }
+
+    // MARK: - Results
+
     var results: [CommandPaletteEntry] {
         if cache.results == nil || cache.resultsQuery != query {
             cache.results = Self.computeResults(entries: entries, recentCommands: recentCommands, query: query)
@@ -126,27 +198,7 @@ struct CommandPaletteModel {
     private static func computeResults(
         entries: [CommandPaletteEntry], recentCommands: [Command], query: String
     ) -> [CommandPaletteEntry] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            let byCommand = Dictionary(uniqueKeysWithValues: entries.map { ($0.command, $0) })
-            let recent = recentCommands.compactMap { byCommand[$0] }
-            let recentSet = Set(recent.map(\.command))
-            return recent + entries.filter { !recentSet.contains($0.command) }
-        }
-
-        let scored: [(score: Int, entry: CommandPaletteEntry)] = entries.compactMap { entry in
-            guard let score = PaletteFuzzyMatcher.score(trimmed, in: entry) else { return nil }
-            return (score: score, entry: entry)
-        }
-        return scored
-            .sorted { lhs, rhs in
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
-                let leftRecent = recentCommands.firstIndex(of: lhs.entry.command) ?? .max
-                let rightRecent = recentCommands.firstIndex(of: rhs.entry.command) ?? .max
-                if leftRecent != rightRecent { return leftRecent < rightRecent }
-                return lhs.entry.title.localizedStandardCompare(rhs.entry.title) == .orderedAscending
-            }
-            .map(\.entry)
+        ordered(rankedEntries(entries, query: query), recents: recentCommands)
     }
 
     var selectedEntry: CommandPaletteEntry? {
@@ -173,50 +225,38 @@ struct CommandPaletteModel {
         query: String
     ) -> [QuickOpenResult] {
         let parsed = QuickOpenQuery(query)
-        var candidates: [QuickOpenResult] = []
-        if parsed.filter == .all || parsed.filter == .commands {
-            candidates += Self.commandResults(
-                for: parsed.terms, entries: entries, recentCommands: recentCommands, query: query
-            )
-            .map { entry in
-                    QuickOpenResult(
-                        id: "command:\(entry.command.rawValue)", kind: .command,
-                        title: entry.title,
-                        subtitle: [entry.binding, entry.scopeLabel].compactMap { $0 }.joined(separator: "  ·  "),
-                        action: .command(entry.command)
-                    )
-                }
-        }
-        candidates += providers.flatMap { $0.results(for: parsed) }
-        let scored = candidates.map { result in
-            (result: result, score: Self.matchScore(parsed.terms, result: result))
-        }
-        return scored
-            .filter { parsed.terms.isEmpty || $0.score >= 0 }
-            .sorted { lhs, rhs in
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
-                if case (.command, .command) = (lhs.result.kind, rhs.result.kind) {
-                    let left = Self.recentRank(lhs.result, recents: recentCommands)
-                    let right = Self.recentRank(rhs.result, recents: recentCommands)
-                    if left != right { return left < right }
-                }
-                return lhs.result.title.localizedStandardCompare(rhs.result.title) == .orderedAscending
-            }
-            .map(\.result)
-    }
+        var candidates: [Ranked<QuickOpenResult>] = []
 
-    private static func commandResults(
-        for terms: String, entries: [CommandPaletteEntry], recentCommands: [Command], query: String
-    ) -> [CommandPaletteEntry] {
-        guard !terms.isEmpty else {
-            return computeResults(entries: entries, recentCommands: recentCommands, query: query)
+        if parsed.filter == .all || parsed.filter == .commands {
+            // Commands keep the score the entry matcher computed, synonyms and
+            // all; re-scoring them against rendered text would throw it away.
+            candidates += rankedEntries(entries, query: parsed.terms).map { ranked in
+                let entry = ranked.value
+                let result = QuickOpenResult(
+                    id: "command:\(entry.command.rawValue)", kind: .command,
+                    title: entry.title,
+                    subtitle: [entry.binding, entry.scopeLabel].compactMap { $0 }.joined(separator: "  ·  "),
+                    searchText: entry.synonyms.joined(separator: " "),
+                    action: .command(entry.command),
+                    score: ranked.score
+                )
+                return Ranked(value: result, score: ranked.score, command: entry.command, title: entry.title)
+            }
         }
-        let trimmed = terms.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scored: [(score: Int, entry: CommandPaletteEntry)] = entries.compactMap { entry in
-            guard let score = PaletteFuzzyMatcher.score(trimmed, in: entry) else { return nil }
-            return (score: score, entry: entry)
+
+        // Providers list; they do not rank.  One function scores everything so
+        // a heading and a command compete on the same scale.
+        for result in providers.flatMap({ $0.results(for: parsed) }) {
+            guard let score = PaletteSearch.score(parsed.terms, in: [result.title, result.searchText]) else {
+                continue
+            }
+            let total = score + result.score
+            candidates.append(
+                Ranked(value: result.scored(total), score: total, command: nil, title: result.title)
+            )
         }
-        return scored.sorted { lhs, rhs in lhs.score > rhs.score }.map(\.entry)
+
+        return ordered(candidates, recents: recentCommands)
     }
 
     var selectedResult: QuickOpenResult? {
@@ -224,6 +264,8 @@ struct CommandPaletteModel {
         guard values.indices.contains(selectedIndex) else { return nil }
         return values[selectedIndex]
     }
+
+    // MARK: - Selection
 
     mutating func updateQuery(_ value: String) {
         guard query != value else { return }
@@ -253,45 +295,16 @@ struct CommandPaletteModel {
         var seen = Set<Command>()
         return commands.filter { seen.insert($0).inserted }
     }
-
-    private func commandResults(for terms: String) -> [CommandPaletteEntry] {
-        guard !terms.isEmpty else { return results }
-        let scored: [(score: Int, entry: CommandPaletteEntry)] = entries.compactMap { entry in
-            guard let score = PaletteFuzzyMatcher.score(terms, in: entry) else { return nil }
-            return (score: score, entry: entry)
-        }
-        return scored.sorted { lhs, rhs in lhs.score > rhs.score }.map(\.entry)
-    }
-
-    private static func matchScore(_ terms: String, result: QuickOpenResult) -> Int {
-        guard !terms.isEmpty else { return 0 }
-        let text = "\(result.title) \(result.subtitle)".lowercased()
-        let query = terms.lowercased()
-        if text == query { return 1_000 }
-        if text.hasPrefix(query) { return 800 - text.count }
-        var cursor = text.startIndex
-        var matched = 0
-        for character in query {
-            guard let index = text[cursor...].firstIndex(of: character) else { return -1 }
-            matched += 1
-            cursor = text.index(after: index)
-        }
-        return 300 + matched * 10 - text.count
-    }
-
-    private static func recentRank(_ result: QuickOpenResult, recents: [Command]) -> Int {
-        guard case .command(let command) = result.action else { return .max }
-        return recents.firstIndex(of: command) ?? .max
-    }
 }
 
 private enum CommandPaletteSynonyms {
     static let values: [Command: [String]] = [
         .sourceMode: ["markdown", "raw", "editor", "edit source", "full source"],
-        .outlineQuickOpen: ["headings", "jump", "go to", "contents"],
+        .outlineQuickOpen: ["headings", "jump", "go to", "contents", "outline"],
         .toggleSidebar: ["files", "documents", "siblings", "navigator"],
         .outlinePanel: ["headings", "contents", "navigation"],
         .taskPanel: ["tasks", "todo", "checkbox", "checklist"],
+        .toggleTaskAtCaret: ["check", "tick", "checkbox", "done"],
         .frontMatterEditor: ["metadata", "yaml", "toml", "properties"],
         .tableEditor: ["tables", "grid", "cells", "rows", "columns"],
         .assetDoctor: ["images", "links", "missing files", "media"],
@@ -302,49 +315,11 @@ private enum CommandPaletteSynonyms {
         .copyAsRichText: ["copy formatted", "rich text"],
         .copyAsPlainText: ["copy text", "plain"],
         .revealInFinder: ["show file", "folder", "locate"],
+        .versionTimeline: ["history", "versions", "snapshots", "revert"],
         .preferences: ["settings", "options", "configuration"],
         .showKeybindings: ["shortcuts", "keys", "keyboard"],
         .checkForUpdates: ["update", "updates", "upgrade", "refresh"],
     ]
-}
-
-private enum PaletteFuzzyMatcher {
-    static func score(_ query: String, in entry: CommandPaletteEntry) -> Int? {
-        let terms = query.lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-        guard !terms.isEmpty else { return 0 }
-        let candidates = ([entry.title] + entry.synonyms).map { $0.lowercased() }
-        var total = 0
-        for term in terms {
-            guard let best = candidates.compactMap({ score(term, in: $0) }).max() else { return nil }
-            total += best
-        }
-        return total
-    }
-
-    private static func score(_ query: String, in candidate: String) -> Int? {
-        if candidate == query { return 1_000 }
-        if candidate.hasPrefix(query) { return 800 - candidate.count }
-        if candidate.split(separator: " ").contains(where: { $0.hasPrefix(query) }) {
-            return 650 - candidate.count
-        }
-
-        var cursor = candidate.startIndex
-        var matched = 0
-        var contiguous = 0
-        var bestContiguous = 0
-        for character in query {
-            guard let index = candidate[cursor...].firstIndex(of: character) else { return nil }
-            matched += 1
-            if index == cursor {
-                contiguous += 1
-                bestContiguous = max(bestContiguous, contiguous)
-            } else {
-                contiguous = 1
-            }
-            cursor = candidate.index(after: index)
-        }
-        return 300 + matched * 12 + bestContiguous * 8 - candidate.count
-    }
 }
 
 private extension Int {

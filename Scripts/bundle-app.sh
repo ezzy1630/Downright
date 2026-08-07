@@ -45,8 +45,11 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN_DIR/Downright" "$MACOS/$APP_NAME"
 cp "$BIN_DIR/down" "$MACOS/down"
 
-# SwiftPM resource bundles resolve through Bundle.main.resourceURL once they
-# sit in Contents/Resources, which is exactly where Bundle.module looks first.
+# SwiftPM resource bundles (themes, SwiftMath's math fonts).  Contents/Resources
+# is where both resolvers look first for a deep bundle — ThemeStore.resourceBundle
+# and the vendored SwiftMath's MathResourceBundle — and it is the only place a
+# .app may keep them: codesign rejects anything but Contents at the bundle root.
+# verify-bundle.sh asserts the individual files at the end of this script.
 for bundle in "$BIN_DIR"/*.bundle; do
     [ -e "$bundle" ] || continue
     cp -R "$bundle" "$RESOURCES/"
@@ -75,6 +78,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>NSAppleEventsUsageDescription</key><string>Downright uses Terminal to open files in your \$EDITOR.</string>
     <key>NSHumanReadableCopyright</key><string>MIT licensed.</string>
     <key>NSServices</key>
     <array>
@@ -147,6 +151,10 @@ PLIST
 
 cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 cp "$ROOT/Resources/AppIcon.png" "$RESOURCES/AppIcon.png"
+# The tour.  AppDelegate looks it up with Bundle.main and hides the start
+# window's guide action when it is absent, so a bundle without this file is
+# degraded but not broken.
+cp "$ROOT/Resources/Welcome.md" "$RESOURCES/Welcome.md"
 # Privacy manifest: required-reason APIs (UserDefaults, file timestamps) must
 # be declared per bundle.  Xcode builds get this via project.yml resources;
 # the SwiftPM bundle copies it here so both pipelines ship the same manifest.

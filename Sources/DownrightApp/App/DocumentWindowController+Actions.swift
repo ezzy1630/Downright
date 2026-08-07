@@ -324,8 +324,11 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.view = progressRing
             item.isBordered = false
             item.label = "Tasks"
-            item.toolTip = "Open Tasks"
-            item.visibilityPriority = .low
+            // The ring is a permanent control now — it shows an empty track
+            // rather than hiding itself on a document with no tasks — so it
+            // must not be the first item the toolbar drops, and its own
+            // tooltip is richer than a static one here.
+            item.visibilityPriority = .high
             progressRing.onActivate = { [weak self] in
                 self?.toolbarShowTasks(nil)
             }

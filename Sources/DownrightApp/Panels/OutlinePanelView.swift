@@ -10,7 +10,6 @@ protocol OutlinePanelDelegate: AnyObject {
     /// headings.count` means "to the end of the document".
     func outlinePanel(_ panel: OutlinePanelView, didMoveHeadingAt index: Int, before targetIndex: Int)
     func outlinePanel(_ panel: OutlinePanelView, didToggleFoldAt index: Int)
-    func outlinePanel(_ panel: OutlinePanelView, didChangeZoomLevel level: ZoomLevel)
 }
 
 extension NSPasteboard.PasteboardType {
@@ -58,13 +57,22 @@ final class OutlinePanelView: NSView, PanelSurface {
         }
     }
 
-    var zoomLevel: ZoomLevel = .everything {
+    /// The host's current structural zoom.  Kept so a caller can read it back;
+    /// the panel does not filter on it — Contents lists what is folded, and
+    /// folding is what the panel already reflects.
+    var zoomLevel: ZoomLevel = .everything
+
+    /// Hidden when the panel is embedded in a surface that already names it —
+    /// two "Contents" labels stacked on one another is the same mistake twice.
+    var showsTitle: Bool = true {
         didSet {
-            guard zoomLevel != oldValue else { return }
+            guard showsTitle != oldValue else { return }
+            titleLabel.isHidden = !showsTitle
+            listTopConstraint?.constant = showsTitle ? 6 : -PanelMetrics.headerHeight + 6
         }
     }
 
-    var preferredWidth: CGFloat { 320 }
+    var preferredWidth: CGFloat { PanelMetrics.listWidth }
     var hasVisibleContent: Bool { !visibleRows.isEmpty }
     var preferredHeight: CGFloat {
         guard hasVisibleContent else { return 0 }
@@ -74,8 +82,9 @@ final class OutlinePanelView: NSView, PanelSurface {
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Contents")
+    private let titleLabel = NSTextField(labelWithString: Command.toggleSidebar.panelTitle)
     private let filterStatusLabel = NSTextField(labelWithString: "")
+    private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "outline")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
 
@@ -85,6 +94,7 @@ final class OutlinePanelView: NSView, PanelSurface {
     var visibleRowCountForTesting: Int { visibleRows.count }
     var filterMatchCountForTesting: Int { filterMatchCount }
     private var filterMatchCount = 0
+    private var listTopConstraint: NSLayoutConstraint?
 
     // MARK: - Init
 
@@ -135,8 +145,9 @@ final class OutlinePanelView: NSView, PanelSurface {
     private func buildTable() {
         table.dataSource = self
         table.delegate = self
-        table.rowHeight = 30
-        table.selectionHighlightStyle = .none
+        table.rowHeight = PanelMetrics.listRowHeight
+        // Selection is drawn once, by `PanelSelectionRowView`, for every panel.
+        table.selectionHighlightStyle = .regular
         table.registerForDraggedTypes([.downrightHeading])
         table.setDraggingSourceOperationMask(.move, forLocal: true)
         // The gap style is what actually shows the reader where the section
@@ -164,10 +175,13 @@ final class OutlinePanelView: NSView, PanelSurface {
         }
 
         addSubview(scroll)
+        emptyState.install(in: self, over: scroll)
+        let top = scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6)
+        listTopConstraint = top
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            top,
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
@@ -177,9 +191,38 @@ final class OutlinePanelView: NSView, PanelSurface {
     func reload() {
         rebuildVisibleRows()
         table.reloadData()
+        updateEmptyState()
         invalidateIntrinsicContentSize()
         revealCurrentHeading()
         needsDisplay = true
+    }
+
+    /// A document with no headings and a filter that matched nothing are two
+    /// different situations and say two different things (§11.4).
+    private func updateEmptyState() {
+        guard visibleRows.isEmpty else {
+            emptyState.isHidden = true
+            scroll.isHidden = false
+            return
+        }
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            emptyState.configure(
+                symbol: "list.bullet.indent",
+                title: "No headings",
+                subtitle: "Add `#` to give this document\nstructure.",
+                styleSheet: styleSheet
+            )
+        } else {
+            emptyState.configure(
+                symbol: "magnifyingglass",
+                title: "No headings match “\(query)”",
+                subtitle: "Clear the filter to see the whole\ndocument again.",
+                styleSheet: styleSheet
+            )
+        }
+        emptyState.isHidden = false
+        scroll.isHidden = true
     }
 
     override func viewDidMoveToWindow() {
@@ -301,6 +344,7 @@ final class OutlinePanelView: NSView, PanelSurface {
         titleLabel.textColor = styleSheet.textSecondary
         filterStatusLabel.textColor = styleSheet.textFaint
         table.reloadData()
+        updateEmptyState()
         needsDisplay = true
     }
 
@@ -325,6 +369,10 @@ final class OutlinePanelView: NSView, PanelSurface {
 
 extension OutlinePanelView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { visibleRows.count }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < visibleRows.count else { return nil }
@@ -519,6 +567,8 @@ private final class OutlineRowView: NSView {
         needsDisplay = true
     }
 
+    /// Selection is `PanelSelectionRowView`'s job now; the row draws only what
+    /// is specific to it — the current-section rule and the hover wash.
     override func draw(_ dirtyRect: NSRect) {
         guard let styleSheet else { return }
 
@@ -528,9 +578,8 @@ private final class OutlineRowView: NSView {
         }
 
         let alpha: CGFloat?
-        if isSelected { alpha = 0.12 }
-        else if isCurrent { alpha = 0.08 }
-        else if isHovered { alpha = 0.05 }
+        if isCurrent { alpha = 0.08 }
+        else if isHovered && !isSelected { alpha = 0.05 }
         else { alpha = nil }
         guard let alpha else { return }
         styleSheet.text

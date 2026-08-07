@@ -409,10 +409,20 @@ final class UpdateCoordinator: UpdateDriverHost {
         currentCycleIsUserInitiated = false
         self.acknowledgement?.discard()
         self.acknowledgement = Capability(acknowledgement)
+        guard userInitiated else {
+            // A background check that could not reach the feed is a non-event.
+            // Sparkle's cycle has to be finished here, or `canCheckForUpdates`
+            // stays false until relaunch and every window carries an orange
+            // alarm badge because a laptop was opened without wifi — which is
+            // exactly the alarm DESIGN.md says not to raise.
+            userDidAcknowledge()
+            discardAllCapabilities()
+            machine.reduce(.dismissed)
+            notifyStateChanged()
+            return
+        }
         machine.reduce(.updaterError(UpdateFailure(error: error)))
-        // A background-cycle failure surfaces on the warning pill; only a
-        // user-initiated failure opens the panel on its own.
-        if userInitiated { showPanel() }
+        showPanel()
         notifyStateChanged()
     }
 

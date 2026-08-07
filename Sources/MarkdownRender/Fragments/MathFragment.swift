@@ -15,17 +15,34 @@ final class MathFragment: DownrightFragment {
 
     override var suppressesText: Bool { true }
 
+    /// A formula that will not typeset is agent output, not an error state —
+    /// but silent dimmed source reads as intentional.  Name the failure and
+    /// keep the source under it, exactly as a broken diagram does.
+    private var failure: FailedObject {
+        FailedObject(label: "Formula could not be typeset", source: payload.detail)
+    }
+
     override var overrideHeight: CGFloat? {
         guard isFirstParagraphOfBlock else { return 0 }
         guard let style = styleSheet else { return nil }
-        let size = renderedImage()?.size ?? CGSize(width: 0, height: style.lineHeight)
-        return RenderMetrics.snap(size.height + style.lineHeight * 0.7, grid: max(1, style.baselineGrid))
+        let grid = max(1, style.baselineGrid)
+        guard let image = renderedImage() else {
+            return RenderMetrics.snap(
+                failedObjectHeight(failure, style: style) + style.lineHeight * 0.5, grid: grid)
+        }
+        return RenderMetrics.snap(image.size.height + style.lineHeight * 0.7, grid: grid)
     }
 
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         guard let image = renderedImage() else {
-            drawFallback(at: point, in: cg, style: style)
+            drawFailedObject(
+                failure,
+                in: CGRect(x: point.x, y: point.y, width: contentWidth,
+                           height: failedObjectHeight(failure, style: style)),
+                style: style,
+                in: cg
+            )
             return
         }
         let frame = layoutFragmentFrame
@@ -33,17 +50,6 @@ final class MathFragment: DownrightFragment {
             x: point.x + max(0, (contentWidth - image.size.width) / 2),
             y: point.y + max(0, (frame.height - image.size.height) / 2))
         draw(image: image, at: origin, in: cg)
-    }
-
-    /// A formula that will not typeset is agent output, not an error state:
-    /// it falls back to its own source, dimmed, so you can see what broke.
-    private func drawFallback(at point: CGPoint, in cg: CGContext, style: StyleSheet) {
-        let text = NSAttributedString(string: payload.detail, attributes: [
-            .font: style.monoFont(size: style.bodyFont().pointSize * 0.9),
-            .foregroundColor: style.textFaint,
-        ])
-        cg.drawText(text, in: CGRect(x: point.x, y: point.y + 2, width: contentWidth,
-                                     height: layoutFragmentFrame.height), flipped: true)
     }
 
     private func renderedImage() -> NSImage? {

@@ -130,9 +130,15 @@ public final class FragmentContext {
 
     var storage: NSTextStorage? { textView?.textStorage }
 
+    /// Strictly inside, not merely touching.
+    ///
+    /// `touches` is inclusive of both edges, so clicking just after a table or
+    /// arrowing past an image swapped a 400 pt object for three lines of source
+    /// and moved the whole page.  §6.2 scopes source to the object the caret is
+    /// *in*; landing on its boundary is not being in it.
     func isCaretInside(_ range: NSRange) -> Bool {
-        guard let caret else { return false }
-        return range.touches(offset: caret)
+        guard let caret, range.length > 0 else { return false }
+        return caret > range.location && caret < range.upperBound
     }
 
     func isSourceFocused(_ range: NSRange) -> Bool {
@@ -293,6 +299,156 @@ public final class ElidedFragment: NSTextLayoutFragment {
     public override var renderingSurfaceBounds: CGRect { .zero }
 
     public override func draw(at point: CGPoint, in context: CGContext) {}
+}
+
+// MARK: - Clipping
+
+extension NSAttributedString {
+    /// This string, wrapped at `width` and cut to `maxHeight`, ending in an
+    /// ellipsis when anything was dropped.
+    ///
+    /// A truncating line-break mode cannot express this: AppKit lays a
+    /// paragraph carrying one out on a *single* line, which flattens wrapped
+    /// text instead of clipping it.  So the ellipsis goes on the text.  The
+    /// common case costs one measurement — proving the string fits — and only
+    /// an overflowing string pays for the search.
+    func clipped(toHeight maxHeight: CGFloat, width: CGFloat) -> NSAttributedString {
+        guard length > 0, width > 1, maxHeight > 0 else { return self }
+        func height(_ string: NSAttributedString) -> CGFloat {
+            string.boundingRect(
+                with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).height
+        }
+        guard height(self) > maxHeight + 0.5 else { return self }
+
+        func candidate(_ prefix: Int) -> NSAttributedString {
+            let head = NSMutableAttributedString(
+                attributedString: attributedSubstring(from: NSRange(location: 0, length: prefix)))
+            while head.length > 0,
+                  let last = head.string.unicodeScalars.last,
+                  CharacterSet.whitespacesAndNewlines.contains(last) {
+                head.deleteCharacters(in: NSRange(location: head.length - 1, length: 1))
+            }
+            head.append(NSAttributedString(
+                string: "…",
+                attributes: attributes(at: Swift.max(0, Swift.min(prefix, length - 1)), effectiveRange: nil)))
+            return head
+        }
+
+        var low = 0
+        var high = length
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if height(candidate(mid)) <= maxHeight + 0.5 { low = mid } else { high = mid - 1 }
+        }
+        return candidate(low)
+    }
+}
+
+// MARK: - Failed objects
+
+/// The trust treatment for an object that did not render (§8.4).
+///
+/// A diagram, formula, or image the agent claims it produced and did not is a
+/// fact about the document, so it is stated: a bordered block in `pathMissing`
+/// with a plain label and, beneath it, the source that failed.  The block is
+/// sized to what it needs, which is the difference between "this did not work"
+/// and two clipped lines of grey text.
+struct FailedObject {
+    /// Plain, unalarmed: "Diagram could not be rendered".
+    var label: String
+    /// The source that failed, shown in mono beneath the label.  Empty when the
+    /// failure is the whole story (a missing file names itself in the label).
+    var source: String
+
+    static let insetX: CGFloat = 14
+    static let insetY: CGFloat = 12
+    /// Enough source to identify the block without turning a broken diagram
+    /// into the longest thing on the page.
+    static let sourceLineLimit = 12
+}
+
+extension DownrightFragment {
+    private func failedObjectText(_ object: FailedObject, style: StyleSheet)
+        -> (label: NSAttributedString, source: NSAttributedString) {
+        let size = style.bodyFont().pointSize
+        let labelParagraph = NSMutableParagraphStyle()
+        labelParagraph.lineBreakMode = .byWordWrapping
+        let label = NSAttributedString(string: object.label, attributes: [
+            .font: style.emphasisFont(bold: true, italic: false).withSize(size * 0.86),
+            .foregroundColor: style.pathMissing,
+            .paragraphStyle: labelParagraph,
+        ])
+        guard !object.source.isEmpty else { return (label, NSAttributedString()) }
+        let sourceParagraph = NSMutableParagraphStyle()
+        // Same rule as a code block: the column does not scroll, so an
+        // unbreakable run wraps by character instead of running off the edge.
+        sourceParagraph.lineBreakMode = .byCharWrapping
+        let source = NSAttributedString(string: object.source, attributes: [
+            .font: style.monoFont(size: size * 0.82),
+            .foregroundColor: style.textSecondary,
+            .paragraphStyle: sourceParagraph,
+        ])
+        return (label, source.clipped(
+            toHeight: style.lineHeight * CGFloat(FailedObject.sourceLineLimit),
+            width: max(80, contentWidth - FailedObject.insetX * 2)))
+    }
+
+    private func failedObjectMetrics(_ object: FailedObject, style: StyleSheet)
+        -> (label: CGFloat, source: CGFloat, width: CGFloat) {
+        let width = max(80, contentWidth - FailedObject.insetX * 2)
+        let text = failedObjectText(object, style: style)
+        let bounds = { (string: NSAttributedString) -> CGFloat in
+            guard string.length > 0 else { return 0 }
+            return ceil(string.boundingRect(
+                with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).height)
+        }
+        return (bounds(text.label), bounds(text.source), width)
+    }
+
+    /// Height the block needs, before any grid snapping the caller applies.
+    func failedObjectHeight(_ object: FailedObject, style: StyleSheet) -> CGFloat {
+        let metrics = failedObjectMetrics(object, style: style)
+        let gap = metrics.source > 0 ? RenderMetrics.imageCaptionGap : 0
+        return metrics.label + gap + metrics.source + FailedObject.insetY * 2
+    }
+
+    func drawFailedObject(
+        _ object: FailedObject,
+        in rect: CGRect,
+        style: StyleSheet,
+        in cg: CGContext
+    ) {
+        cg.fillRect(rect, color: style.codeBackground, radius: RenderMetrics.imageCornerRadius)
+        cg.saveGState()
+        cg.setStrokeColor(style.pathMissing.withAlphaComponent(0.55).cgColor)
+        cg.setLineWidth(1)
+        cg.addPath(CGPath(
+            roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
+            cornerWidth: RenderMetrics.imageCornerRadius,
+            cornerHeight: RenderMetrics.imageCornerRadius,
+            transform: nil))
+        cg.strokePath()
+        cg.restoreGState()
+
+        let metrics = failedObjectMetrics(object, style: style)
+        let text = failedObjectText(object, style: style)
+        let x = rect.minX + FailedObject.insetX
+        cg.drawText(text.label,
+                    in: CGRect(x: x, y: rect.minY + FailedObject.insetY,
+                               width: metrics.width, height: metrics.label),
+                    flipped: true)
+        guard metrics.source > 0 else { return }
+        cg.drawText(text.source,
+                    in: CGRect(x: x,
+                               y: rect.minY + FailedObject.insetY + metrics.label
+                                   + RenderMetrics.imageCaptionGap,
+                               width: metrics.width, height: metrics.source),
+                    flipped: true)
+    }
 }
 
 // MARK: - Drawing helpers

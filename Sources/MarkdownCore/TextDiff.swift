@@ -51,7 +51,15 @@ public enum TextDiff {
                 : span(inserted)
 
             if deleted.isEmpty {
-                hunks.append(ChangeHunk(kind: .inserted, newRange: newRange, oldRange: oldRange))
+                // Brand-new prose is the *strongest* signal on the page, so it
+                // gets the same word-level highlight a rewritten paragraph
+                // gets.  Leaving `wordRanges` empty gave three new paragraphs a
+                // hairline in the margin while a one-word edit got a filled
+                // background — exactly backwards.
+                hunks.append(ChangeHunk(
+                    kind: .inserted, newRange: newRange, oldRange: oldRange,
+                    wordRanges: insertedWords(in: newNS, span: newRange)
+                ))
             } else if inserted.isEmpty {
                 hunks.append(ChangeHunk(kind: .deleted, newRange: newRange, oldRange: oldRange))
             } else {
@@ -81,6 +89,28 @@ public enum TextDiff {
         }
         flush()
         return hunks
+    }
+
+    // MARK: Deletions
+
+    /// A non-degenerate range in the new text for a hunk that has no new text.
+    ///
+    /// A pure deletion's `newRange` is empty by definition — the bytes are
+    /// gone — but an empty range is unrenderable: the overlay clamps it away
+    /// and the density band comes out zero-height, so "the agent replaced a
+    /// section you wanted" is the one change the reader could not see.  Anchor
+    /// it on the single character at the join point (the character *after* the
+    /// join, or the last character of the document when the deletion ran to the
+    /// end) so the UI has a caret position and a row rectangle to work from.
+    ///
+    /// The removed bytes themselves live in `oldRange` of the old text; the
+    /// caller pairs the two to expand the caret into a ghost block.
+    public static func anchorRange(for hunk: ChangeHunk, inNewTextOfLength length: Int) -> NSRange {
+        if hunk.newRange.length > 0 { return hunk.newRange }
+        guard length > 0 else { return NSRange(location: 0, length: 0) }
+        let location = min(max(0, hunk.newRange.location), length)
+        if location < length { return NSRange(location: location, length: 1) }
+        return NSRange(location: length - 1, length: 1)
     }
 
     // MARK: Line and word tokenisation
@@ -129,6 +159,18 @@ public enum TextDiff {
             out.append(NSRange(location: newRange.location + word.location, length: word.length))
         }
         return merge(out)
+    }
+
+    /// Every word of an inserted span, in coordinates of the whole new text.
+    /// Word-split rather than one flat range so the highlight skips newlines
+    /// and punctuation; a background colour painted over a line terminator
+    /// draws a full-width block that reads as a bug.
+    static func insertedWords(in text: NSString, span: NSRange) -> [NSRange] {
+        guard span.length > 0 else { return [] }
+        let body = text.substring(with: span) as NSString
+        return merge(words(in: body).map {
+            NSRange(location: span.location + $0.location, length: $0.length)
+        })
     }
 
     /// Words, punctuation excluded — matching on words rather than on runs of

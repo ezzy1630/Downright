@@ -58,6 +58,17 @@ final class CodeBlockFragment: DownrightFragment {
         }
     }
 
+    /// The closing chrome's copy control is taller than the band it sits in, so
+    /// the fragment has to claim the surface it draws into or TextKit clips it.
+    public override var renderingSurfaceBounds: CGRect {
+        let base = super.renderingSurfaceBounds
+        guard role == .closeChrome else { return base }
+        let overhang = Self.copyControlOverhang
+        return base.union(CGRect(x: base.minX, y: -overhang,
+                                 width: base.width,
+                                 height: layoutFragmentFrame.height + overhang * 2))
+    }
+
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard let style = styleSheet else { return }
         let band = bandRect(at: point)
@@ -79,6 +90,10 @@ final class CodeBlockFragment: DownrightFragment {
             extended.size.height += RenderMetrics.codeCornerRadius
             cg.fillRect(extended, color: style.codeBackground, radius: RenderMetrics.codeCornerRadius)
             drawRule(band, style: style, in: cg)
+            // A long block scrolls its opening chrome off the top, taking the
+            // only copy control with it.  The closing fence carries a second
+            // one so the block always has a reachable copy (§7.1).
+            drawCopyControl(in: band, style: style, language: "", in: cg)
         case .body:
             cg.fillRect(band, color: style.codeBackground)
             drawRule(band, style: style, in: cg)
@@ -106,18 +121,20 @@ final class CodeBlockFragment: DownrightFragment {
             cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
             cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
         }
+        drawCopyControl(in: band, style: style, language: language, in: cg)
+    }
 
-        if context?.hoveredFragmentRange == payload.sourceRange {
-            let copy = Self.copyButtonRect(in: band, style: style, language: language)
-            cg.fillRect(copy, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
-            let copied = context?.copiedCodeRange == payload.sourceRange
-            let symbol = copied ? "checkmark" : "doc.on.doc"
-            let description = copied ? "Copied" : "Copy code"
-            if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-                .withSymbolConfiguration(.init(pointSize: 11, weight: .medium)) {
-                let tinted = image.tinted(style.textSecondary)
-                draw(image: tinted, in: copy.insetBy(dx: 5, dy: 4), in: cg)
-            }
+    private func drawCopyControl(in band: CGRect, style: StyleSheet, language: String, in cg: CGContext) {
+        guard context?.hoveredFragmentRange == payload.sourceRange else { return }
+        let copy = Self.copyButtonRect(in: band, style: style, language: language)
+        cg.fillRect(copy, color: style.codeRule.withAlphaComponent(0.22), radius: 6)
+        let copied = context?.copiedCodeRange == payload.sourceRange
+        let symbol = copied ? "checkmark" : "doc.on.doc"
+        let description = copied ? "Copied" : "Copy code"
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium)) {
+            let tinted = image.tinted(style.textSecondary)
+            draw(image: tinted, in: copy.insetBy(dx: 8, dy: 8), in: cg)
         }
     }
 
@@ -174,11 +191,23 @@ final class CodeBlockFragment: DownrightFragment {
         return CGRect(x: band.maxX - width - RenderMetrics.codeInsetX, y: y, width: width, height: 17)
     }
 
+    /// A 28pt square: the smallest pointer target that does not need aiming.
+    /// The old 24x17 was a decoration you had to hunt for.
+    static let copyControlSide: CGFloat = 28
+
+    /// How far the closing chrome's control overhangs its own 14pt band.  The
+    /// band is padding, not a header row, so the control is centred on it and
+    /// claims the surface above and below rather than shrinking to fit.
+    static var copyControlOverhang: CGFloat {
+        max(0, (copyControlSide - RenderMetrics.codeInsetY) / 2).rounded(.up)
+    }
+
     static func copyButtonRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
-        let width: CGFloat = 24
-        let chip = language.isEmpty ? band.maxX - RenderMetrics.codeInsetX : chipRect(in: band, style: style, language: language).minX
-        let y = band.minY + max(0, (band.height - 17) / 2)
-        return CGRect(x: chip - width - 6, y: y, width: width, height: 17)
+        let side = copyControlSide
+        let chip = language.isEmpty
+            ? band.maxX - RenderMetrics.codeInsetX
+            : chipRect(in: band, style: style, language: language).minX
+        return CGRect(x: chip - side - 6, y: band.midY - side / 2, width: side, height: side)
     }
 }
 

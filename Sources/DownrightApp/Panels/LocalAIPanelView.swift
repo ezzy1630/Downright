@@ -16,10 +16,10 @@ final class LocalAIPanelView: NSView, PanelSurface {
     var availability: LocalAIAvailability = .systemUnavailable { didSet { updateStatus() } }
     var result: LocalAIResult? { didSet { updateResult() } }
     var isRunning = false { didSet { updateStatus() } }
-    var preferredWidth: CGFloat { 360 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Local AI")
+    private let titleLabel = NSTextField(labelWithString: Command.localAI.panelTitle)
     private let taskPopup = NSPopUpButton()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let previewLabel = NSTextField(wrappingLabelWithString: "")

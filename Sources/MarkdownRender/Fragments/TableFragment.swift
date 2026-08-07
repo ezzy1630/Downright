@@ -317,9 +317,11 @@ final class TableRowFragment: DownrightFragment {
             } else {
                 source = NSAttributedString()
             }
-            let text = NSMutableAttributedString(attributedString: row.isHeader
-                ? NSAttributedString(string: source.string.uppercased(), attributes: source.length > 0 ? source.attributes(at: 0, effectiveRange: nil) : [:])
-                : source)
+            // Header cells keep their author's casing.  Upper-casing turned
+            // `pH` into `PH` and `macOS` into `MACOS`, and rebuilding the string
+            // from the attributes at index 0 flattened every inline span in the
+            // cell.  Kern + secondary + semibold already separate the row.
+            let text = NSMutableAttributedString(attributedString: source)
             guard text.length > 0 else { continue }
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = layout.alignments[index]
@@ -329,17 +331,19 @@ final class TableRowFragment: DownrightFragment {
             let whole = NSRange(location: 0, length: text.length)
             text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
             if row.isHeader {
-                text.addAttributes([
-                    .font: style.emphasisFont(bold: true, italic: false).withSize(style.bodyFont().pointSize * 0.85),
-                    .foregroundColor: style.textSecondary,
-                    .kern: style.bodyFont().pointSize * 0.06,
-                ], range: whole)
+                Self.applyHeaderTreatment(to: text, style: style)
             }
             let cellRect = CGRect(x: frame.minX + layout.columnX[index],
                                   y: frame.minY + RenderMetrics.tableRowPadding,
                                   width: layout.columnWidths[index],
                                   height: frame.height - RenderMetrics.tableRowPadding)
-            cg.drawText(text, in: cellRect, flipped: true)
+            // The row reserved at most three lines (§11.3).  Anything longer
+            // ends in an ellipsis, so a clipped cell reads as "there is more"
+            // rather than as a sentence that stops mid-word.
+            let visible = text.clipped(
+                toHeight: rowHeight - RenderMetrics.tableRowPadding * 2,
+                width: layout.columnWidths[index])
+            cg.drawText(visible, in: cellRect, flipped: true)
         }
 
         // One rule under the header. An open bottom keeps the table out of box territory.
@@ -347,6 +351,28 @@ final class TableRowFragment: DownrightFragment {
             cg.fillRect(CGRect(x: frame.minX, y: frame.maxY - RenderMetrics.tableRuleWidth,
                                width: frame.width, height: RenderMetrics.tableRuleWidth),
                         color: style.rule)
+        }
+    }
+
+    /// Label treatment for a header cell: smaller, tracked, secondary, and
+    /// semibold — applied *per font run* so an inline `code` or emphasis span
+    /// inside the header survives instead of being overwritten wholesale.
+    private static func applyHeaderTreatment(to text: NSMutableAttributedString, style: StyleSheet) {
+        let whole = NSRange(location: 0, length: text.length)
+        let size = style.bodyFont().pointSize * 0.85
+        text.addAttributes([
+            .foregroundColor: style.textSecondary,
+            .kern: style.bodyFont().pointSize * 0.06,
+        ], range: whole)
+        text.enumerateAttribute(.font, in: whole) { value, range, _ in
+            let font = value as? NSFont ?? style.bodyFont()
+            let label = font.isFixedPitch
+                ? style.monoFont(size: size)
+                : style.emphasisFont(
+                    bold: true,
+                    italic: font.fontDescriptor.symbolicTraits.contains(.italic)
+                ).withSize(size)
+            text.addAttribute(.font, value: label, range: range)
         }
     }
 
@@ -379,10 +405,14 @@ final class TableRowFragment: DownrightFragment {
                 style: style
             )
 
-            let labelText = NSAttributedString(string: label.uppercased(), attributes: [
+            // Same rule as the wide layout: the author's casing is the label.
+            let labelParagraph = NSMutableParagraphStyle()
+            labelParagraph.lineBreakMode = .byTruncatingTail
+            let labelText = NSAttributedString(string: label, attributes: [
                 .font: NSFont.systemFont(ofSize: max(10, style.bodyFont().pointSize * 0.72), weight: .semibold),
                 .foregroundColor: style.textSecondary,
                 .kern: style.bodyFont().pointSize * 0.045,
+                .paragraphStyle: labelParagraph,
             ])
             cg.drawText(
                 labelText,
@@ -396,8 +426,12 @@ final class TableRowFragment: DownrightFragment {
                 paragraph.lineBreakMode = .byWordWrapping
                 value.addAttribute(.paragraphStyle, value: paragraph,
                                    range: NSRange(location: 0, length: value.length))
+                // Stacked cells cap at four lines; anything longer ends in an
+                // ellipsis rather than being cut mid-word.
+                let visible = value.clipped(
+                    toHeight: cellHeight - style.baselineGrid, width: valueWidth)
                 cg.drawText(
-                    value,
+                    visible,
                     in: CGRect(x: valueX, y: y, width: valueWidth, height: cellHeight),
                     flipped: true
                 )

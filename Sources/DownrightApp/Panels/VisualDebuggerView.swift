@@ -25,10 +25,10 @@ final class VisualDebuggerView: NSView, PanelSurface {
         didSet { reload() }
     }
 
-    var preferredWidth: CGFloat { 380 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Visual Debugger")
+    private let titleLabel = NSTextField(labelWithString: Command.visualDebugger.panelTitle)
     private let locationLabel = NSTextField(labelWithString: "")
     private let summaryView = NSTextView()
     private let copyButton = NSButton(title: "Copy Summary", target: nil, action: nil)

@@ -23,20 +23,26 @@ final class DocumentHealthView: NSView, PanelSurface {
     }
 
     var sourceText: String = "" {
-        didSet { reloadPreview() }
+        didSet {
+            guard sourceText != oldValue else { return }
+            lineIndex = SourceLineIndex(text: sourceText)
+            table.reloadData()
+            reloadPreview()
+        }
     }
 
     var diagnostics: [DocumentHealthDiagnostic] = [] {
         didSet { reload() }
     }
 
-    var preferredWidth: CGFloat { 360 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Document health")
+    private let titleLabel = NSTextField(labelWithString: Command.documentHealth.panelTitle)
     private let countLabel = NSTextField(labelWithString: "")
     private let previewLabel = NSTextField(labelWithString: "")
     private let preview = NSTextView()
+    private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "documentHealth")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private let applyButton: NSButton
@@ -48,6 +54,15 @@ final class DocumentHealthView: NSView, PanelSurface {
     private var ignoredIDs: Set<String> = []
     private var rows: [Row] = []
     private var selectedIndex: Int?
+    /// Selection is remembered by finding id, not row: the host reparses on
+    /// every keystroke and a row number does not survive that.
+    private var selectedDiagnosticID: String?
+    private var lineIndex = SourceLineIndex(text: "")
+    /// What the last action did, shown where the preview normally is.  Cleared
+    /// by the first reload that is not the one the action itself caused.
+    private var actionStatus: String?
+    private var isApplyingFixes = false
+    private var previewConstraints: [NSLayoutConstraint] = []
 
     private enum Row {
         case group(DocumentHealthCategory, DocumentHealthSeverity, Int)
@@ -118,12 +133,24 @@ final class DocumentHealthView: NSView, PanelSurface {
         sourceButton.action = #selector(ButtonAction.fire(_:))
         sourceButton.setAccessibilityLabel("Open Source Focus")
 
-        let actions = NSStackView(views: [applyButton, ignoreButton, sourceButton])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
+        // Two short rows rather than one 305pt row: the inspector can be
+        // narrower than three buttons side by side, and a control that runs off
+        // the panel is worse than one that wraps.
+        let primaryRow = NSStackView(views: [applyButton, ignoreButton])
+        primaryRow.orientation = .horizontal
+        primaryRow.alignment = .centerY
+        primaryRow.spacing = 5
+        for button in [applyButton, ignoreButton, sourceButton] {
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+
+        let actions = NSStackView(views: [primaryRow, sourceButton])
+        actions.orientation = .vertical
+        actions.alignment = .leading
         actions.spacing = 5
         actions.translatesAutoresizingMaskIntoConstraints = false
         addSubview(actions)
+        emptyState.install(in: self, over: scroll)
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
@@ -141,12 +168,15 @@ final class DocumentHealthView: NSView, PanelSurface {
             preview.leadingAnchor.constraint(equalTo: previewLabel.leadingAnchor),
             preview.trailingAnchor.constraint(equalTo: previewLabel.trailingAnchor),
             preview.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 4),
-            preview.heightAnchor.constraint(equalToConstant: 74),
             actions.leadingAnchor.constraint(equalTo: previewLabel.leadingAnchor),
             actions.trailingAnchor.constraint(lessThanOrEqualTo: previewLabel.trailingAnchor),
             actions.topAnchor.constraint(equalTo: preview.bottomAnchor, constant: 7),
             actions.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
         ])
+
+        // The diff box only exists while there is a change to show in it.
+        previewConstraints = [preview.heightAnchor.constraint(equalToConstant: 74)]
+        NSLayoutConstraint.activate(previewConstraints)
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Document health")
@@ -177,6 +207,7 @@ final class DocumentHealthView: NSView, PanelSurface {
     }
 
     private func reload() {
+        if !isApplyingFixes { actionStatus = nil }
         rows.removeAll(keepingCapacity: true)
         let grouped = Dictionary(grouping: visibleDiagnostics) { diagnostics[$0].category }
         for category in DocumentHealthCategory.allCases {
@@ -190,10 +221,48 @@ final class DocumentHealthView: NSView, PanelSurface {
             : "\(visibleDiagnostics.count) finding\(visibleDiagnostics.count == 1 ? "" : "s")"
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         table.reloadData()
-        table.deselectAll(nil)
-        selectedIndex = nil
+        restoreSelection()
+        updateEmptyState()
         reloadPreview()
         updateActionState()
+    }
+
+    /// Reselect the same finding after a reparse rather than dropping the
+    /// user's selection — and its preview — on every keystroke.
+    private func restoreSelection() {
+        guard let selectedDiagnosticID,
+              let index = diagnostics.firstIndex(where: { $0.id == selectedDiagnosticID }),
+              !ignoredIDs.contains(selectedDiagnosticID),
+              let row = rows.firstIndex(where: {
+                  if case .diagnostic(let candidate) = $0 { return candidate == index }
+                  return false
+              })
+        else {
+            table.deselectAll(nil)
+            selectedIndex = nil
+            self.selectedDiagnosticID = nil
+            return
+        }
+        selectedIndex = index
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    private func updateEmptyState() {
+        guard rows.isEmpty else {
+            emptyState.isHidden = true
+            scroll.isHidden = false
+            return
+        }
+        emptyState.configure(
+            symbol: "checkmark.seal",
+            title: "No findings",
+            subtitle: diagnostics.isEmpty
+                ? "Headings, links, and structure all\nlook right from here."
+                : "Every finding in this document\nhas been ignored.",
+            styleSheet: styleSheet
+        )
+        emptyState.isHidden = false
+        scroll.isHidden = true
     }
 
     private func severityOrder(_ lhs: DocumentHealthSeverity, _ rhs: DocumentHealthSeverity) -> Bool {
@@ -214,19 +283,33 @@ final class DocumentHealthView: NSView, PanelSurface {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard let index = diagnosticIndex(for: row) else { return }
         selectedIndex = index
+        selectedDiagnosticID = diagnostics[index].id
+        actionStatus = nil
         reloadPreview()
+        updateActionState()
         delegate?.documentHealthView(self, didSelect: diagnostics[index])
     }
 
-    private func applySafeFixes() {
+    /// Every fix this button would apply, in the order they will be written.
+    private var safeFixes: [TextEdit] {
         let length = (sourceText as NSString).length
         let fixes = visibleDiagnostics.compactMap { index -> TextEdit? in
             guard let fix = diagnostics[index].fix,
                   fix.range.location >= 0, fix.range.upperBound <= length else { return nil }
             return fix
         }
+        return nonOverlapping(fixes)
+    }
+
+    private func applySafeFixes() {
+        let fixes = safeFixes
         guard !fixes.isEmpty else { return }
-        delegate?.documentHealthView(self, didApply: nonOverlapping(fixes))
+        // Say what happened.  Rows vanishing is not feedback (§11.4).
+        actionStatus = "Applied \(fixes.count) safe fix\(fixes.count == 1 ? "" : "es")."
+        isApplyingFixes = true
+        delegate?.documentHealthView(self, didApply: fixes)
+        isApplyingFixes = false
+        reloadPreview()
     }
 
     private func nonOverlapping(_ edits: [TextEdit]) -> [TextEdit] {
@@ -240,26 +323,56 @@ final class DocumentHealthView: NSView, PanelSurface {
 
     private func ignoreSelection() {
         guard let selectedIndex, selectedIndex < diagnostics.count else { return }
-        ignoredIDs.insert(diagnostics[selectedIndex].id)
+        let ignored = diagnostics[selectedIndex]
+        ignoredIDs.insert(ignored.id)
+        selectedDiagnosticID = nil
+        actionStatus = "Ignored “\(ignored.message)”."
+        isApplyingFixes = true
         reload()
+        isApplyingFixes = false
     }
 
+    /// Shows the diff box only when there is a diff.  Offering to "select a
+    /// finding" over an empty list is an instruction the panel cannot honour.
     private func reloadPreview() {
+        if let actionStatus {
+            previewLabel.stringValue = actionStatus
+            setPreviewVisible(false)
+            return
+        }
+        guard !rows.isEmpty else {
+            previewLabel.stringValue = ""
+            setPreviewVisible(false)
+            return
+        }
         guard let selectedIndex, selectedIndex < diagnostics.count,
-              let fix = diagnostics[selectedIndex].fix else {
+              let fix = diagnostics[selectedIndex].fix,
+              fix.range.location >= 0,
+              fix.range.upperBound <= (sourceText as NSString).length else {
             previewLabel.stringValue = "Select a finding to preview a safe source change."
-            preview.string = ""
+            setPreviewVisible(false)
             return
         }
         let before = (sourceText as NSString).substring(with: fix.range)
         previewLabel.stringValue = "Preview · \(fix.summary)"
         preview.string = "− \(before)\n+ \(fix.replacement)"
         preview.setAccessibilityLabel("Source change preview: replace \(before) with \(fix.replacement)")
+        setPreviewVisible(true)
+    }
+
+    private func setPreviewVisible(_ visible: Bool) {
+        guard preview.isHidden == visible else { return }
+        preview.isHidden = !visible
+        if !visible { preview.string = "" }
+        for constraint in previewConstraints { constraint.constant = visible ? 74 : 0 }
     }
 
     private func updateActionState() {
-        let hasFix = visibleDiagnostics.contains { diagnostics[$0].fix != nil }
-        applyButton.isEnabled = hasFix
+        let count = safeFixes.count
+        // The button says how much it will do before it does it (§11.4).
+        applyButton.title = count == 1 ? "Apply 1 Safe Fix" : "Apply \(count) Safe Fixes"
+        applyButton.isEnabled = count > 0
+        applyButton.setAccessibilityLabel(applyButton.title)
         ignoreButton.isEnabled = selectedIndex != nil
     }
 
@@ -270,6 +383,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         preview.backgroundColor = styleSheet.background
         preview.textColor = styleSheet.text
         table.reloadData()
+        updateEmptyState()
     }
 
     @objc private func rowClicked(_ sender: Any?) { activateSelection() }
@@ -284,9 +398,13 @@ extension DocumentHealthView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return 48 }
+        guard row < rows.count else { return PanelMetrics.wideRowHeight }
         if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        return 58
+        return PanelMetrics.wideRowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
@@ -315,7 +433,11 @@ extension DocumentHealthView: NSTableViewDataSource, NSTableViewDelegate {
             let id = NSUserInterfaceItemIdentifier("documentHealthRow")
             let cell = tableView.makeView(withIdentifier: id, owner: self) as? HealthDiagnosticRowView
                 ?? HealthDiagnosticRowView(identifier: id)
-            cell.configure(diagnostic: diagnostics[index], styleSheet: styleSheet)
+            cell.configure(
+                diagnostic: diagnostics[index],
+                lineCaption: lineIndex.caption(for: diagnostics[index].range),
+                styleSheet: styleSheet
+            )
             return cell
         }
     }
@@ -357,14 +479,18 @@ private final class HealthDiagnosticRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(diagnostic: DocumentHealthDiagnostic, styleSheet: StyleSheet) {
+    func configure(diagnostic: DocumentHealthDiagnostic, lineCaption: String, styleSheet: StyleSheet) {
         messageLabel.stringValue = "\(diagnostic.severity.rawValue.capitalized): \(diagnostic.message)"
         reasonLabel.stringValue = diagnostic.explanation
-        rangeLabel.stringValue = "Source range \(diagnostic.range.location)–\(diagnostic.range.upperBound)"
+        // A reader locates a finding by line.  VoiceOver keeps the exact source
+        // range, which is the one place the byte offsets are still useful.
+        rangeLabel.stringValue = lineCaption
         messageLabel.textColor = color(for: diagnostic.severity, styleSheet: styleSheet)
         reasonLabel.textColor = styleSheet.textSecondary
         rangeLabel.textColor = styleSheet.textFaint
-        setAccessibilityLabel("\(messageLabel.stringValue). \(reasonLabel.stringValue). \(rangeLabel.stringValue)")
+        toolTip = "\(diagnostic.message)\n\(diagnostic.explanation)"
+        let range = "Source range \(diagnostic.range.location)–\(diagnostic.range.upperBound)"
+        setAccessibilityLabel("\(messageLabel.stringValue). \(reasonLabel.stringValue). \(lineCaption). \(range)")
     }
 
     private func color(for severity: DocumentHealthSeverity, styleSheet: StyleSheet) -> NSColor {

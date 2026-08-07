@@ -19,6 +19,17 @@ final class UpdateStatusPill: NSButton {
     }
 
     private let shell = NSView()
+    /// The same hover/press wash every neighbouring toolbar control uses, so
+    /// the pill answers the pointer instead of sitting inert among controls
+    /// that do (§11.3).
+    private let feedbackLayer = CALayer()
+    private var interaction: ToolbarChromePolicy.InteractionState = .idle {
+        didSet {
+            guard interaction != oldValue else { return }
+            applyFeedback()
+        }
+    }
+    private var trackingArea: NSTrackingArea?
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
@@ -50,6 +61,9 @@ final class UpdateStatusPill: NSButton {
         shell.translatesAutoresizingMaskIntoConstraints = false
         shell.wantsLayer = true
         shell.layer?.cornerRadius = Metrics.cornerRadius
+        feedbackLayer.cornerRadius = Metrics.cornerRadius
+        feedbackLayer.opacity = 0
+        shell.layer?.addSublayer(feedbackLayer)
         addSubview(shell)
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -80,6 +94,8 @@ final class UpdateStatusPill: NSButton {
         action = #selector(clicked(_:))
         setAccessibilityRole(.button)
         setAccessibilityHelp("Open the update panel")
+        // Pointer users get the same sentence VoiceOver does.
+        toolTip = "Open the update panel"
 
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -137,6 +153,60 @@ final class UpdateStatusPill: NSButton {
         UpdateCoordinator.shared.showPanel()
     }
 
+    // MARK: - Pointer feedback
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        feedbackLayer.frame = shell.bounds
+        CATransaction.commit()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { interaction = .hover }
+    override func mouseExited(with event: NSEvent) { interaction = .idle }
+
+    override func mouseDown(with event: NSEvent) {
+        interaction = .pressed
+        super.mouseDown(with: event)
+        interaction = bounds.contains(convert(event.locationInWindow, from: nil)) ? .hover : .idle
+    }
+
+    private func applyFeedback() {
+        feedbackLayer.backgroundColor = sheet.text.cgColor
+        let opacity = ToolbarChromePolicy.feedbackOpacity(
+            for: interaction, increaseContrast: sheet.increaseContrast
+        )
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, window != nil else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            feedbackLayer.opacity = opacity
+            CATransaction.commit()
+            return
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = feedbackLayer.presentation()?.opacity ?? feedbackLayer.opacity
+        fade.toValue = opacity
+        fade.duration = interaction == .pressed
+            ? ToolbarChromePolicy.pressInDuration
+            : ToolbarChromePolicy.hoverDuration
+        fade.timingFunction = ToolbarChromePolicy.timingFunction()
+        feedbackLayer.add(fade, forKey: "feedback")
+        feedbackLayer.opacity = opacity
+    }
+
     // MARK: - Coordinator binding
 
     private func refreshFromCoordinator() {
@@ -146,11 +216,11 @@ final class UpdateStatusPill: NSButton {
         refreshAppearance()
         guard changed else { return }
         let visible = model != UpdatePillModel.hidden
-        if visible {
-            isHidden = false
-            setAccessibilityLabel(accessibilityLabel(for: model))
-            setAccessibilityValue(label.stringValue)
-        }
+        // Set in both branches: a hidden control that still reports the last
+        // visible state is a stale answer for VoiceOver.
+        setAccessibilityLabel(accessibilityLabel(for: model))
+        setAccessibilityValue(visible ? label.stringValue : "")
+        if visible { isHidden = false }
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // Collapse to 1pt, never 0: the toolbar auto-measures this view and a
         // zero-width frame logs an ambiguous-layout warning on every launch.
@@ -220,15 +290,19 @@ final class UpdateStatusPill: NSButton {
 
         case .warning:
             iconView.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Update failed")
-            iconView.contentTintColor = .systemOrange
-            label.textColor = .systemOrange
+            // The theme owns the warning colour; a raw system orange ignores
+            // the warm light and dark palettes entirely (§11.3).
+            let warning = sheet.calloutColor(.warning)
+            iconView.contentTintColor = warning
+            label.textColor = warning
             label.stringValue = "Update Failed"
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
-            shell.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(contrast ? 0.22 : 0.12).cgColor
+            shell.layer?.backgroundColor = warning
+                .panelAlpha(contrast ? 0.22 : 0.12, increaseContrast: false).cgColor
             shell.layer?.borderWidth = contrast ? 1 : 0
-            shell.layer?.borderColor = NSColor.systemOrange.cgColor
+            shell.layer?.borderColor = warning.cgColor
 
         case .informational(let version):
             iconView.image = NSImage(systemSymbolName: "info.circle.fill", accessibilityDescription: "Update information")
@@ -242,6 +316,7 @@ final class UpdateStatusPill: NSButton {
             shell.layer?.borderWidth = contrast ? 1 : 0
             shell.layer?.borderColor = sheet.rule.cgColor
         }
+        applyFeedback()
         needsDisplay = true
     }
 

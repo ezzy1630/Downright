@@ -67,4 +67,7 @@ place an attacker could interfere:
 Dependency CVEs (Sparkle, swift-cmark, BeautifulMermaid, SwiftMath) should be
 reported through the same private channel, or upstream where the advisory
 predates Downright. `Package.resolved` pins exact versions; dependabot-style
-updates land in the `[Unreleased]` section of `CHANGELOG.md`.
+updates land in the `[Unreleased]` section of `CHANGELOG.md`. SwiftMath is the
+exception: it is vendored at `Vendor/SwiftMath`, so no resolver will ever move
+it and an upstream advisory has to be applied by hand — the procedure and the
+patch we carry are in `Vendor/SwiftMath/PATCHES.md`.

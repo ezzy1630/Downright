@@ -80,6 +80,18 @@ final class Preferences {
         }
     }
 
+    /// How the settings file was read at launch.  "Missing" and "unreadable"
+    /// are different events and must not share a code path: the first is the
+    /// ordinary first run, the second is a file that still holds the user's
+    /// settings and must never be quietly overwritten by defaults.
+    enum Load: Equatable {
+        case absent
+        case loaded
+        /// The file existed but could not be decoded.  The original was moved
+        /// aside so the user can inspect or repair it.
+        case recovered(backup: URL?)
+    }
+
     private(set) var values: Values {
         didSet {
             guard values != oldValue else { return }
@@ -87,27 +99,78 @@ final class Preferences {
             NotificationCenter.default.post(name: Preferences.didChange, object: self)
         }
     }
+
+    /// What happened when the settings file was read.
+    private(set) var load: Load = .absent
+
+    /// True when this launch found no settings file at all — the signal the
+    /// app uses to decide whether to offer the welcome document.
+    var isFirstRun: Bool { load == .absent }
+
+    /// Set when the settings file existed but could not be decoded.  Installed
+    /// by the app so the fault reaches the user; assigning it after the fact
+    /// reports immediately, which it must, because loading happens inside the
+    /// singleton's initialiser.
+    var onLoadFault: ((Load) -> Void)? {
+        didSet {
+            if case .recovered = load { onLoadFault?(load) }
+        }
+    }
+
     /// Last settings write failure, if any.  Settings changes remain available
     /// in memory; callers can surface this without losing the new values.
     private(set) var lastPersistenceError: Error?
+
+    /// Called on the *first* failed write of a run of failures, never again
+    /// until a write succeeds.  Dragging a stepper on a full disk is one fault,
+    /// not one fault per increment.
     var onPersistenceFailure: ((Error) -> Void)?
 
     static let didChange = Notification.Name("com.ezzy.downright.preferencesDidChange")
 
     private init() {
         lastPersistenceError = nil
-        if let data = try? Data(contentsOf: AppPaths.preferencesFile),
-           let decoded = try? JSONDecoder().decode(Values.self, from: data) {
-            values = decoded
+        let (loaded, load) = Preferences.read(contentsOf: AppPaths.preferencesFile)
+        self.load = load
+        if let loaded {
+            values = loaded
         } else {
             values = Values()
-            // First run: adopt whichever editor the user actually has, since
-            // "System Default" for a .ts file is rarely what they want (§8.4).
+            // No usable settings: adopt whichever editor the user actually has,
+            // since "System Default" for a .ts file is rarely what they want
+            // (§8.4).
             values.externalEditor = ExternalEditor.bestAvailable
         }
         SnapshotStore.shared.maximumAge = TimeInterval(values.historyMaximumDays) * 86_400
         SnapshotStore.shared.maximumBytes = values.historyMaximumMegabytes * 1024 * 1024
         KeybindingStore.shared.vimKeysEnabled = values.vimKeys
+    }
+
+    /// Reads the settings file, preserving a file that exists but cannot be
+    /// decoded.  Returning the outcome rather than swallowing it is the whole
+    /// point: silently reverting to defaults loses every setting the user has
+    /// ever changed, and the next change writes that loss to disk.
+    private static func read(contentsOf url: URL) -> (Values?, Load) {
+        guard let data = try? Data(contentsOf: url) else { return (nil, .absent) }
+        if let decoded = try? JSONDecoder().decode(Values.self, from: data) {
+            return (decoded, .loaded)
+        }
+        return (nil, .recovered(backup: moveAside(url)))
+    }
+
+    /// Moves an undecodable settings file to `preferences.json.bad` so the next
+    /// write does not destroy it.  Returns where it went, or nil if even that
+    /// failed — in which case the caller still reports the fault.
+    private static func moveAside(_ url: URL) -> URL? {
+        let backup = url.appendingPathExtension("bad")
+        let manager = FileManager.default
+        try? manager.removeItem(at: backup)
+        do {
+            try manager.moveItem(at: url, to: backup)
+            return backup
+        } catch {
+            return nil
+        }
     }
 
     /// Single mutation point, so persistence and the change notification can
@@ -130,8 +193,12 @@ final class Preferences {
             try data.write(to: AppPaths.preferencesFile, options: .atomic)
             lastPersistenceError = nil
         } catch {
+            // Edge-triggered: report the first failure of a run and stay quiet
+            // until a write succeeds again.  A stepper drag on a full disk is
+            // dozens of writes and must not be dozens of warnings.
+            let isFirstOfRun = lastPersistenceError == nil
             lastPersistenceError = error
-            onPersistenceFailure?(error)
+            if isFirstOfRun { onPersistenceFailure?(error) }
         }
     }
 

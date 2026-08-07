@@ -16,23 +16,42 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         didSet { backdrop.styleSheet = styleSheet; applyStyle() }
     }
 
-    var entries: [WorkspaceIndexEntry] = [] { didSet { reload() } }
-    var searchResults: [WorkspaceSearchResult] = [] { didSet { reload() } }
+    var entries: [WorkspaceIndexEntry] = [] {
+        didSet { hasScanned = true; reload() }
+    }
+
+    var searchResults: [WorkspaceSearchResult] = [] {
+        // Results arriving is what ends a search.  Until they do the panel must
+        // not claim there are none (§11.4).
+        didSet { isSearching = false; reload() }
+    }
+
     var backlinks: [WorkspaceBacklink] = [] { didSet { reload() } }
     var selectedFileID: String? { didSet { reload() } }
     var selectedTab: WorkspaceSidebarTab = .files {
         didSet { guard selectedTab != oldValue else { return }; syncTab(); reload() }
     }
-    var preferredWidth: CGFloat { 320 }
+
+    /// Set while the host is scanning the folder for the first time.  A folder
+    /// scan is work in progress, not an empty folder.
+    var isScanning: Bool = false { didSet { reload() } }
+
+    var preferredWidth: CGFloat { PanelMetrics.listWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Workspace")
+    private let titleLabel = NSTextField(labelWithString: Command.workspace.panelTitle)
     private let countLabel = NSTextField(labelWithString: "")
-    private let tabControl = NSSegmentedControl()
+    private let tabControl: PanelSegmentedControl
     private let searchField = NSSearchField()
+    private let spinner = NSProgressIndicator()
+    private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "workspaceSidebar")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private var rows: [Row] = []
+    /// True once the host has handed over a file list, so "no files" can be
+    /// told apart from "not scanned yet".
+    private var hasScanned = false
+    private var isSearching = false
 
     enum WorkspaceSidebarTab: String, CaseIterable, Sendable {
         case files = "Files"
@@ -52,6 +71,10 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
+        tabControl = PanelSegmentedControl(
+            items: WorkspaceSidebarTab.allCases.map(\.rawValue),
+            styleSheet: styleSheet
+        )
         super.init(frame: .zero)
 
         backdrop.autoresizingMask = [.width, .height]
@@ -59,22 +82,29 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         addSubview(backdrop)
         titleLabel.font = PanelFont.header
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(titleLabel)
         countLabel.font = PanelFont.secondary
         countLabel.alignment = .right
+        countLabel.lineBreakMode = .byTruncatingTail
+        countLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(countLabel)
 
-        tabControl.segmentCount = WorkspaceSidebarTab.allCases.count
-        for (index, tab) in WorkspaceSidebarTab.allCases.enumerated() {
-            tabControl.setLabel(tab.rawValue, forSegment: index)
-            tabControl.setWidth(76, forSegment: index)
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(spinner)
+
+        // Sized from its labels and free to compress, so the tab strip cannot
+        // out-measure a narrow inspector the way three 76pt segments did.
+        tabControl.onChange = { [weak self] index in
+            guard let tab = WorkspaceSidebarTab.allCases.element(at: index) else { return }
+            self?.selectedTab = tab
         }
-        tabControl.segmentStyle = .texturedRounded
-        tabControl.controlSize = .small
-        tabControl.target = self
-        tabControl.action = #selector(tabChanged(_:))
         tabControl.setAccessibilityLabel("Workspace sections")
+        tabControl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tabControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabControl)
 
@@ -94,16 +124,22 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         table.onActivate = { [weak self] in self?.activateSelection() }
         table.setAccessibilityLabel("Workspace results")
         addSubview(scroll)
+        emptyState.install(in: self, over: scroll)
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            spinner.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            spinner.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 14),
+            spinner.heightAnchor.constraint(equalToConstant: 14),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             countLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
+            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: spinner.trailingAnchor, constant: 6),
             tabControl.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            tabControl.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.trailingAnchor),
+            tabControl.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             tabControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            tabControl.heightAnchor.constraint(equalToConstant: PanelSegmentedControl.controlHeight),
             searchField.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             searchField.trailingAnchor.constraint(equalTo: countLabel.trailingAnchor),
             searchField.topAnchor.constraint(equalTo: tabControl.bottomAnchor, constant: 5),
@@ -135,8 +171,18 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
 
     private func syncTab() {
         guard let index = WorkspaceSidebarTab.allCases.firstIndex(of: selectedTab) else { return }
-        tabControl.selectedSegment = index
+        tabControl.setSelectedIndex(index)
         searchField.isHidden = selectedTab == .backlinks
+    }
+
+    /// True while the tab on screen is still waiting for its content.  Nothing
+    /// may say "none" until this is false.
+    private var isBusy: Bool {
+        switch selectedTab {
+        case .files: return isScanning || !hasScanned
+        case .search: return isSearching
+        case .backlinks: return false
+        }
     }
 
     private func reload() {
@@ -154,12 +200,16 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
                 if order.count > 1 { rows.append(.group(folder == "." ? "This folder" : folder)) }
                 rows.append(contentsOf: groups[folder, default: []].map { .file($0) })
             }
-            countLabel.stringValue = "\(entries.count) file\(entries.count == 1 ? "" : "s")"
+            countLabel.stringValue = isBusy
+                ? "Scanning…"
+                : "\(entries.count) file\(entries.count == 1 ? "" : "s")"
         case .search:
             rows = searchResults.indices.map { .result($0) }
-            countLabel.stringValue = searchResults.isEmpty
-                ? "No matches"
-                : "\(searchResults.count) match\(searchResults.count == 1 ? "" : "es")"
+            countLabel.stringValue = isBusy
+                ? "Searching…"
+                : (searchResults.isEmpty
+                    ? "No matches"
+                    : "\(searchResults.count) match\(searchResults.count == 1 ? "" : "es")")
         case .backlinks:
             rows = backlinks.indices.map { .backlink($0) }
             countLabel.stringValue = backlinks.isEmpty
@@ -167,17 +217,43 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
                 : "\(backlinks.count) backlink\(backlinks.count == 1 ? "" : "s")"
         }
         countLabel.setAccessibilityLabel(countLabel.stringValue)
+        if isBusy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         table.reloadData()
+        updateEmptyState()
+        setAccessibilityValue(countLabel.stringValue)
     }
 
-    @objc private func tabChanged(_ sender: NSSegmentedControl) {
-        guard sender.selectedSegment >= 0, sender.selectedSegment < WorkspaceSidebarTab.allCases.count else { return }
-        selectedTab = WorkspaceSidebarTab.allCases[sender.selectedSegment]
+    private func updateEmptyState() {
+        guard rows.isEmpty else {
+            emptyState.isHidden = true
+            scroll.isHidden = false
+            return
+        }
+        let state: (symbol: String, title: String, subtitle: String)
+        switch (selectedTab, isBusy) {
+        case (.files, true):
+            state = ("folder", "Scanning the folder", "Listing the Markdown files\nnext to this document.")
+        case (.files, false):
+            state = ("folder", "No Markdown files", "This workspace folder has no\nother Markdown documents.")
+        case (.search, true):
+            state = ("magnifyingglass", "Searching", "Looking through the workspace\nfiles for that text.")
+        case (.search, false) where searchField.stringValue.isEmpty:
+            state = ("magnifyingglass", "Search the workspace", "Type above to search every\nMarkdown file in this folder.")
+        case (.search, false):
+            state = ("magnifyingglass", "No matches", "Nothing in this workspace\ncontains “\(searchField.stringValue)”.")
+        case (.backlinks, _):
+            state = ("arrow.triangle.branch", "No backlinks", "No workspace file links to\nthis document yet.")
+        }
+        emptyState.configure(symbol: state.symbol, title: state.title, subtitle: state.subtitle, styleSheet: styleSheet)
+        emptyState.isHidden = false
+        scroll.isHidden = true
     }
 
     @objc private func searchChanged(_ sender: Any?) {
         guard selectedTab == .search || !searchField.stringValue.isEmpty else { return }
+        isSearching = !searchField.stringValue.isEmpty
         selectedTab = .search
+        reload()
         delegate?.workspaceSidebar(self, didSearch: WorkspaceSearchQuery(text: searchField.stringValue))
     }
 
@@ -203,7 +279,9 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
         countLabel.textColor = styleSheet.textFaint
+        tabControl.styleSheet = styleSheet
         table.reloadData()
+        updateEmptyState()
     }
 
     @objc private func rowClicked(_ sender: Any?) { activateSelection() }
@@ -219,9 +297,12 @@ extension WorkspaceSidebarView: NSSearchFieldDelegate {}
 extension WorkspaceSidebarView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return 42 }
+        guard row < rows.count else { return PanelMetrics.detailRowHeight }
         if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        return 42
+        return PanelMetrics.detailRowHeight
+    }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
     }
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
         guard row < rows.count else { return false }
@@ -243,13 +324,13 @@ extension WorkspaceSidebarView: NSTableViewDataSource, NSTableViewDelegate {
             return cell
         case .file(let index) where index < entries.count:
             let entry = entries[index]
-            return makeRow(id: "workspaceFile", title: entry.relativePath, detail: headingSummary(entry), color: styleSheet.textSecondary)
+            return makeRow(in: tableView, id: "workspaceFile", title: entry.relativePath, detail: headingSummary(entry), color: styleSheet.textSecondary)
         case .result(let index) where index < searchResults.count:
             let result = searchResults[index]
-            return makeRow(id: "workspaceSearch", title: result.relativePath, detail: "Line \(result.line) · \(result.contextText)", color: styleSheet.textSecondary)
+            return makeRow(in: tableView, id: "workspaceSearch", title: result.relativePath, detail: "Line \(result.line) · \(result.contextText)", color: styleSheet.textSecondary)
         case .backlink(let index) where index < backlinks.count:
             let backlink = backlinks[index]
-            return makeRow(id: "workspaceBacklink", title: URL(fileURLWithPath: backlink.sourceFile).lastPathComponent, detail: backlink.destination, color: styleSheet.textSecondary)
+            return makeRow(in: tableView, id: "workspaceBacklink", title: URL(fileURLWithPath: backlink.sourceFile).lastPathComponent, detail: backlink.destination, color: styleSheet.textSecondary)
         default: return nil
         }
     }
@@ -259,8 +340,14 @@ extension WorkspaceSidebarView: NSTableViewDataSource, NSTableViewDelegate {
         return "Markdown file"
     }
 
-    private func makeRow(id: String, title: String, detail: String, color: NSColor) -> NSView {
-        let view = WorkspaceSidebarRowView(identifier: NSUserInterfaceItemIdentifier(id))
+    /// Reuse rather than a fresh cell per `viewFor`: this table reloads on every
+    /// keystroke in the search field.
+    private func makeRow(
+        in tableView: NSTableView, id: String, title: String, detail: String, color: NSColor
+    ) -> NSView {
+        let identifier = NSUserInterfaceItemIdentifier(id)
+        let view = tableView.makeView(withIdentifier: identifier, owner: self) as? WorkspaceSidebarRowView
+            ?? WorkspaceSidebarRowView(identifier: identifier)
         view.configure(title: title, detail: detail, color: color)
         return view
     }

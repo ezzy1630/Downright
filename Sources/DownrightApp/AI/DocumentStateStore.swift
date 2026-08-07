@@ -21,9 +21,21 @@ struct ScrollAnchor: Codable, Equatable {
 
 struct DocumentState: Codable, Equatable {
     var path: String
-    /// Content hash at the moment the document was last closed.  If the bytes
-    /// differ on reopen, §8.1 change marks are applied automatically (§8.2).
+    /// Content hash of what was on disk when the document was last closed.
+    /// Pure disk-state bookkeeping: it moves the instant a write is absorbed,
+    /// so it says nothing about what the reader has read.
     var lastSeenHash: String
+    /// Content hash of the document as the reader last *finished reviewing* it.
+    ///
+    /// This is the one hash the app diffs incoming writes against, and the only
+    /// one a user action moves.  Keeping it separate from `lastSeenHash` is what
+    /// makes "close a window with twelve unreviewed marks and reopen it" show
+    /// twelve marks instead of none.  Empty means "never reviewed", in which
+    /// case the state the document was first opened in is the baseline.
+    var reviewBaselineHash: String
+    /// The unreviewed mark set, re-anchored on reopen (§8.2).  Persisted so a
+    /// window close is not silently counted as a review.
+    var marks: [ChangeTracker.PersistedMark]
     var anchor: ScrollAnchor
     var mode: RenderMode
     var zoomLevel: ZoomLevel
@@ -42,6 +54,8 @@ struct DocumentState: Codable, Equatable {
     init(path: String) {
         self.path = path
         self.lastSeenHash = ""
+        self.reviewBaselineHash = ""
+        self.marks = []
         self.anchor = .top
         self.mode = .live
         self.zoomLevel = .everything
@@ -61,6 +75,13 @@ struct DocumentState: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
         lastSeenHash = try c.decodeIfPresent(String.self, forKey: .lastSeenHash) ?? ""
+        // A state file written before the review baseline existed has only the
+        // disk hash to offer.  Adopting it means the first session after the
+        // upgrade shows nothing new, which is honest — it is exactly what the
+        // old build already showed — rather than re-marking the whole document.
+        reviewBaselineHash = try c.decodeIfPresent(String.self, forKey: .reviewBaselineHash)
+            ?? lastSeenHash
+        marks = try c.decodeIfPresent([ChangeTracker.PersistedMark].self, forKey: .marks) ?? []
         anchor = try c.decodeIfPresent(ScrollAnchor.self, forKey: .anchor) ?? .top
         // Mode used to persist Read/Source.  The adaptive Document surface is
         // now the only restorable state; Source Focus is always transient.

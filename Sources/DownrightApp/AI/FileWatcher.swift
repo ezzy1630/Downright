@@ -25,15 +25,22 @@ final class FileWatcher {
     enum Event {
         /// The file's bytes changed on disk.
         case changed
-        /// The file went away — deleted, or renamed out from under us.
+        /// The file went away — deleted, and not found again under a new name.
         case removed
         /// It came back after having been removed.
         case restored
+        /// The file was renamed or moved within its directory.  The watcher has
+        /// already re-attached; the URL is where it lives now.
+        case renamed(to: URL)
     }
 
     private(set) var url: URL
     private let watchesDirectory: Bool
     private let handler: (Event) -> Void
+    /// Extensions a directory watch reports.  A folder of agent output churns
+    /// constantly — lockfiles, build artefacts, `.DS_Store` — and matching on
+    /// the path prefix alone woke a full sibling rescan for every one of them.
+    private let interestingExtensions: Set<String>
     private let queue = DispatchQueue(label: "com.ezzy.downright.filewatcher", qos: .utility)
 
     private var stream: FSEventStreamRef?
@@ -53,15 +60,26 @@ final class FileWatcher {
         weak var watcher: FileWatcher?
     }
 
-    /// Agents often write a file two or three times in quick succession.
-    /// Coalescing avoids re-parsing and re-diffing a document three times for
-    /// what the user experiences as one change.
-    private let coalesceInterval: TimeInterval = 0.12
+    /// Agents write a file two to five times in a few seconds — a plan, then a
+    /// section, then a fix to that section.  120 ms was short enough that each
+    /// of those arrived as its own event, and the reader watched the document
+    /// rebuild five times.  300 ms holds a burst together without making a
+    /// single deliberate write feel late.  The document layer adds a second,
+    /// trailing quiet period on top of this; see
+    /// `MarkdownDocument.handleExternalWrite`.
+    private let coalesceInterval: TimeInterval = 0.30
     private let pollInterval: TimeInterval = 1.5
 
-    init(url: URL, watchesDirectory: Bool = false, handler: @escaping (Event) -> Void) {
+    init(
+        url: URL,
+        watchesDirectory: Bool = false,
+        fileExtensions: Set<String>? = nil,
+        handler: @escaping (Event) -> Void
+    ) {
         self.url = url.resolvingSymlinksInPath()
         self.watchesDirectory = watchesDirectory
+        self.interestingExtensions = fileExtensions
+            ?? Set(DocumentTypes.fileExtensions.map { $0.lowercased() })
         self.handler = handler
         self.lastSnapshot = FileWatcher.snapshot(of: self.url)
         start()
@@ -171,7 +189,11 @@ final class FileWatcher {
     private func handleStreamEvents(paths: [String]) {
         if watchesDirectory {
             let root = url.path.hasSuffix("/") ? url.path : url.path + "/"
-            guard paths.contains(where: { $0 == url.path || $0.hasPrefix(root) }) else { return }
+            let matches = paths.contains { path in
+                guard path == url.path || path.hasPrefix(root) else { return false }
+                return isInteresting(path)
+            }
+            guard matches else { return }
             scheduleDirectoryChange()
             return
         }
@@ -184,6 +206,21 @@ final class FileWatcher {
         }
         guard matches else { return }
         scheduleCheck()
+    }
+
+    /// Whether a path under a watched directory is worth waking the owner for.
+    ///
+    /// Markdown files always are.  So is anything with no extension: a new
+    /// `docs/` folder, or a `README` written without one.  Everything else —
+    /// `.swift`, `.png`, `.tmp`, `.lock` — is noise to a sibling list, and
+    /// `.DS_Store` and `.git` churn hardest of all.
+    private func isInteresting(_ path: String) -> Bool {
+        if path == url.path { return true }
+        let name = (path as NSString).lastPathComponent
+        if name == ".DS_Store" { return false }
+        if path.contains("/.git/") || name == ".git" { return false }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return ext.isEmpty || interestingExtensions.contains(ext)
     }
 
     private func scheduleDirectoryChange() {
@@ -227,6 +264,18 @@ final class FileWatcher {
         let previous = lastSnapshot
         lastSnapshot = now
 
+        // A rename inside the directory reaches us as a deletion: the path stops
+        // resolving and the app used to stop watching for good.  The inode is
+        // still there under a new name, so look for it before declaring the
+        // document gone.
+        if now.size < 0, previous.inode != 0, previous.size >= 0,
+           let relocated = FileWatcher.locate(previous, in: url.deletingLastPathComponent()) {
+            retarget(to: relocated)
+            let newURL = url
+            DispatchQueue.main.async { [handler] in handler(.renamed(to: newURL)) }
+            return
+        }
+
         let event: Event
         if now.size < 0 {
             event = .removed
@@ -261,6 +310,29 @@ final class FileWatcher {
         suppressedSnapshot = nil
 
         DispatchQueue.main.async { [handler] in handler(event) }
+    }
+
+    /// Finds the file that used to be at the watched path, shallowly, in one
+    /// directory.
+    ///
+    /// Matched on the *whole* snapshot — inode, size, and modification time —
+    /// not on the inode alone: a rename changes none of the three, while an
+    /// inode number freed by a genuine deletion can be handed straight back to
+    /// an unrelated new file.
+    ///
+    /// Only ever runs when the watched file has just disappeared, so the cost
+    /// is paid once per removal rather than once per event.  Capped because
+    /// "agent output folder" and "ten thousand files" are not mutually
+    /// exclusive.
+    private static func locate(_ wanted: Snapshot, in directory: URL) -> URL? {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else {
+            return nil
+        }
+        for name in names.prefix(4096) {
+            let candidate = directory.appendingPathComponent(name)
+            if snapshot(of: candidate) == wanted { return candidate }
+        }
+        return nil
     }
 
     private static func snapshot(of url: URL) -> Snapshot {

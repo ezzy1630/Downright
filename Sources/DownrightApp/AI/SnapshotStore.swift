@@ -43,9 +43,40 @@ final class SnapshotStore {
         var versions: [VersionRecord]
     }
 
+    /// The result of asking for a historical version.
+    ///
+    /// "Not there" and "there but unreadable" are different answers and the
+    /// timeline has to say which: silently handing back mojibake presents a
+    /// truncated object as a real version of the user's document.
+    enum Content: Equatable {
+        case text(String)
+        /// No object with that hash — pruned by age or size, or never written.
+        case missing
+        /// The object exists but does not decompress, does not decode as UTF-8,
+        /// or does not hash back to the name it is filed under.
+        case corrupt
+    }
+
     /// Defaults from §8.3.
     var maximumAge: TimeInterval = 30 * 24 * 60 * 60
     var maximumBytes: Int = 500 * 1024 * 1024
+    /// Per-document size cap.
+    ///
+    /// A single global cap lets one 400 MB document's history evict every other
+    /// document's, which defeats the entire point of the store: the file *you*
+    /// are reading has to have a yesterday.  Each document is trimmed against
+    /// its own budget first, and the global cap is only a backstop.
+    var maximumBytesPerDocument: Int = 32 * 1024 * 1024
+
+    /// What a prune removed, so a document can say "older versions were
+    /// dropped" instead of quietly having fewer entries than last time.
+    struct PruneReport: Equatable {
+        /// Versions dropped, keyed by document key.
+        var droppedVersions: [String: Int] = [:]
+        /// Bytes reclaimed from the object store.
+        var freedBytes: Int = 0
+        var isEmpty: Bool { droppedVersions.isEmpty }
+    }
 
     private let queue = DispatchQueue(label: "com.ezzy.downright.history", qos: .utility)
     private let fm = FileManager.default
@@ -66,6 +97,10 @@ final class SnapshotStore {
     private var stateOrder: [String] = []
     private let maximumCachedDocuments = 512
     private var lastPrune: Date = .distantPast
+    /// Guarded by `pendingLock`.  Accumulates across prunes until a document
+    /// reads and acknowledges its own count.
+    private var evictedVersionsByDocument: [String: Int] = [:]
+    private var lastReport = PruneReport()
 
     private init() {
         AppPaths.ensure(AppPaths.historyDirectory)
@@ -124,14 +159,39 @@ final class SnapshotStore {
         text(forHash: record.hash)
     }
 
+    /// Convenience for callers that treat "gone" and "broken" alike.  Prefer
+    /// `content(forHash:)` anywhere the difference is visible to the user.
     func text(forHash hash: String) -> String? {
+        guard case .text(let text) = content(forHash: hash) else { return nil }
+        return text
+    }
+
+    func content(for record: VersionRecord) -> Content {
+        content(forHash: record.hash)
+    }
+
+    /// Reads an object and verifies it.
+    ///
+    /// The store is content-addressed, so the file name *is* the checksum: the
+    /// only trustworthy test of "did this survive" is hashing what came back.
+    /// That is also what separates a legitimate pre-compression object (raw
+    /// UTF-8, hashes correctly) from a truncated compressed one (decompression
+    /// fails, and the bytes read as UTF-8 mojibake that hashes to nothing).
+    func content(forHash hash: String) -> Content {
+        guard !hash.isEmpty else { return .missing }
         let url = objectURL(for: hash)
-        guard let compressed = try? Data(contentsOf: url) else { return nil }
-        guard let raw = try? (compressed as NSData).decompressed(using: .zlib) as Data else {
-            // Objects written before compression, or a truncated write.
-            return String(data: compressed, encoding: .utf8)
+        guard let stored = try? Data(contentsOf: url) else { return .missing }
+
+        if let raw = try? (stored as NSData).decompressed(using: .zlib) as Data,
+           let text = String(data: raw, encoding: .utf8),
+           Self.hash(text) == hash {
+            return .text(text)
         }
-        return String(data: raw, encoding: .utf8)
+        // Objects written before compression are raw UTF-8.
+        if let text = String(data: stored, encoding: .utf8), Self.hash(text) == hash {
+            return .text(text)
+        }
+        return .corrupt
     }
 
     /// Waits for all writes queued before this call.  Used by tests and
@@ -154,22 +214,54 @@ final class SnapshotStore {
         return total
     }
 
+    /// Drops one document's entire history — the "Forget this document's
+    /// history" action.  The index goes immediately; the objects go on the
+    /// sweep that follows, because another document may share them.
     func forget(_ url: URL) {
         let documentKey = Self.documentKey(for: url)
         pendingLock.lock()
-        defer { pendingLock.unlock() }
         // Keep a loaded empty state until the queued deletion runs.  A new
         // record immediately after forget must not read the old index again.
         storeState(DocumentState(isLoaded: true), forKey: documentKey)
+        evictedVersionsByDocument.removeValue(forKey: documentKey)
+        pendingLock.unlock()
+
         queue.async { [self] in
             try? fm.removeItem(at: indexURL(for: url))
             pendingLock.lock()
-            defer { pendingLock.unlock() }
             if stateByDocument[documentKey]?.newestHash == nil {
                 stateByDocument.removeValue(forKey: documentKey)
                 stateOrder.removeAll { $0 == documentKey }
             }
+            pendingLock.unlock()
+            // Deleting the index only unreferences the objects.  Sweep now so
+            // "forget" actually reclaims the disk the user asked us to give
+            // back, rather than waiting up to five minutes for the next write.
+            collectUnreferencedObjects()
         }
+    }
+
+    /// How many versions of `url` a prune has dropped since the document last
+    /// acknowledged them.  Non-zero means the timeline is not the whole story.
+    func evictedVersionCount(for url: URL) -> Int {
+        let key = Self.documentKey(for: url)
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        return evictedVersionsByDocument[key] ?? 0
+    }
+
+    func acknowledgeEvictions(for url: URL) {
+        let key = Self.documentKey(for: url)
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        evictedVersionsByDocument.removeValue(forKey: key)
+    }
+
+    /// The most recent prune's outcome, for the preferences pane.
+    func lastPruneReport() -> PruneReport {
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        return lastReport
     }
 
     /// This cache only coalesces writes. Evicting an old entry is safe because
@@ -226,10 +318,19 @@ final class SnapshotStore {
         prune()
     }
 
-    /// Drops versions past the age cap, then oldest-first until under the size
-    /// cap, then garbage-collects objects no index references any more.
-    func prune() {
+    /// Trims every document against the age cap and its **own** size budget,
+    /// then applies the global cap as a backstop, then garbage-collects objects
+    /// no index references any more.
+    ///
+    /// Per-document first is the whole point: the previous global-only pass
+    /// walked all objects oldest-first, so one document with a long history
+    /// could silently evict every other document's past before touching its
+    /// own.  Whatever is dropped is recorded per document so the timeline can
+    /// say so out loud.
+    @discardableResult
+    func prune() -> PruneReport {
         let cutoff = Date().addingTimeInterval(-maximumAge)
+        var report = PruneReport()
         var referenced = Set<String>()
         var newestHashes = Set<String>()
 
@@ -238,6 +339,8 @@ final class SnapshotStore {
             guard let data = try? Data(contentsOf: indexFile),
                   var index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
             else { continue }
+            let documentKey = indexFile.deletingPathExtension().lastPathComponent
+            let before = index.versions.count
 
             // Always keep the newest version even if it is older than the cap:
             // a document you haven't touched in six weeks should still have a
@@ -245,6 +348,15 @@ final class SnapshotStore {
             let newest = index.versions.last
             index.versions.removeAll { $0.date < cutoff && $0.hash != newest?.hash }
             if index.versions.isEmpty, let newest { index.versions = [newest] }
+
+            // Per-document size budget, oldest first, newest always kept.
+            var total = index.versions.reduce(0) { $0 + $1.byteCount }
+            while total > maximumBytesPerDocument, index.versions.count > 1 {
+                total -= index.versions.removeFirst().byteCount
+            }
+
+            let dropped = before - index.versions.count
+            if dropped > 0 { report.droppedVersions[documentKey, default: 0] += dropped }
 
             if let encoded = try? JSONEncoder.snapshotEncoder.encode(index) {
                 try? encoded.write(to: indexFile, options: .atomic)
@@ -255,23 +367,18 @@ final class SnapshotStore {
             }
         }
 
-        // Size cap: drop the oldest unreferenced-after-trim objects first.
-        var objects: [(url: URL, size: Int, date: Date, hash: String)] = []
-        if let e = fm.enumerator(at: objectsDirectory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) {
-            for case let url as URL in e {
-                guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                      let size = values.fileSize else { continue }
-                objects.append((url, size, values.contentModificationDate ?? .distantPast, url.lastPathComponent))
-            }
-        }
-
+        var objects = objectInventory()
         for object in objects where !referenced.contains(object.hash) {
             try? fm.removeItem(at: object.url)
+            report.freedBytes += object.size
         }
 
         var live = objects.filter { referenced.contains($0.hash) }
         var total = live.reduce(0) { $0 + $1.size }
-        guard total > maximumBytes else { return }
+        guard total > maximumBytes else {
+            recordPrune(report)
+            return report
+        }
 
         live.sort { $0.date < $1.date }
         var dropped = Set<String>()
@@ -280,18 +387,68 @@ final class SnapshotStore {
         for object in live where total > maximumBytes && !newestHashes.contains(object.hash) {
             try? fm.removeItem(at: object.url)
             dropped.insert(object.hash)
+            report.freedBytes += object.size
             total -= object.size
         }
-        guard !dropped.isEmpty else { return }
+        objects = []
+        guard !dropped.isEmpty else {
+            recordPrune(report)
+            return report
+        }
 
         for indexFile in indexes where indexFile.pathExtension == "json" {
             guard let data = try? Data(contentsOf: indexFile),
                   var index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
             else { continue }
+            let documentKey = indexFile.deletingPathExtension().lastPathComponent
+            let before = index.versions.count
             index.versions.removeAll { dropped.contains($0.hash) }
+            let removed = before - index.versions.count
+            if removed > 0 { report.droppedVersions[documentKey, default: 0] += removed }
             if let encoded = try? JSONEncoder.snapshotEncoder.encode(index) {
                 try? encoded.write(to: indexFile, options: .atomic)
             }
+        }
+        recordPrune(report)
+        return report
+    }
+
+    /// Removes objects no index mentions.  Split out of `prune()` so `forget`
+    /// can reclaim one document's disk without a full age/size pass.
+    private func collectUnreferencedObjects() {
+        var referenced = Set<String>()
+        let indexes = (try? fm.contentsOfDirectory(at: indexDirectory, includingPropertiesForKeys: nil)) ?? []
+        for indexFile in indexes where indexFile.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: indexFile),
+                  let index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
+            else { continue }
+            referenced.formUnion(index.versions.map(\.hash))
+        }
+        for object in objectInventory() where !referenced.contains(object.hash) {
+            try? fm.removeItem(at: object.url)
+        }
+    }
+
+    private func objectInventory() -> [(url: URL, size: Int, date: Date, hash: String)] {
+        var objects: [(url: URL, size: Int, date: Date, hash: String)] = []
+        guard let e = fm.enumerator(
+            at: objectsDirectory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]
+        ) else { return objects }
+        for case let url as URL in e {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize else { continue }
+            objects.append((url, size, values.contentModificationDate ?? .distantPast, url.lastPathComponent))
+        }
+        return objects
+    }
+
+    private func recordPrune(_ report: PruneReport) {
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        lastReport = report
+        for (key, count) in report.droppedVersions {
+            evictedVersionsByDocument[key, default: 0] += count
         }
     }
 

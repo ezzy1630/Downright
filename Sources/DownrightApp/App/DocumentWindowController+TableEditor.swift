@@ -17,7 +17,7 @@ extension DocumentWindowController: TableEditorDelegate {
 
         let sheetWindow = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
-            styleMask: [.titled, .resizable],
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -42,6 +42,17 @@ extension DocumentWindowController: TableEditorDelegate {
         closeTableEditor()
         containerTextView.focusSource(in: range)
         window?.makeFirstResponder(containerTextView)
+    }
+
+    func tableEditorDidFinish(_ editor: TableEditorView) { closeTableEditor() }
+
+    func tableEditorDidCancel(_ editor: TableEditorView) {
+        // Every accepted operation was exactly one undo step.
+        for _ in 0..<editor.appliedEditCount where markdownDocument.undoManager.canUndo {
+            markdownDocument.undoManager.undo()
+        }
+        markdownDocument.reparseNow()
+        closeTableEditor()
     }
 
     func closeTableEditor() {

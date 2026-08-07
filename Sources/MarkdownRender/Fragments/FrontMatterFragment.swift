@@ -41,7 +41,7 @@ final class FrontMatterFragment: DownrightFragment {
         guard let style = styleSheet, !fields.isEmpty else { return 0 }
         let showsTitle = context?.documentHasH1 == false && fields.contains { $0.key.lowercased() == "title" }
         let chipFont = style.bodyFont().withSize(style.bodyFont().pointSize * 0.85)
-        let available = max(80, contentWidth - 18)
+        let available = max(80, contentWidth)
         var used: CGFloat = 0
         var chipLines: CGFloat = 1
         for field in fields where !(showsTitle && field.key.lowercased() == "title") {
@@ -57,12 +57,10 @@ final class FrontMatterFragment: DownrightFragment {
 
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet, !fields.isEmpty else { return }
+        // No disclosure triangle: nothing hit-tests it and the card has no
+        // collapsed state, so it was an affordance that promised an action the
+        // app does not have.  The card starts on the text column instead.
         let card = CGRect(x: point.x, y: point.y, width: contentWidth, height: layoutFragmentFrame.height)
-        let triangle = NSAttributedString(string: "▸", attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: style.textFaint,
-        ])
-        cg.drawText(triangle, in: CGRect(x: card.minX, y: card.minY + 5, width: 12, height: 16), flipped: true)
-
         let title = fields.first { $0.key.lowercased() == "title" }
         let showsTitle = context?.documentHasH1 == false && title != nil
         var y = card.minY + 2
@@ -70,19 +68,19 @@ final class FrontMatterFragment: DownrightFragment {
             cg.drawText(NSAttributedString(string: title.value, attributes: [
                 .font: style.headingFont(level: 1).withSize(style.bodyFont().pointSize * 1.35),
                 .foregroundColor: style.text,
-            ]), in: CGRect(x: card.minX + 18, y: y, width: card.width - 18, height: style.lineHeight), flipped: true)
+            ]), in: CGRect(x: card.minX, y: y, width: card.width, height: style.lineHeight), flipped: true)
             y += style.lineHeight
         }
 
         let chipFont = style.bodyFont().withSize(style.bodyFont().pointSize * 0.85)
-        var x = card.minX + 18
+        var x = card.minX
         for field in fields where !(showsTitle && field.key.lowercased() == "title") {
             let label = "\(field.key)  \(singleLine(field.value))"
             let text = NSAttributedString(string: label, attributes: [
                 .font: chipFont, .foregroundColor: style.textSecondary,
             ])
-            let width = min(card.width - 18, text.size().width + 16)
-            if x + width > card.maxX { x = card.minX + 18; y += style.lineHeight }
+            let width = min(card.width, text.size().width + 16)
+            if x + width > card.maxX { x = card.minX; y += style.lineHeight }
             let chip = CGRect(x: x, y: y + 2, width: width, height: style.lineHeight - 4)
             cg.fillRect(chip, color: style.inlineCodeBackground, radius: 6)
             cg.drawText(text, in: chip.insetBy(dx: 8, dy: 1), flipped: true)
