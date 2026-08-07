@@ -43,6 +43,25 @@ public enum RenderMetrics {
         taskBoxSide + taskBoxGap + taskBoxClearance
     }
 
+    /// The box and its tick as ratios of the side, so the panel's 16pt
+    /// checkbox is the document's 20pt checkbox at a smaller scale rather than
+    /// a second control that happens to look similar (§8.5).
+    public static let taskBoxCornerRatio: CGFloat = 5.5 / 20
+    public static let taskBoxStrokeRatio: CGFloat = 1.5 / 20
+    public static let taskTickStrokeRatio: CGFloat = 2 / 20
+
+    /// The tick, in unit coordinates measured from the bottom-left of the box.
+    ///
+    /// It is inset from the box rather than spanning it corner to corner.  The
+    /// tick this replaced ran from 13% to 89% of the side: at the panel's 16pt
+    /// it touched the corner radius on both ends, so the mark read as a
+    /// scribble filling a square instead of a check sitting in one.
+    public static let taskTick: [CGPoint] = [
+        CGPoint(x: 0.245, y: 0.500),
+        CGPoint(x: 0.430, y: 0.315),
+        CGPoint(x: 0.765, y: 0.690),
+    ]
+
     /// One-line chip a long code block collapses to in Read mode (§5.1).
     public static let chipHeight: CGFloat = 30
     /// Code blocks longer than this collapse in Read mode (§5.1).

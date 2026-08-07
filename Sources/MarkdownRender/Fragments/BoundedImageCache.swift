@@ -161,9 +161,17 @@ final class ImageRenderCache {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        return NSImage(
+        let image = NSImage(
             cgImage: cgImage,
             size: NSSize(width: sourceWidth ?? CGFloat(cgImage.width),
                          height: sourceHeight ?? CGFloat(cgImage.height)))
+        // The *source* is the authority on transparency: a thumbnail can be
+        // handed back in a format that no longer advertises it.  Fragments
+        // matte a transparent image rather than letting the page colour show
+        // through the artwork, so the flag has to survive the downsample.
+        if let declared = properties?[kCGImagePropertyHasAlpha] as? Bool {
+            image.representations.first?.hasAlpha = declared
+        }
+        return image
     }
 }

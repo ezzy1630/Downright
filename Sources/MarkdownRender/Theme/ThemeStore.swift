@@ -76,8 +76,35 @@ public final class ThemeStore {
         themes = bundled + userOnly
     }
 
+    /// SwiftPM's generated `Bundle.module` looks for the resource bundle beside
+    /// `Bundle.main.bundleURL` and then falls back to an absolute path inside
+    /// the build directory.  Neither is right once the code ships: a macOS
+    /// bundle keeps resources in `Contents/Resources`, so `Bundle.module`
+    /// resolves only via the build-directory fallback — which exists on the
+    /// machine that compiled it and nowhere else.  Inside the sandboxed Quick
+    /// Look extension it is unreachable even there, and the fallback traps.
+    ///
+    /// So resolve the bundle against the layouts we actually ship before
+    /// deferring to `Bundle.module` for `swift run` and `swift test`.
+    private static let resourceBundle: Bundle = {
+        let name = "Downright_MarkdownRender.bundle"
+        let token = Bundle(for: BundleToken.self)
+        let roots = [
+            Bundle.main.resourceURL,       // Downright.app, DownrightQL.appex
+            token.resourceURL,
+            token.bundleURL.deletingLastPathComponent(),
+            Bundle.main.bundleURL,
+        ]
+        for root in roots.compactMap({ $0 }) {
+            if let bundle = Bundle(url: root.appendingPathComponent(name)) {
+                return bundle
+            }
+        }
+        return .module
+    }()
+
     private static func loadBundledThemes() -> [Theme] {
-        guard let urls = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: "Themes") else {
+        guard let urls = resourceBundle.urls(forResourcesWithExtension: "json", subdirectory: "Themes") else {
             return []
         }
         return decode(urls)
@@ -304,3 +331,6 @@ final class DirectoryWatcher {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 }
+
+/// Anchors `Bundle(for:)` to whichever bundle this module was loaded from.
+private final class BundleToken {}

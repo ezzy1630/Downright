@@ -54,7 +54,10 @@ struct StartWindowTests {
         #expect(abs(openCenter.y - createCenter.y) < 0.5)
         #expect(createCenter.x > openCenter.x)
         #expect(abs(open.frame.width - create.frame.width) < 0.5)
-        #expect(abs(open.frame.width - 164) < 0.5)
+        // Sized to content, not to a constant: a fixed 164pt clipped
+        // "New Document" mid-word.
+        #expect(open.frame.width >= open.intrinsicContentSize.width)
+        #expect(create.frame.width >= create.intrinsicContentSize.width)
     }
 
     @Test

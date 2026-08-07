@@ -24,6 +24,11 @@ protocol TaskPanelDelegate: AnyObject {
 /// bar that glides, a whole-percent figure, a quiet "done of total" caption,
 /// and a thumbed All/Open filter — so the shape of the plan is visible before
 /// the first checkbox is read.
+///
+/// Everything in the panel hangs off one left rail (`TaskRowMetrics`): the
+/// percent figure, the section names, and the checkbox column all begin at the
+/// same x, and task text begins at the second column that the boxes open.  A
+/// worklist that lines up is the difference between a plan and a form.
 final class TaskPanelView: NSView, PanelSurface {
     weak var delegate: TaskPanelDelegate?
     var onClose: (() -> Void)?
@@ -52,7 +57,7 @@ final class TaskPanelView: NSView, PanelSurface {
         (done: tasks.reduce(0) { $0 + ($1.isChecked ? 1 : 0) }, total: tasks.count)
     }
 
-    var preferredWidth: CGFloat { 336 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     var visibleTaskCountForTesting: Int {
         rows.reduce(into: 0) { count, row in
@@ -67,12 +72,9 @@ final class TaskPanelView: NSView, PanelSurface {
     private let captionLabel = NSTextField(labelWithString: "")
     private let progressBar: PanelProgressBar
     private let filterControl: PanelSegmentedControl
-    private let emptyState = TaskEmptyStateView()
+    private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "tasks")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
-    /// Separator under the inspector host's header, so the worklist reads as a
-    /// card rather than the page (§8.5).
-    private let topHairline = NSView()
 
     private enum Row {
         case group(String)
@@ -81,6 +83,11 @@ final class TaskPanelView: NSView, PanelSurface {
     }
 
     private var rows: [Row] = []
+    /// Which row carried the selection last, so a selection change can rebuild
+    /// two rows instead of the whole list.
+    private var lastSelectedRow: Int?
+    /// Table width the current row heights were measured at.
+    private var measuredWidth: CGFloat = 0
     /// Set when a reload populated the table before the panel reached a window
     /// (the host hands it `tasks` while it is still detached); the entrance
     /// then runs on first layout instead of being skipped.
@@ -100,17 +107,13 @@ final class TaskPanelView: NSView, PanelSurface {
         super.init(frame: .zero)
 
         // The panel is a card inside the inspector: a flat themed surface (the
-        // vibrancy backdrop resolved to almost the page colour) with a
-        // hairline under the host header, so it separates from the document
-        // instead of dissolving into it (§8.5).
+        // vibrancy backdrop resolved to almost the page colour).  The rule that
+        // separates it from the host's switcher belongs to the host, which
+        // draws one for every panel rather than each panel drawing its own.
         backdrop.usesSurfaceFill = true
         backdrop.autoresizingMask = [.width, .height]
         backdrop.frame = bounds
         addSubview(backdrop)
-
-        topHairline.wantsLayer = true
-        topHairline.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(topHairline)
 
         buildHeader()
         buildTable()
@@ -125,18 +128,25 @@ final class TaskPanelView: NSView, PanelSurface {
 
     private func buildHeader() {
         // The inspector host owns the section title and the close affordance,
-        // so the panel's own header is just the worklist strip: progress,
-        // count, and the filter.  One header per surface, never two (§11.4).
-        percentLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
+        // so the panel's own header is just the worklist strip: progress, count,
+        // and the filter.  One header per surface, never two (§11.4).
+        //
+        // Reading order top to bottom: the figure and the filter on one line,
+        // then the bar that draws the same figure, then the list.  The bar used
+        // to sit *above* the numbers and hard against the host's own rule,
+        // where it read as a stray accent line belonging to neither surface.
+        percentLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
         percentLabel.translatesAutoresizingMaskIntoConstraints = false
         percentLabel.setAccessibilityRole(.staticText)
+        percentLabel.setContentHuggingPriority(.required, for: .horizontal)
         addSubview(percentLabel)
 
         captionLabel.font = PanelFont.secondary
-        captionLabel.alignment = .right
+        captionLabel.alignment = .left
+        captionLabel.lineBreakMode = .byTruncatingTail
         captionLabel.translatesAutoresizingMaskIntoConstraints = false
         captionLabel.setAccessibilityRole(.staticText)
-        captionLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(captionLabel)
 
         progressBar.translatesAutoresizingMaskIntoConstraints = false
@@ -148,6 +158,7 @@ final class TaskPanelView: NSView, PanelSurface {
         }
         filterControl.setAccessibilityLabel("Task filter")
         filterControl.toolTip = "Show all tasks or only open tasks"
+        filterControl.setContentHuggingPriority(.required, for: .horizontal)
         addSubview(filterControl)
 
         emptyState.translatesAutoresizingMaskIntoConstraints = false
@@ -155,42 +166,71 @@ final class TaskPanelView: NSView, PanelSurface {
         addSubview(emptyState)
 
         NSLayoutConstraint.activate([
-            progressBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            progressBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            progressBar.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            progressBar.heightAnchor.constraint(equalToConstant: 4),
+            filterControl.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -TaskRowMetrics.contentInset
+            ),
+            filterControl.topAnchor.constraint(
+                equalTo: topAnchor, constant: TaskRowMetrics.headerTopPadding
+            ),
+            filterControl.heightAnchor.constraint(equalToConstant: TaskRowMetrics.filterHeight),
 
-            percentLabel.leadingAnchor.constraint(equalTo: progressBar.leadingAnchor),
-            percentLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 7),
-            captionLabel.leadingAnchor.constraint(greaterThanOrEqualTo: percentLabel.trailingAnchor, constant: 8),
-            captionLabel.trailingAnchor.constraint(equalTo: progressBar.trailingAnchor),
-            captionLabel.centerYAnchor.constraint(equalTo: percentLabel.centerYAnchor),
+            percentLabel.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: TaskRowMetrics.contentInset
+            ),
+            percentLabel.centerYAnchor.constraint(equalTo: filterControl.centerYAnchor),
+            captionLabel.leadingAnchor.constraint(equalTo: percentLabel.trailingAnchor, constant: 7),
+            captionLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: filterControl.leadingAnchor, constant: -10
+            ),
+            captionLabel.firstBaselineAnchor.constraint(equalTo: percentLabel.firstBaselineAnchor),
 
-            filterControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            filterControl.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            filterControl.topAnchor.constraint(equalTo: percentLabel.bottomAnchor, constant: 13),
-            filterControl.heightAnchor.constraint(equalToConstant: PanelSegmentedControl.controlHeight),
+            // The bar sits on the same rail as everything else and under the
+            // figure it restates, so the header reads as one block instead of
+            // a line, a gap, and a row.
+            progressBar.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: TaskRowMetrics.contentInset
+            ),
+            progressBar.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -TaskRowMetrics.contentInset
+            ),
+            progressBar.topAnchor.constraint(equalTo: filterControl.bottomAnchor, constant: 9),
+            progressBar.heightAnchor.constraint(equalToConstant: TaskRowMetrics.progressBarHeight),
         ])
     }
 
     private func buildTable() {
         table.dataSource = self
         table.delegate = self
-        table.rowHeight = 42
+        table.rowHeight = TaskRowMetrics.minimumHeight
         table.autoresizesSubviews = true
         table.setAccessibilityLabel("Task list")
         table.onActivate = { [weak self] in self?.activateSelection() }
+        // "The row jumps the document to the task" — which it did only on a
+        // double-click, while the chevron that appears on hover promised it on
+        // one.  The checkbox handles its own clicks, so a click that reaches
+        // the table is a click on the row and never a toggle.
+        table.target = self
+        table.action = #selector(rowClicked(_:))
+        // Space ticks the selected task and Return jumps to it: the two things
+        // the row does, both reachable without the pointer (§11.4).
         table.onKeyDown = { [weak self] key in
-            guard key == "escape" else { return false }
-            self?.onClose?()
-            return true
+            guard let self else { return false }
+            switch key {
+            case "escape":
+                self.onClose?()
+                return true
+            case "space":
+                return self.toggleSelection()
+            default:
+                return false
+            }
         }
 
         addSubview(scroll)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: filterControl.bottomAnchor, constant: 8),
+            scroll.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 12),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             emptyState.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             emptyState.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
@@ -220,6 +260,7 @@ final class TaskPanelView: NSView, PanelSurface {
         captionLabel.setAccessibilityLabel(accessibleCaption)
 
         let previousCount = table.numberOfRows
+        measuredWidth = table.bounds.width
         table.reloadData()
         animateReload(previousCount: previousCount)
 
@@ -227,7 +268,10 @@ final class TaskPanelView: NSView, PanelSurface {
         scroll.isHidden = !hasRows
         let emptyStateWasHidden = emptyState.isHidden
         emptyState.isHidden = hasRows
-        configureEmptyState()
+        // Configuring costs a symbol lookup and a string layout; a panel with
+        // rows reloads on every keystroke that touches a task and has nothing
+        // to say about being empty.
+        if !hasRows { configureEmptyState() }
         if emptyStateWasHidden, !emptyState.isHidden {
             animateEmptyStateAppearance()
         }
@@ -240,7 +284,7 @@ final class TaskPanelView: NSView, PanelSurface {
         emptyState.alphaValue = 0
         emptyState.wantsLayer = true
         emptyState.layer?.transform = CATransform3DMakeTranslation(0, 5, 0)
-        PanelAnimation.run(reduceMotion: false, duration: Motion.standard) { _ in
+        PanelAnimation.run(reduceMotion: styleSheet.reduceMotion, duration: Motion.standard) { _ in
             self.emptyState.animator().alphaValue = 1
             self.emptyState.animator().layer?.transform = CATransform3DIdentity
         }
@@ -265,11 +309,17 @@ final class TaskPanelView: NSView, PanelSurface {
         }
     }
 
-    /// Rows land in document order: group headers pop into place first, then
-    /// the tasks beneath them rise one after another.  A plan reveals itself
-    /// top-down, like a hand unrolling it, instead of arriving as one flat
-    /// wash.  Only the rows currently on screen animate; scrolling later just
-    /// shows settled rows.
+    /// Rows land top-down, so a plan reveals itself the way a hand unrolls it
+    /// rather than arriving as one flat wash.  Only the rows currently on
+    /// screen animate; scrolling later just shows settled rows.
+    ///
+    /// The stagger *compresses* instead of clipping.  The old one added a
+    /// fixed 0.028s per row and capped the total at 0.30s, so on any list
+    /// longer than twelve rows every remaining row shared one delay and
+    /// flashed in as a batch, with the last landing at 0.50s — a duration the
+    /// motion system does not have.  Spreading the same budget across however
+    /// many rows there are keeps every row distinct and puts the last one down
+    /// at exactly `Motion.deliberate` after the panel opens.
     private func staggerVisibleRows() {
         guard !styleSheet.reduceMotion, window != nil, table.numberOfRows > 0 else { return }
         let visible = table.rows(in: table.visibleRect)
@@ -281,21 +331,20 @@ final class TaskPanelView: NSView, PanelSurface {
         } else {
             rowRange = 0..<table.numberOfRows
         }
-        var sequence = 0
+        let span = max(1, rowRange.count - 1)
+        let start = CACurrentMediaTime()
         for row in rowRange {
             guard row >= 0, row < rows.count else { continue }
             guard let view = table.view(atColumn: 0, row: row, makeIfNecessary: true) else { continue }
-            if case .group = rows[row] {
-                animateHeaderLanding(view)
-            } else {
-                let delay = min(Double(sequence) * 0.028, 0.30)
-                animateRowEntrance(view, delay: delay)
-                sequence += 1
-            }
+            let delay = Motion.quick * Double(row - rowRange.lowerBound) / Double(span)
+            animateRowEntrance(view, at: start + delay)
         }
     }
 
-    private func animateRowEntrance(_ view: NSView, delay: TimeInterval) {
+    /// One entrance for every row, group headers included.  A header that pops
+    /// while its tasks rise is two entrances in one list, and a scale on a text
+    /// row costs a re-render for movement nobody asked for (§11.4).
+    private func animateRowEntrance(_ view: NSView, at beginTime: CFTimeInterval) {
         view.wantsLayer = true
         view.alphaValue = 1
         view.layer?.transform = CATransform3DIdentity
@@ -304,33 +353,17 @@ final class TaskPanelView: NSView, PanelSurface {
         fade.fromValue = 0
         fade.toValue = 1
         let rise = CABasicAnimation(keyPath: "transform.translation.y")
-        rise.fromValue = 6
+        rise.fromValue = 5
         rise.toValue = 0
         let group = CAAnimationGroup()
         group.animations = [fade, rise]
         group.duration = Motion.standard
-        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.82, 0.28, 1)
+        group.timingFunction = Motion.timing(.decelerate)
         // fillMode .backwards shows the from-value during the delay, so no
         // row can flash at its final position before its turn.
-        group.beginTime = CACurrentMediaTime() + delay
+        group.beginTime = beginTime
         group.fillMode = .backwards
         view.layer?.add(group, forKey: "row-entrance")
-    }
-
-    private func animateHeaderLanding(_ view: NSView) {
-        view.wantsLayer = true
-        view.layer?.transform = CATransform3DIdentity
-        let pop = CAKeyframeAnimation(keyPath: "transform.scale")
-        pop.values = [0.96, 1.02, 1.0]
-        pop.keyTimes = [0, 0.6, 1]
-        pop.duration = Motion.deliberate
-        pop.timingFunctions = [
-            CAMediaTimingFunction(controlPoints: 0.22, 0.82, 0.28, 1),
-            CAMediaTimingFunction(name: .easeOut),
-        ]
-        pop.beginTime = CACurrentMediaTime() + 0.04
-        pop.fillMode = .backwards
-        view.layer?.add(pop, forKey: "header-pop")
     }
 
     /// Tasks arrive in document order, so grouping is a single pass: a new
@@ -378,15 +411,31 @@ final class TaskPanelView: NSView, PanelSurface {
 
     private func applyStyle() {
         captionLabel.textColor = styleSheet.textFaint
-        topHairline.layer?.backgroundColor = styleSheet.rule
-            .withAlphaComponent(styleSheet.increaseContrast ? 0.7 : 0.45).cgColor
         table.reloadData()
+    }
+
+    @objc private func rowClicked(_ sender: Any?) {
+        let row = table.clickedRow
+        guard row >= 0, row < rows.count,
+              case .task(let index) = rows[row], index < tasks.count else { return }
+        delegate?.taskPanel(self, didSelectTaskAt: tasks[index].contentRange.location)
     }
 
     private func activateSelection() {
         let row = table.selectedRow
         guard row >= 0, row < rows.count, case .task(let index) = rows[row], index < tasks.count else { return }
         delegate?.taskPanel(self, didSelectTaskAt: tasks[index].contentRange.location)
+    }
+
+    /// Ticks the selected task through the row's own checkbox, so the keyboard
+    /// gets the same haptic, ripple, and drawn check the pointer does.
+    @discardableResult
+    private func toggleSelection() -> Bool {
+        let row = table.selectedRow
+        guard row >= 0, row < rows.count, case .task = rows[row] else { return false }
+        guard let cell = table.view(atColumn: 0, row: row, makeIfNecessary: true) as? TaskRowView else { return false }
+        cell.toggleFromKeyboard()
+        return true
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -411,14 +460,25 @@ final class TaskPanelView: NSView, PanelSurface {
 
     override func layout() {
         super.layout()
-        topHairline.frame = NSRect(x: 0, y: isFlipped ? 0 : max(0, bounds.height - 1),
-                                   width: bounds.width, height: 1)
+        remeasureRowsIfWidthChanged()
         // Fallback for a panel populated while detached whose async entrance
         // fired before the inspector gave the table its width: the next layout
         // pass with real geometry runs the stagger instead of losing it.
         guard entranceScheduled, window != nil, table.numberOfRows > 0, bounds.width > 1 else { return }
         entranceScheduled = false
         staggerVisibleRows()
+    }
+
+    /// A wrapped row's height depends on the width it wraps at, and AppKit asks
+    /// for heights once and caches them.  The first ask happens before the
+    /// inspector has given the table its width, so without this a long task
+    /// keeps the two-line height it was measured at when the panel was 90pt
+    /// wide — which is what made one-line rows sit at uneven distances.
+    private func remeasureRowsIfWidthChanged() {
+        let width = table.bounds.width
+        guard width > 1, abs(width - measuredWidth) > 0.5, table.numberOfRows > 0 else { return }
+        measuredWidth = width
+        table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<table.numberOfRows))
     }
 
     override func cancelOperation(_ sender: Any?) { onClose?() }
@@ -430,24 +490,36 @@ extension TaskPanelView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return PanelMetrics.rowHeight }
-        if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        guard case .task(let index) = rows[row], index < tasks.count else { return PanelMetrics.rowHeight }
+        guard row < rows.count else { return TaskRowMetrics.minimumHeight }
+        if case .group = rows[row] { return TaskRowMetrics.groupHeight }
+        guard case .task(let index) = rows[row], index < tasks.count else {
+            return TaskRowMetrics.minimumHeight
+        }
         // Long labels wrap inside a fixed-width label column; the row grows
         // with them so a wrapped line can never collide with the row below (§8.5).
         return Self.estimatedRowHeight(for: tasks[index], panelWidth: tableView.bounds.width)
     }
 
-    private static func estimatedRowHeight(for task: TaskItem, panelWidth: CGFloat) -> CGFloat {
+    /// Measured from the very constants `TaskRowView` constrains itself with,
+    /// including the indent, so a deeply nested long task is measured at the
+    /// width it will actually wrap at instead of a wider guess.
+    static func estimatedRowHeight(for task: TaskItem, panelWidth: CGFloat) -> CGFloat {
         let font = PanelFont.row
-        let available = max(120, panelWidth - PanelMetrics.inset - 20 - 8 - 8 - 6 - 14)
         let text = task.text.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return PanelMetrics.rowHeight }
+        guard !text.isEmpty, panelWidth > 0 else { return TaskRowMetrics.minimumHeight }
+
+        let leading = TaskRowMetrics.leading(indentLevel: task.indentLevel)
+        let available = max(
+            TaskRowMetrics.minimumLabelWidth,
+            panelWidth - leading - TaskRowMetrics.trailingChrome
+        )
         let width = (text as NSString).size(withAttributes: [.font: font]).width
-        let lines = max(1, min(3, Int(ceil(width / available))))
+        let lines = max(1, min(TaskRowMetrics.maximumLines, Int(ceil(width / available))))
         let lineHeight = font.ascender - font.descender + 2
-        // 12pt vertical padding above and below the wrapped block.
-        return max(PanelMetrics.rowHeight, 12 + CGFloat(lines) * lineHeight + 12)
+        return max(
+            TaskRowMetrics.minimumHeight,
+            TaskRowMetrics.verticalPadding * 2 + CGFloat(lines) * lineHeight
+        )
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
@@ -482,6 +554,9 @@ extension TaskPanelView: NSTableViewDataSource, NSTableViewDelegate {
             let identifier = NSUserInterfaceItemIdentifier("taskGroup")
             let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? PanelGroupRowView
                 ?? PanelGroupRowView(identifier: identifier)
+            // Section names sit on the panel's one left rail, with the percent
+            // figure above them and the checkboxes below.
+            cell.leadingInset = TaskRowMetrics.contentInset
             cell.configure(text: title, color: styleSheet.textFaint)
             return cell
 
@@ -504,45 +579,127 @@ extension TaskPanelView: NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) { table.reloadData() }
+    /// Only the two rows whose selection actually changed are rebuilt.  A full
+    /// `reloadData` on every arrow key rebuilds every visible cell view, throws
+    /// away their hover state, and grows with the length of the plan.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        var affected = IndexSet()
+        if let previous = lastSelectedRow, previous < table.numberOfRows { affected.insert(previous) }
+        if table.selectedRow >= 0 { affected.insert(table.selectedRow) }
+        lastSelectedRow = table.selectedRow >= 0 ? table.selectedRow : nil
+        guard !affected.isEmpty else { return }
+        table.reloadData(forRowIndexes: affected, columnIndexes: IndexSet(integer: 0))
+    }
 }
 
 // MARK: - Row
 
+/// The one place the panel's geometry is written down.  `TaskRowView`
+/// constrains itself from these, the header lays out from them, and
+/// `estimatedRowHeight` measures from them, so the height a row is given and
+/// the width its label wraps at cannot drift apart (§8.5).
+enum TaskRowMetrics {
+    /// One left rail for the whole panel: the percent figure, the section
+    /// headers, and the checkboxes all start here — and it is the *host's*
+    /// rail, so the section switcher above the panel starts on it too.  Two
+    /// points of disagreement between chrome and content is the kind of thing
+    /// nobody can name and everybody sees.
+    static let contentInset = PanelMetrics.inset
+    static let checkboxInset = contentInset
+    static let boxSide = PanelCheckbox.Geometry.panelSide
+    /// A child's box begins exactly where its parent's box ended, so nesting
+    /// is one box-width per level — readable at four levels inside 336pt.
+    static let indentStep = boxSide
+    static let maximumIndent = 4
+    /// Checkbox → label gap, label → chevron gap, chevron, chevron → edge.
+    static let labelGap: CGFloat = 9
+    static let glyphGap: CGFloat = 6
+    static let glyphWidth: CGFloat = 8
+    static let glyphInset: CGFloat = 10
+    /// Air above and below a single line of task text.  12 made a one-line row
+    /// 41pt tall — a settings form, not a worklist.
+    static let verticalPadding: CGFloat = 7
+    static let minimumHeight: CGFloat = 30
+    /// Section headers carry their air above the label, which is where the
+    /// break between two groups belongs.
+    static let groupHeight: CGFloat = 26
+    static let minimumLabelWidth: CGFloat = 90
+    static let maximumLines = 3
+
+    static let headerTopPadding: CGFloat = 11
+    /// Tall enough to round its own ends and to read as a bar rather than as a
+    /// rule that happens to be orange.
+    static let progressBarHeight: CGFloat = 5
+    /// The chrome height for a segmented control, not a squeezed one: the
+    /// filter used to be pinned to 22 against a control designed at 26, which
+    /// cramped the thumb and clipped the air around both labels.
+    static let filterHeight = PanelSegmentedControl.controlHeight
+
+    static func leading(indentLevel: Int) -> CGFloat {
+        checkboxInset
+            + CGFloat(min(indentLevel, maximumIndent)) * indentStep
+            + boxSide
+            + labelGap
+    }
+
+    static var trailingChrome: CGFloat { glyphGap + glyphWidth + glyphInset }
+
+    /// Top of the checkbox, placed so its centre lands on the first line's
+    /// x-height centre — `baseline - xHeight / 2`, the same rule the document
+    /// renderer uses for the ornament column.
+    static var firstLineBoxTop: CGFloat {
+        let font = PanelFont.row
+        let opticalCentre = verticalPadding + font.ascender - font.xHeight / 2
+        return (opticalCentre - boxSide / 2).rounded()
+    }
+
+    /// Centre of the box one level shallower — where a nesting rail hangs from.
+    static func railX(forIndentLevel level: Int) -> CGFloat {
+        checkboxInset + CGFloat(level - 1) * indentStep + boxSide / 2
+    }
+}
+
 private final class TaskRowView: NSView {
     var onToggle: ((Int) -> Void)?
 
-    private let checkbox = TaskCheckboxButton()
+    private let checkbox = PanelCheckbox()
     private let label = NSTextField(labelWithString: "")
     private let jumpGlyph = NSImageView()
+    /// The row's own surface, drawn in the same rect the selection uses so
+    /// hover, press, and selection are one shape at three strengths.
+    private let surfaceLayer = CALayer()
     private var checkboxLeading: NSLayoutConstraint!
     private var markOffset = 0
     private var indentLevel = 0
     private var trackingArea: NSTrackingArea?
-    private var hoverColor: NSColor = .clear
     private var styleSheet: StyleSheet = .current
     private var isHovered = false { didSet { updateSurface(animated: true) } }
+    private var isPressed = false { didSet { updateSurface(animated: true) } }
     private var isSelected = false
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
 
+        wantsLayer = true
+        surfaceLayer.cornerRadius = PanelMetrics.rowSurfaceRadius
+        surfaceLayer.actions = ["position": NSNull(), "bounds": NSNull()]
+        layer?.addSublayer(surfaceLayer)
+
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.onToggle = { [weak self] in
             guard let self else { return }
-            self.animateLabelPulse()
             self.pulseRowGlow()
             self.onToggle?(self.markOffset)
         }
         checkbox.onPressChange = { [weak self] pressed in
-            self?.setRowPressed(pressed)
+            self?.isPressed = pressed
         }
         addSubview(checkbox)
 
         label.font = PanelFont.row
         label.lineBreakMode = .byWordWrapping
-        label.maximumNumberOfLines = 3
+        label.maximumNumberOfLines = TaskRowMetrics.maximumLines
         label.cell?.wraps = true
         label.cell?.isScrollable = false
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -558,36 +715,49 @@ private final class TaskRowView: NSView {
         jumpGlyph.alphaValue = 0
         addSubview(jumpGlyph)
 
-        checkboxLeading = checkbox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset)
+        checkboxLeading = checkbox.leadingAnchor.constraint(
+            equalTo: leadingAnchor, constant: TaskRowMetrics.checkboxInset
+        )
         NSLayoutConstraint.activate([
             checkboxLeading,
-            checkbox.centerYAnchor.constraint(equalTo: centerYAnchor),
-            checkbox.widthAnchor.constraint(equalToConstant: RenderMetrics.taskBoxSide),
-            checkbox.heightAnchor.constraint(equalToConstant: RenderMetrics.taskBoxSide),
-            label.leadingAnchor.constraint(equalTo: checkbox.trailingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: jumpGlyph.leadingAnchor, constant: -6),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            jumpGlyph.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            jumpGlyph.centerYAnchor.constraint(equalTo: centerYAnchor),
-            jumpGlyph.widthAnchor.constraint(equalToConstant: 8),
+            // The box centres on the first line's x-height, not on the row —
+            // the rule `ListOrnamentFragment` uses to place the document's own
+            // checkbox — so a wrapped task keeps its box beside the words it
+            // belongs to instead of drifting to the middle of the block.
+            checkbox.topAnchor.constraint(
+                equalTo: topAnchor, constant: TaskRowMetrics.firstLineBoxTop
+            ),
+            checkbox.widthAnchor.constraint(equalToConstant: TaskRowMetrics.boxSide),
+            checkbox.heightAnchor.constraint(equalToConstant: TaskRowMetrics.boxSide),
+            label.leadingAnchor.constraint(equalTo: checkbox.trailingAnchor, constant: TaskRowMetrics.labelGap),
+            label.trailingAnchor.constraint(equalTo: jumpGlyph.leadingAnchor, constant: -TaskRowMetrics.glyphGap),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: TaskRowMetrics.verticalPadding),
+            jumpGlyph.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -TaskRowMetrics.glyphInset),
+            jumpGlyph.centerYAnchor.constraint(equalTo: checkbox.centerYAnchor),
+            jumpGlyph.widthAnchor.constraint(equalToConstant: TaskRowMetrics.glyphWidth),
         ])
-
-        wantsLayer = true
-        layer?.cornerRadius = 7
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        surfaceLayer.frame = PanelMetrics.rowSurface(in: bounds)
+        CATransaction.commit()
+    }
+
     func configure(task: TaskItem, groupTitle: String, isSelected: Bool, styleSheet: StyleSheet) {
         markOffset = task.markRange.location
-        indentLevel = min(task.indentLevel, 4)
+        indentLevel = min(task.indentLevel, TaskRowMetrics.maximumIndent)
         self.styleSheet = styleSheet
         self.isSelected = isSelected
-        hoverColor = styleSheet.selection.panelAlpha(
-            styleSheet.increaseContrast ? 0.28 : 0.14,
-            increaseContrast: styleSheet.increaseContrast
-        )
-        checkboxLeading.constant = 12 + CGFloat(indentLevel) * 11
+        checkboxLeading.constant = TaskRowMetrics.checkboxInset
+            + CGFloat(indentLevel) * TaskRowMetrics.indentStep
+        // A task that still had to be clipped says the rest on hover rather
+        // than losing it (§8.5).
+        toolTip = task.text.trimmingCharacters(in: .whitespaces)
 
         checkbox.setStyleSheet(styleSheet)
         checkbox.setChecked(task.isChecked, animated: false)
@@ -596,16 +766,16 @@ private final class TaskRowView: NSView {
 
         jumpGlyph.contentTintColor = styleSheet.textFaint
 
-        // Struck-through and eased back when done, but still legible: one
-        // completion cue (the tick) plus a restrained strike, never three
-        // heavy reductions stacked on top of each other (§8.5).
+        // Byte-for-byte the treatment `DecorationEngine` gives a ticked task in
+        // the page — secondary text, faint strike — so the same task does not
+        // read as two different states in two places (§8.5).
         let text = task.text.trimmingCharacters(in: .whitespaces)
         if task.isChecked {
             label.attributedStringValue = NSAttributedString(string: text, attributes: [
                 .font: PanelFont.row,
                 .foregroundColor: styleSheet.textSecondary,
                 .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                .strikethroughColor: styleSheet.textFaint.withAlphaComponent(0.55),
+                .strikethroughColor: styleSheet.textFaint,
             ])
         } else {
             label.attributedStringValue = NSAttributedString(string: text, attributes: [
@@ -615,12 +785,13 @@ private final class TaskRowView: NSView {
         }
         setAccessibilityRole(.row)
         setAccessibilityLabel("\(task.isChecked ? "Completed" : "Incomplete") task: \(text), in \(groupTitle)")
-        // Reuse: a row handed back to the pool must not keep its squeeze or a
-        // half-run entrance animation from a previous life.
+        // Reuse: a row handed back to the pool must not keep a half-run
+        // entrance animation from a previous life.
+        isPressed = false
         layer?.transform = CATransform3DIdentity
         layer?.removeAnimation(forKey: "row-entrance")
-        layer?.removeAnimation(forKey: "header-pop")
         alphaValue = 1
+        needsDisplay = true
         updateSurface(animated: false)
         updateGlyph(animated: false)
     }
@@ -640,517 +811,85 @@ private final class TaskRowView: NSView {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    /// The panel's Space key comes through here so pointer and keyboard share
+    /// one toggle path, exactly as the checkbox's own comment claims.
+    func toggleFromKeyboard() { checkbox.performToggle() }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        // A faint vertical guide that continues the nesting implied by the
-        // checkbox indentation, so a two-level plan reads as a hierarchy and
-        // not as an accidentally indented list.
+        // One faint rail per ancestor level, hanging from the centre of the
+        // box it belongs to.  Rows abut, so consecutive children draw a single
+        // unbroken line and a two-level plan reads as a hierarchy rather than
+        // as an accidentally indented list.
         guard indentLevel > 0 else { return }
-        let x = 12 + CGFloat(indentLevel) * 11 - 6.5
-        let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        styleSheet.text.panelAlpha(contrast ? 0.16 : 0.10, increaseContrast: contrast).setFill()
-        NSRect(x: x, y: 0, width: 1, height: bounds.height).fill()
+        let contrast = styleSheet.increaseContrast
+        styleSheet.text.panelAlpha(contrast ? 0.16 : 0.09, increaseContrast: contrast).setFill()
+        for level in 1...indentLevel {
+            // A one-point rule centred on the box's centre line.
+            let x = TaskRowMetrics.railX(forIndentLevel: level) - 0.5
+            NSRect(x: x, y: 0, width: 1, height: bounds.height).fill()
+        }
+    }
+
+    /// Hover, press, and the completion glow are the same rectangle at three
+    /// strengths, so the row never changes shape as it changes state.
+    private func surfaceColor() -> NSColor {
+        // Hover and press are the selection colour at a fraction of its
+        // strength, so the three states are one ramp rather than three tints.
+        let contrast = styleSheet.increaseContrast
+        if isPressed { return styleSheet.selection.withAlphaComponent(contrast ? 0.9 : 0.65) }
+        if isHovered { return styleSheet.selection.withAlphaComponent(contrast ? 0.7 : 0.45) }
+        return .clear
     }
 
     private func updateSurface(animated: Bool) {
-        let color = isHovered ? hoverColor : .clear
-        let changes = { self.layer?.backgroundColor = color.cgColor }
-        guard animated else { changes(); return }
-        PanelAnimation.run(
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-            duration: Motion.quick
-        ) { _ in changes() }
-        updateGlyph(animated: animated)
+        let color = surfaceColor().cgColor
+        guard animated, !styleSheet.reduceMotion, window != nil else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            surfaceLayer.removeAnimation(forKey: "surface")
+            surfaceLayer.backgroundColor = color
+            CATransaction.commit()
+            updateGlyph(animated: false)
+            return
+        }
+        let fade = CABasicAnimation(keyPath: "backgroundColor")
+        fade.fromValue = surfaceLayer.presentation()?.backgroundColor ?? surfaceLayer.backgroundColor
+        fade.toValue = color
+        fade.duration = Motion.quick
+        fade.timingFunction = Motion.timing(.easeOut)
+        surfaceLayer.add(fade, forKey: "surface")
+        surfaceLayer.backgroundColor = color
+        updateGlyph(animated: true)
     }
 
     private func updateGlyph(animated: Bool) {
         let target: CGFloat = isHovered || isSelected ? 1 : 0
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard animated, !styleSheet.reduceMotion else {
             jumpGlyph.alphaValue = target
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Motion.quick
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        guard jumpGlyph.alphaValue != target else { return }
+        Motion.run(reduceMotion: styleSheet.reduceMotion, duration: Motion.quick) { _ in
             jumpGlyph.animator().alphaValue = target
         }
     }
 
-    private func animateLabelPulse() {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        let original = label.layer?.transform ?? CATransform3DIdentity
-        label.wantsLayer = true
-        label.layer?.transform = CATransform3DMakeScale(0.96, 0.96, 1)
-        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .spring) { _ in
-            self.label.animator().layer?.transform = original
-        }
-    }
-
-    /// The checkbox presses the whole row, not just itself: the same
-    /// toolbar press policy, scaled to the row's calm.  Pointer and keyboard
-    /// both arrive here through the checkbox's single press channel.
-    private func setRowPressed(_ pressed: Bool) {
-        // A click landing while a staggered entrance is still running must
-        // take over the transform immediately, or the entrance's presentation
-        // value would swallow the press for its remaining duration.
-        layer?.removeAnimation(forKey: "row-entrance")
-        layer?.removeAnimation(forKey: "header-pop")
-        let scale = pressed ? ToolbarChromePolicy.pressedScale : 1
-        let target = CATransform3DMakeScale(scale, scale, 1)
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        guard !reduce, window != nil else {
-            layer?.transform = target
-            return
-        }
-        let animation = CABasicAnimation(keyPath: "transform")
-        animation.fromValue = layer?.presentation()?.transform ?? layer?.transform
-        animation.toValue = target
-        animation.duration = pressed
-            ? ToolbarChromePolicy.pressInDuration
-            : ToolbarChromePolicy.pressOutDuration
-        animation.timingFunction = ToolbarChromePolicy.timingFunction()
-        layer?.add(animation, forKey: "row-press")
-        layer?.transform = target
-    }
-
-    /// The whole row answers a completed task with a brief accent wash — the
-    /// same colour as the checkbox fill, at panel alpha — that settles back to
-    /// the row's own hover surface.  A soft glow, not a flash, so rapid
-    /// ticking reads as a pulse train rather than a strobe.
+    /// The row answers a completed task with one brief accent wash in the
+    /// checkbox's own colour, which settles back to whatever the row was
+    /// already showing.  A glow, not a flash, so ticking six tasks in a row
+    /// reads as a pulse train rather than a strobe.
     private func pulseRowGlow() {
+        guard !styleSheet.reduceMotion, window != nil else { return }
         let contrast = styleSheet.increaseContrast
-        let glow = styleSheet.accent.panelAlpha(
-            contrast ? 0.16 : 0.10,
-            increaseContrast: contrast
-        )
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        guard !reduce, window != nil else { return }
-        layer?.backgroundColor = glow.cgColor
-        let settle = isHovered ? hoverColor : .clear
-        PanelAnimation.run(reduceMotion: false, duration: Motion.deliberate) { _ in
-            self.layer?.backgroundColor = settle.cgColor
-        }
-    }
-}
-
-// MARK: - Checkbox
-
-/// The checkbox is drawn, not templated: a neutral border that warms on hover,
-/// an accent fill that pops in, and a checkmark that draws itself.  A stock
-/// `.switch` button cannot spring its fill or stroke its check, and that
-/// animation is the whole reason ticking a task here feels like completing it.
-private final class TaskCheckboxButton: NSView {
-    var onToggle: (() -> Void)?
-    /// Lets the owning row compress with the checkbox so the press reads as
-    /// one physical surface rather than a stamp on top of a still row.
-    var onPressChange: ((Bool) -> Void)?
-
-    private var styleSheet: StyleSheet = .current
-    private let borderLayer = CAShapeLayer()
-    private let fillLayer = CAShapeLayer()
-    private let sheenLayer = CAShapeLayer()
-    private let checkLayer = CAShapeLayer()
-    private let rippleLayer = CAShapeLayer()
-    private var isChecked = false
-    private var isHovering = false
-    private var isPressed = false
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: RenderMetrics.taskBoxSide, height: RenderMetrics.taskBoxSide)
-    }
-
-    init() {
-        super.init(frame: .zero)
-        wantsLayer = true
-        for layer in [fillLayer, borderLayer, sheenLayer, rippleLayer, checkLayer] {
-            layer.fillColor = NSColor.clear.cgColor
-            layer.actions = ["position": NSNull(), "bounds": NSNull()]
-            self.layer?.addSublayer(layer)
-        }
-        rippleLayer.lineWidth = 1.6
-        rippleLayer.opacity = 0
-        // The eyebrow highlight: a bright inner stroke along the top and left
-        // edges of the fill, so a checked box reads as a raised chip catching
-        // light rather than a flat accent square.  StrokeStart/End wrap around
-        // the closed rounded-rect path so the visible arc is the top edge
-        // (0…0.30) plus the left edge (0.72…1).
-        sheenLayer.lineWidth = 1.1
-        sheenLayer.lineCap = .round
-        sheenLayer.strokeStart = 0.72
-        sheenLayer.strokeEnd = 0.30
-        sheenLayer.opacity = 0
-        setAccessibilityElement(true)
-        setAccessibilityRole(.button)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    func setStyleSheet(_ styleSheet: StyleSheet) {
-        self.styleSheet = styleSheet
-        applyVisual(animated: false)
-    }
-
-    func setChecked(_ checked: Bool, animated: Bool) {
-        guard checked != isChecked else { return }
-        isChecked = checked
-        applyVisual(animated: animated)
-    }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let radius: CGFloat = 5
-        borderLayer.frame = bounds
-        borderLayer.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        fillLayer.frame = bounds
-        fillLayer.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        checkLayer.frame = bounds
-        checkLayer.path = Self.checkPath(in: bounds.insetBy(dx: 3.5, dy: 3.5))
-        checkLayer.lineWidth = 1.8
-        checkLayer.lineCap = .round
-        checkLayer.lineJoin = .round
-        checkLayer.strokeStart = 0
-        sheenLayer.frame = bounds
-        sheenLayer.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        rippleLayer.frame = bounds
-        rippleLayer.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        rippleLayer.strokeColor = styleSheet.accent.cgColor
-        CATransaction.commit()
-    }
-
-    private static func checkPath(in rect: NSRect) -> CGPath {
-        // Drawn in the checkbox's unflipped coordinates, matching the renderer:
-        // the vertex sits at the bottom — upper-left start, bottom vertex, and
-        // the long arm finishing mid-right on the far side.
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: rect.minX + 1.2, y: rect.maxY - 1.2))
-        path.line(to: NSPoint(x: rect.midX - 0.5, y: rect.minY + 1.4))
-        path.line(to: NSPoint(x: rect.maxX - 0.6, y: rect.midY + 0.6))
-        return path.cgPath
-    }
-
-    private func applyVisual(animated: Bool) {
-        let contrast = styleSheet.increaseContrast
-        let accent = styleSheet.accent
-        let neutral = styleSheet.text.panelAlpha(contrast ? 0.5 : 0.30, increaseContrast: contrast)
-
-        let targetBorder = isChecked ? accent : (isHovering ? accent.withAlphaComponent(0.8) : neutral)
-        let targetFillAlpha: CGFloat = isChecked ? 1 : (isHovering ? 0.10 : 0)
-        let checkEnd: CGFloat = isChecked ? 1 : 0
-
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        guard animated, !reduce, window != nil else {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            borderLayer.strokeColor = targetBorder.cgColor
-            borderLayer.lineWidth = isChecked ? 1.6 : 1.4
-            fillLayer.opacity = Float(targetFillAlpha)
-            fillLayer.backgroundColor = accent.cgColor
-            fillLayer.cornerRadius = 5
-            sheenLayer.strokeColor = styleSheet.background.withAlphaComponent(0.30).cgColor
-            sheenLayer.opacity = Float(isChecked ? 1 : 0)
-            checkLayer.strokeColor = styleSheet.background.cgColor
-            checkLayer.strokeEnd = checkEnd
-            checkLayer.opacity = Float(checkEnd)
-            CATransaction.commit()
-            return
-        }
-
-        sheenLayer.strokeColor = styleSheet.background.withAlphaComponent(0.30).cgColor
-        if isChecked {
-            // The sheen waits for the fill to nearly settle, then arrives on
-            // top of it — keyTimes hold opacity at 0 for the delay so the
-            // layer cannot flash at full opacity before the animation runs.
-            let sheenFade = CAKeyframeAnimation(keyPath: "opacity")
-            sheenFade.values = [0, 0, 1]
-            sheenFade.keyTimes = [0, 0.45, 1]
-            sheenFade.duration = Motion.standard + Motion.quick
-            sheenFade.timingFunctions = [
-                CAMediaTimingFunction(name: .linear),
-                CAMediaTimingFunction(name: .easeOut),
-            ]
-            sheenLayer.removeAllAnimations()
-            sheenLayer.add(sheenFade, forKey: "sheen-fade")
-        } else {
-            let sheenFade = CABasicAnimation(keyPath: "opacity")
-            sheenFade.fromValue = 1
-            sheenFade.toValue = 0
-            sheenFade.duration = Motion.quick
-            sheenLayer.removeAllAnimations()
-            sheenLayer.add(sheenFade, forKey: "sheen-fade")
-        }
-        sheenLayer.opacity = Float(isChecked ? 1 : 0)
-
-        // Border warms toward the accent.
-        let border = CABasicAnimation(keyPath: "strokeColor")
-        border.fromValue = borderLayer.strokeColor
-        border.toValue = targetBorder.cgColor
-        border.duration = Motion.quick
-        borderLayer.strokeColor = targetBorder.cgColor
-        borderLayer.add(border, forKey: "border")
-
-        borderLayer.lineWidth = isChecked ? 1.6 : 1.4
-
-        if isChecked {
-            // The fill springs in beneath the check as the check draws.  The
-            // keyframe carries a deliberate overshoot (0.62 → 1.07 → 1) so the
-            // box lands with a soft bounce instead of stopping dead at full
-            // size — a spring timing function alone cannot overshoot an
-            // explicitly-clamped scale this tightly.
-            let pop = CAKeyframeAnimation(keyPath: "transform.scale")
-            pop.values = [0.62, 1.07, 1.0]
-            pop.keyTimes = [0, 0.55, 1]
-            pop.duration = Motion.deliberate
-            pop.timingFunctions = [
-                CAMediaTimingFunction(controlPoints: 0.22, 0.82, 0.28, 1),
-                CAMediaTimingFunction(controlPoints: 0.45, 0, 0.55, 1),
-            ]
-
-            let fadeIn = CABasicAnimation(keyPath: "opacity")
-            fadeIn.fromValue = 0
-            fadeIn.toValue = 1
-            fadeIn.duration = Motion.quick
-
-            fillLayer.backgroundColor = accent.cgColor
-            fillLayer.cornerRadius = 5
-            fillLayer.removeAllAnimations()
-            fillLayer.add(pop, forKey: "fill-pop")
-            fillLayer.add(fadeIn, forKey: "fill-fade")
-            fillLayer.opacity = 1
-
-            checkLayer.strokeColor = styleSheet.background.cgColor
-            let draw = CABasicAnimation(keyPath: "strokeEnd")
-            draw.fromValue = 0
-            draw.toValue = 1
-            draw.duration = Motion.standard
-            draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            checkLayer.removeAllAnimations()
-            checkLayer.add(draw, forKey: "check-draw")
-            checkLayer.strokeEnd = 1
-            checkLayer.opacity = 1
-        } else {
-            // The check withdraws, then the fill lets go.
-            let retract = CABasicAnimation(keyPath: "strokeEnd")
-            retract.fromValue = 1
-            retract.toValue = 0
-            retract.duration = Motion.quick
-            checkLayer.removeAllAnimations()
-            checkLayer.add(retract, forKey: "check-retract")
-            checkLayer.strokeEnd = 0
-
-            let fadeOut = CABasicAnimation(keyPath: "opacity")
-            fadeOut.fromValue = 1
-            fadeOut.toValue = 0
-            fadeOut.duration = Motion.quick
-            fillLayer.removeAllAnimations()
-            fillLayer.add(fadeOut, forKey: "fill-fade-out")
-            fillLayer.opacity = 0
-        }
-    }
-
-    // MARK: - Interaction
-
-    override func mouseDown(with event: NSEvent) {
-        isPressed = true
-        updatePress(animated: true)
-        onPressChange?(true)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
-        guard inside != isPressed else { return }
-        isPressed = inside
-        updatePress(animated: true)
-        onPressChange?(isPressed)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
-        isPressed = false
-        updatePress(animated: true)
-        onPressChange?(false)
-        if inside {
-            performToggle()
-        }
-    }
-
-    /// One toggle path for pointer, keyboard, and VoiceOver so the feedback —
-    /// haptic, ripple, and the drawn check — is identical however it was fired.
-    private func performToggle() {
-        isChecked.toggle()
-        applyVisual(animated: true)
-        if isChecked {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-            pulseRipple()
-        }
-        onToggle?()
-    }
-
-    /// A soft ring that expands from the box and fades, so a completed task is
-    /// answered in place — the same pulse the document renderer draws around a
-    /// checkbox the moment it is ticked (§7.1).
-    private func pulseRipple() {
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        guard window != nil, !reduce else {
-            rippleLayer.opacity = 0
-            return
-        }
-        rippleLayer.removeAllAnimations()
-        rippleLayer.opacity = 1
-        let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 0.7
-        scale.toValue = 1.5
-        scale.duration = 0.42
-        scale.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.9, 0.34, 1)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0.55
-        fade.toValue = 0
-        fade.duration = 0.42
-
-        let group = CAAnimationGroup()
-        group.animations = [scale, fade]
-        group.duration = 0.42
-        rippleLayer.add(group, forKey: "ripple")
-        rippleLayer.opacity = 0
-    }
-
-    private func updatePress(animated: Bool) {
-        let scale = isPressed ? 0.86 : 1
-        let target = CATransform3DMakeScale(scale, scale, 1)
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            layer?.transform = target
-            return
-        }
-        let animation = CABasicAnimation(keyPath: "transform")
-        animation.fromValue = layer?.presentation()?.transform ?? layer?.transform
-        animation.toValue = target
-        animation.duration = isPressed ? 0.07 : Motion.standard
-        animation.timingFunction = CAMediaTimingFunction(name: isPressed ? .easeOut : .easeInEaseOut)
-        layer?.add(animation, forKey: "press")
-        layer?.transform = target
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
-            owner: self
-        ))
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard !isChecked else { return }
-        isHovering = true
-        applyVisual(animated: true)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        guard isHovering else { return }
-        isHovering = false
-        applyVisual(animated: true)
-    }
-
-    override func accessibilityPerformPress() -> Bool {
-        performToggle()
-        return true
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        applyVisual(animated: false)
-    }
-}
-
-// MARK: - Empty state
-
-/// A two-line empty state with a tinted symbol disc, used when the panel has
-/// nothing to list.  It replaces the old flat text so "nothing to do" reads as
-/// a state of the plan, not a gap in the UI.
-private final class TaskEmptyStateView: NSView {
-    private let discLayer = CALayer()
-    private let symbolView = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
-
-    var title: String { titleLabel.stringValue }
-    var subtitle: String { subtitleLabel.stringValue }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-
-        symbolView.translatesAutoresizingMaskIntoConstraints = false
-        symbolView.imageScaling = .scaleProportionallyDown
-        symbolView.contentTintColor = .clear
-        addSubview(symbolView)
-
-        discLayer.opacity = 0
-        layer?.addSublayer(discLayer)
-
-        titleLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
-        titleLabel.alignment = .center
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
-
-        subtitleLabel.font = PanelFont.secondary
-        subtitleLabel.alignment = .center
-        subtitleLabel.maximumNumberOfLines = 3
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(subtitleLabel)
-
-        NSLayoutConstraint.activate([
-            symbolView.topAnchor.constraint(equalTo: topAnchor),
-            symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            symbolView.widthAnchor.constraint(equalToConstant: 40),
-            symbolView.heightAnchor.constraint(equalToConstant: 40),
-            titleLabel.topAnchor.constraint(equalTo: symbolView.bottomAnchor, constant: 10),
-            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            subtitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            subtitleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            subtitleLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        discLayer.frame = symbolView.frame.insetBy(dx: -2, dy: -2)
-        discLayer.cornerRadius = discLayer.bounds.width / 2
-        CATransaction.commit()
-    }
-
-    func configure(symbol: String, title: String, subtitle: String, styleSheet: StyleSheet) {
-        let contrast = styleSheet.increaseContrast
-        discLayer.backgroundColor = styleSheet.accent
-            .panelAlpha(0.12, increaseContrast: contrast).cgColor
-        discLayer.opacity = 1
-
-        symbolView.image = NSImage(
-            systemSymbolName: symbol,
-            accessibilityDescription: title
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 18, weight: .medium))
-        symbolView.contentTintColor = styleSheet.accent
-
-        titleLabel.stringValue = title
-        titleLabel.textColor = styleSheet.text
-        subtitleLabel.stringValue = subtitle
-        subtitleLabel.textColor = styleSheet.textFaint
-        setAccessibilityRole(.group)
-        setAccessibilityLabel("\(title): \(subtitle)")
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
+        let glow = styleSheet.accent.panelAlpha(contrast ? 0.18 : 0.12, increaseContrast: contrast)
+        let settle = surfaceColor()
+        let wash = CAKeyframeAnimation(keyPath: "backgroundColor")
+        wash.values = [glow.cgColor, glow.cgColor, settle.cgColor]
+        wash.keyTimes = [0, 0.25, 1]
+        wash.duration = Motion.deliberate
+        wash.timingFunctions = [Motion.timing(.easeOut), Motion.timing(.easeOut)]
+        surfaceLayer.add(wash, forKey: "surface")
+        surfaceLayer.backgroundColor = settle.cgColor
     }
 }

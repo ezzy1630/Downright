@@ -9,7 +9,8 @@ import SwiftMath
 ///
 /// The single cached path — fragments, HTML export, and PDF export all come
 /// through here, so a formula is typeset once per (source, style) pair no
-/// matter who asks for it.
+/// matter who asks for it.  Being the only door into SwiftMath is also what
+/// makes `MathFontBundle` sufficient: one guard covers every caller.
 public enum MathRenderer {
 
     /// Typeset LaTeX to an image.  `display` selects display vs inline style.
@@ -27,6 +28,13 @@ public enum MathRenderer {
     ) -> NSImage? {
         let trimmed = latex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        // SwiftMath traps rather than fails when it cannot find its fonts, so
+        // the question has to be settled before we call into it.  `nil` is a
+        // path every caller already handles: `MathFragment` draws the LaTeX
+        // source dimmed, and inline math simply keeps its source text.  A
+        // preview that shows `\frac{a}{b}` is a degraded preview; a preview
+        // that traps is no preview at all (§10).
+        guard MathFontBundle.isAvailable else { return nil }
         let key = MathRendererCacheKey(
             source: trimmed,
             display: display,

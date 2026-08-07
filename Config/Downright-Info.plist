@@ -48,6 +48,8 @@
 	<string>PLACEHOLDER_DOWNRIGHT_ED25519_PUBLIC_KEY</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Downright uses Terminal to open files in your $EDITOR.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT licensed.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>

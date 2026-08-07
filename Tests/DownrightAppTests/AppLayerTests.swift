@@ -411,10 +411,13 @@ struct AppLayerTests {
         #expect(store.primaryBinding(for: .sourceMode) == KeyBinding("e", [.command, .shift]))
         #expect(store.primaryBinding(for: .useSelectionForFind) == KeyBinding("e", .command))
         #expect(store.primaryBinding(for: .copyAsMarkdown) == KeyBinding("c", [.command, .shift]))
-        #expect(store.primaryBinding(for: .toggleSidebar) == KeyBinding("0", .command))
+        // ⌘0 is Actual Size on macOS, ⌘⇧V is Paste and Match Style, and ⌥↑/⌥↓
+        // are moveParagraphBackward:/Forward: while a caret is in the document,
+        // so these three moved off the chords the system already owns.
+        #expect(store.primaryBinding(for: .toggleSidebar) == KeyBinding("0", [.command, .option]))
         #expect(store.primaryBinding(for: .outlineQuickOpen) == KeyBinding("o", [.command, .shift]))
-        #expect(store.primaryBinding(for: .versionTimeline) == KeyBinding("v", [.command, .shift]))
-        #expect(store.primaryBinding(for: .nextChange) == KeyBinding("down", .option))
+        #expect(store.primaryBinding(for: .versionTimeline) == KeyBinding("v", [.command, .option]))
+        #expect(store.primaryBinding(for: .nextChange) == KeyBinding("down", [.command, .control]))
         #expect(store.primaryBinding(for: .splitView) == KeyBinding("backslash", .command))
     }
 

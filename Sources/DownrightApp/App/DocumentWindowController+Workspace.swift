@@ -51,6 +51,7 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         workspaceSearch = search
         index.onUpdate = { [weak self, weak panel] snapshot in
             guard let self, let panel else { return }
+            panel.isScanning = false
             self.workspaceGraph = WorkspaceLinkGraphBuilder.build(snapshot: snapshot)
             panel.entries = snapshot.entries
             panel.searchResults = []
@@ -77,8 +78,11 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         search.onUpdate = { [weak panel] results in
             panel?.searchResults = results
         }
-        installTrailing(panel)
+        installTrailing(panel, title: Command.workspace.panelTitle)
         let root = markdownDocument.url?.deletingLastPathComponent() ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        // The first scan can take a moment on a large folder; the panel says so
+        // rather than showing an empty file list that reads as "no files".
+        panel.isScanning = true
         index.start(rootURL: root)
     }
 

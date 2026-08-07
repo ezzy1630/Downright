@@ -14,7 +14,6 @@ private enum StartLayout {
     static let bottomInset: CGFloat = 40
     static let sectionSpacing: CGFloat = 22
     static let contentWidth: CGFloat = 592
-    static let actionWidth: CGFloat = 164
     static let buttonHeight: CGFloat = 38
     static let rowHeight: CGFloat = 40
     static let cornerRadius: CGFloat = 7
@@ -28,6 +27,17 @@ private enum StartTheme {
     }
 }
 
+/// Where the welcome document sits on the start window.
+enum StartGuideOffer {
+    /// This build ships no welcome document; the action is not shown.
+    case unavailable
+    /// A quiet third action beside Open and New.
+    case secondary
+    /// First launch: the guide leads, because there is nothing to reopen and
+    /// nothing to continue.
+    case primary
+}
+
 @MainActor
 final class StartWindowController: NSWindowController {
     static let recentDisplayLimit = startRecentDisplayLimit
@@ -35,6 +45,7 @@ final class StartWindowController: NSWindowController {
     var onOpen: ((URL) -> Void)?
     var onOpenPanel: (() -> Void)?
     var onNew: (() -> Void)?
+    var onOpenGuide: (() -> Void)?
     var onClearRecents: (() -> Void)?
 
     /// Quiet text-button target for the recents header's Clear action.
@@ -45,7 +56,7 @@ final class StartWindowController: NSWindowController {
     private var startView: StartView? { window?.contentView as? StartView }
     fileprivate var isHandingOff = false
 
-    convenience init(recents: [RecentDocument]) {
+    convenience init(recents: [RecentDocument], guide: StartGuideOffer = .unavailable) {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: StartLayout.windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -62,7 +73,7 @@ final class StartWindowController: NSWindowController {
         window.backgroundColor = .windowBackgroundColor
         window.center()
         self.init(window: window)
-        let content = StartView(recents: recents, owner: self)
+        let content = StartView(recents: recents, guide: guide, owner: self)
         window.contentView = content
         window.initialFirstResponder = content.preferredFirstResponder
     }
@@ -128,6 +139,12 @@ final class StartWindowController: NSWindowController {
         onNew?()
         isHandingOff = false
     }
+
+    @objc func openGuide(_ sender: Any?) {
+        guard beginHandoff() else { return }
+        onOpenGuide?()
+        isHandingOff = false
+    }
 }
 
 // MARK: - Root
@@ -146,16 +163,17 @@ private final class StartView: NSView {
     private let updatePill = UpdateStatusPill()
     private var sheet: StyleSheet
     private var didPlayEntrance = false
+    private var keyObserver: NSObjectProtocol?
     /// Clear of traffic lights; keep content below chrome.
     private static let titlebarClearance: CGFloat = 44
 
-    var preferredFirstResponder: NSView { hero.openButton }
+    var preferredFirstResponder: NSView { hero.leadButton }
 
-    init(recents: [RecentDocument], owner: StartWindowController) {
+    init(recents: [RecentDocument], guide: StartGuideOffer, owner: StartWindowController) {
         self.owner = owner
         self.sheet = StartView.makeSheet()
         self.recentPanel = RecentDocumentsPanel(recents: recents, owner: owner, sheet: sheet)
-        self.hero = StartHeroView(owner: owner, sheet: sheet)
+        self.hero = StartHeroView(owner: owner, guide: guide, sheet: sheet)
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -262,7 +280,7 @@ private final class StartView: NSView {
     /// Arrow keys move focus through the recent rows; Space opens the focused
     /// row natively, Return is handled here so keyboard-only users get both
     /// keys.  One focus model, no separate selection state: the row under the
-    /// first responder draws the accent ring (§row focus).
+    /// first responder draws the accent ring.
     override func keyDown(with event: NSEvent) {
         // Key codes rather than `specialKey`: the latter is resolved through
         // the active keyboard layout, so synthetic events and unusual layouts
@@ -299,7 +317,7 @@ private final class StartView: NSView {
     /// selection without opening anything.
     override func cancelOperation(_ sender: Any?) {
         if window?.firstResponder is RecentDocumentButton {
-            window?.makeFirstResponder(hero.openButton)
+            window?.makeFirstResponder(hero.leadButton)
         } else {
             super.cancelOperation(sender)
         }
@@ -313,10 +331,26 @@ private final class StartView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.backgroundColor = sheet.background
+        keyObserver.map(NotificationCenter.default.removeObserver)
+        keyObserver = nil
+        if let window {
+            // Bindings are user-editable, so the hero's shortcut hints are only
+            // true at the moment they are drawn.  Refreshing when the window
+            // comes forward covers the "rebind ⌘O, come back here" path.
+            keyObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.hero.refreshShortcuts() }
+            }
+        }
         if !didPlayEntrance, window != nil {
             didPlayEntrance = true
             playEntrance()
         }
+    }
+
+    deinit {
+        keyObserver.map(NotificationCenter.default.removeObserver)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -460,29 +494,39 @@ private final class StartCanvasView: NSView {
 private final class StartHeroView: NSView {
     let openButton: StartActionButton
     private let newButton: StartActionButton
+    private let guideButton: StartActionButton?
+    /// The action the window opens focused on.
+    let leadButton: StartActionButton
     private let brandLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(
-        wrappingLabelWithString: "Read, edit, and review it in one focused place."
-    )
+    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let dropHint = NSTextField(labelWithString: "")
     private let dropIcon = NSImageView()
     private let brand: BrandMarkView
+    private let guide: StartGuideOffer
     private var sheet: StyleSheet
     private var isDropActive = false
     private static let idleDropHint = "You can also drop a file anywhere"
 
-    init(owner: StartWindowController, sheet: StyleSheet) {
+    init(owner: StartWindowController, guide: StartGuideOffer, sheet: StyleSheet) {
+        self.guide = guide
+        let guideLeads = guide == .primary
         openButton = StartActionButton(
-            title: "Open File", icon: "folder", shortcut: "⌘O",
-            kind: .primary, sheet: sheet, target: owner,
+            title: "Open File", icon: "folder", command: .open,
+            kind: guideLeads ? .secondary : .primary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.openPanel(_:))
         )
         newButton = StartActionButton(
-            title: "New Document", icon: "doc", shortcut: "⌘N",
+            title: "New Document", icon: "doc", command: .newDocument,
             kind: .secondary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.newDocument(_:))
         )
+        guideButton = guide == .unavailable ? nil : StartActionButton(
+            title: "Take the Tour", icon: "sparkles", command: nil,
+            kind: guideLeads ? .primary : .secondary, sheet: sheet, target: owner,
+            action: #selector(StartWindowController.openGuide(_:))
+        )
+        leadButton = (guideLeads ? guideButton : nil) ?? openButton
         brand = BrandMarkView()
         self.sheet = sheet
         super.init(frame: .zero)
@@ -507,8 +551,8 @@ private final class StartHeroView: NSView {
         subtitleLabel.preferredMaxLayoutWidth = StartLayout.contentWidth
         configurePassiveLabel(subtitleLabel)
 
-        // Two peer entry paths, with Open File carrying primary emphasis.
-        let actions = NSStackView(views: [openButton, newButton])
+        // Peer entry paths, with exactly one carrying primary emphasis.
+        let actions = NSStackView(views: [openButton, newButton] + (guideButton.map { [$0] } ?? []))
         actions.orientation = .horizontal
         actions.alignment = .centerY
         actions.spacing = 8
@@ -537,13 +581,14 @@ private final class StartHeroView: NSView {
         stack.spacing = 0
         addSubview(stack)
 
-        NSLayoutConstraint.activate([
+        // The two headline actions match each other, but the width comes from
+        // whichever label is longer — a fixed constant clipped "New Document".
+        var constraints: [NSLayoutConstraint] = [
             brand.widthAnchor.constraint(equalToConstant: 38),
             brand.heightAnchor.constraint(equalToConstant: 38),
             openButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight),
             newButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight),
-            openButton.widthAnchor.constraint(equalToConstant: StartLayout.actionWidth),
-            newButton.widthAnchor.constraint(equalToConstant: StartLayout.actionWidth),
+            openButton.widthAnchor.constraint(equalTo: newButton.widthAnchor),
             titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
             dropSlot.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -552,7 +597,13 @@ private final class StartHeroView: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        ]
+        if let guideButton {
+            // The tour carries no shortcut, so it sizes to its own label rather
+            // than padding out to match the two file actions.
+            constraints.append(guideButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight))
+        }
+        NSLayoutConstraint.activate(constraints)
 
         stack.setCustomSpacing(16, after: brandRow)
         stack.setCustomSpacing(4, after: titleLabel)
@@ -566,10 +617,18 @@ private final class StartHeroView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
+    /// Bindings are user-editable, so the hints on the buttons are re-read
+    /// rather than baked in at build time.
+    func refreshShortcuts() {
+        openButton.refreshShortcut()
+        newButton.refreshShortcut()
+    }
+
     func apply(sheet: StyleSheet) {
         self.sheet = sheet
         openButton.apply(sheet: sheet)
         newButton.apply(sheet: sheet)
+        guideButton?.apply(sheet: sheet)
         brandLabel.attributedStringValue = NSAttributedString(
             string: "Downright",
             attributes: [
@@ -578,13 +637,16 @@ private final class StartHeroView: NSView {
             ]
         )
         titleLabel.attributedStringValue = NSAttributedString(
-            string: "Open a Markdown file",
+            string: guide == .primary ? "Welcome to Downright" : "Open a Markdown file",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 24, weight: .semibold),
                 .foregroundColor: sheet.text,
                 .kern: -0.3,
             ]
         )
+        subtitleLabel.stringValue = guide == .primary
+            ? "The tour is a real document. It explains the reading tools while you read it."
+            : "Read, edit, and review it in one focused place."
         subtitleLabel.textColor = sheet.textSecondary
         dropHint.textColor = isDropActive ? sheet.accent : sheet.textSecondary
         dropIcon.contentTintColor = isDropActive ? sheet.accent : sheet.textFaint
@@ -892,10 +954,15 @@ private final class StartActionButton: NSButton {
     enum Kind { case primary, secondary }
 
     private let kind: Kind
+    /// The command this button runs, when it has one.  The shortcut hint is
+    /// read from the live binding table rather than written into the label:
+    /// bindings are user-editable, and a stale "⌘O" is a lie.
+    private let command: Command?
     private let shell = NSView()
     private let iconView = NSImageView()
     private let titleLabel: NSTextField
-    private let shortcutLabel: NSTextField
+    private let shortcutLabel = NSTextField(labelWithString: "")
+    private var shortcutGap: NSLayoutConstraint!
     private var isHovered = false
     private var isPressed = false
     private var sheet: StyleSheet
@@ -903,16 +970,16 @@ private final class StartActionButton: NSButton {
     init(
         title: String,
         icon: String,
-        shortcut: String,
+        command: Command?,
         kind: Kind,
         sheet: StyleSheet,
         target: AnyObject,
         action: Selector
     ) {
         self.kind = kind
+        self.command = command
         self.sheet = sheet
         titleLabel = NSTextField(labelWithString: title)
-        shortcutLabel = NSTextField(labelWithString: shortcut)
         super.init(frame: .zero)
 
         self.target = target
@@ -923,7 +990,6 @@ private final class StartActionButton: NSButton {
         focusRingType = .none
         setAccessibilityRole(.button)
         setAccessibilityLabel(title)
-        setAccessibilityHelp(shortcut)
         wantsLayer = true
 
         shell.translatesAutoresizingMaskIntoConstraints = false
@@ -949,6 +1015,9 @@ private final class StartActionButton: NSButton {
         configurePassiveLabel(shortcutLabel)
         shell.addSubview(shortcutLabel)
 
+        shortcutGap = shortcutLabel.leadingAnchor.constraint(
+            greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: Self.shortcutGapWidth
+        )
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
             shell.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -963,19 +1032,20 @@ private final class StartActionButton: NSButton {
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 7),
             titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
 
-            shortcutLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 12),
+            shortcutGap,
             shortcutLabel.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -14),
             shortcutLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
         ])
 
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The label must never be the thing that gives: a clipped "New Documen"
+        // is worse than a wider button.
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         shortcutLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         isEnabled = true
-        // The hero owns the action width so both controls share one visual
-        // column. Let the button expand beyond its intrinsic label width.
-        setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
+        refreshShortcut()
         updateSurface(animated: false)
 
         addTrackingArea(NSTrackingArea(
@@ -993,13 +1063,30 @@ private final class StartActionButton: NSButton {
         updateSurface(animated: false)
     }
 
+    /// Space between the label and the shortcut when there is a shortcut.
+    private static let shortcutGapWidth: CGFloat = 12
+
+    /// Re-reads the binding.  A command with no binding shows no hint and the
+    /// button closes up around its label.
+    func refreshShortcut() {
+        let hint = command
+            .flatMap { KeybindingStore.shared.primaryBinding(for: $0) }
+            .map(\.displayString) ?? ""
+        shortcutLabel.stringValue = hint
+        shortcutLabel.isHidden = hint.isEmpty
+        shortcutGap.constant = hint.isEmpty ? 0 : Self.shortcutGapWidth
+        setAccessibilityHelp(hint.isEmpty ? nil : hint)
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
     override var mouseDownCanMoveWindow: Bool { false }
 
     override var intrinsicContentSize: NSSize {
         let titleW = titleLabel.intrinsicContentSize.width
-        let shortW = shortcutLabel.intrinsicContentSize.width
+        let shortW = shortcutLabel.isHidden ? 0 : shortcutLabel.intrinsicContentSize.width
         // Trailing shortcut sits at the far edge; leave room so labels never clip.
-        return NSSize(width: ceil(14 + 14 + 7 + titleW + 12 + shortW + 14), height: 34)
+        return NSSize(width: ceil(14 + 14 + 7 + titleW + shortcutGap.constant + shortW + 14), height: 34)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {

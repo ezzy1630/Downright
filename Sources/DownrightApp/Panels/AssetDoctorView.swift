@@ -30,11 +30,12 @@ final class AssetDoctorView: NSView, PanelSurface {
         didSet { reload() }
     }
 
-    var preferredWidth: CGFloat { 344 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Asset Doctor")
+    private let titleLabel = NSTextField(labelWithString: Command.assetDoctor.panelTitle)
     private let statusLabel = NSTextField(labelWithString: "")
+    private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "assetDoctor")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
 
@@ -62,6 +63,10 @@ final class AssetDoctorView: NSView, PanelSurface {
 
         statusLabel.font = PanelFont.secondary
         statusLabel.alignment = .right
+        statusLabel.lineBreakMode = .byTruncatingTail
+        // The header must give way before it runs off a narrow inspector.
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(statusLabel)
 
@@ -72,6 +77,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         table.onActivate = { [weak self] in self?.activateSelection() }
         table.setAccessibilityLabel("Asset diagnostics")
         addSubview(scroll)
+        emptyState.install(in: self, over: scroll)
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
@@ -97,6 +103,25 @@ final class AssetDoctorView: NSView, PanelSurface {
         rebuildRows()
         table.reloadData()
         updateStatus()
+        updateEmptyState()
+    }
+
+    /// "No issues" in a corner over an empty list is not an answer.  Every
+    /// image resolving is a *result*, and the panel should say so (§11.4).
+    private func updateEmptyState() {
+        guard rows.isEmpty else {
+            emptyState.isHidden = true
+            scroll.isHidden = false
+            return
+        }
+        emptyState.configure(
+            symbol: "photo.on.rectangle",
+            title: "Every image resolves",
+            subtitle: "No missing files, unsafe destinations,\nor absolute paths in this document.",
+            styleSheet: styleSheet
+        )
+        emptyState.isHidden = false
+        scroll.isHidden = true
     }
 
     private func rebuildRows() {
@@ -142,6 +167,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         titleLabel.textColor = styleSheet.textSecondary
         statusLabel.textColor = styleSheet.textFaint
         table.reloadData()
+        updateEmptyState()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -188,9 +214,13 @@ extension AssetDoctorView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return 44 }
+        guard row < rows.count else { return PanelMetrics.detailRowHeight }
         if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        return 54
+        return PanelMetrics.detailRowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
@@ -256,14 +286,31 @@ extension AssetDoctorView: NSTableViewDataSource, NSTableViewDelegate {
     }
 }
 
+/// One asset finding.
+///
+/// The row's four actions live in a menu rather than four bordered buttons.
+/// Four bezels per row in a list of twenty is the loudest thing in a low-chrome
+/// app, and at 54pt they clipped anyway.  The menu is on the row's context
+/// menu (pointer) and behind one quiet glyph that appears on hover, so every
+/// action still has a pointer path and a keyboard path (§11.3).
 private final class AssetDiagnosticRowView: NSView {
     private let severityLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
     private let lineLabel = NSTextField(labelWithString: "")
-    private let actionStack = NSStackView()
-    private var actions: [ButtonAction] = []
+    private let actionsButton: NSButton
+    private var actionsAction: ButtonAction?
+    private var trackingArea: NSTrackingArea?
+    private var handlers: Handlers?
+
+    private struct Handlers {
+        let select: () -> Void
+        let reveal: () -> Void
+        let relink: () -> Void
+        let rename: () -> Void
+    }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
+        actionsButton = PanelButton.symbol("ellipsis.circle", label: "Asset actions", action: ButtonAction {})
         super.init(frame: .zero)
         self.identifier = identifier
 
@@ -280,13 +327,16 @@ private final class AssetDiagnosticRowView: NSView {
 
         lineLabel.font = PanelFont.secondary
         lineLabel.alignment = .right
+        lineLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         lineLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(lineLabel)
 
-        actionStack.orientation = .horizontal
-        actionStack.spacing = 4
-        actionStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(actionStack)
+        let action = ButtonAction { [weak self] in self?.showActionsMenu() }
+        actionsAction = action
+        actionsButton.target = action
+        actionsButton.action = #selector(ButtonAction.fire(_:))
+        actionsButton.alphaValue = 0
+        addSubview(actionsButton)
 
         NSLayoutConstraint.activate([
             severityLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -295,12 +345,13 @@ private final class AssetDiagnosticRowView: NSView {
             messageLabel.leadingAnchor.constraint(equalTo: severityLabel.trailingAnchor, constant: 4),
             messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: lineLabel.leadingAnchor, constant: -4),
             messageLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            lineLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            messageLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -5),
+            lineLabel.trailingAnchor.constraint(equalTo: actionsButton.leadingAnchor, constant: -2),
             lineLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             lineLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 38),
-            actionStack.leadingAnchor.constraint(equalTo: messageLabel.leadingAnchor),
-            actionStack.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 3),
-            actionStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -5),
+            actionsButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            actionsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            actionsButton.widthAnchor.constraint(equalToConstant: 24),
         ])
     }
 
@@ -324,25 +375,68 @@ private final class AssetDiagnosticRowView: NSView {
         messageLabel.textColor = styleSheet.textSecondary
         lineLabel.stringValue = "Line \(diagnostic.reference.line)"
         lineLabel.textColor = styleSheet.textFaint
+        actionsButton.contentTintColor = styleSheet.textFaint
 
-        actionStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        actions.removeAll(keepingCapacity: true)
-        let select = ButtonAction(onSelect)
-        actions.append(select)
-        actionStack.addArrangedSubview(PanelButton.text("Select", action: select))
-        let reveal = ButtonAction(onReveal)
-        actions.append(reveal)
-        actionStack.addArrangedSubview(PanelButton.text("Reveal", action: reveal))
-        let relink = ButtonAction(onRelink)
-        actions.append(relink)
-        actionStack.addArrangedSubview(PanelButton.text("Relink", action: relink))
-        let rename = ButtonAction(onRename)
-        actions.append(rename)
-        actionStack.addArrangedSubview(PanelButton.text("Rename", action: rename))
+        handlers = Handlers(select: onSelect, reveal: onReveal, relink: onRelink, rename: onRename)
+        menu = makeActionsMenu()
 
         let destination = diagnostic.reference.source
         let severity = diagnostic.severity.rawValue.capitalized
         setAccessibilityLabel("\(severity), line \(diagnostic.reference.line): \(diagnostic.message). Asset \(destination)")
         toolTip = destination
+    }
+
+    private func makeActionsMenu() -> NSMenu {
+        let menu = NSMenu()
+        for (title, key) in [("Select in Document", "select"), ("Reveal in Finder", "reveal"),
+                             ("Relink…", "relink"), ("Rename…", "rename")] {
+            let item = NSMenuItem(title: title, action: #selector(performAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = key
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func performAction(_ sender: NSMenuItem) {
+        guard let handlers, let key = sender.representedObject as? String else { return }
+        switch key {
+        case "select": handlers.select()
+        case "reveal": handlers.reveal()
+        case "relink": handlers.relink()
+        case "rename": handlers.rename()
+        default: break
+        }
+    }
+
+    private func showActionsMenu() {
+        guard let menu else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: actionsButton.frame.minX, y: actionsButton.frame.maxY), in: self)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { setActionsVisible(true) }
+    override func mouseExited(with event: NSEvent) { setActionsVisible(false) }
+
+    private func setActionsVisible(_ visible: Bool) {
+        // This row view is not given a StyleSheet, so it cannot see a Reader
+        // Profile's motion override — the workspace flag is the best it has.
+        PanelAnimation.run(
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            duration: Motion.quick
+        ) { _ in
+            self.actionsButton.animator().alphaValue = visible ? 1 : 0
+        }
     }
 }

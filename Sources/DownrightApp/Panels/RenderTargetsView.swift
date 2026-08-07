@@ -32,7 +32,12 @@ final class RenderTargetsView: NSView, PanelSurface {
     }
 
     var sourceText: String = "" {
-        didSet { reloadPreview() }
+        didSet {
+            guard sourceText != oldValue else { return }
+            lineIndex = SourceLineIndex(text: sourceText)
+            table.reloadData()
+            reloadPreview()
+        }
     }
 
     var selectedProfile: RenderTargetProfile = .gitHub {
@@ -48,14 +53,15 @@ final class RenderTargetsView: NSView, PanelSurface {
         didSet { reload() }
     }
 
-    var preferredWidth: CGFloat { 360 }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Render targets")
+    private let titleLabel = NSTextField(labelWithString: Command.renderTargets.panelTitle)
     private let countLabel = NSTextField(labelWithString: "")
     private let targetControl = NSPopUpButton()
     private let previewLabel = NSTextField(labelWithString: "")
     private let preview = NSTextView()
+    private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "renderTargets")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private let applyButton: NSButton
@@ -64,6 +70,13 @@ final class RenderTargetsView: NSView, PanelSurface {
     private var sourceAction: ButtonAction?
     private var rows: [Row] = []
     private var selectedIndex: Int?
+    /// Selection survives a reparse by diagnostic id rather than row number.
+    private var selectedDiagnosticID: String?
+    private var lineIndex = SourceLineIndex(text: "")
+    /// What the last action did, shown where the preview normally is.
+    private var actionStatus: String?
+    private var isApplyingFixes = false
+    private var previewConstraints: [NSLayoutConstraint] = []
 
     private enum Row {
         case group(MarkdownCapability, Int)
@@ -131,12 +144,16 @@ final class RenderTargetsView: NSView, PanelSurface {
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
         sourceButton.setAccessibilityLabel("Open Source Focus")
+        for button in [applyButton, sourceButton] {
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
         let actions = NSStackView(views: [applyButton, sourceButton])
         actions.orientation = .horizontal
         actions.alignment = .centerY
         actions.spacing = 5
         actions.translatesAutoresizingMaskIntoConstraints = false
         addSubview(actions)
+        emptyState.install(in: self, over: scroll)
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
@@ -157,12 +174,15 @@ final class RenderTargetsView: NSView, PanelSurface {
             preview.leadingAnchor.constraint(equalTo: previewLabel.leadingAnchor),
             preview.trailingAnchor.constraint(equalTo: previewLabel.trailingAnchor),
             preview.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 4),
-            preview.heightAnchor.constraint(equalToConstant: 74),
             actions.leadingAnchor.constraint(equalTo: previewLabel.leadingAnchor),
             actions.trailingAnchor.constraint(lessThanOrEqualTo: previewLabel.trailingAnchor),
             actions.topAnchor.constraint(equalTo: preview.bottomAnchor, constant: 7),
             actions.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
         ])
+
+        // The diff box only exists while there is a diff to put in it.
+        previewConstraints = [preview.heightAnchor.constraint(equalToConstant: 74)]
+        NSLayoutConstraint.activate(previewConstraints)
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Render targets")
@@ -204,6 +224,7 @@ final class RenderTargetsView: NSView, PanelSurface {
     }
 
     private func reload() {
+        if !isApplyingFixes { actionStatus = nil }
         rows.removeAll(keepingCapacity: true)
         let grouped = Dictionary(grouping: report.diagnostics.indices, by: { report.diagnostics[$0].capability })
         for capability in MarkdownCapability.allCases {
@@ -216,10 +237,52 @@ final class RenderTargetsView: NSView, PanelSurface {
             : "\(report.diagnostics.count) issue\(report.diagnostics.count == 1 ? "" : "s")"
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         table.reloadData()
-        table.deselectAll(nil)
-        selectedIndex = nil
+        restoreSelection()
+        updateEmptyState()
         reloadPreview()
-        applyButton.isEnabled = report.diagnostics.contains { $0.proposal != nil }
+        updateActionState()
+    }
+
+    /// Reselect the same finding after a reparse instead of clearing the
+    /// selection — and the preview — on every keystroke in the document.
+    private func restoreSelection() {
+        guard let selectedDiagnosticID,
+              let index = report.diagnostics.firstIndex(where: { $0.id == selectedDiagnosticID }),
+              let row = rows.firstIndex(where: {
+                  if case .diagnostic(let candidate) = $0 { return candidate == index }
+                  return false
+              })
+        else {
+            table.deselectAll(nil)
+            selectedIndex = nil
+            self.selectedDiagnosticID = nil
+            return
+        }
+        selectedIndex = index
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    private func updateEmptyState() {
+        guard rows.isEmpty else {
+            emptyState.isHidden = true
+            scroll.isHidden = false
+            return
+        }
+        emptyState.configure(
+            symbol: "checkmark.seal",
+            title: "Compatible with \(selectedProfile.name)",
+            subtitle: "Everything in this document renders\non the selected target.",
+            styleSheet: styleSheet
+        )
+        emptyState.isHidden = false
+        scroll.isHidden = true
+    }
+
+    private func updateActionState() {
+        let count = safeEdits.count
+        applyButton.title = count == 1 ? "Apply 1 Safe Fix" : "Apply \(count) Safe Fixes"
+        applyButton.isEnabled = count > 0
+        applyButton.setAccessibilityLabel(applyButton.title)
     }
 
     private func diagnosticIndex(for row: Int) -> Int? {
@@ -232,19 +295,31 @@ final class RenderTargetsView: NSView, PanelSurface {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard let index = diagnosticIndex(for: row) else { return }
         selectedIndex = index
+        selectedDiagnosticID = report.diagnostics[index].id
+        actionStatus = nil
         reloadPreview()
         delegate?.renderTargetsView(self, didSelect: report.diagnostics[index])
     }
 
-    private func applySafeFixes() {
+    /// Every edit the apply button would write, in the order it will write them.
+    private var safeEdits: [TextEdit] {
         let length = (sourceText as NSString).length
         let edits = report.diagnostics.compactMap { diagnostic -> TextEdit? in
             guard let proposal = diagnostic.proposal,
                   proposal.range.location >= 0, proposal.range.upperBound <= length else { return nil }
             return TextEdit(range: proposal.range, replacement: proposal.replacement, summary: proposal.summary)
         }
+        return nonOverlapping(edits)
+    }
+
+    private func applySafeFixes() {
+        let edits = safeEdits
         guard !edits.isEmpty else { return }
-        delegate?.renderTargetsView(self, didApply: nonOverlapping(edits))
+        actionStatus = "Applied \(edits.count) safe fix\(edits.count == 1 ? "" : "es")."
+        isApplyingFixes = true
+        delegate?.renderTargetsView(self, didApply: edits)
+        isApplyingFixes = false
+        reloadPreview()
     }
 
     private func nonOverlapping(_ edits: [TextEdit]) -> [TextEdit] {
@@ -256,19 +331,39 @@ final class RenderTargetsView: NSView, PanelSurface {
         }
     }
 
+    /// Shows the diff box only when there is a diff.  Asking the reader to
+    /// "select a finding" over an empty list is an instruction with no target.
     private func reloadPreview() {
-        guard let selectedIndex, selectedIndex < report.diagnostics.count,
-              let proposal = report.diagnostics[selectedIndex].proposal else {
-            previewLabel.stringValue = "Select a finding to preview a safe source change."
-            preview.string = ""
+        if let actionStatus {
+            previewLabel.stringValue = actionStatus
+            setPreviewVisible(false)
             return
         }
-        guard proposal.range.location >= 0,
-              proposal.range.upperBound <= (sourceText as NSString).length else { return }
+        guard !rows.isEmpty else {
+            previewLabel.stringValue = ""
+            setPreviewVisible(false)
+            return
+        }
+        guard let selectedIndex, selectedIndex < report.diagnostics.count,
+              let proposal = report.diagnostics[selectedIndex].proposal,
+              proposal.range.location >= 0,
+              proposal.range.upperBound <= (sourceText as NSString).length else {
+            previewLabel.stringValue = "Select a finding to preview a safe source change."
+            setPreviewVisible(false)
+            return
+        }
         let before = (sourceText as NSString).substring(with: proposal.range)
         previewLabel.stringValue = "Preview · \(proposal.summary)"
         preview.string = "− \(before)\n+ \(proposal.replacement)"
         preview.setAccessibilityLabel("Source change preview: replace \(before) with \(proposal.replacement)")
+        setPreviewVisible(true)
+    }
+
+    private func setPreviewVisible(_ visible: Bool) {
+        guard preview.isHidden == visible else { return }
+        preview.isHidden = !visible
+        if !visible { preview.string = "" }
+        for constraint in previewConstraints { constraint.constant = visible ? 74 : 0 }
     }
 
     private func applyStyle() {
@@ -278,6 +373,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         preview.backgroundColor = styleSheet.background
         preview.textColor = styleSheet.text
         table.reloadData()
+        updateEmptyState()
     }
 
     @objc private func rowClicked(_ sender: Any?) { activateSelection() }
@@ -291,9 +387,12 @@ final class RenderTargetsView: NSView, PanelSurface {
 extension RenderTargetsView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return 48 }
+        guard row < rows.count else { return PanelMetrics.wideRowHeight }
         if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        return 58
+        return PanelMetrics.wideRowHeight
+    }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
     }
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
         guard row < rows.count else { return false }
@@ -319,7 +418,11 @@ extension RenderTargetsView: NSTableViewDataSource, NSTableViewDelegate {
             let id = NSUserInterfaceItemIdentifier("renderTargetsRow")
             let cell = tableView.makeView(withIdentifier: id, owner: self) as? CompatibilityDiagnosticRowView
                 ?? CompatibilityDiagnosticRowView(identifier: id)
-            cell.configure(diagnostic: report.diagnostics[index], styleSheet: styleSheet)
+            cell.configure(
+                diagnostic: report.diagnostics[index],
+                lineCaption: lineIndex.caption(for: report.diagnostics[index].range),
+                styleSheet: styleSheet
+            )
             return cell
         }
     }
@@ -357,13 +460,17 @@ private final class CompatibilityDiagnosticRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(diagnostic: CompatibilityDiagnostic, styleSheet: StyleSheet) {
+    func configure(diagnostic: CompatibilityDiagnostic, lineCaption: String, styleSheet: StyleSheet) {
         titleLabel.stringValue = diagnostic.title
         detailLabel.stringValue = diagnostic.explanation
-        rangeLabel.stringValue = "Source range \(diagnostic.range.location)–\(diagnostic.range.upperBound)"
+        // Line for the reader; the exact range stays on the accessibility
+        // label, where a precise source position is still worth having.
+        rangeLabel.stringValue = lineCaption
         titleLabel.textColor = styleSheet.calloutColor(.warning)
         detailLabel.textColor = styleSheet.textSecondary
         rangeLabel.textColor = styleSheet.textFaint
-        setAccessibilityLabel("\(diagnostic.title). \(diagnostic.explanation). \(rangeLabel.stringValue)")
+        toolTip = "\(diagnostic.title)\n\(diagnostic.explanation)"
+        let range = "Source range \(diagnostic.range.location)–\(diagnostic.range.upperBound)"
+        setAccessibilityLabel("\(diagnostic.title). \(diagnostic.explanation). \(lineCaption). \(range)")
     }
 }

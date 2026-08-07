@@ -29,12 +29,12 @@ final class SiblingSidebarView: NSView, PanelSurface {
     var siblings: [SiblingScanner.Sibling] = [] { didSet { reload() } }
     var filterText: String = "" { didSet { guard filterText != oldValue else { return }; reload() } }
 
-    var preferredWidth: CGFloat { 320 }
+    var preferredWidth: CGFloat { PanelMetrics.listWidth }
     var hasVisibleContent: Bool { !rows.isEmpty }
     var preferredHeight: CGFloat {
         guard hasVisibleContent else { return 0 }
         let rowCount = min(rows.count, 12)
-        return 40 + CGFloat(rowCount) * 30
+        return 40 + CGFloat(rowCount) * PanelMetrics.listRowHeight
     }
     // MARK: - Views
 
@@ -75,8 +75,9 @@ final class SiblingSidebarView: NSView, PanelSurface {
 
         table.dataSource = self
         table.delegate = self
-        table.rowHeight = 30
-        table.selectionHighlightStyle = .none
+        table.rowHeight = PanelMetrics.listRowHeight
+        // Selection is drawn once, by `PanelSelectionRowView`, for every panel.
+        table.selectionHighlightStyle = .regular
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.openSelected(inNewWindow: false) }
@@ -191,9 +192,13 @@ extension SiblingSidebarView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return 30 }
+        guard row < rows.count else { return PanelMetrics.listRowHeight }
         if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        return 30
+        return PanelMetrics.listRowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
@@ -322,13 +327,14 @@ private final class SiblingRowView: NSView {
         needsDisplay = true
     }
 
+    /// Selection is `PanelSelectionRowView`'s job now; the row draws only the
+    /// current-document rule, the hover wash, and the unseen-change dot.
     override func draw(_ dirtyRect: NSRect) {
         guard let styleSheet else { return }
 
         let alpha: CGFloat?
-        if isSelected { alpha = 0.12 }
-        else if isCurrent { alpha = 0.08 }
-        else if isHovered { alpha = 0.05 }
+        if isCurrent { alpha = 0.08 }
+        else if isHovered && !isSelected { alpha = 0.05 }
         else { alpha = nil }
         if let alpha {
             styleSheet.text

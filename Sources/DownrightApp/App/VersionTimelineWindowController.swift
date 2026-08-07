@@ -104,7 +104,13 @@ final class VersionTimelineWindowController: NSWindowController {
             return
         }
         preview.textView.changeMarks = TextDiff.hunks(old: previous, new: text).map {
-            (kind: $0.kind, range: $0.newRange, words: $0.wordRanges)
+            MarkdownTextView.ChangeMark(
+                kind: $0.kind,
+                range: TextDiff.anchorRange(for: $0, inNewTextOfLength: (text as NSString).length),
+                words: $0.wordRanges,
+                deletedText: $0.kind == .deleted
+                    ? (previous as NSString).substring(with: $0.oldRange) : ""
+            )
         }
     }
 }

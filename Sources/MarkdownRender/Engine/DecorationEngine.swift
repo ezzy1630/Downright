@@ -700,9 +700,17 @@ public final class DecorationEngine {
     }
 
     private func applyLink(_ destination: String, span: InlineSpan, state: inout DecorateState) {
+        // A link has to be findable without colour: WCAG 1.4.1, and readers who
+        // cannot separate the link hue from body text otherwise have no way to
+        // see one at all.  The rest at low contrast, so the page stays calm;
+        // hover still strengthens it (§7.1).
         apply([
             .drLink: destination,
             .foregroundColor: styleSheet.link,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .underlineColor: styleSheet.link.withAlphaComponent(
+                styleSheet.increaseContrast ? 0.75 : 0.35
+            ),
         ], to: span.contentRange.length > 0 ? span.contentRange : span.range, state: &state)
     }
 

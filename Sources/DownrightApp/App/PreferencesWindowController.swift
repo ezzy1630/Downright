@@ -2,74 +2,264 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
-/// Settings, including the keybinding editor §7.2 promises.
+/// The panes of the Settings window, in the order they appear.
+///
+/// A typed value rather than a title string: "Keyboard Shortcuts…" has to be
+/// able to name the pane it opens, and the search field has to be able to jump
+/// to one.
+enum SettingsPane: String, CaseIterable {
+    case general, appearance, typography, editor, history, updates, keys
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .appearance: return "Appearance"
+        case .typography: return "Typography"
+        case .editor: return "Editor"
+        case .history: return "History"
+        case .updates: return "Updates"
+        case .keys: return "Keys"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .appearance: return "circle.lefthalf.filled"
+        case .typography: return "textformat"
+        case .editor: return "square.and.pencil"
+        case .history: return "clock.arrow.circlepath"
+        case .updates: return "arrow.down.circle"
+        case .keys: return "keyboard"
+        }
+    }
+}
+
+/// A pane that participates in the settings search.
+@MainActor
+protocol PreferenceSearchable: AnyObject {
+    /// Words the user typed; empty means "show everything".
+    var searchQuery: String { get set }
+    /// How many rows survive the current query.
+    var searchMatchCount: Int { get }
+}
+
+/// Settings, including the keybinding editor.
 ///
 /// The keys pane is generated from the `Command` table, so a command added
 /// anywhere in the app is remappable here without touching this file.
 @MainActor
 final class PreferencesWindowController: NSWindowController {
+    private let tabs: NSTabViewController
+    private var panes: [(pane: SettingsPane, controller: NSViewController)] = []
+    private let searchField = NSSearchField()
+
     convenience init() {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
-        let panes: [(String, String, [PreferenceRow])] = [
-            ("General", "gearshape", PreferencesForms.general()),
-            ("Appearance", "circle.lefthalf.filled", PreferencesForms.appearance()),
-            ("Typography", "textformat", PreferencesForms.typography()),
-            ("Editor", "square.and.pencil", PreferencesForms.editor()),
-            ("History", "clock.arrow.circlepath", PreferencesForms.history()),
-            ("Updates", "arrow.down.circle", PreferencesForms.updates()),
-        ]
-        for (title, symbol, rows) in panes {
-            let pane = PreferencesPane(title: title, symbol: symbol, rows: rows)
-            tabs.addTabViewItem(NSTabViewItem(viewController: pane))
-        }
-        tabs.addTabViewItem(NSTabViewItem(viewController: KeybindingsPane()))
-
         let window = NSWindow(contentViewController: tabs)
         window.title = "Downright Settings"
         window.styleMask.insert(.resizable)
-        window.setContentSize(NSSize(width: 760, height: 600))
-        self.init(window: window)
+        window.setContentSize(NSSize(width: 760, height: 620))
+        self.init(window: window, tabs: tabs)
+    }
+
+    private init(window: NSWindow, tabs: NSTabViewController) {
+        self.tabs = tabs
+        super.init(window: window)
+
+        for pane in SettingsPane.allCases {
+            let controller: NSViewController = pane == .keys
+                ? KeybindingsPane()
+                : PreferencesPane(pane: pane, rows: PreferencesForms.rows(for: pane))
+            panes.append((pane, controller))
+            tabs.addTabViewItem(NSTabViewItem(viewController: controller))
+        }
+        installSearchField(in: window)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func select(_ pane: SettingsPane) {
+        guard let index = panes.firstIndex(where: { $0.pane == pane }) else { return }
+        tabs.selectedTabViewItemIndex = index
+    }
+
+    // MARK: - Search
+
+    /// Seven panes and about thirty controls is more than anyone should have to
+    /// scan by eye.  The rows are already declarative data, so filtering them
+    /// costs one pass — and because every pane filters at once, a query also
+    /// tells the user which pane the setting lives in.
+    private func installSearchField(in window: NSWindow) {
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "Search settings"
+        searchField.sendsSearchStringImmediately = false
+        searchField.sendsWholeSearchString = false
+        searchField.target = self
+        searchField.action = #selector(searchChanged)
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(searchField)
+        NSLayoutConstraint.activate([
+            container.heightAnchor.constraint(equalToConstant: 38),
+            searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            searchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
+            searchField.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = container
+        accessory.layoutAttribute = .bottom
+        window.addTitlebarAccessoryViewController(accessory)
+    }
+
+    @objc private func searchChanged(_ sender: NSSearchField) {
+        let query = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        for entry in panes {
+            (entry.controller as? PreferenceSearchable)?.searchQuery = query
+        }
+        guard !query.isEmpty else { return }
+        // Jump to the first pane that has something to show, so a query that
+        // matches one setting lands the user on it rather than on an empty pane.
+        if let hit = panes.firstIndex(where: {
+            ($0.controller as? PreferenceSearchable).map { $0.searchMatchCount > 0 } ?? false
+        }) {
+            tabs.selectedTabViewItemIndex = hit
+        }
     }
 }
 
 // MARK: - Form rows
 
 /// A row in a settings pane.  Keeping the panes declarative means a new
-/// preference is one line here, not a layout exercise.
+/// preference is one line in `PreferencesForms`, not a layout exercise — and it
+/// is what lets the search filter them.
 enum PreferenceRow {
     case toggle(String, help: String?, get: () -> Bool, set: (Bool) -> Void)
     case stepper(String, help: String?, range: ClosedRange<Double>, step: Double, get: () -> Double, set: (Double) -> Void)
-    case choice(String, help: String?, options: [String], get: () -> Int, set: (Int) -> Void)
+    case choice(String, help: String?, options: [String], get: () -> ChoiceSelection, set: (Int) -> Void)
     case text(String, help: String?, get: () -> String, set: (String) -> Void)
     case button(String, () -> Void)
     case section(String)
     case note(String)
+
+    /// What a popup should show.
+    ///
+    /// A stored value that is no longer in the list — a theme whose file was
+    /// deleted, an editor that was uninstalled — must stay visible.  Falling
+    /// back to the first item makes the popup disagree with the setting behind
+    /// it, and the user has no way to tell.
+    enum ChoiceSelection {
+        case index(Int)
+        case missing(String)
+    }
+
+    /// Header rows carry no control of their own and survive a search only when
+    /// something under them does.
+    var isSection: Bool {
+        if case .section = self { return true }
+        return false
+    }
+
+    /// Every word the user might type to find this row.
+    var searchableText: String {
+        switch self {
+        case .toggle(let title, let help, _, _),
+             .text(let title, let help, _, _):
+            return [title, help ?? ""].joined(separator: " ")
+        case .stepper(let title, let help, _, _, _, _):
+            return [title, help ?? ""].joined(separator: " ")
+        case .choice(let title, let help, let options, _, _):
+            return ([title, help ?? ""] + options).joined(separator: " ")
+        case .button(let title, _):
+            return title
+        case .section(let title):
+            return title
+        case .note(let text):
+            return text
+        }
+    }
 }
 
-final class PreferencesPane: NSViewController {
-    private let rows: [PreferenceRow]
-    private let paneTitle: String
-    private let symbol: String
+/// Pure filtering, so the search behaviour is testable without a window.
+enum PreferenceRowFilter {
+    /// Keeps rows matching every word of the query, then drops section headers
+    /// that ended up with nothing beneath them.  A query that matches a section
+    /// title keeps that whole section.
+    static func apply(_ rows: [PreferenceRow], query: String) -> [PreferenceRow] {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return rows }
 
-    init(title: String, symbol: String, rows: [PreferenceRow]) {
-        self.paneTitle = title
-        self.symbol = symbol
-        self.rows = rows
+        func matches(_ row: PreferenceRow) -> Bool {
+            let text = row.searchableText.lowercased()
+            return words.allSatisfy(text.contains)
+        }
+
+        var kept: [PreferenceRow] = []
+        var sectionMatched = false
+        for row in rows {
+            if row.isSection {
+                sectionMatched = matches(row)
+                kept.append(row)
+                continue
+            }
+            if sectionMatched || matches(row) { kept.append(row) }
+        }
+        // Trailing pass: a header with no rows under it is noise.
+        var pruned: [PreferenceRow] = []
+        for (index, row) in kept.enumerated() {
+            if row.isSection {
+                let hasContent = kept[(index + 1)...].prefix { !$0.isSection }.isEmpty == false
+                guard hasContent else { continue }
+            }
+            pruned.append(row)
+        }
+        return pruned
+    }
+}
+
+@MainActor
+final class PreferencesPane: NSViewController, PreferenceSearchable {
+    private let pane: SettingsPane
+    /// Rows are re-read, not snapshotted.  A theme imported since the window
+    /// was built, a history folder that has grown, an updater that has checked
+    /// since — all of it is stale the moment it is captured.
+    private let makeRows: () -> [PreferenceRow]
+    private let stack = NSStackView()
+    private let emptyLabel = NSTextField(labelWithString: "No settings match your search.")
+
+    var searchQuery: String = "" {
+        didSet {
+            guard searchQuery != oldValue else { return }
+            if isViewLoaded { rebuild() }
+        }
+    }
+
+    var searchMatchCount: Int {
+        PreferenceRowFilter.apply(makeRows(), query: searchQuery)
+            .filter { !$0.isSection }
+            .count
+    }
+
+    init(pane: SettingsPane, rows: @escaping () -> [PreferenceRow]) {
+        self.pane = pane
+        self.makeRows = rows
         super.init(nibName: nil, bundle: nil)
-        self.title = title
+        self.title = pane.title
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     override func loadView() {
-        let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
 
-        for row in rows { stack.addArrangedSubview(control(for: row)) }
+        emptyLabel.font = .systemFont(ofSize: 12)
+        emptyLabel.textColor = .tertiaryLabelColor
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -82,11 +272,34 @@ final class PreferencesPane: NSViewController {
             stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
         view = scroll
+        rebuild()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        if let item = tabBarItem { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: paneTitle) }
+        if let item = tabBarItem {
+            item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
+        }
+    }
+
+    /// Every appearance rebuilds: the window is long-lived and the values
+    /// behind these controls are not.
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        rebuild()
+    }
+
+    private func rebuild() {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let rows = PreferenceRowFilter.apply(makeRows(), query: searchQuery)
+        guard !rows.isEmpty else {
+            stack.addArrangedSubview(emptyLabel)
+            return
+        }
+        for row in rows { stack.addArrangedSubview(control(for: row)) }
     }
 
     private var tabBarItem: NSTabViewItem? {
@@ -118,8 +331,12 @@ final class PreferencesPane: NSViewController {
             return labelled(button, help: help)
 
         case .stepper(let title, let help, let range, let step, let get, let set):
-            let field = NSTextField(string: String(format: "%g", get()))
-            field.formatter = NumberFormatter()
+            // The formatter comes from the row's own step, so a fractional
+            // setting can actually be typed: a bare NumberFormatter allows zero
+            // fraction digits and quietly rejects "1.55" for line height.
+            let formatter = PreferencesPane.numberFormatter(range: range, step: step)
+            let field = NSTextField(string: formatter.string(from: NSNumber(value: get())) ?? "")
+            field.formatter = formatter
             field.widthAnchor.constraint(equalToConstant: 70).isActive = true
             let stepper = NSStepper()
             stepper.minValue = range.lowerBound
@@ -129,13 +346,13 @@ final class PreferencesPane: NSViewController {
             let updateValue: (Double) -> Void = { value in
                 let value = min(range.upperBound, max(range.lowerBound, value))
                 stepper.doubleValue = value
-                field.stringValue = String(format: "%g", value)
+                field.stringValue = formatter.string(from: NSNumber(value: value)) ?? ""
                 set(value)
             }
             let stepperHandler = ActionHandler { updateValue(stepper.doubleValue) }
             let fieldHandler = ActionHandler {
                 guard let value = Double(field.stringValue) else {
-                    field.stringValue = String(format: "%g", stepper.doubleValue)
+                    field.stringValue = formatter.string(from: NSNumber(value: stepper.doubleValue)) ?? ""
                     return
                 }
                 updateValue(value)
@@ -154,8 +371,18 @@ final class PreferencesPane: NSViewController {
 
         case .choice(let title, let help, let options, let get, let set):
             let popup = NSPopUpButton()
+            popup.autoenablesItems = false
             popup.addItems(withTitles: options)
-            popup.selectItem(at: min(get(), max(0, options.count - 1)))
+            switch get() {
+            case .index(let index):
+                popup.selectItem(at: min(max(0, index), max(0, options.count - 1)))
+            case .missing(let name):
+                // Show what is stored, disabled, instead of silently selecting
+                // something else: the setting and the popup must agree.
+                popup.addItem(withTitle: "\(name) (not available)")
+                popup.lastItem?.isEnabled = false
+                popup.select(popup.lastItem)
+            }
             let handler = ActionHandler { set(popup.indexOfSelectedItem) }
             popup.target = handler
             popup.action = #selector(ActionHandler.run)
@@ -189,6 +416,20 @@ final class PreferencesPane: NSViewController {
         }
     }
 
+    /// Decimal places implied by a step: 1 → none, 0.05 → two.
+    static func numberFormatter(range: ClosedRange<Double>, step: Double) -> NumberFormatter {
+        let digits = step > 0 ? max(0, Int(ceil(-log10(step)))) : 0
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.allowsFloats = digits > 0
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = digits
+        formatter.minimum = NSNumber(value: range.lowerBound)
+        formatter.maximum = NSNumber(value: range.upperBound)
+        return formatter
+    }
+
     private func labelled(_ control: NSView, help: String?) -> NSView {
         guard let help else { return control }
         let hint = NSTextField(wrappingLabelWithString: help)
@@ -214,31 +455,61 @@ final class ActionHandler: NSObject {
 // MARK: - Form definitions
 
 enum PreferencesForms {
+    /// One row-builder per pane, evaluated afresh every time a pane appears.
+    @MainActor
+    static func rows(for pane: SettingsPane) -> () -> [PreferenceRow] {
+        switch pane {
+        case .general: return general
+        case .appearance: return appearance
+        case .typography: return typography
+        case .editor: return editor
+        case .history: return history
+        case .updates: return updates
+        case .keys: return { [] }
+        }
+    }
+
+    /// The shortcut a command answers to right now.  Settings copy must never
+    /// hard-code a chord: every binding here is user-editable.
+    @MainActor
+    static func shortcut(for command: Command) -> String? {
+        KeybindingStore.shared.primaryBinding(for: command)?.displayString
+    }
+
+    @MainActor
     static func general() -> [PreferenceRow] {
-        [
+        // Offering an editor that isn't installed makes "Open in Editor" fail
+        // with no explanation, so the list is what this Mac actually has.
+        let editors = ExternalEditor.allCases.filter(\.isInstalled)
+        return [
             .section("On open"),
             .toggle("Restore windows from the last session", help: nil,
                     get: { Preferences.shared.values.restoreSession },
                     set: { value in Preferences.shared.update { $0.restoreSession = value } }),
 
-            .section("Agent workflow"),
-            .toggle("Watch files for external changes", help: "Marks up what changed while you were reading (§8.1).",
+            .section("Working with agents"),
+            .toggle("Watch files for external changes",
+                    help: "Marks what changed in the document while you were reading it.",
                     get: { Preferences.shared.values.watchFiles },
                     set: { value in Preferences.shared.update { $0.watchFiles = value } }),
             .toggle("Resolve file paths in documents",
-                    help: "Underlines paths the agent claims to have touched that aren't there (§8.4).",
+                    help: "Underlines paths that aren't there, so a file an agent claims to have written is easy to check.",
                     get: { Preferences.shared.values.resolvePathTokens },
                     set: { value in Preferences.shared.update { $0.resolvePathTokens = value } }),
             .choice("Open code files in",
-                    help: nil,
-                    options: ExternalEditor.allCases.map(\.title),
-                    get: { ExternalEditor.allCases.firstIndex(of: Preferences.shared.values.externalEditor) ?? 0 },
+                    help: "Only apps installed on this Mac are listed.",
+                    options: editors.map(\.title),
+                    get: {
+                        let current = Preferences.shared.values.externalEditor
+                        if let index = editors.firstIndex(of: current) { return .index(index) }
+                        return .missing(current.title)
+                    },
                     set: { index in
-                        guard ExternalEditor.allCases.indices.contains(index) else { return }
-                        Preferences.shared.update { $0.externalEditor = ExternalEditor.allCases[index] }
+                        guard editors.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.externalEditor = editors[index] }
                     }),
             .text("Extra sibling folders",
-                  help: "Comma-separated, scanned one level down from the document (§8.7).",
+                  help: "Folder names, separated by commas, scanned one level down from the document. Reopen a document for a change here to reach it.",
                   get: { Preferences.shared.values.siblingScanDirectories.joined(separator: ", ") },
                   set: { value in
                       Preferences.shared.update {
@@ -255,15 +526,16 @@ enum PreferencesForms {
         ]
     }
 
+    @MainActor
     static func typography() -> [PreferenceRow] {
         [
             .section("Body"),
-            .note("These values persist through Preferences.effectiveTypography. Applying them to open document surfaces is owned by the render/controller lane."),
-            .choice("Preset", help: "Reading is New York, Working is SF Pro Text (§11.1).",
+            .choice("Preset", help: "Reading is set in New York, Working in SF Pro Text.",
                     options: TypographyConfig.BodyPreset.allCases.map(\.title),
                     get: {
-                        TypographyConfig.BodyPreset.allCases
-                            .firstIndex(of: Preferences.shared.values.typography.preset) ?? 0
+                        let presets = TypographyConfig.BodyPreset.allCases
+                        let current = Preferences.shared.values.typography.preset
+                        return .index(presets.firstIndex(of: current) ?? 0)
                     },
                     set: { index in
                         guard TypographyConfig.BodyPreset.allCases.indices.contains(index) else { return }
@@ -274,15 +546,15 @@ enum PreferencesForms {
             .stepper("Size", help: nil, range: 11...24, step: 1,
                      get: { Double(Preferences.shared.values.typography.bodySize) },
                      set: { value in Preferences.shared.update { $0.typography.bodySize = CGFloat(value) } }),
-            .stepper("Text size adjustment", help: "A quick app-wide nudge, also available from the View menu.",
+            .stepper("Text size adjustment", help: "A quick app-wide nudge, also on the View menu.",
                      range: -4...10, step: 1,
                      get: { Double(Preferences.shared.values.textSizeAdjustment) },
                      set: { value in Preferences.shared.update { $0.textSizeAdjustment = CGFloat(value) } }),
-            .choice("Type scale", help: "One ratio drives every heading size (§11.1).",
+            .choice("Type scale", help: "One ratio sets every heading size.",
                     options: ["1.200", "1.250", "1.333"],
                     get: {
                         let ratio = Preferences.shared.values.typography.scaleRatio
-                        return ratio < 1.22 ? 0 : (ratio < 1.29 ? 1 : 2)
+                        return .index(ratio < 1.22 ? 0 : (ratio < 1.29 ? 1 : 2))
                     },
                     set: { index in
                         let ratios: [CGFloat] = [1.2, 1.25, 1.333]
@@ -294,7 +566,8 @@ enum PreferencesForms {
             .stepper("Line height", help: nil, range: 1.2...2.0, step: 0.05,
                      get: { Double(Preferences.shared.values.typography.lineHeightMultiple) },
                      set: { value in Preferences.shared.update { $0.typography.lineHeightMultiple = CGFloat(value) } }),
-            .stepper("Measure (characters)", help: "Capped at 68–72; full-width text is the single most common thing markdown viewers get wrong (§11.1).",
+            .stepper("Measure (characters)",
+                     help: "How much text fits on a line before it wraps. Around 68 to 72 reads best; full-width text is the most common thing Markdown viewers get wrong.",
                      range: 60...80, step: 1,
                      get: { Double(Preferences.shared.values.typography.measureCharacters) },
                      set: { value in Preferences.shared.update { $0.typography.measureCharacters = CGFloat(value) } }),
@@ -308,102 +581,111 @@ enum PreferencesForms {
                     set: { value in Preferences.shared.update { $0.typography.monoLigatures = value } }),
 
             .section("Detail"),
-            .toggle("Hanging punctuation and optical margins", help: "Makes text look set rather than merely laid out (§11.1).",
+            .toggle("Hanging punctuation and optical margins",
+                    help: "Makes text look set rather than merely laid out.",
                     get: { Preferences.shared.values.typography.opticalMargins },
                     set: { value in Preferences.shared.update { $0.typography.opticalMargins = value } }),
-            .stepper("Math scale", help: "Math sized optically against body text (§11.3).",
+            .stepper("Math scale", help: "Sizes formulas to sit evenly against the body text.",
                      range: 0.8...1.3, step: 0.05,
                      get: { Double(Preferences.shared.values.typography.mathScale) },
                      set: { value in Preferences.shared.update { $0.typography.mathScale = CGFloat(value) } }),
         ]
     }
 
+    @MainActor
     static func appearance() -> [PreferenceRow] {
-        [
+        // Both lists are read here, on every rebuild, and again inside the
+        // setters — an imported or reloaded theme must not leave the popup
+        // indices pointing at names that have moved.
+        let light = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
+        let dark = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
+        return [
             .section("Themes"),
             .choice("Light theme", help: "Used when macOS is in Light appearance.",
-                    options: ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name),
+                    options: light,
                     get: {
-                        let names = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
-                        return names.firstIndex(of: Preferences.shared.values.themeName) ?? 0
+                        let name = Preferences.shared.values.themeName
+                        return light.firstIndex(of: name).map { .index($0) } ?? .missing(name)
                     },
                     set: { index in
-                        let names = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
-                        guard names.indices.contains(index) else { return }
-                        Preferences.shared.update { $0.themeName = names[index] }
+                        guard light.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.themeName = light[index] }
                     }),
             .choice("Dark theme", help: "Used when macOS is in Dark appearance.",
-                    options: ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name),
+                    options: dark,
                     get: {
-                        let names = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
-                        return names.firstIndex(of: Preferences.shared.values.darkThemeName) ?? 0
+                        let name = Preferences.shared.values.darkThemeName
+                        return dark.firstIndex(of: name).map { .index($0) } ?? .missing(name)
                     },
                     set: { index in
-                        let names = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
-                        guard names.indices.contains(index) else { return }
-                        Preferences.shared.update { $0.darkThemeName = names[index] }
+                        guard dark.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.darkThemeName = dark[index] }
                     }),
-            .toggle("Follow system appearance", help: "Switch between the selected light and dark themes automatically.",
+            .toggle("Follow system appearance",
+                    help: "Switch between the light and dark themes as macOS does. Turn this off to keep the light theme in both.",
                     get: { Preferences.shared.values.followsSystemAppearance },
                     set: { value in Preferences.shared.update { $0.followsSystemAppearance = value } }),
+            .note("Themes live in the Downright folder in Application Support. Import Theme and Reload Themes are on the View menu."),
         ]
     }
 
+    @MainActor
     static func editor() -> [PreferenceRow] {
         [
             .section("Typing"),
             .toggle("Typewriter scrolling", help: nil,
                     get: { Preferences.shared.values.typewriterScrolling },
                     set: { value in Preferences.shared.update { $0.typewriterScrolling = value } }),
-            .toggle("Use typographic substitutions", help: "Convert smart quotes and dashes while typing. Off keeps Markdown source exact.",
+            .toggle("Use typographic substitutions",
+                    help: "Convert straight quotes and dashes while typing. Off keeps Markdown source exact.",
                     get: { Preferences.shared.values.typographicSubstitution },
                     set: { value in Preferences.shared.update { $0.typographicSubstitution = value } }),
             .section("Display"),
-            .toggle("Show spaces and tabs", help: "Draw whitespace markers in the visible viewport.",
+            .toggle("Show spaces and tabs", help: "Draw whitespace markers in the visible part of the document.",
                     get: { Preferences.shared.values.showInvisibles },
                     set: { value in Preferences.shared.update { $0.showInvisibles = value } }),
-            .toggle("Reflow wrapped paragraphs", help: "Join source-wrapped prose visually without changing Markdown bytes.",
+            .toggle("Reflow wrapped paragraphs",
+                    help: "Join source-wrapped prose visually without changing a byte of the file.",
                     get: { Preferences.shared.values.reflowHardWrappedParagraphs },
                     set: { value in Preferences.shared.update { $0.reflowHardWrappedParagraphs = value } }),
-            .toggle("Reveal syntax at every cursor", help: "Show inline markers for secondary insertion cursors too.",
+            .toggle("Reveal syntax at every cursor", help: "Show inline markers for extra insertion cursors too.",
                     get: { Preferences.shared.values.revealMarkersAtAllCursors },
                     set: { value in Preferences.shared.update { $0.revealMarkersAtAllCursors = value } }),
-            .toggle("Focus mode on open", help: "Hide surrounding chrome and panels for a single-column writing surface.",
+            .toggle("Focus mode on open", help: "Hide the surrounding chrome and panels for a single-column writing surface.",
                     get: { Preferences.shared.values.focusMode },
                     set: { value in Preferences.shared.update { $0.focusMode = value } }),
-            .choice("Default mode", help: "The presentation used when opening a document.",
+            .choice("Default mode", help: "How a document looks when you open it.",
                     options: RenderMode.userFacingModes.map(\.title),
                     get: {
-                        RenderMode.userFacingModes.firstIndex(of: Preferences.shared.values.defaultMode) ?? 0
+                        let current = Preferences.shared.values.defaultMode
+                        return .index(RenderMode.userFacingModes.firstIndex(of: current) ?? 0)
                     },
                     set: { index in
                         guard RenderMode.userFacingModes.indices.contains(index) else { return }
                         Preferences.shared.update { $0.defaultMode = RenderMode.userFacingModes[index] }
                     }),
             .section("Performance"),
-            .stepper("Collapse long code after", help: "Lines. Used when a document is opened in the reading projection.",
-                     range: 1...10_000, step: 1,
-                     get: { Double(Preferences.shared.values.codeBlockCollapseThreshold) },
-                     set: { value in Preferences.shared.update { $0.codeBlockCollapseThreshold = Int(value) } }),
-            .stepper("Large-file threshold", help: "Megabytes. Above this, layout uses a line-count estimate instead of eagerly laying out the whole file.",
+            .stepper("Large-file threshold",
+                     help: "Megabytes. Above this, Downright estimates the layout from line counts instead of laying out the whole file before showing you anything.",
                      range: 1...1024, step: 1,
                      get: { Double(Preferences.shared.values.largeFileThresholdMegabytes) },
                      set: { value in Preferences.shared.update { $0.largeFileThresholdMegabytes = Int(value) } }),
         ]
     }
 
-    @MainActor static func updates() -> [PreferenceRow] {
+    @MainActor
+    static func updates() -> [PreferenceRow] {
         let coordinator = UpdateCoordinator.shared
         guard coordinator.isUpdateConfigurationPresent else {
             return [
-                .note("This build carries no update configuration, so automatic updates are disabled. Install a release build to see update settings here."),
+                .note("This build carries no update configuration, so automatic updates are off. Install a release build to see update settings here."),
             ]
         }
         return [
-            .section("Sparkle"),
-            .note("Downright checks the signed update feed over HTTPS. Downloaded updates install when Downright quits; active editing sessions are never interrupted."),
+            .section("Updates"),
+            .note("Downright checks a signed update feed over HTTPS. A downloaded update installs when you quit, so an editing session is never interrupted."),
             .toggle("Automatically check for updates",
-                    help: "Checks the feed once a day. The menu command still works while this is off.",
+                    help: "Checks once a day. The menu command still works while this is off.",
                     get: { UpdateCoordinator.shared.automaticallyChecksForUpdates },
                     set: { value in UpdateCoordinator.shared.automaticallyChecksForUpdates = value }),
             .toggle("Automatically download and install updates",
@@ -416,13 +698,19 @@ enum PreferencesForms {
         ]
     }
 
+    @MainActor
     static func history() -> [PreferenceRow] {
-        [
-            .section("Local time travel (§8.3)"),
+        let timeline = shortcut(for: .versionTimeline).map { " (\($0))" } ?? ""
+        let used = ByteCountFormatter.string(
+            fromByteCount: Int64(SnapshotStore.shared.totalBytes()),
+            countStyle: .file
+        )
+        return [
+            .section("Version history"),
             .note("""
-            Every external write is snapshotted to a content-addressed store, \
-            deduplicated by hash. Agents don't commit and git doesn't help you \
-            here — this is what makes ⌘⇧V possible.
+            Downright keeps a copy of the document every time something else writes to it, \
+            stored locally and deduplicated, so nothing is kept twice. That is where Version \
+            Timeline\(timeline) gets the versions it shows you.
             """),
             .stepper("Keep versions for", help: "Days.", range: 1...365, step: 1,
                      get: { Double(Preferences.shared.values.historyMaximumDays) },
@@ -430,23 +718,53 @@ enum PreferencesForms {
             .stepper("Maximum size", help: "Megabytes.", range: 50...5000, step: 50,
                      get: { Double(Preferences.shared.values.historyMaximumMegabytes) },
                      set: { value in Preferences.shared.update { $0.historyMaximumMegabytes = Int(value) } }),
-            .note("Currently using \(ByteCountFormatter.string(fromByteCount: Int64(SnapshotStore.shared.totalBytes()), countStyle: .file))."),
+            .note("Currently using \(used)."),
         ]
     }
 }
 
-// MARK: - Keybindings pane (§7.2)
+// MARK: - Keybindings pane
 
-final class KeybindingsPane: NSViewController {
+@MainActor
+final class KeybindingsPane: NSViewController, PreferenceSearchable {
     private let table = NSTableView()
-    private var commands: [Command] = Command.allCases.sorted {
+    private let recordButton = NSButton(title: "Record Shortcut", target: nil, action: nil)
+    private let resetRowButton = NSButton(title: "Reset Shortcut", target: nil, action: nil)
+    private let allCommands: [Command] = Command.allCases.sorted {
         ($0.menu.rawValue, $0.title) < ($1.menu.rawValue, $1.title)
     }
+    private var commands: [Command] = []
     private var recordingRow: Int?
     private var keyMonitor: Any?
+    private var resignKeyObserver: NSObjectProtocol?
+
+    var searchQuery: String = "" {
+        didSet {
+            guard searchQuery != oldValue else { return }
+            cancelRecording()
+            applyFilter()
+        }
+    }
+
+    var searchMatchCount: Int { KeybindingsPane.filtered(allCommands, query: searchQuery).count }
+
+    /// Commands whose menu, name, or current shortcut matches every word typed.
+    static func filtered(_ commands: [Command], query: String) -> [Command] {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return commands }
+        return commands.filter { command in
+            let bindings = KeybindingStore.shared.bindings(for: command)
+                .map(\.displayString).joined(separator: " ")
+            let text = "\(command.menu.title) \(command.title) \(bindings)".lowercased()
+            return words.allSatisfy(text.contains)
+        }
+    }
 
     override func loadView() {
-        title = "Keys"
+        title = SettingsPane.keys.title
+        // A query typed before this pane was ever shown must survive the view
+        // finally loading.
+        commands = KeybindingsPane.filtered(allCommands, query: searchQuery)
 
         table.headerView = NSTableHeaderView()
         table.usesAlternatingRowBackgroundColors = true
@@ -454,7 +772,8 @@ final class KeybindingsPane: NSViewController {
         table.dataSource = self
         table.delegate = self
         table.target = self
-        table.doubleAction = #selector(beginRecording)
+        table.doubleAction = #selector(beginRecordingSelectedRow)
+        table.allowsEmptySelection = true
 
         for (identifier, title, width) in [
             ("menu", "Menu", 90.0), ("command", "Command", 260.0), ("binding", "Shortcut", 140.0),
@@ -469,16 +788,21 @@ final class KeybindingsPane: NSViewController {
         scroll.documentView = table
         scroll.hasVerticalScroller = true
 
-        let hint = NSTextField(labelWithString: "Double-click a shortcut to record a new one. ⌫ clears it.")
+        let hint = NSTextField(labelWithString: "Select a command and press Record, or double-click its shortcut. ⌫ clears it, ⎋ stops recording.")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
 
-        let reset = NSButton(title: "Reset All", target: self, action: #selector(resetAll))
+        recordButton.target = self
+        recordButton.action = #selector(toggleRecording)
+        resetRowButton.target = self
+        resetRowButton.action = #selector(resetSelected)
+        let resetAll = NSButton(title: "Reset All…", target: self, action: #selector(resetAll))
         let vim = NSButton(checkboxWithTitle: "Vim-style navigation keys", target: self, action: #selector(toggleVim))
         vim.state = Preferences.shared.values.vimKeys ? .on : .off
 
-        let footer = NSStackView(views: [vim, NSView(), reset])
+        let footer = NSStackView(views: [vim, NSView(), recordButton, resetRowButton, resetAll])
         footer.orientation = .horizontal
+        footer.spacing = 8
 
         let stack = NSStackView(views: [scroll, hint, footer])
         stack.orientation = .vertical
@@ -491,34 +815,91 @@ final class KeybindingsPane: NSViewController {
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 340),
         ])
         view = stack
+        refreshButtons()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         if let item = (parent as? NSTabViewController)?.tabViewItems.first(where: { $0.viewController === self }) {
-            item.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Keys")
+            item.image = NSImage(systemSymbolName: SettingsPane.keys.symbol, accessibilityDescription: SettingsPane.keys.title)
         }
     }
 
-    @objc private func beginRecording() {
-        let row = table.clickedRow
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        table.reloadData()
+        // A recorder that outlives the window would swallow the next keystroke
+        // anywhere in the app, so it is torn down the moment focus leaves.
+        if let window = view.window {
+            resignKeyObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cancelRecording() }
+            }
+        }
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        cancelRecording()
+        resignKeyObserver.map(NotificationCenter.default.removeObserver)
+        resignKeyObserver = nil
+    }
+
+    deinit {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        resignKeyObserver.map(NotificationCenter.default.removeObserver)
+    }
+
+    private func applyFilter() {
+        commands = KeybindingsPane.filtered(allCommands, query: searchQuery)
+        if isViewLoaded {
+            table.reloadData()
+            refreshButtons()
+        }
+    }
+
+    // MARK: Recording
+
+    @objc private func toggleRecording() {
+        if recordingRow != nil {
+            cancelRecording()
+        } else {
+            beginRecordingSelectedRow()
+        }
+    }
+
+    @objc private func beginRecordingSelectedRow() {
+        let clicked = table.clickedRow
+        let row = clicked >= 0 ? clicked : table.selectedRow
         guard row >= 0, row < commands.count else { return }
+        beginRecording(row: row)
+    }
+
+    private func beginRecording(row: Int) {
+        // Always tear the previous monitor down first.  Two live monitors both
+        // write into whichever row was recorded last, and the older one can
+        // never be removed.
+        cancelRecording()
         recordingRow = row
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         table.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integersIn: 0..<3))
+        refreshButtons()
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let row = self.recordingRow else { return event }
+            guard let self, let row = self.recordingRow, row < self.commands.count else { return event }
+            let command = self.commands[row]
             defer { self.endRecording() }
 
             if event.keyCode == 53 { return nil }                      // ⎋ cancels
             if event.keyCode == 51 {                                   // ⌫ clears
-                KeybindingStore.shared.setBinding(nil, for: self.commands[row])
+                KeybindingStore.shared.setBinding(nil, for: command)
                 return nil
             }
             guard let key = KeyBinding.key(for: event) else { return nil }
             let binding = KeyBinding(key, event.modifierFlags.intersection(.deviceIndependentFlagsMask))
 
-            let conflicts = KeybindingStore.shared.conflicts(for: binding, excluding: self.commands[row])
+            let conflicts = KeybindingStore.shared.conflicts(for: binding, excluding: command)
             if !conflicts.isEmpty {
                 let alert = NSAlert()
                 alert.messageText = "\(binding.displayString) is already used"
@@ -528,22 +909,64 @@ final class KeybindingsPane: NSViewController {
                 guard alert.runModal() == .alertFirstButtonReturn else { return nil }
                 for conflict in conflicts { KeybindingStore.shared.setBinding(nil, for: conflict) }
             }
-            KeybindingStore.shared.setBinding(binding, for: self.commands[row])
+            KeybindingStore.shared.setBinding(binding, for: command)
             return nil
         }
     }
 
-    private func endRecording() {
+    /// Stops listening without changing anything.  Safe to call when nothing is
+    /// being recorded, which is what makes it usable from every exit path.
+    private func cancelRecording() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        guard recordingRow != nil else { return }
         recordingRow = nil
+        if isViewLoaded {
+            table.reloadData()
+            refreshButtons()
+        }
+    }
+
+    private func endRecording() {
+        cancelRecording()
+        if let menu = NSApp.mainMenu { MainMenu.refreshKeyEquivalents(in: menu) }
+    }
+
+    private func refreshButtons() {
+        let hasSelection = table.selectedRow >= 0 && table.selectedRow < commands.count
+        recordButton.title = recordingRow == nil ? "Record Shortcut" : "Cancel"
+        recordButton.isEnabled = recordingRow != nil || hasSelection
+        resetRowButton.isEnabled = hasSelection && recordingRow == nil
+    }
+
+    // MARK: Resetting
+
+    @objc private func resetSelected() {
+        let row = table.selectedRow
+        guard row >= 0, row < commands.count else { return }
+        // Restores the shipped chord for this command.  A command that ships
+        // with several chords keeps only the first until `KeybindingStore`
+        // learns how to drop a single override.
+        KeybindingStore.shared.setBinding(
+            KeybindingDefaults.table[commands[row]]?.first,
+            for: commands[row]
+        )
         table.reloadData()
         if let menu = NSApp.mainMenu { MainMenu.refreshKeyEquivalents(in: menu) }
     }
 
     @objc private func resetAll() {
+        cancelRecording()
+        let alert = NSAlert()
+        alert.messageText = "Reset every keyboard shortcut?"
+        alert.informativeText = "All of your custom shortcuts go back to the ones Downright ships with. This can't be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reset All")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
         KeybindingStore.shared.resetToDefaults()
         table.reloadData()
+        if let menu = NSApp.mainMenu { MainMenu.refreshKeyEquivalents(in: menu) }
     }
 
     @objc private func toggleVim(_ sender: NSButton) {
@@ -555,7 +978,15 @@ final class KeybindingsPane: NSViewController {
 extension KeybindingsPane: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { commands.count }
 
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        // Moving to another command abandons the recording rather than pointing
+        // it somewhere the user is no longer looking.
+        cancelRecording()
+        refreshButtons()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < commands.count else { return nil }
         let command = commands[row]
         let text: String
         switch tableColumn?.identifier.rawValue {

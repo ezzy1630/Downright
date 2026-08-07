@@ -29,29 +29,32 @@ struct QuickOpenQuery: Equatable {
     let filter: QuickOpenFilter
     let terms: String
 
+    /// Prefixes, longest first, because `#task` must win over `#`.  One table
+    /// rather than a chain of `hasPrefix` branches, so a filter cannot be
+    /// declared and then left unreachable — which is exactly how `.headings`
+    /// became dead code.
+    private static let prefixes: [(marker: String, filter: QuickOpenFilter)] = [
+        ("#tasks", .tasks),
+        ("#task", .tasks),
+        ("asset:", .assets),
+        ("file:", .files),
+        ("link:", .links),
+        ("#", .headings),
+        ("@", .symbols),
+        (">", .commands),
+    ]
+
     init(_ raw: String) {
         self.raw = raw
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch value.lowercased() {
-        case ">": filter = .commands; terms = ""
-        case "#task", "#tasks": filter = .tasks; terms = ""
-        default:
-            if value.lowercased().hasPrefix("file:") {
-                filter = .files; terms = String(value.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            } else if value.lowercased().hasPrefix("asset:") {
-                filter = .assets; terms = String(value.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            } else if value.lowercased().hasPrefix("link:") {
-                filter = .links; terms = String(value.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            } else if value.hasPrefix("@") {
-                filter = .symbols; terms = String(value.dropFirst()).trimmingCharacters(in: .whitespaces)
-            } else if value.hasPrefix(">") {
-                filter = .commands; terms = String(value.dropFirst()).trimmingCharacters(in: .whitespaces)
-            } else if value.lowercased().hasPrefix("#task ") {
-                filter = .tasks; terms = String(value.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            } else {
-                filter = .all; terms = value
-            }
+        let lowered = value.lowercased()
+        for (marker, filter) in Self.prefixes where lowered.hasPrefix(marker) {
+            self.filter = filter
+            self.terms = String(value.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+            return
         }
+        filter = .all
+        terms = value
     }
 }
 
@@ -66,7 +69,12 @@ struct QuickOpenResult: Identifiable, Equatable {
     let id: String
     let kind: QuickOpenProviderKind
     let title: String
+    /// Rendered chrome — "⌘⇧K  ·  Document", "Heading 2".  Displayed, never
+    /// searched: matching against it made `doc` match most of the app.
     let subtitle: String
+    /// Extra text the query may match: a file path, a link destination, a
+    /// command's synonyms.  Searched, never displayed.
+    let searchText: String
     let action: QuickOpenAction
     let score: Int
 
@@ -75,6 +83,7 @@ struct QuickOpenResult: Identifiable, Equatable {
         kind: QuickOpenProviderKind,
         title: String,
         subtitle: String = "",
+        searchText: String = "",
         action: QuickOpenAction,
         score: Int = 0
     ) {
@@ -82,8 +91,18 @@ struct QuickOpenResult: Identifiable, Equatable {
         self.kind = kind
         self.title = title
         self.subtitle = subtitle
+        self.searchText = searchText
         self.action = action
         self.score = score
+    }
+
+    /// The same result with a rank attached.  Scoring lives in the palette
+    /// model, so every provider's results are ranked by one function.
+    func scored(_ score: Int) -> QuickOpenResult {
+        QuickOpenResult(
+            id: id, kind: kind, title: title, subtitle: subtitle, searchText: searchText,
+            action: action, score: score
+        )
     }
 }
 
@@ -129,11 +148,13 @@ struct CurrentDocumentQuickOpenProvider: QuickOpenProvider {
                 let label = document.substring(span.contentRange)
                 output.append(QuickOpenResult(id: "link:\(span.range.location):\(index)", kind: .link,
                                               title: label.isEmpty ? destination : label,
-                                              subtitle: destination, action: .select(span.range)))
+                                              subtitle: destination, searchText: destination,
+                                              action: .select(span.range)))
             case .image(let source, let alt):
                 guard query.filter == .all || query.filter == .assets else { continue }
                 output.append(QuickOpenResult(id: "asset:\(span.range.location):\(index)", kind: .asset,
-                                              title: alt.isEmpty ? source : alt, subtitle: source, action: .select(span.range)))
+                                              title: alt.isEmpty ? source : alt, subtitle: source,
+                                              searchText: source, action: .select(span.range)))
             case .footnoteReference(let identifier):
                 guard query.filter == .all else { continue }
                 output.append(QuickOpenResult(id: "footnote-ref:\(span.range.location):\(index)", kind: .footnote,
@@ -160,7 +181,7 @@ struct WorkspaceQuickOpenProvider: QuickOpenProvider {
             output += files.map {
                 QuickOpenResult(id: "file:\($0.path)", kind: .workspaceFile,
                                 title: $0.deletingPathExtension().lastPathComponent,
-                                subtitle: $0.path, action: .open($0))
+                                subtitle: $0.path, searchText: $0.path, action: .open($0))
             }
         }
         if query.filter == .all || query.filter == .symbols { output += symbols }
@@ -177,7 +198,7 @@ struct RecentFilesQuickOpenProvider: QuickOpenProvider {
         return files.map {
             QuickOpenResult(id: "recent:\($0.path)", kind: .recentFile,
                             title: $0.lastPathComponent, subtitle: $0.deletingLastPathComponent().path,
-                            action: .open($0))
+                            searchText: $0.path, action: .open($0))
         }
     }
 }

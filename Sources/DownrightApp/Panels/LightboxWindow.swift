@@ -80,6 +80,7 @@ private final class LightboxContentView: NSView {
     private var scale: CGFloat = 1
     private var offset = CGSize.zero
     private var didDrag = false
+    private var isGripping = false
 
     private let captionInset: CGFloat = 24
     private let minimumScale: CGFloat = 0.05
@@ -158,6 +159,12 @@ private final class LightboxContentView: NSView {
     override func mouseDown(with event: NSEvent) { didDrag = false }
 
     override func mouseDragged(with event: NSEvent) {
+        // The hand closes while it is dragging.  An open hand that never grips
+        // is the one cue a pan gesture owes the pointer.
+        if !didDrag {
+            NSCursor.closedHand.push()
+            isGripping = true
+        }
         didDrag = true
         offset.width += event.deltaX
         offset.height -= event.deltaY
@@ -165,6 +172,10 @@ private final class LightboxContentView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if isGripping {
+            NSCursor.pop()
+            isGripping = false
+        }
         if event.clickCount == 2 {
             // Fit ⇄ actual size, the standard image-viewer double-click.
             scale = abs(scale - fitScale) < 0.001 ? 1 : fitScale
@@ -178,9 +189,17 @@ private final class LightboxContentView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // The three zoom keys every image viewer has.  Scroll-to-zoom alone
+        // leaves trackpad-less and keyboard-only users without a zoom at all.
         switch KeyBinding.key(for: event) {
-        case "escape": onDismiss?()
-        case "space": onDismiss?()
+        case "escape", "space": onDismiss?()
+        case "+", "=": zoom(by: 1.25, about: NSPoint(x: bounds.midX, y: bounds.midY))
+        case "-", "_": zoom(by: 1 / 1.25, about: NSPoint(x: bounds.midX, y: bounds.midY))
+        case "0": resetZoom()
+        case "1":
+            scale = 1
+            offset = .zero
+            needsDisplay = true
         default: super.keyDown(with: event)
         }
     }
@@ -205,17 +224,27 @@ private final class LightboxContentView: NSView {
             image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
         }
 
+        drawZoomReadout()
+
         guard let caption else { return }
+        // A long alt text is truncated with an ellipsis rather than sliced
+        // mid-glyph, and the pill never grows past the window.
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.alignment = .center
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12),
             .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph,
         ]
-        let size = (caption as NSString).size(withAttributes: attributes)
+        let maximumWidth = max(80, bounds.width - 80)
+        let natural = (caption as NSString).size(withAttributes: attributes)
+        let pillWidth = min(maximumWidth, natural.width + 20)
         let pill = NSRect(
-            x: bounds.midX - size.width / 2 - 10,
+            x: bounds.midX - pillWidth / 2,
             y: captionInset - 5,
-            width: min(bounds.width - 80, size.width + 20),
-            height: size.height + 10
+            width: pillWidth,
+            height: natural.height + 10
         )
         NSColor.white.withAlphaComponent(0.12).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
@@ -223,6 +252,26 @@ private final class LightboxContentView: NSView {
             in: pill.insetBy(dx: 10, dy: 5),
             withAttributes: attributes
         )
+    }
+
+    /// The current zoom, so "+" and scroll have a visible effect even on an
+    /// image with no detail to judge scale by.
+    private func drawZoomReadout() {
+        let text = "\(Int((scale * 100).rounded()))%"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.85),
+        ]
+        let size = (text as NSString).size(withAttributes: attributes)
+        let pill = NSRect(
+            x: bounds.maxX - size.width - 34,
+            y: bounds.maxY - size.height - 26,
+            width: size.width + 16,
+            height: size.height + 8
+        )
+        NSColor.white.withAlphaComponent(0.12).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
+        (text as NSString).draw(at: NSPoint(x: pill.minX + 8, y: pill.minY + 4), withAttributes: attributes)
     }
 
     override func viewDidEndLiveResize() {

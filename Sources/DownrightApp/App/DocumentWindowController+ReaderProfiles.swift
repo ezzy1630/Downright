@@ -5,6 +5,9 @@ import ObjectiveC
 private final class ReaderProfileControllerState: NSObject {
     var profile = ReaderProfile.builtIns[0]
     var baseTheme: Theme?
+    /// The open picker, so the command can close the one it opened.  The
+    /// picker's delegate reference back to the controller is weak.
+    var picker: ReaderProfilePickerView?
     var store: ReaderProfileStore = JSONReaderProfileStore(
         url: AppPaths.supportDirectory.appendingPathComponent("reader-profiles.json")
     )
@@ -27,11 +30,22 @@ extension DocumentWindowController: ReaderProfilePickerDelegate {
     /// markdown document and does not select or modify a color theme.
     var readerProfile: ReaderProfile { readerProfileState.profile }
 
+    /// The command toggles, like every other panel command.  Building a fresh
+    /// picker on each invocation replaced the panel instead of closing it, so
+    /// the command had no off state.
     func showReaderProfiles() {
+        if let picker = readerProfileState.picker {
+            dismissTrailing(picker)
+            readerProfileState.picker = nil
+            return
+        }
         let picker = ReaderProfilePickerView(store: readerProfileState.store, styleSheet: activeStyleSheet)
         picker.delegate = self
+        readerProfileState.picker = picker
+        // Establishes the Revert baseline: without a selection the picker has
+        // nothing to revert a preview to.
         picker.selectProfile(id: readerProfile.id)
-        installTrailing(picker)
+        installTrailing(picker, title: Command.readerProfiles.panelTitle)
     }
 
     func applyReaderProfile(_ profile: ReaderProfile) {

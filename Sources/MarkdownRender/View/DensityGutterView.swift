@@ -29,9 +29,14 @@ public struct DensityBand {
 /// Density gutter (§8.6) — the scrollbar's replacement.
 ///
 /// "The whole shape of a 3,000-word document at a glance."  A scrollbar tells
-/// you how much is left; this tells you what is left.  Changed regions are the
-/// band that matters most (§8.1), so they are drawn last and can never be
-/// occluded by a heading tick or a code block that happens to overlap them.
+/// you how much is left; this tells you what is left.
+///
+/// The stack is an index of *sections*: one mark per drawn heading, thinned by
+/// depth when the track cannot hold them all, spaced by a pitch derived from
+/// the track rather than a fixed gap.  Changed regions are the band that
+/// matters most (§8.1), so they hang off the mark for the section they fall in
+/// as a leading-edge pip — they can neither be occluded by a heading tick nor,
+/// as when thinning ran over the merged band list, thinned away by it.
 ///
 /// The band palette is deliberately narrow.  A theme only guarantees *semantic*
 /// colours (§11.2), so inventing six hues here would break the moment someone
@@ -51,6 +56,10 @@ public final class DensityGutterView: NSView {
     public var bands: [DensityBand] = [] {
         didSet {
             hoveredBandIndex = nil
+            // The stack is derived from these, and the current mark is derived
+            // from the stack — both caches are stale the moment bands change.
+            bandsRevision &+= 1
+            previousCurrentFraction = nil
             updateMarkLayers(animated: false)
         }
     }
@@ -68,6 +77,9 @@ public final class DensityGutterView: NSView {
     /// heading glow and hovered mark transitions stay smooth.
     public var visibleRange: ClosedRange<CGFloat> = 0...1 {
         didSet {
+            // Hosts drive this from a scroll observer, which fires far more
+            // often than the value actually moves.
+            guard visibleRange != oldValue else { return }
             // Only animate if the *current* heading changed (user landed on a
             // new section); a simple scroll-by never animates so momentum
             // scrolling does not create CA animation objects per mark.
@@ -82,6 +94,10 @@ public final class DensityGutterView: NSView {
     /// implicit transactions.
     public var readProgress: CGFloat = 0 {
         didSet {
+            // Hosts assign this as `max(current, …)` on every scroll event, so
+            // most assignments are a no-op; without this guard scrolling up
+            // relaid the whole stack at frame rate for no change.
+            guard readProgress != oldValue else { return }
             setAccessibilityValueDescription("\(Int((readProgress * 100).rounded())) percent read")
             updateMarkLayers(animated: false)
         }
@@ -126,13 +142,41 @@ public final class DensityGutterView: NSView {
     static let neighborhoodDim: CGFloat = 0.82
     /// Marks within this index distance stay slightly lifted under hover.
     static let neighborhoodLiftRadius: Int = 2
-    /// Wider resting gap when the document has few headings.
-    static let shortDocMarkGap: CGFloat = 18
-    static let shortDocThreshold: Int = 3
+
+    // Stack sizing.  Every one of these is a *rate*, not a length: the cluster
+    // is derived from the track it sits in, so the same document reads the same
+    // way in a Quick Look panel and on a full-screen display.  Absolute mark
+    // counts and gaps were the bug — 15 marks at a 10pt gap is 10% of a tall
+    // window (a sparse huddle) and a solid bar in a short one.
+    //
+    /// Closest two marks may sit.  Below this the stack stops reading as
+    /// separate ticks and becomes a bar, so it caps the capacity instead.
+    static let minPitch: CGFloat = 9
+    /// Furthest two marks may sit.  Beyond this the cluster stops reading as
+    /// one object.
+    static let maxPitch: CGFloat = 20
+    /// Share of the track the cluster may span.  The stack is a prompt index,
+    /// so it must never grow to full height and become a second scrollbar.
+    static let maxSpanFraction: CGFloat = 0.62
+    /// Upper bound on marks however tall the window is — past this the rail is
+    /// asking to be read rather than scanned, and the hover outline is the
+    /// place for detail.
+    static let stackCapacityCeiling: Int = 20
+    /// Below this the document has no shape worth indexing, so the rail draws
+    /// the quiet spine instead of a stack pretending to be one.
+    static let minimumStackMarks: Int = 3
+
+    /// Overlay dot on a mark's leading edge (§2.3 "coloured pips").
+    static let pipDiameter: CGFloat = 3.5
+    /// Gap from the resting mark's leading edge to the first pip.
+    static let pipLeadingGap: CGFloat = 5
+
     /// Optical boost on click / scrub release (points of extra width).
     static let jumpPunchBoost: CGFloat = 4
     /// Soft progress wash behind the stack.
     static let progressWashAlpha: CGFloat = 0.055
+    /// Resting spine shown when there is no stack to draw.
+    static let spineAlpha: CGFloat = 0.05
     /// Current-mark glow (same hue, very low opacity).
     static let currentGlowRadius: CGFloat = 10
     static let currentGlowOpacity: Float = 0.12
@@ -157,8 +201,15 @@ public final class DensityGutterView: NSView {
     private var pointerVelocityY: CGFloat = 0
     private var previousCurrentFraction: CGFloat?
     private var progressWashLayer: CALayer?
-    private var endCapLayers: [CALayer] = []
+    private var spineLayer: CALayer?
     private var breatheWorkItem: DispatchWorkItem?
+
+    /// Bumped on every `bands` assignment so the selection cache can be keyed
+    /// without comparing the array itself (which can hold thousands of search
+    /// hits and is rebuilt wholesale on every reparse).
+    private var bandsRevision: Int = 0
+    private var cachedSelection: Selection?
+    private var cachedSelectionKey: SelectionKey?
 
     /// The bars sit on a quiet, centred spine. The spine is deliberately
     /// narrower than the hit area so the map feels easy to scrub without
@@ -166,6 +217,7 @@ public final class DensityGutterView: NSView {
     private let horizontalMargin: CGFloat = 16
     private let trackInset: CGFloat = 28
     private var markLayers: [CALayer] = []
+    private var pipLayers: [CALayer] = []
     private var hoveredBandIndex: Int?
     private var didDrag = false
 
@@ -241,8 +293,47 @@ public final class DensityGutterView: NSView {
 
     // MARK: - Drawing
 
+    // MARK: - Stack model
+
+    /// One drawn mark: a heading, plus the review overlays that fall inside its
+    /// section.
+    struct ResolvedMark {
+        var band: DensityBand
+        var y: CGFloat
+        var pip: Pip
+    }
+
+    /// Overlays no longer compete with headings for a slot in the stack — they
+    /// attach to the section they fall in and draw as dots on the mark's
+    /// leading edge (§2.3).  Before this, thinning ran over the merged band
+    /// list, so a Find with two hundred matches could replace the entire
+    /// outline with search pips, and a change at the top of a heading drew a
+    /// second tick that read as a second section.
+    struct Pip: Equatable {
+        var change: ChangeKind?
+        var searchHit: Bool = false
+
+        var isEmpty: Bool { change == nil && !searchHit }
+    }
+
+    /// Which bands the rail draws, and what hangs off each of them.  Depends
+    /// only on the bands and the capacity, so it survives pointer movement.
+    struct Selection {
+        var marks: [DensityBand]
+        var pips: [Pip]
+    }
+
+    private struct SelectionKey: Equatable {
+        var revision: Int
+        var capacity: Int
+    }
+
     private func currentHeadingFraction() -> CGFloat? {
-        Self.currentHeadingFraction(in: bands, at: visibleRange)
+        // Derived from the *drawn* marks rather than from every heading: a
+        // current fraction that no drawn mark carries highlights nothing.
+        Self.currentHeadingFraction(
+            in: selection(height: bounds.height).marks, at: visibleRange
+        )
     }
 
     static func currentHeadingFraction(
@@ -256,6 +347,35 @@ public final class DensityGutterView: NSView {
             ?? headings.first?.startFraction
     }
 
+    /// The usable span of the rail, inset from both ends.
+    static func trackRange(
+        height: CGFloat, trackInset: CGFloat = 28
+    ) -> (top: CGFloat, bottom: CGFloat) {
+        let top = min(trackInset, max(0, height / 2))
+        return (top, max(top, height - trackInset))
+    }
+
+    /// How many marks this track can hold at a legible pitch.
+    ///
+    /// Derived from the track, so a Quick Look panel thins harder and a tall
+    /// window shows more.  A fixed cap could not do both: the count that kept
+    /// a 1400pt window from becoming a solid bar left it a 140pt huddle in an
+    /// otherwise empty column, and still collapsed to a bar in a short one.
+    static func stackCapacity(track: CGFloat) -> Int {
+        guard track > 0 else { return 0 }
+        let fit = Int((track * maxSpanFraction / minPitch).rounded(.down)) + 1
+        return max(0, min(stackCapacityCeiling, fit))
+    }
+
+    /// Spread `count` marks across the allowed share of the track, then clamp.
+    /// Legibility (`minPitch`) wins over the span target; cohesion (`maxPitch`)
+    /// caps how far a small stack may spread.
+    static func markPitch(track: CGFloat, count: Int) -> CGFloat {
+        guard count > 1 else { return maxPitch }
+        let ideal = track * maxSpanFraction / CGFloat(count - 1)
+        return min(maxPitch, max(minPitch, ideal))
+    }
+
     /// Calculate a centered stack for the visible document marks. This is a
     /// prompt index, not a miniature scrollbar: the marks stay easy to scan
     /// while the active heading changes by appearance rather than movement.
@@ -263,19 +383,18 @@ public final class DensityGutterView: NSView {
         height: CGFloat,
         count: Int,
         trackInset: CGFloat = 28,
-        markGap: CGFloat = 10,
+        markGap: CGFloat = DensityGutterView.maxPitch,
         pointerY: CGFloat? = nil,
         compression: CGFloat = DensityGutterView.stackCompression,
         proximityRadius: CGFloat = DensityGutterView.proximityRadius
     ) -> [CGFloat] {
         guard count > 0 else { return [] }
 
-        let top = min(trackInset, max(0, height / 2))
-        let bottom = max(top, height - trackInset)
-        let trackHeight = max(1, bottom - top)
+        let track = trackRange(height: height, trackInset: trackInset)
+        let trackHeight = max(1, track.bottom - track.top)
         let gap = min(markGap, trackHeight / CGFloat(max(1, count - 1)))
         let groupHeight = CGFloat(max(0, count - 1)) * gap
-        let start = top + max(0, (trackHeight - groupHeight) / 2)
+        let start = track.top + max(0, (trackHeight - groupHeight) / 2)
         let base = (0..<count).map { start + CGFloat($0) * gap }
 
         guard let pointerY, count > 1, compression > 0 else { return base }
@@ -313,31 +432,170 @@ public final class DensityGutterView: NSView {
         return emphasized ? 30 : 24
     }
 
-    /// Resting gap: short documents breathe so two lonely ticks do not look broken.
-    static func restingMarkGap(count: Int, defaultGap: CGFloat = 10, shortGap: CGFloat = shortDocMarkGap) -> CGFloat {
-        count > 0 && count < shortDocThreshold ? shortGap : defaultGap
+    /// Cached because pointer movement must not re-derive it: the selection
+    /// depends only on the bands and on how many the track can hold, and
+    /// attaching pips is linear in the overlay count — which, with Find active
+    /// on a large document, is thousands.
+    private func selection(height: CGFloat) -> Selection {
+        let track = Self.trackRange(height: height, trackInset: trackInset)
+        let capacity = Self.stackCapacity(track: track.bottom - track.top)
+        let key = SelectionKey(revision: bandsRevision, capacity: capacity)
+        if key == cachedSelectionKey, let cachedSelection { return cachedSelection }
+        let resolved = Self.selection(for: bands, capacity: capacity)
+        cachedSelection = resolved
+        cachedSelectionKey = key
+        return resolved
     }
 
-    private func visualBands(height: CGFloat) -> [(band: DensityBand, y: CGFloat)] {
-        let visible = bands
-            .filter { Self.isVisibleAtRest($0.kind) }
-            .sorted { lhs, rhs in
-                if lhs.startFraction != rhs.startFraction {
-                    return lhs.startFraction < rhs.startFraction
-                }
-                return Self.paintOrder(lhs.kind) < Self.paintOrder(rhs.kind)
-            }
-        guard !visible.isEmpty else { return [] }
+    static func selection(for bands: [DensityBand], capacity: Int) -> Selection {
+        let headings = bands
+            .filter { if case .heading = $0.kind { return true } else { return false } }
+            .sorted { $0.startFraction < $1.startFraction }
+        let overlays = bands
+            .filter { isOverlay($0.kind) }
+            .sorted { $0.startFraction < $1.startFraction }
 
+        // A document with no headings has no sections to index, so the review
+        // overlays become the stack rather than vanishing along with it.
+        guard !headings.isEmpty else {
+            let marks = strideSampled(overlays, limit: capacity)
+            guard marks.count >= minimumStackMarks else { return Selection(marks: [], pips: []) }
+            return Selection(marks: marks, pips: Array(repeating: Pip(), count: marks.count))
+        }
+
+        let marks = selectHeadings(headings, capacity: capacity)
+        guard marks.count >= minimumStackMarks else { return Selection(marks: [], pips: []) }
+        return Selection(marks: marks, pips: pips(for: overlays, on: marks))
+    }
+
+    /// Thins by *depth* before it thins by position, so detail is lost the way
+    /// a table of contents loses it and never structure.  Index-stride sampling
+    /// over the whole list could drop an H1 while keeping one of its H3
+    /// children, which left the rail describing a shape the document has not
+    /// got.
+    static func selectHeadings(_ headings: [DensityBand], capacity: Int) -> [DensityBand] {
+        guard capacity > 0 else { return [] }
+        guard headings.count > capacity else { return headings }
+
+        let present = Set(headings.map(headingLevel)).sorted()
+        var chosen: [DensityBand] = []
+        var fillIndex = present.count
+        for (index, depth) in present.enumerated() {
+            let candidates = headings.filter { headingLevel($0) <= depth }
+            if candidates.count > capacity {
+                fillIndex = index
+                break
+            }
+            chosen = candidates
+        }
+
+        // Spare slots go to the next depth down, evenly sampled.  Without this
+        // a document with one H1 and forty H2s drew a single tick, because the
+        // deepest depth that fits whole is the H1 on its own.
+        let remaining = capacity - chosen.count
+        guard remaining > 0, fillIndex < present.count else { return chosen }
+        let fillLevel = present[fillIndex]
+        let picked = strideSampled(
+            headings.filter { headingLevel($0) == fillLevel }, limit: remaining
+        )
+        return (chosen + picked).sorted { $0.startFraction < $1.startFraction }
+    }
+
+    private static func headingLevel(_ band: DensityBand) -> Int {
+        if case .heading(let level) = band.kind { return level }
+        return .max
+    }
+
+    /// Evenly thins to `limit`, always keeping the first and last so the result
+    /// still spans what it stands for.  Scanning is what this control is for;
+    /// an exact count is what the hover outline is for.
+    static func strideSampled(_ bands: [DensityBand], limit: Int) -> [DensityBand] {
+        guard limit > 0 else { return [] }
+        guard bands.count > limit else { return bands }
+        // `bands.count > limit >= 1` here, so the array is never empty.
+        guard limit > 1 else { return [bands[0]] }
+        let last = bands.count - 1
+        let step = Double(last) / Double(limit - 1)
+        var picked: [DensityBand] = []
+        picked.reserveCapacity(limit)
+        var previousIndex = -1
+        for slot in 0..<limit {
+            let index = min(last, Int((Double(slot) * step).rounded()))
+            guard index != previousIndex else { continue }
+            picked.append(bands[index])
+            previousIndex = index
+        }
+        return picked
+    }
+
+    /// An overlay belongs to the section it falls in, so it attaches to the
+    /// last mark at or before it — not to the nearest one, which would hang a
+    /// change made at the top of a section off the previous heading.
+    static func pips(for overlays: [DensityBand], on marks: [DensityBand]) -> [Pip] {
+        var result = [Pip](repeating: Pip(), count: marks.count)
+        guard !marks.isEmpty else { return result }
+        let fractions = marks.map(\.startFraction)
+        for overlay in overlays {
+            let index = sectionIndex(for: overlay.startFraction, in: fractions)
+            switch overlay.kind {
+            case .searchHit:
+                result[index].searchHit = true
+            case .change(let kind):
+                // Mixed kinds in one section report as "changed" rather than
+                // claiming whichever happened to be enumerated last.
+                result[index].change = result[index].change.map { $0 == kind ? kind : .modified }
+                    ?? kind
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    /// Last index whose fraction is at or before `fraction`, or 0 for anything
+    /// above the first mark — front matter, or an edit made before any heading.
+    static func sectionIndex(for fraction: CGFloat, in fractions: [CGFloat]) -> Int {
+        var low = 0
+        var high = fractions.count - 1
+        var result = 0
+        while low <= high {
+            let mid = (low + high) / 2
+            if fractions[mid] <= fraction {
+                result = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return result
+    }
+
+    /// At rest the rail carries navigation and review signals only: headings
+    /// become marks, changes and search hits become pips on them.  Body-shape
+    /// bands stay in the data for the hover preview, but never become a
+    /// minimap of code, tables, or other large blocks.
+    static func isOverlay(_ kind: DensityBand.Kind) -> Bool {
+        switch kind {
+        case .change, .searchHit: return true
+        case .heading, .codeBlock, .table, .math, .taskList, .image, .callout: return false
+        }
+    }
+
+    private func resolvedStack(height: CGFloat) -> [ResolvedMark] {
+        let selected = selection(height: height)
+        guard !selected.marks.isEmpty else { return [] }
+        let track = Self.trackRange(height: height, trackInset: trackInset)
         let positions = Self.centeredBandYPositions(
             height: height,
-            count: visible.count,
+            count: selected.marks.count,
             trackInset: trackInset,
-            markGap: Self.restingMarkGap(count: visible.count),
+            markGap: Self.markPitch(
+                track: track.bottom - track.top, count: selected.marks.count
+            ),
             pointerY: pointerLocation?.y
         )
-        return visible.enumerated().map { index, band in
-            (band: band, y: positions[index])
+        return selected.marks.enumerated().map { index, band in
+            ResolvedMark(band: band, y: positions[index], pip: selected.pips[index])
         }
     }
 
@@ -384,7 +642,7 @@ public final class DensityGutterView: NSView {
     /// only changes length, weight, and brightness.
     private func updateMarkLayers(animated: Bool) {
         guard bounds.height > 0 else { return }
-        let entries = visualBands(height: bounds.height)
+        let entries = resolvedStack(height: bounds.height)
         let current = currentHeadingFraction()
         let currentChanged = current != previousCurrentFraction
         previousCurrentFraction = current
@@ -572,8 +830,62 @@ public final class DensityGutterView: NSView {
             mark.isHidden = true
         }
 
+        updatePipLayers(entries: entries)
         updateProgressWash(entries: entries, animated: animated)
-        updateEndCaps(entries: entries, animated: animated)
+    }
+
+    /// Review overlays sit on a fixed leading offset from the *resting* mark
+    /// width, so hovering a mark grows the tick without shoving its pips
+    /// sideways.
+    private func updatePipLayers(entries: [ResolvedMark]) {
+        let contrast = styleSheet.increaseContrast
+        var wanted: [(frame: CGRect, color: NSColor)] = []
+        let diameter = Self.pipDiameter * railBreathe
+        let restingHalf = Self.headingMarkWidth(level: 1) / 2 * railBreathe
+
+        for entry in entries where !entry.pip.isEmpty {
+            var trailingEdge = bounds.midX - restingHalf - Self.pipLeadingGap * railBreathe
+            var colors: [NSColor] = []
+            if let change = entry.pip.change {
+                colors.append(styleSheet.changeColor(change).withAlphaComponent(contrast ? 1 : 0.95))
+            }
+            if entry.pip.searchHit {
+                colors.append(styleSheet.searchHit.withAlphaComponent(contrast ? 1 : 0.92))
+            }
+            for color in colors {
+                wanted.append((
+                    frame: CGRect(
+                        x: trailingEdge - diameter,
+                        y: entry.y - diameter / 2,
+                        width: diameter,
+                        height: diameter
+                    ),
+                    color: color
+                ))
+                trailingEdge -= diameter + 2.5
+            }
+        }
+
+        while pipLayers.count < wanted.count {
+            let pip = CALayer()
+            pip.cornerCurve = .continuous
+            layer?.addSublayer(pip)
+            pipLayers.append(pip)
+        }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, pip) in pipLayers.enumerated() {
+            guard index < wanted.count else {
+                pip.isHidden = true
+                continue
+            }
+            pip.frame = wanted[index].frame
+            pip.cornerRadius = diameter / 2
+            pip.backgroundColor = wanted[index].color.cgColor
+            pip.isHidden = false
+        }
+        CATransaction.commit()
     }
 
     static func neighborhoodFactor(index: Int, hoveredIndex: Int?) -> CGFloat {
@@ -585,30 +897,45 @@ public final class DensityGutterView: NSView {
     }
 
     private func ensureChromeLayers() {
+        if spineLayer == nil {
+            let spine = CALayer()
+            spine.cornerCurve = .continuous
+            spine.masksToBounds = true
+            layer?.insertSublayer(spine, at: 0)
+            spineLayer = spine
+        }
         if progressWashLayer == nil {
             let wash = CALayer()
             wash.cornerCurve = .continuous
             wash.masksToBounds = true
-            layer?.insertSublayer(wash, at: 0)
+            layer?.insertSublayer(wash, at: 1)
             progressWashLayer = wash
-        }
-        while endCapLayers.count < 2 {
-            let cap = CALayer()
-            cap.cornerCurve = .continuous
-            cap.masksToBounds = true
-            layer?.insertSublayer(cap, at: 0)
-            endCapLayers.append(cap)
         }
     }
 
-    /// Quiet completion trail: a soft wash from the stack top through read marks.
-    private func updateProgressWash(
-        entries: [(band: DensityBand, y: CGFloat)],
-        animated: Bool
-    ) {
+    /// Quiet completion trail: a soft wash from the stack top through read
+    /// marks.  With no stack to trail — a document of one or two sections — it
+    /// falls back to a hairline spanning the track, so the lane reads as "this
+    /// document has no sections" rather than as a broken index.  That replaces
+    /// the end-cap dots, which propped up a two-mark cluster instead of
+    /// admitting there was nothing to index.
+    private func updateProgressWash(entries: [ResolvedMark], animated: Bool) {
         guard let wash = progressWashLayer else { return }
+        updateSpine(hasStack: !entries.isEmpty)
+
         let readEntries = entries.filter { $0.band.startFraction <= readProgress }
-        guard let first = entries.first, let lastRead = readEntries.last, readProgress > 0.001 else {
+        let washSpan: (top: CGFloat, bottom: CGFloat)?
+        if let first = entries.first, let lastRead = readEntries.last {
+            washSpan = (first.y - 6, lastRead.y + 6)
+        } else if entries.isEmpty, !bands.isEmpty {
+            // Spine-only rail: the wash is the read share of the whole track.
+            let track = Self.trackRange(height: bounds.height, trackInset: trackInset)
+            washSpan = (track.top, track.top + (track.bottom - track.top) * min(1, readProgress))
+        } else {
+            washSpan = nil
+        }
+
+        guard let span = washSpan, readProgress > 0.001 else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             wash.isHidden = true
@@ -616,10 +943,10 @@ public final class DensityGutterView: NSView {
             return
         }
 
-        let top = first.y - 6
-        let bottom = lastRead.y + 6
+        let top = span.top
+        let bottom = span.bottom
         let height = max(4, bottom - top)
-        let width: CGFloat = 6 * railBreathe
+        let width: CGFloat = (entries.isEmpty ? 1.5 : 6) * railBreathe
         let frame = CGRect(
             x: bounds.midX - width / 2,
             y: top,
@@ -652,56 +979,32 @@ public final class DensityGutterView: NSView {
         wash.add(pos, forKey: "wash-position")
     }
 
-    /// Soft end-caps so one- or two-mark stacks do not float orphaned.
-    private func updateEndCaps(
-        entries: [(band: DensityBand, y: CGFloat)],
-        animated: Bool
-    ) {
-        let showCaps = entries.count > 0 && entries.count < Self.shortDocThreshold
-        let capSize: CGFloat = 2.5 * railBreathe
-        let color = styleSheet.railTick.withAlphaComponent(0.16).cgColor
-        let positions: [CGFloat] = {
-            guard showCaps, let first = entries.first?.y, let last = entries.last?.y else {
-                return []
-            }
-            let pad = Self.shortDocMarkGap * 0.85
-            return [first - pad, last + pad]
-        }()
-
-        for (index, cap) in endCapLayers.enumerated() {
-            guard showCaps, index < positions.count else {
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                cap.isHidden = true
-                CATransaction.commit()
-                continue
-            }
-            let y = positions[index]
-            let frame = CGRect(
-                x: bounds.midX - capSize / 2,
-                y: y - capSize / 2,
-                width: capSize,
-                height: capSize
-            )
-            let previous = cap.presentation()?.frame ?? cap.frame
+    /// The resting hairline behind a suppressed stack.  Only drawn when there
+    /// is a document but no index worth showing.
+    private func updateSpine(hasStack: Bool) {
+        guard let spine = spineLayer else { return }
+        guard !hasStack, !bands.isEmpty else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            cap.cornerRadius = capSize / 2
-            cap.frame = frame
-            cap.backgroundColor = color
-            cap.isHidden = false
+            spine.isHidden = true
             CATransaction.commit()
-
-            guard animated, !styleSheet.reduceMotion, previous != .zero, previous != frame else {
-                continue
-            }
-            let anim = CABasicAnimation(keyPath: "position")
-            anim.fromValue = NSValue(point: NSPoint(x: previous.midX, y: previous.midY))
-            anim.toValue = NSValue(point: cap.position)
-            anim.duration = Motion.breathe
-            anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            cap.add(anim, forKey: "cap-position")
+            return
         }
+
+        let track = Self.trackRange(height: bounds.height, trackInset: trackInset)
+        let width: CGFloat = 1.5 * railBreathe
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        spine.frame = CGRect(
+            x: bounds.midX - width / 2,
+            y: track.top,
+            width: width,
+            height: max(1, track.bottom - track.top)
+        )
+        spine.cornerRadius = width / 2
+        spine.backgroundColor = styleSheet.railTick.withAlphaComponent(Self.spineAlpha).cgColor
+        spine.isHidden = false
+        CATransaction.commit()
     }
 
     public override func layout() {
@@ -709,30 +1012,6 @@ public final class DensityGutterView: NSView {
         updateMarkLayers(animated: false)
     }
 
-
-    /// Changes last, search hits just under them: both are transient answers to
-    /// "where is the thing I am looking for", and losing one behind a heading
-    /// tick would defeat the feature.
-    private static func paintOrder(_ kind: DensityBand.Kind) -> Int {
-        switch kind {
-        case .heading: return 0
-        case .codeBlock, .table, .math, .taskList, .image, .callout: return 1
-        case .searchHit: return 2
-        case .change: return 3
-        }
-    }
-
-    /// At rest, the rail carries navigation and review signals.  Body-shape
-    /// bands stay available to callers for previews, but do not become a
-    /// minimap of code, tables, or other large blocks.
-    static func isVisibleAtRest(_ kind: DensityBand.Kind) -> Bool {
-        switch kind {
-        case .heading, .searchHit, .change:
-            return true
-        case .codeBlock, .table, .math, .taskList, .image, .callout:
-            return false
-        }
-    }
 
     // MARK: - Pointer (§7.1 "click to jump, drag to scrub")
 
@@ -754,22 +1033,43 @@ public final class DensityGutterView: NSView {
         trackingArea = area
     }
 
+    /// The rail has exactly one coordinate system: the marks.
+    ///
+    /// A point inside the cluster resolves to the mark it is on; a point
+    /// between two marks interpolates between their fractions; a point beyond
+    /// either end clamps to the first or last mark.  It used to fall back to a
+    /// linear read of the whole track whenever no mark was within slop — and
+    /// since the cluster occupied a small share of a tall rail, most of a
+    /// full-height, 72pt-wide hit area jumped to a position the rail had never
+    /// depicted.
     private func fraction(at point: NSPoint) -> CGFloat {
         guard bounds.height > 0 else { return 0 }
-        let entries = visualBands(height: bounds.height)
+        let entries = resolvedStack(height: bounds.height)
+        guard let first = entries.first, let last = entries.last else {
+            // No stack: the track is all there is to read.
+            let track = Self.trackRange(height: bounds.height, trackInset: trackInset)
+            return min(1, max(0, (point.y - track.top) / max(1, track.bottom - track.top)))
+        }
+        if point.y <= first.y { return first.band.startFraction }
+        if point.y >= last.y { return last.band.startFraction }
         if let nearest = entries.min(by: {
             abs($0.y - point.y) < abs($1.y - point.y)
         }), abs(nearest.y - point.y) <= Self.hoverActivationSlop {
             return nearest.band.startFraction
         }
-        let top = min(trackInset, max(0, bounds.height / 2))
-        let bottom = max(top, bounds.height - trackInset)
-        return min(1, max(0, (point.y - top) / max(1, bottom - top)))
+        guard let upper = entries.firstIndex(where: { $0.y > point.y }), upper > 0 else {
+            return last.band.startFraction
+        }
+        let low = entries[upper - 1]
+        let high = entries[upper]
+        let t = (point.y - low.y) / max(1, high.y - low.y)
+        return low.band.startFraction
+            + (high.band.startFraction - low.band.startFraction) * t
     }
 
     /// Scrub release always settles on the nearest mark so the stick feels physical.
     private func snapFraction(at point: NSPoint) -> CGFloat {
-        let entries = visualBands(height: bounds.height)
+        let entries = resolvedStack(height: bounds.height)
         if let nearest = entries.min(by: { abs($0.y - point.y) < abs($1.y - point.y) }) {
             return nearest.band.startFraction
         }
@@ -817,13 +1117,13 @@ public final class DensityGutterView: NSView {
     private func updateHoveredBand(at point: NSPoint?, animated: Bool) {
         let nextIndex: Int?
         if let point, bounds.height > 0 {
-            let entries = visualBands(height: bounds.height)
+            let positions = resolvedStack(height: bounds.height).map(\.y)
             nextIndex = Self.nextHoveredBandIndex(
                 at: point.y,
-                positions: entries.map { $0.y },
+                positions: positions,
                 currentIndex: hoveredBandIndex,
                 activationSlop: Self.hoverActivationSlop,
-                dismissalSlop: Self.hoverDismissalSlop
+                dismissalSlop: Self.dismissalSlop(for: positions)
             )
         } else {
             nextIndex = nil
@@ -836,6 +1136,21 @@ public final class DensityGutterView: NSView {
         if indexChanged || point != nil || pointerLocation != nil {
             updateMarkLayers(animated: animated && indexChanged)
         }
+    }
+
+    /// A mark's hover row is half the gap to its neighbour, so the pointer
+    /// hands over from one mark to the next with no dead band between them.
+    ///
+    /// The fixed 4pt row only worked while the pitch was fixed at 10pt: at the
+    /// wider pitches an adaptive stack uses, everything from 4pt away to the
+    /// neighbour's activation range resolved to "no mark", and the preview
+    /// blinked out and back on every crossing.
+    static func dismissalSlop(for positions: [CGFloat]) -> CGFloat {
+        guard positions.count > 1 else { return hoverDismissalSlop }
+        let smallestGap = zip(positions, positions.dropFirst())
+            .map { $1 - $0 }
+            .min() ?? hoverDismissalSlop
+        return max(hoverDismissalSlop, smallestGap / 2)
     }
 
     static func nextHoveredBandIndex(
@@ -898,7 +1213,7 @@ public final class DensityGutterView: NSView {
         updateHoveredBand(at: point, animated: true)
         let target = wasDragging ? snapFraction(at: point) : fraction(at: point)
         delegate?.densityGutter(self, didRequestScrollToFraction: target)
-        let punchIndex = visualBands(height: bounds.height).firstIndex {
+        let punchIndex = resolvedStack(height: bounds.height).firstIndex {
             abs($0.band.startFraction - target) < 0.000_1
         } ?? hoveredBandIndex
         performJumpPunch(at: punchIndex)

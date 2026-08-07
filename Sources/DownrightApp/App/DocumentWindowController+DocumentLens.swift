@@ -28,7 +28,7 @@ extension DocumentWindowController: DocumentLensViewDelegate {
         panel.delegate = self
         documentLensPanel = panel
         configureDocumentLens(panel)
-        installTrailing(panel)
+        installTrailing(panel, title: Command.documentLens.panelTitle)
 
         let observation = ThemeStore.shared.observe { [weak self, weak panel] theme in
             guard let self, let panel, let window = self.window else { return }
@@ -53,6 +53,9 @@ extension DocumentWindowController: DocumentLensViewDelegate {
         let changes = markdownDocument.changes.visibleMarks.enumerated().map { index, mark in
             DocumentLensChange(id: "\(index):\(mark.range.location)", kind: mark.kind, range: mark.range, wordRanges: mark.wordRanges)
         }
+        // The rows caption themselves by line number, which needs the source
+        // before the model lands or they fall back to raw byte offsets.
+        panel.sourceText = markdownDocument.text
         panel.model = DocumentLensModel(input: DocumentLensInput(
             document: parsed, health: health, assetReferences: references, assets: assets,
             renderTarget: report, changes: changes

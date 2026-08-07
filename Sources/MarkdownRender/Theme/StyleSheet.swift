@@ -341,6 +341,34 @@ public struct StyleSheet {
 
     public func codeColor(_ token: SyntaxToken) -> NSColor { codeColors[token] ?? text }
 
+    /// What a mark drawn *on* the accent must be painted in — the tick inside a
+    /// ticked checkbox, a glyph on an accent pill.
+    ///
+    /// It used to be `background` everywhere, which assumes the page is always
+    /// the far side of the accent.  A warm light theme has a near-white page
+    /// and a mid-amber accent, and a white tick on amber is the one state in
+    /// the app a reader could not see.  Picking whichever of the page and its
+    /// text stands further from the accent keeps the mark legible in every
+    /// theme without a per-theme token (§11.2).
+    public var onAccent: NSColor {
+        let distance = { (color: NSColor) in
+            abs(StyleSheet.relativeLuminance(color) - StyleSheet.relativeLuminance(accent))
+        }
+        return distance(background) >= distance(text) ? background : text
+    }
+
+    /// WCAG relative luminance, on the sRGB components the resolver already
+    /// snapshotted.
+    static func relativeLuminance(_ color: NSColor) -> CGFloat {
+        guard let srgb = color.usingColorSpace(.sRGB) else { return 0.5 }
+        let channel = { (value: CGFloat) -> CGFloat in
+            value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(srgb.redComponent)
+            + 0.7152 * channel(srgb.greenComponent)
+            + 0.0722 * channel(srgb.blueComponent)
+    }
+
     private static func codeColors(
         _ code: CodeTheme, text: NSColor, resolver: ColorResolver
     ) -> [SyntaxToken: NSColor] {

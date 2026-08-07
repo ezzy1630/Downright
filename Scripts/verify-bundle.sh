@@ -8,6 +8,8 @@
 #   * Sparkle.framework and its nested XPC helpers are present and bundle-relative
 #   * runtime dylib paths are bundle-relative (no absolute build-machine paths)
 #   * the Quick Look extensions and the `down` CLI are embedded
+#   * the host app and each .appex carry their own copy of every SwiftPM
+#     resource bundle their code reaches for, at a path the resolvers look in
 #   * host and extensions share the marketing/build versions
 #   * --production: the Info.plist carries the exact feed URL and a real
 #     (non-placeholder) Ed25519 public key
@@ -76,16 +78,61 @@ else
     check 0 "PrivacyInfo.xcprivacy present"
 fi
 
-# --- Quick Look extensions (Xcode builds only) -------------------------------
+# --- Resource bundles --------------------------------------------------------
+# Both resolvers — ThemeStore.resourceBundle and the vendored SwiftMath's
+# MathResourceBundle (Vendor/SwiftMath/PATCHES.md) — look in Contents/Resources
+# first for a deep bundle, so that is where these have to be.  Assert the exact
+# files they open rather than the bundles around them: a truncated copy is the
+# failure that shows up as "no math" months later.
+check "$([ -f "$CONTENTS/Resources/Downright_MarkdownRender.bundle/Themes/paper-light.json" ] && echo 1 || echo 0)" \
+      "host carries the MarkdownRender themes"
+check "$([ -f "$CONTENTS/Resources/SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf" ] && echo 1 || echo 0)" \
+      "host carries the SwiftMath math fonts"
+
+# --- Quick Look extensions ---------------------------------------------------
+# Two .appex layouts reach this script: flat, as Scripts/bundle-quicklook.sh
+# assembles them, and deep (Contents/MacOS, Contents/Resources) from Xcode.
+# Resolve each file against both rather than pinning one pipeline's shape.
+appex_plist() {
+    local appex="$1"
+    [ -f "$appex/Info.plist" ] && { echo "$appex/Info.plist"; return; }
+    [ -f "$appex/Contents/Info.plist" ] && echo "$appex/Contents/Info.plist"
+}
+
+# An extension resolves resources from its own bundle: `Contents/Resources` for
+# a deep .appex, the bundle root for a flat one.  Accept either — the two
+# pipelines produce different shapes and both resolvers cover both.
+appex_resource() {
+    local appex="$1" relative="$2"
+    [ -e "$appex/$relative" ] && { echo "$appex/$relative"; return; }
+    [ -e "$appex/Contents/Resources/$relative" ] && echo "$appex/Contents/Resources/$relative"
+}
+
 if [ -d "$CONTENTS/PlugIns" ]; then
     check "$([ -d "$CONTENTS/PlugIns/DownrightQL.appex" ] && echo 1 || echo 0)" "DownrightQL.appex embedded"
     check "$([ -d "$CONTENTS/PlugIns/DownrightThumb.appex" ] && echo 1 || echo 0)" "DownrightThumb.appex embedded"
+
+    # An extension resolves resources through its own Bundle.main, so nothing in
+    # the host app's Contents/Resources is reachable from inside it: each .appex
+    # needs its own copy of every resource bundle its linked code can ask for.
+    for appex in "$CONTENTS"/PlugIns/*.appex; do
+        [ -e "$appex" ] || continue
+        NAME="$(basename "$appex")"
+        check "$([ -n "$(appex_resource "$appex" Downright_MarkdownRender.bundle/Themes/paper-light.json)" ] && echo 1 || echo 0)" \
+              "$NAME carries the MarkdownRender themes"
+        # SwiftMath does not fail when its fonts are missing, it calls
+        # fatalError — which is how one formula used to take the whole preview
+        # down.  MathFontBundle degrades instead of trapping now, so a miss
+        # here is no longer fatal, only silently worse; assert the exact file
+        # SwiftMath opens first so it cannot regress unnoticed.
+        check "$([ -n "$(appex_resource "$appex" SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf)" ] && echo 1 || echo 0)" \
+              "$NAME carries the SwiftMath math fonts"
+    done
 fi
 
 # --- Version consistency -----------------------------------------------------
 host_short() { /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$1/Contents/Info.plist" 2>/dev/null || echo ""; }
 host_build() { /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$1/Contents/Info.plist" 2>/dev/null || echo ""; }
-extension_short() { /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$1/Contents/Info.plist" 2>/dev/null || echo ""; }
 
 HOST_SHORT="$(host_short "$APP")"
 HOST_BUILD="$(host_build "$APP")"
@@ -93,8 +140,11 @@ HOST_BUILD="$(host_build "$APP")"
 
 for appex in "$CONTENTS"/PlugIns/*.appex; do
     [ -e "$appex" ] || continue
-    EXT_SHORT="$(extension_short "$appex")"
-    EXT_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$appex/Contents/Info.plist" 2>/dev/null || echo "")"
+    # `|| true`: an .appex with neither plist would abort the script under
+    # `set -e` before the check below could report it.
+    EXT_PLIST="$(appex_plist "$appex" || true)"
+    EXT_SHORT="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$EXT_PLIST" 2>/dev/null || echo "")"
+    EXT_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$EXT_PLIST" 2>/dev/null || echo "")"
     check "$([ "$EXT_SHORT" = "$HOST_SHORT" ] && echo 1 || echo 0)" "$(basename "$appex") marketing version matches host"
     check "$([ "$EXT_BUILD" = "$HOST_BUILD" ] && echo 1 || echo 0)" "$(basename "$appex") build version matches host"
 done

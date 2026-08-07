@@ -39,6 +39,16 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
+- **Math rendered only on the machine that built the app.** SwiftMath reached
+  its fonts through SwiftPM's generated `Bundle.module`, whose two candidates
+  are the bundle *root* (where codesign forbids resources) and an absolute path
+  inside the build directory — so a shipped bundle found neither and the
+  accessor called `fatalError`, taking the whole Quick Look preview down with
+  the first formula. SwiftMath 1.7.3 is now vendored at `Vendor/SwiftMath` with
+  a three-line patch that resolves the fonts from the layouts we actually ship
+  (`Vendor/SwiftMath/PATCHES.md`). `MathFontBundle` still guards every call as
+  defence in depth, and `Scripts/verify-bundle.sh` now asserts the fonts in the
+  host app as well as in each `.appex`.
 - An implicit save could silently clobber a newer on-disk version after an
   external edit (occlusion autosave, quit, checkbox toggle): saves are now
   refused until the user resolves the conflict, and only an explicit

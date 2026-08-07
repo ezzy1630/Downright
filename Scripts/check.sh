@@ -64,9 +64,20 @@ echo "    ok"
 echo
 echo "==> Sanity: the runner must actually have run something"
 COUNT=$(awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { print count + 0 }' "$TEST_LOG")
+# A missing or unreadable log leaves COUNT empty, and an empty COUNT must read
+# as "nothing ran", never as "the arithmetic test was malformed, carry on".
+case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
 echo "    $COUNT tests executed"
-[ "$COUNT" -gt 0 ] || { echo "    NO TESTS RAN — see the note at the top of this script"; exit 1; }
-[ "$TEST_STATUS" -eq 0 ] || { echo "    TESTS FAILED — see $TEST_LOG"; exit "$TEST_STATUS"; }
+if [ "$COUNT" -eq 0 ]; then
+    echo "    NO TESTS RAN — see the note at the top of this script"
+    exit 1
+fi
+# Exit codes are taken modulo 256, so a status of 256 would surface as success.
+# Report the failure with a literal 1 instead of forwarding the raw status.
+if [ "$TEST_STATUS" -ne 0 ]; then
+    echo "    TESTS FAILED (swift test exited $TEST_STATUS) — see $TEST_LOG"
+    exit 1
+fi
 
 echo
 echo "==> Bench (debug, informational — exercises drbench and catches crashes)"

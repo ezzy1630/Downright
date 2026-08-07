@@ -48,6 +48,7 @@ final class ChangeSummaryBarView: MessageBarView {
         }
         self.previousButton = previousButton
         self.nextButton = nextButton
+        updateNavigationState()
 
         let reviewedButton = addSymbolAction(
             "checkmark",
@@ -69,16 +70,37 @@ final class ChangeSummaryBarView: MessageBarView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    /// Wide enough for the message it is carrying, never wider than a strip of
+    /// chrome should be over a document.
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 320, height: PanelMetrics.reviewBarHeight)
+        NSSize(
+            width: min(Self.maximumWidth, max(Self.minimumWidth, fittedWidth)),
+            height: PanelMetrics.reviewBarHeight
+        )
     }
+
+    private static let minimumWidth: CGFloat = 260
+    private static let maximumWidth: CGFloat = 520
 
     func configure(message: String, changeCount: Int) {
         self.message = message
         self.changeCount = max(0, changeCount)
         currentPosition = nil
         updatePositionStatus()
+        updateNavigationState()
+        invalidateIntrinsicContentSize()
         setAccessibilityLabel("\(message). \(changeCount) unread changes")
+    }
+
+    /// Walking is only offered when there is something to walk.  Enabled
+    /// chevrons that silently do nothing are worse than no chevrons (§11.4).
+    private func updateNavigationState() {
+        let canWalk = changeCount > 0
+        previousButton?.isEnabled = canWalk
+        nextButton?.isEnabled = canWalk
+        let help = canWalk ? "" : " (no unread changes)"
+        previousButton?.toolTip = "Previous change\(help)"
+        nextButton?.toolTip = "Next change\(help)"
     }
 
     var positionStatusForTesting: String {

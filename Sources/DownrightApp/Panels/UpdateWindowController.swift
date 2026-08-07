@@ -52,6 +52,11 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         coordinator?.userDidDismissPanel()
     }
+
+    /// Esc closes the update window, like every other summonable surface.
+    override func cancelOperation(_ sender: Any?) {
+        window?.performClose(sender)
+    }
 }
 
 // MARK: - Root view

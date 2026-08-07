@@ -47,6 +47,28 @@ final class MarkdownDocument: NSObject {
         case fileRestored
     }
 
+    /// What the app can say about changes made since the reader last reviewed
+    /// this document (§8.2).
+    ///
+    /// The third case is the point: the bytes moved, the previous text has been
+    /// pruned, and the honest answer is "this changed since you last read it,
+    /// but I can no longer show you what" — not silence.
+    enum UnreadChanges: Equatable {
+        case none
+        case marked(count: Int)
+        case previousVersionUnavailable(reason: Unavailable)
+
+        /// Why the previous text cannot be shown.  Worth distinguishing: one is
+        /// a normal consequence of the retention settings, the other is damage.
+        enum Unavailable: Equatable {
+            /// Dropped by the age or size cap.
+            case pruned
+            /// The object is there but does not decompress or does not hash
+            /// back to its own name.
+            case corrupt
+        }
+    }
+
     // MARK: - State
 
     let storage = NSTextStorage()
@@ -61,6 +83,19 @@ final class MarkdownDocument: NSObject {
     /// that bar is dismissed — so an implicit save never silently writes the
     /// buffer over the newer on-disk version.
     private(set) var pendingConflict: Conflict?
+
+    /// The document as the reader last **finished reviewing** it.
+    ///
+    /// Every incoming external write is diffed against this, never against the
+    /// live buffer.  Diffing against the buffer meant that after an agent wrote
+    /// five times in three seconds the marks described write 5 against write 4
+    /// and everything writes 1–4 did had vanished.  Only a user action moves
+    /// this baseline forward — see `advanceReviewBaseline(to:)`.
+    private(set) var reviewBaselineText: String = ""
+    private(set) var reviewBaselineHash: String = ""
+    /// What can be said about changes since that baseline, including the
+    /// degraded case where the previous text is no longer in the store.
+    private(set) var unreadChanges: UnreadChanges = .none
 
     let changes = ChangeTracker()
     var state: DocumentState
@@ -82,8 +117,26 @@ final class MarkdownDocument: NSObject {
     var currentTopOffsetProvider: (() -> Int)?
     /// Asked to scroll to a source offset after an external rewrite.
     var restoreOffsetHandler: ((Int) -> Void)?
+    /// Asked for the current source selection, and asked to put it back after
+    /// an external rewrite.  A burst of agent writes must not eat the reader's
+    /// selection five times over.
+    var currentSelectionProvider: (() -> NSRange)?
+    var restoreSelectionHandler: ((NSRange) -> Void)?
+    /// True while a burst of external writes is still landing, false once the
+    /// document has settled.  Drives a "receiving changes" cue rather than five
+    /// separate "1 new change" banners.
+    var onExternalWriteActivity: ((Bool) -> Void)?
+    /// The watched file was renamed or moved.  Separate from `onExternalEvent`
+    /// on purpose: this is an identity change, not content to reconcile, and
+    /// the owner has different work to do (title, represented URL, path
+    /// resolution, sibling scan).
+    var onFileRenamed: ((URL) -> Void)?
 
     private var watcher: FileWatcher?
+    /// Trailing quiet-period debounce for external writes.  See
+    /// `handleExternalWrite()`.
+    private var pendingExternalWrite: DispatchWorkItem?
+    private var isAbsorbingBurst = false
     private var reparseScheduled = false
     private var isApplyingExternalChange = false
     private var suppressReparse = false
@@ -112,6 +165,13 @@ final class MarkdownDocument: NSObject {
         }
         storage.delegate = self
         undoManager.groupsByEvent = false
+        // Clearing marks *is* finishing a review, wherever the call comes from,
+        // so the baseline moves with it and the next agent write is measured
+        // from what the user just signed off on.
+        changes.onReviewed = { [weak self] in
+            guard let self else { return }
+            self.advanceReviewBaseline(to: self.storage.string)
+        }
         preferencesObservation = NotificationCenter.default.addObserver(
             forName: Preferences.didChange,
             object: Preferences.shared,
@@ -141,9 +201,11 @@ final class MarkdownDocument: NSObject {
         isClosed = false
         enqueueParseControl { await $0.resume() }
         cancelParseWork()
+        cancelPendingExternalWrite()
         // In-place hops reuse this document; change marks from the previous
-        // file must not decorate the next one.
-        changes.clear()
+        // file must not decorate the next one.  `reset`, not `clear`: dropping
+        // a document is not the user reviewing it.
+        changes.reset()
         // Canonicalise once, up front.  A `.atomic` write renames a new file
         // over the destination, which would *replace a symlink with a regular
         // file* while the link's target kept its stale content.  Resolving here
@@ -174,17 +236,103 @@ final class MarkdownDocument: NSObject {
         SnapshotStore.shared.record(text, for: canonical, kind: .baseline)
         DocumentStateStore.shared.noteOpened(canonical, document: structure)
 
-        // Unread-since-last-read (§8.2): if the bytes moved while the app was
-        // closed, mark up what changed and offer to jump to the first one.
-        if !state.lastSeenHash.isEmpty, state.lastSeenHash != diskHash,
-           let previous = SnapshotStore.shared.text(forHash: state.lastSeenHash) {
-            let hunks = TextDiff.hunks(old: previous, new: text)
-            if !hunks.isEmpty { changes.apply(hunks: hunks) }
-        }
+        restoreReviewState(currentText: text)
 
         startWatching(canonical)
         forceNextDirtyWholesale = true
         startAsyncReparse()
+    }
+
+    // MARK: - Review baseline (§8.1, §8.2)
+
+    /// Rebuilds the unread-changes picture on open.
+    ///
+    /// Three independent questions, answered in order, because the old code
+    /// collapsed them into one `guard` and answered "nothing changed" whenever
+    /// any of them failed:
+    ///
+    /// 1. **Did the bytes move since the reader last reviewed?**  A hash
+    ///    comparison, made without touching the object store, so a pruned
+    ///    object can never be mistaken for an unchanged file.
+    /// 2. **Can the previous text still be shown?**  If not, say so
+    ///    (`previousVersionUnavailable`) instead of showing nothing at all.
+    /// 3. **What did the reader already work through?**  Persisted marks carry
+    ///    the visited flags back, so reopening a document does not silently
+    ///    count twelve unreviewed changes as read.
+    private func restoreReviewState(currentText: String) {
+        let storedBaseline = state.reviewBaselineHash.isEmpty
+            ? state.lastSeenHash
+            : state.reviewBaselineHash
+
+        guard !storedBaseline.isEmpty, storedBaseline != diskHash else {
+            // Nothing outstanding: the file is exactly as the reader left it.
+            adoptBaseline(text: currentText, hash: diskHash)
+            changes.reset()
+            unreadChanges = .none
+            return
+        }
+
+        let stored = SnapshotStore.shared.content(forHash: storedBaseline)
+        guard case .text(let previous) = stored else {
+            // The file moved and the old text is gone.  Keep the baseline hash
+            // so a later write is still measured from the right place, and let
+            // the owner say what happened.
+            reviewBaselineText = ""
+            reviewBaselineHash = storedBaseline
+            changes.reset()
+            unreadChanges = .previousVersionUnavailable(reason: stored == .corrupt ? .corrupt : .pruned)
+            return
+        }
+
+        adoptBaseline(text: previous, hash: storedBaseline)
+        let hunks = TextDiff.hunks(old: previous, new: currentText)
+        guard !hunks.isEmpty else {
+            changes.reset()
+            unreadChanges = .none
+            return
+        }
+        changes.apply(hunks: hunks, newText: currentText, oldText: previous)
+        // Re-anchor the persisted set over the freshly computed one so review
+        // progress survives the close/reopen: same kind, same range, same mark.
+        changes.merge(persisted: state.marks)
+        unreadChanges = .marked(count: changes.count)
+    }
+
+    private func adoptBaseline(text: String, hash: String) {
+        reviewBaselineText = text
+        reviewBaselineHash = hash
+    }
+
+    /// Moves the review baseline forward.  **Only user actions call this**:
+    /// finishing a review, keeping their own version in a conflict, restoring a
+    /// historical version, or opening a document that has nothing outstanding.
+    /// An incoming write must never advance it — that is the bug this whole
+    /// mechanism exists to prevent.
+    func advanceReviewBaseline(to text: String) {
+        adoptBaseline(text: text, hash: SnapshotStore.hash(text))
+        unreadChanges = .none
+        state.reviewBaselineHash = reviewBaselineHash
+        state.marks = []
+    }
+
+    /// The explicit "I have read these" action.  Equivalent to `changes.clear()`
+    /// — which routes here through `ChangeTracker.onReviewed` — but named so a
+    /// call site reads as intent rather than as cleanup.
+    func markChangesReviewed() {
+        changes.clear()
+    }
+
+    /// Drops this document's local history (§8.3) and starts the review
+    /// baseline again from what is in the buffer now.  Backs a "Forget this
+    /// document's history" action: without resetting the baseline the next
+    /// write would be diffed against a version whose bytes we just deleted.
+    func forgetHistory() {
+        guard let url else { return }
+        SnapshotStore.shared.forget(url)
+        changes.reset()
+        advanceReviewBaseline(to: storage.string)
+        SnapshotStore.shared.record(storage.string, for: url, kind: .baseline)
+        persistState()
     }
 
     /// Adopts text with no backing file — used by `Compare` windows and by the
@@ -316,11 +464,14 @@ final class MarkdownDocument: NSObject {
     func close() {
         isClosed = true
         cancelParseWork()
+        cancelPendingExternalWrite()
+        // Persist *before* discarding: closing a window is not a review, and the
+        // twelve marks the reader had not looked at yet must come back.
+        persistState()
         // Discard change marks owned by a torn-down document so they cannot
         // leak across to the next file opened in the same window.
-        changes.clear()
+        changes.reset()
         enqueueParseControl { await $0.suspend() }
-        persistState()
         watcher?.stop()
         watcher = nil
     }
@@ -328,7 +479,12 @@ final class MarkdownDocument: NSObject {
     private func persistState() {
         guard let url else { return }
         var state = self.state
+        // `lastSeenHash` is disk bookkeeping and moves with every absorbed
+        // write.  `reviewBaselineHash` is the reader's place in the review and
+        // moves only when they say so — the two must never be conflated.
         state.lastSeenHash = diskHash
+        state.reviewBaselineHash = reviewBaselineHash
+        state.marks = changes.persistedMarks
         if let top = currentTopOffsetProvider?() {
             state.anchor = ScrollAnchoring.anchor(for: top, in: parsed)
         }
@@ -525,6 +681,18 @@ final class MarkdownDocument: NSObject {
         startWatching(url)
     }
 
+    private func cancelPendingExternalWrite() {
+        pendingExternalWrite?.cancel()
+        pendingExternalWrite = nil
+        endBurstIfNeeded()
+    }
+
+    private func endBurstIfNeeded() {
+        guard isAbsorbingBurst else { return }
+        isAbsorbingBurst = false
+        onExternalWriteActivity?(false)
+    }
+
     private func handleWatchEvent(_ event: FileWatcher.Event) {
         switch event {
         case .removed:
@@ -534,10 +702,66 @@ final class MarkdownDocument: NSObject {
             handleExternalWrite()
         case .changed:
             handleExternalWrite()
+        case .renamed(let newURL):
+            adoptRenamedFile(newURL)
         }
     }
 
-    private func handleExternalWrite() {
+    /// The file was renamed under us and the watcher re-attached.  Move the
+    /// document's identity with it so reading position, history, and the
+    /// window's own idea of what it is showing all keep pointing at one file.
+    private func adoptRenamedFile(_ newURL: URL) {
+        guard url != nil else { return }
+        let canonical = newURL.resolvingSymlinksInPath()
+        guard canonical != url else { return }
+        url = canonical
+        state.path = canonical.path
+        DocumentStateStore.shared.save(state, for: canonical)
+        // Seed the new key's history with what we are holding, so the timeline
+        // does not start empty at the new name.
+        SnapshotStore.shared.record(storage.string, for: canonical, kind: .baseline)
+        onFileRenamed?(canonical)
+    }
+
+    /// Trailing quiet-period debounce.
+    ///
+    /// `FileWatcher` already coalesces at 300 ms, but an agent that writes a
+    /// file five times over three seconds clears that window between writes, so
+    /// each one arrived as its own full-buffer replace, synchronous reparse and
+    /// scroll restore — the document visibly rebuilding five times while the
+    /// reader was mid-sentence.  Hold off until nothing has landed for 250 ms
+    /// and absorb once.  Nothing is buffered: the flush re-reads the file, so
+    /// it always applies the newest bytes rather than a stale copy.
+    ///
+    /// Internal rather than private so tests can drive an agent's write burst
+    /// without racing a real filesystem watcher.
+    func handleExternalWrite() {
+        pendingExternalWrite?.cancel()
+        if !isAbsorbingBurst {
+            isAbsorbingBurst = true
+            onExternalWriteActivity?(true)
+        }
+        let item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.absorbExternalWrite() }
+        }
+        pendingExternalWrite = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + externalWriteQuietPeriod, execute: item)
+    }
+
+    private let externalWriteQuietPeriod: TimeInterval = 0.25
+
+    /// Applies any external write still waiting on the quiet period.  Tests and
+    /// lifecycle code use this instead of guessing at wall-clock timing.
+    func flushPendingExternalWrite() {
+        guard pendingExternalWrite != nil else { return }
+        pendingExternalWrite?.cancel()
+        pendingExternalWrite = nil
+        absorbExternalWrite()
+    }
+
+    private func absorbExternalWrite() {
+        pendingExternalWrite = nil
+        defer { endBurstIfNeeded() }
         guard let url, let (incoming, freshFidelity) = try? DocumentIO.read(contentsOf: url) else { return }
         let incomingHash = SnapshotStore.hash(incoming)
         let currentText = storage.string
@@ -560,13 +784,17 @@ final class MarkdownDocument: NSObject {
         }
 
         SnapshotStore.shared.record(incoming, for: url, kind: .external)
-        let hunks = TextDiff.hunks(old: currentText, new: incoming)
         diskHash = incomingHash
 
         if isDirty {  // Never clobber (§8.1).  The bar is non-modal; the buffer is
             // untouched until the user picks.  Track it at the document level
             // so implicit saves refuse to clobber even after the bar is
             // dismissed.
+            //
+            // A conflict is diffed against the *buffer*, not against the review
+            // baseline: the question on screen is "my version or theirs", and
+            // the reader's own unsaved edits are one side of it.
+            let hunks = TextDiff.hunks(old: currentText, new: incoming)
             let conflict = Conflict(
                 incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
             )
@@ -575,33 +803,141 @@ final class MarkdownDocument: NSObject {
             return
         }
 
+        // The clean-buffer case is diffed against the review baseline.  This is
+        // the fix for "five writes in three seconds": every one of them reports
+        // what changed since the reader last looked, so writes 1–4 do not
+        // disappear behind write 5.
+        let baseline = effectiveBaselineText(fallback: currentText)
+        let hunks = TextDiff.hunks(old: baseline, new: incoming)
+
         pendingConflict = nil
         fidelity = freshFidelity
-        applyExternalText(incoming, hunks: hunks)
+        applyExternalText(incoming, hunks: hunks, baseline: baseline)
+        unreadChanges = changes.isEmpty ? .none : .marked(count: changes.count)
         onExternalEvent?(.applied(hunks: hunks))
     }
 
+    /// The text to diff an incoming write against.  Falls back to the buffer
+    /// when the baseline text is unavailable (pruned history), which degrades
+    /// to the old behaviour rather than to no marks at all.
+    private func effectiveBaselineText(fallback: String) -> String {
+        reviewBaselineText.isEmpty ? fallback : reviewBaselineText
+    }
+
     /// Replaces the buffer in place, holding the reader's position by anchoring
-    /// to the nearest unchanged heading rather than to a byte offset (§8.1).
-    func applyExternalText(_ incoming: String, hunks: [ChangeHunk]) {
+    /// to the nearest unchanged heading rather than to a byte offset (§8.1),
+    /// and putting the selection back afterwards.
+    func applyExternalText(_ incoming: String, hunks: [ChangeHunk], baseline: String? = nil) {
         // Adopting the on-disk version resolves any outstanding conflict.
         pendingConflict = nil
         let topOffset = currentTopOffsetProvider?() ?? 0
         let anchor = ScrollAnchoring.anchor(for: topOffset, in: parsed)
+        let previousText = storage.string
+        let previousSelection = currentSelectionProvider?() ?? NSRange(location: 0, length: 0)
 
-        isApplyingExternalChange = true
-        let whole = NSRange(location: 0, length: storage.length)
-        // Registered as undoable on purpose: ⌘Z reverts an agent's rewrite,
-        // which is the fastest possible answer to "no, put it back".
-        replace(whole, with: incoming, actionName: "External Change")
-        isApplyingExternalChange = false
+        adoptExternalBuffer(incoming)
         setDirty(false)
 
         reparseNow()
-        changes.apply(hunks: hunks)
+        changes.apply(hunks: hunks, newText: incoming, oldText: baseline ?? previousText)
 
         let restored = ScrollAnchoring.offset(for: anchor, in: parsed)
         restoreOffsetHandler?(restored)
+        restoreSelection(previousText, previousSelection, near: restored)
+    }
+
+    /// Puts the buffer's whole contents behind an external write, with an undo
+    /// that says what it is doing.
+    ///
+    /// ⌘Z reverting an agent's rewrite is the fastest possible answer to "no,
+    /// put it back" and must keep working.  What it must *not* do is quietly
+    /// leave a dirty buffer while `diskHash` still holds the agent's content —
+    /// the next save then failed with a conflict the user could not connect to
+    /// anything they had done.  So the undo restores the text *and* surfaces
+    /// the disagreement it just created, through the same conflict bar that any
+    /// other buffer-versus-disk disagreement uses.
+    private func adoptExternalBuffer(_ incoming: String) {
+        let previous = storage.string
+        let whole = NSRange(location: 0, length: storage.length)
+
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { document in
+            MainActor.assumeIsolated {
+                document.revertExternalBuffer(to: previous, incoming: incoming)
+            }
+        }
+        undoManager.setActionName("External Change")
+        undoManager.endUndoGrouping()
+
+        isApplyingExternalChange = true
+        storage.beginEditing()
+        storage.replaceCharacters(in: whole, with: incoming)
+        storage.endEditing()
+        isApplyingExternalChange = false
+    }
+
+    /// Undo of an external absorb.  The buffer goes back to what the reader had;
+    /// the file on disk still holds the agent's version, so that is an
+    /// unresolved conflict and is shown as one.
+    private func revertExternalBuffer(to previous: String, incoming: String) {
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { document in
+            MainActor.assumeIsolated {
+                document.adoptExternalBuffer(incoming)
+                document.setDirty(false)
+                document.pendingConflict = nil
+                document.reparseNow()
+            }
+        }
+        undoManager.setActionName("External Change")
+        undoManager.endUndoGrouping()
+
+        storage.beginEditing()
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: previous)
+        storage.endEditing()
+        reparseNow()
+        changes.reset()
+        setDirty(true)
+
+        let hunks = TextDiff.hunks(old: previous, new: incoming)
+        let conflict = Conflict(
+            incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+        )
+        pendingConflict = conflict
+        unreadChanges = .none
+        onExternalEvent?(.conflict(conflict))
+    }
+
+    /// Restores the reader's selection after the buffer was replaced.
+    ///
+    /// Matched on the selected *text* rather than on byte offsets, for the same
+    /// reason the scroll position is anchored to a heading: an agent inserting
+    /// two paragraphs above you must not move what you had selected.  A
+    /// selection whose text is gone collapses to a caret at the restored
+    /// reading position rather than jumping to the top of the file.
+    private func restoreSelection(_ previousText: String, _ selection: NSRange, near offset: Int) {
+        guard let restoreSelectionHandler else { return }
+        let previous = previousText as NSString
+        guard selection.length > 0, selection.upperBound <= previous.length,
+              selection.length <= 4096 else {
+            restoreSelectionHandler(NSRange(location: min(offset, storage.length), length: 0))
+            return
+        }
+        let needle = previous.substring(with: selection)
+        let haystack = storage.string as NSString
+        let forward = haystack.range(
+            of: needle,
+            options: [.literal],
+            range: NSRange(location: min(offset, haystack.length), length: haystack.length - min(offset, haystack.length))
+        )
+        let found = forward.location != NSNotFound
+            ? forward
+            : haystack.range(of: needle, options: [.literal, .backwards])
+        restoreSelectionHandler(
+            found.location != NSNotFound
+                ? found
+                : NSRange(location: min(offset, haystack.length), length: 0)
+        )
     }
 
     /// Conflict resolution: take the version on disk, dropping local edits.
@@ -627,13 +963,26 @@ final class MarkdownDocument: NSObject {
         return SnapshotStore.shared.versions(for: url)
     }
 
+    /// Whether a historical version can still be shown, so the timeline can
+    /// distinguish "pruned" from "damaged" instead of showing an empty pane.
+    func content(of version: SnapshotStore.VersionRecord) -> SnapshotStore.Content {
+        SnapshotStore.shared.content(for: version)
+    }
+
     /// Restores a historical version into the buffer as a normal, undoable edit.
-    func restore(version: SnapshotStore.VersionRecord) {
-        guard let text = SnapshotStore.shared.text(for: version) else { return }
-        let hunks = TextDiff.hunks(old: storage.string, new: text)
+    /// Choosing a version is a review decision, so the baseline moves with it:
+    /// the next agent write is measured against what the user just chose.
+    @discardableResult
+    func restore(version: SnapshotStore.VersionRecord) -> Bool {
+        guard case .text(let text) = SnapshotStore.shared.content(for: version) else { return false }
+        let previous = storage.string
+        let hunks = TextDiff.hunks(old: previous, new: text)
         replace(NSRange(location: 0, length: storage.length), with: text, actionName: "Restore Version")
         reparseNow()
-        changes.apply(hunks: hunks)
+        advanceReviewBaseline(to: text)
+        changes.apply(hunks: hunks, newText: text, oldText: previous)
+        unreadChanges = changes.isEmpty ? .none : .marked(count: changes.count)
+        return true
     }
 }
 

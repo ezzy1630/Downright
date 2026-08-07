@@ -41,7 +41,7 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
         panel.delegate = self
         reviewPanel = panel
         configureReviewPanel(panel)
-        installTrailing(panel)
+        installTrailing(panel, title: Command.reviewPanel.panelTitle)
     }
 
     func configureReviewPanel(_ panel: ReviewPanelView) {

@@ -53,7 +53,7 @@ extension DocumentWindowController {
         case .markdown:
             pasteboard.setString(markdown, forType: .string)
         case .richText:
-            let attributed = containerTextView.attributedStringForRichTextCopy(range: range)
+            let attributed = containerTextView.exportableAttributedString(range: range)
             if let rtf = attributed.rtf(from: NSRange(location: 0, length: attributed.length), documentAttributes: [:]) {
                 pasteboard.declareTypes([.rtf, .string], owner: nil)
                 pasteboard.setData(rtf, forType: .rtf)
@@ -71,12 +71,36 @@ extension DocumentWindowController {
         copy(range: markdownDocument.parsed.headings[index].sectionRange, flavour: .markdown)
     }
 
-    func copySectionLink() {
-        guard let index = currentHeadingIndex(), let url = markdownDocument.url else { return }
-        let slug = markdownDocument.parsed.headings[index].slug
-        let link = "[\(markdownDocument.parsed.headings[index].title)](\(url.lastPathComponent)#\(slug))"
+    /// Copies a link to a section.  `index` names the heading the user pointed
+    /// at; without one the caret's section is the sensible default.
+    ///
+    /// Clicking the gutter's heading marker used to fall through to the caret's
+    /// section, so it silently copied a link to a different heading than the one
+    /// under the pointer — and, replacing the clipboard with no feedback, said
+    /// nothing about it either way.
+    func copySectionLink(index: Int? = nil) {
+        guard let index = index ?? currentHeadingIndex(),
+              markdownDocument.parsed.headings.indices.contains(index),
+              let url = markdownDocument.url else { return }
+        let heading = markdownDocument.parsed.headings[index]
+        let link = "[\(heading.title)](\(url.lastPathComponent)#\(heading.slug))"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(link, forType: .string)
+        announceTransientStatus("Copied link to “\(heading.title)”")
+    }
+
+    /// A quiet, non-blocking confirmation for actions whose only other evidence
+    /// is a changed clipboard.
+    func announceTransientStatus(_ message: String) {
+        guard let element = window else { return }
+        NSAccessibility.post(
+            element: element,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
     }
 
     // MARK: - Saving
@@ -202,6 +226,7 @@ extension DocumentWindowController {
             styleMask: [.titled, .resizable], backing: .buffered, defer: false
         )
         sheetWindow.title = "Tidy Document"
+        sheetWindow.minSize = NSSize(width: 560, height: 400)
 
         let sheet = TidySheetView()
         sheet.styleSheet = currentStyleSheet

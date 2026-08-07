@@ -98,11 +98,24 @@ public final class GutterRailView: NSView {
         guard textView.mode.policy.showsGutterMarkers || hoveredHeadingIsVisible else { return }
 
         let font = style.monoFont(size: max(9, style.bodyFont().pointSize * 0.62))
+        // Same draw-ahead band the row intersection has always used, hoisted so
+        // the loop can also stop on it.
+        let band = visible.insetBy(dx: 0, dy: -40)
         for marker in visibleMarkerSlice(in: textView) {
             if let focus = textView.sourceFocus.range,
                focus.contains(offset: marker.offset) { continue }
-            guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView),
-                  rect.intersects(visible.insetBy(dx: 0, dy: -40)) else { continue }
+            guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView)
+            else { continue }
+            // Rows are laid out top to bottom, so once one clears the band no
+            // later marker can re-enter it; `drawLineNumbers` stops on the same
+            // invariant.  Without the stop this loop measures every marker the
+            // slice contains, and the slice runs to the end of the document
+            // whenever the viewport's lower hit test lands inside a fragment —
+            // a thousand `rect(forOffset:)` calls per scroll event on a long
+            // file, each of which walks the content storage's element list
+            // (§12).
+            if rect.minY > band.maxY { break }
+            guard rect.intersects(band) else { continue }
             let isActive = activeBlock.map { $0.range.contains(offset: marker.offset) } ?? false
             let color = isActive ? style.marker.blended(withFraction: 0.5, of: style.text) ?? style.marker
                                  : style.marker

@@ -20,13 +20,19 @@ final class CommandPaletteView: NSView, PanelSurface {
         }
     }
 
-    let preferredWidth: CGFloat = 520
+    let preferredWidth: CGFloat = PanelMetrics.wideWidth
 
     private let backdrop: PanelBackdrop
     private let searchField = NSSearchField()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     private let hintLabel = NSTextField(labelWithString: "↑ ↓ Move   Return Open   Esc Close")
+    /// The prefixes exist and nothing said so.  A filter you cannot discover
+    /// is a filter nobody uses (§7.2).
+    private let prefixLabel = NSTextField(
+        labelWithString: ">  commands    @  symbols    #  headings    #task    file:    link:    asset:"
+    )
+    private let emptyState = PanelEmptyStateView()
     private var model: CommandPaletteModel
     private let recentStore: CommandPaletteRecentStore
     private var keyMonitor: Any?
@@ -97,7 +103,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         tableView.dataSource = self
         tableView.target = self
         tableView.doubleAction = #selector(doubleClick(_:))
-        tableView.rowHeight = 48
+        tableView.rowHeight = PanelMetrics.detailRowHeight
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.selectionHighlightStyle = .regular
         tableView.backgroundColor = .clear
@@ -113,11 +119,23 @@ final class CommandPaletteView: NSView, PanelSurface {
         addSubview(scrollView)
 
         hintLabel.font = PanelFont.secondary
-        hintLabel.textColor = .secondaryLabelColor
         hintLabel.alignment = .right
+        hintLabel.lineBreakMode = .byTruncatingTail
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
         hintLabel.setAccessibilityLabel("Keyboard commands: move, open, close")
         addSubview(hintLabel)
+
+        prefixLabel.font = NSFont.systemFont(ofSize: 10.5)
+        prefixLabel.alignment = .left
+        prefixLabel.lineBreakMode = .byTruncatingTail
+        prefixLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        prefixLabel.translatesAutoresizingMaskIntoConstraints = false
+        prefixLabel.setAccessibilityLabel(
+            "Search prefixes: greater-than for commands, at for symbols, hash for headings, "
+                + "hash task for tasks, file colon, link colon, asset colon"
+        )
+        addSubview(prefixLabel)
+        emptyState.install(in: self, over: scrollView)
 
         NSLayoutConstraint.activate([
             searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -128,7 +146,9 @@ final class CommandPaletteView: NSView, PanelSurface {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
             scrollView.bottomAnchor.constraint(equalTo: hintLabel.topAnchor, constant: -8),
-            hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            prefixLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            prefixLabel.centerYAnchor.constraint(equalTo: hintLabel.centerYAnchor),
+            hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: prefixLabel.trailingAnchor, constant: 12),
             hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             hintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
             hintLabel.heightAnchor.constraint(equalToConstant: 16),
@@ -143,7 +163,10 @@ final class CommandPaletteView: NSView, PanelSurface {
         layer?.backgroundColor = styleSheet.background.cgColor
         searchField.backgroundColor = styleSheet.background
         searchField.textColor = styleSheet.text
+        hintLabel.textColor = styleSheet.textFaint
+        prefixLabel.textColor = styleSheet.textFaint
         tableView.reloadData()
+        updateEmptyState()
     }
 
     private func reloadResults() {
@@ -157,6 +180,26 @@ final class CommandPaletteView: NSView, PanelSurface {
         }
         let status = count == 1 ? "1 command" : "\(count) commands"
         tableView.setAccessibilityValue(status)
+        updateEmptyState()
+    }
+
+    /// A typo produced a blank rectangle.  Say what happened and how to get
+    /// out of it instead (§11.4).
+    private func updateEmptyState() {
+        guard model.quickResults.isEmpty else {
+            emptyState.isHidden = true
+            scrollView.isHidden = false
+            return
+        }
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        emptyState.configure(
+            symbol: "magnifyingglass",
+            title: query.isEmpty ? "Nothing to open yet" : "No matches for “\(query)”",
+            subtitle: "Try a prefix: `>` for commands,\n`@` for symbols, `#` for headings.",
+            styleSheet: styleSheet
+        )
+        emptyState.isHidden = false
+        scrollView.isHidden = true
     }
 
     private func installKeyMonitor() {
@@ -191,6 +234,12 @@ final class CommandPaletteView: NSView, PanelSurface {
         delegate?.commandPalette(self, didChoose: result)
     }
 
+    /// Esc closes the palette even if the local key monitor is not installed —
+    /// the responder chain answers as well as the monitor does.
+    override func cancelOperation(_ sender: Any?) {
+        delegate?.commandPaletteDidCancel(self)
+    }
+
     @objc private func doubleClick(_ sender: NSTableView) {
         guard sender.selectedRow >= 0 else { return }
         model.select(index: sender.selectedRow)
@@ -215,9 +264,13 @@ extension CommandPaletteView: NSTableViewDataSource, NSTableViewDelegate {
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
+        guard model.quickResults.indices.contains(row) else { return nil }
         let result = model.quickResults[row]
-        let cell = CommandPaletteRowView()
-        cell.configure(result)
+        // Reuse: this table reloads on every keystroke.
+        let identifier = NSUserInterfaceItemIdentifier("commandPaletteRow")
+        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? CommandPaletteRowView
+            ?? CommandPaletteRowView(identifier: identifier)
+        cell.configure(result, styleSheet: styleSheet)
         return cell
     }
 
@@ -244,21 +297,24 @@ private final class CommandPaletteRowView: NSTableCellView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let metadataLabel = NSTextField(labelWithString: "")
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
         titleLabel.font = PanelFont.rowEmphasised
         metadataLabel.font = PanelFont.secondary
-        metadataLabel.textColor = .secondaryLabelColor
+        // Long paths used to be cut off mid-glyph with no ellipsis.
+        titleLabel.lineBreakMode = .byTruncatingTail
+        metadataLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         metadataLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
         addSubview(metadataLabel)
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             metadataLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            metadataLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            metadataLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             metadataLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
             metadataLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -5),
         ])
@@ -267,9 +323,12 @@ private final class CommandPaletteRowView: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(_ result: QuickOpenResult) {
+    func configure(_ result: QuickOpenResult, styleSheet: StyleSheet) {
         titleLabel.stringValue = result.title
+        titleLabel.textColor = styleSheet.text
         metadataLabel.stringValue = result.subtitle.isEmpty ? result.kind.rawValue.capitalized : result.subtitle
+        metadataLabel.textColor = styleSheet.textFaint
+        toolTip = result.subtitle.isEmpty ? result.title : "\(result.title)\n\(result.subtitle)"
         setAccessibilityLabel(result.title)
         setAccessibilityValue(metadataLabel.stringValue)
     }

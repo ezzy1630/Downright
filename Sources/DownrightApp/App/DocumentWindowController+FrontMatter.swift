@@ -17,7 +17,7 @@ extension DocumentWindowController: FrontMatterEditorDelegate {
             editor = created
         }
         editor.document = markdownDocument.parsed
-        installTrailing(editor)
+        installTrailing(editor, title: Command.frontMatterEditor.panelTitle)
     }
 
     func dismissFrontMatterEditor() {

@@ -9,6 +9,58 @@ enum DocumentOpenDisposition {
     case window
 }
 
+/// Whether two URLs name the same file.
+///
+/// A case-sensitive path comparison is wrong on the case-insensitive volumes
+/// most Macs use: `README.md` and `readme.md` are one file, and opening both
+/// gives two buffers writing over each other.  Ask the file system for identity
+/// when it can answer, and fold case when it cannot.
+enum FileIdentity {
+    static func sameFile(_ lhs: URL, _ rhs: URL) -> Bool {
+        let left = lhs.resolvingSymlinksInPath().standardizedFileURL
+        let right = rhs.resolvingSymlinksInPath().standardizedFileURL
+        if let a = identifier(of: left), let b = identifier(of: right) {
+            return a.isEqual(b)
+        }
+        return left.path.compare(right.path, options: .caseInsensitive) == .orderedSame
+    }
+
+    /// Inode identity, available only for a file that exists right now.
+    private static func identifier(of url: URL) -> (any NSObjectProtocol)? {
+        try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
+    }
+}
+
+/// The bundled tour.
+///
+/// Opening it must not touch the reader's own files, so the bundle copy is
+/// materialised in a temporary folder and opened from there: the tour stays
+/// editable — poking at it is half the point — and nothing lands on disk that
+/// the reader has to clean up.
+enum WelcomeDocument {
+    static var bundled: URL? {
+        Bundle.main.url(forResource: "Welcome", withExtension: "md")
+    }
+
+    static var isAvailable: Bool { bundled != nil }
+
+    static func materialize() throws -> URL {
+        guard let bundled else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let manager = FileManager.default
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("Downright Tour", isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copy = folder.appendingPathComponent("Welcome to Downright.md")
+        // A fresh copy every time: the tour should read the same on the second
+        // visit as on the first, whatever the reader typed into it.
+        try? manager.removeItem(at: copy)
+        try manager.copyItem(at: bundled, to: copy)
+        return copy
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [DocumentWindowController] = []
@@ -17,14 +69,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let servicesProvider = DownrightServicesProvider()
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
+    private var appearanceObservation: NSKeyValueObservation?
 
     // MARK: - Lifecycle
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        AppPaths.prepareAll()
+        reportUnavailableStorage(AppPaths.prepareAll())
         parseLaunchArguments()
         NSApp.mainMenu = MainMenu.build()
-        ThemeStore.shared.select(named: Preferences.shared.themeName(for: NSApp.effectiveAppearance))
+        applySelectedTheme()
         IntegrationRegistry.shared.openHandler = { [weak self] url in
             _ = self?.open(url)
         }
@@ -39,15 +92,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(preferencesDidChange),
             name: Preferences.didChange, object: nil
         )
+        // "Follow system appearance" has to mean *while running*, not "at the
+        // next launch".  Nothing else watches the system flipping to Dark.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.applySelectedTheme() }
+        }
+        Preferences.shared.onLoadFault = { [weak self] load in
+            guard case .recovered(let backup) = load else { return }
+            self?.reportSettingsRecovery(backup: backup)
+        }
         Preferences.shared.onPersistenceFailure = { [weak self] error in
             DispatchQueue.main.async {
-                self?.presentPreferenceWriteFailure(error)
+                self?.reportSettingsWriteFailure(error)
             }
+        }
+        // The store refuses to overwrite a file it could not read, so the user
+        // is the only one who can fix it — which means they have to be told.
+        KeybindingStore.shared.onLoadFailure = { [weak self] error in
+            self?.reportKeybindingsLoadFailure(error)
         }
         // History pruning at launch rather than on a timer: it touches the disk
         // and there is no reason to do it while the user is reading (§8.3).
         DispatchQueue.global(qos: .utility).async { SnapshotStore.shared.prune() }
 
+        defer { flushWarnings() }
         guard windowControllers.isEmpty else { return }
         // Paths on the command line, for running straight out of `.build`
         // during development.  Launch Services never routes these through
@@ -89,10 +157,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // A failed close-time write must cancel termination.  Otherwise macOS
-        // tears down the process after the alert and the unsaved buffer is lost.
+        // One policy for unsaved work: ask.  Quitting used to write every dirty
+        // buffer to disk without a word while closing a window offered
+        // Save / Discard / Cancel — the same intent with opposite consequences,
+        // and the silent one commits edits to a file an agent may also be
+        // writing.  A failed save still cancels termination, or macOS tears the
+        // process down after the alert and the buffer is lost.
         for controller in windowControllers where controller.markdownDocument.isDirty {
-            guard controller.saveDocument() else { return .terminateCancel }
+            controller.window?.makeKeyAndOrderFront(nil)
+            guard controller.confirmPendingChangesBeforeClose(markDiscardForWindowClose: true) else {
+                return .terminateCancel
+            }
         }
         return .terminateNow
     }
@@ -123,8 +198,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // One window per file: reopening a file you already have open should
         // raise it, not give you two buffers over the same bytes.
         if let existing = windowControllers.first(where: {
-            $0.markdownDocument.url?.resolvingSymlinksInPath().standardizedFileURL
-                == url.resolvingSymlinksInPath().standardizedFileURL
+            guard let open = $0.markdownDocument.url else { return false }
+            return FileIdentity.sameFile(open, url)
         }) {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
@@ -206,13 +281,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startWindow.window?.makeKeyAndOrderFront(nil)
             return
         }
-        let controller = StartWindowController(recents: recents)
+        let controller = StartWindowController(recents: recents, guide: guideOffer(recents: recents))
         controller.onOpen = { [weak self] url in self?.open(url) }
         controller.onOpenPanel = { [weak self] in self?.showOpenPanel() }
         controller.onNew = { [weak self] in self?.newDocument() }
+        controller.onOpenGuide = { [weak self] in self?.openWelcomeDocument() }
         controller.onClearRecents = { [weak self] in self?.clearRecentDocuments(nil) }
         startWindow = controller
         controller.showWindow(nil)
+    }
+
+    /// A first launch — no settings file and nothing opened before — is the one
+    /// moment the tour is more useful than the open panel, so it leads there.
+    /// After that it stays available as a quiet third action.
+    private func guideOffer(recents: [RecentDocument]) -> StartGuideOffer {
+        guard WelcomeDocument.isAvailable else { return .unavailable }
+        return Preferences.shared.isFirstRun && recents.isEmpty ? .primary : .secondary
+    }
+
+    func openWelcomeDocument() {
+        do {
+            open(try WelcomeDocument.materialize(), mode: .live)
+        } catch {
+            warn(
+                "Couldn't open the tour",
+                "The welcome document couldn't be prepared. \(error.localizedDescription)"
+            )
+            startWindow?.window?.makeKeyAndOrderFront(nil)
+            flushWarnings()
+        }
     }
 
     /// Fades the start window out in parallel with the document content fade-up.
@@ -294,6 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else { return false }
 
         var restored = 0
+        var missing: [String] = []
         var groupHosts: [Int: NSWindow] = [:]
         var selectedWindows: [NSWindow] = []
         let ordered = windows.sorted {
@@ -304,7 +402,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         for entry in ordered {
             let url = URL(fileURLWithPath: entry.path)
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                missing.append(url.lastPathComponent)
+                continue
+            }
             let host = entry.tabGroup.flatMap { groupHosts[$0] }
             guard let controller = open(
                 url,
@@ -312,7 +413,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 disposition: host == nil ? .window : .tab,
                 tabbingWith: host
             ) else { continue }
-            controller.window?.setFrame(NSRectFromString(entry.frame), display: true)
+            if let frame = AppDelegate.reachableFrame(NSRectFromString(entry.frame)) {
+                controller.window?.setFrame(frame, display: true)
+            }
             if let group = entry.tabGroup, groupHosts[group] == nil, let window = controller.window {
                 groupHosts[group] = window
             }
@@ -324,7 +427,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for window in selectedWindows {
             window.tabGroup?.selectedWindow = window
         }
+        reportSkippedSessionFiles(missing)
         return restored > 0
+    }
+
+    /// A saved frame, moved onto an attached screen when the screen it was
+    /// recorded on has gone away.
+    ///
+    /// Restoring a session captured with an external display otherwise puts
+    /// every window somewhere nobody can reach, and because Downright quits
+    /// with its last window there is no obvious way back.  Returns nil for a
+    /// frame that carries no usable size, so the window keeps its own.
+    static func reachableFrame(_ frame: NSRect) -> NSRect? {
+        guard frame.width >= 1, frame.height >= 1 else { return nil }
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return frame }
+        // The title bar is the handle: if that strip is on a screen, the window
+        // can be moved, resized, and closed by hand.
+        let titleBar = NSRect(x: frame.minX, y: frame.maxY - 24, width: frame.width, height: 24)
+        if screens.contains(where: { $0.visibleFrame.intersects(titleBar) }) { return frame }
+
+        let target = (NSScreen.main ?? screens[0]).visibleFrame
+        let size = NSSize(
+            width: min(frame.width, target.width),
+            height: min(frame.height, target.height)
+        )
+        return NSRect(
+            x: target.midX - size.width / 2,
+            y: target.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
     }
 
     // MARK: - Menu actions
@@ -341,12 +474,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func selectTheme(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
-        ThemeStore.shared.select(named: name)
+        let pickedIsDark = ThemeStore.shared.themes.first { $0.name == name }?.appearance == .dark
+        let systemIsDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         Preferences.shared.update { values in
-            let isDark = ThemeStore.shared.current.appearance == .dark
-            if isDark { values.darkThemeName = name } else { values.themeName = name }
-            values.followsSystemAppearance = false
+            if pickedIsDark == systemIsDark {
+                // The pick agrees with the current system appearance, so it is
+                // a choice about that half of the pair.  Following stays on:
+                // the user never asked to stop.
+                if pickedIsDark { values.darkThemeName = name } else { values.themeName = name }
+            } else {
+                // Picking against the system appearance only makes sense as a
+                // decision to stop following it — otherwise the next flip would
+                // undo the choice that was just made.
+                values.themeName = name
+                values.followsSystemAppearance = false
+            }
         }
+        // `update` posts the change, and `preferencesDidChange` is the single
+        // place that decides which theme is current.
     }
 
     @objc func importTheme(_ sender: Any?) {
@@ -375,17 +520,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showPreferences(_ sender: Any?) {
-        if preferencesWindow == nil {
-            preferencesWindow = PreferencesWindowController()
-        }
-        preferencesWindow?.showWindow(nil)
-        preferencesWindow?.window?.makeKeyAndOrderFront(nil)
+        showPreferences(selecting: nil)
+    }
+
+    /// Opens Settings, optionally on a named pane.  "Keyboard Shortcuts…" has
+    /// to land on Keys, not on whichever pane was open last.
+    func showPreferences(selecting pane: SettingsPane?) {
+        let controller = preferencesWindow as? PreferencesWindowController ?? PreferencesWindowController()
+        preferencesWindow = controller
+        if let pane { controller.select(pane) }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The one place that decides which theme is current.  Reading it back from
+    /// preferences on every change — rather than only while the theme pair
+    /// follows the system — is what makes the Appearance popups take effect
+    /// without a relaunch.
+    private func applySelectedTheme() {
+        ThemeStore.shared.select(named: Preferences.shared.themeName(for: NSApp.effectiveAppearance))
     }
 
     @objc private func preferencesDidChange() {
-        if Preferences.shared.values.followsSystemAppearance {
-            ThemeStore.shared.select(named: Preferences.shared.themeName(for: NSApp.effectiveAppearance))
-        }
+        applySelectedTheme()
         if let menu = NSApp.mainMenu { MainMenu.refreshKeyEquivalents(in: menu) }
     }
 
@@ -397,13 +554,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch command {
         case .newDocument: newDocument(); return true
         case .open: showOpenPanel(); return true
-        case .preferences, .showKeybindings: showPreferences(nil); return true
+        // No document to close, so ⌘W means the window in front — the start
+        // window included, which otherwise ignored the key entirely.
+        case .close: NSApp.keyWindow?.performClose(nil); return true
+        case .preferences: showPreferences(selecting: nil); return true
+        case .showKeybindings: showPreferences(selecting: .keys); return true
         case .reloadTheme: ThemeStore.shared.reloadUserThemes(); return true
         case .toggleVimKeys:
             Preferences.shared.update { $0.vimKeys.toggle() }
             return true
         case .compareFiles: showComparePanel(); return true
-        case .checkForUpdates: UpdateCoordinator.shared.checkForUpdates(); return true
+        // The palette has no menu validation in front of it, so it honours the
+        // same precondition the menu item does.
+        case .checkForUpdates:
+            guard UpdateCoordinator.shared.canCheckForUpdates else { return true }
+            UpdateCoordinator.shared.checkForUpdates()
+            return true
         default: return false
         }
     }
@@ -438,12 +604,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    private func presentPreferenceWriteFailure(_ error: Error) {
+    // MARK: - Warnings
+
+    /// Something the user needs to know that must never stop them reading.
+    private struct Warning {
+        var title: String
+        var message: String
+    }
+
+    private var pendingWarnings: [Warning] = []
+    private var isPresentingWarning = false
+
+    /// Queues a warning.  Sheets are window-modal, so they inform without
+    /// blocking; a fault raised before any window exists waits for one rather
+    /// than seizing the app during launch.
+    private func warn(_ title: String, _ message: String) {
+        pendingWarnings.append(Warning(title: title, message: message))
+        flushWarnings()
+    }
+
+    private func flushWarnings() {
+        guard !isPresentingWarning, !pendingWarnings.isEmpty else { return }
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible) else { return }
+        let warning = pendingWarnings.removeFirst()
+        isPresentingWarning = true
         let alert = NSAlert()
-        alert.messageText = "Couldn't save Downright Settings"
-        alert.informativeText = error.localizedDescription
+        alert.messageText = warning.title
+        alert.informativeText = warning.message
         alert.alertStyle = .warning
-        alert.runModal()
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window) { [weak self] _ in
+            guard let self else { return }
+            self.isPresentingWarning = false
+            self.flushWarnings()
+        }
+    }
+
+    private func reportSettingsWriteFailure(_ error: Error) {
+        warn(
+            "Downright can't save your settings",
+            """
+            Your changes are in effect for now, but they won't survive a restart until \
+            Downright can write to its settings file. \(error.localizedDescription)
+            """
+        )
+    }
+
+    private func reportKeybindingsLoadFailure(_ error: Error) {
+        warn(
+            "Your keyboard shortcuts file couldn't be read",
+            """
+            Downright is using its default shortcuts. Your file at \
+            \(AppPaths.keybindingsFile.path) was left untouched so you can repair it; \
+            recording a shortcut in Settings replaces it. \(error.localizedDescription)
+            """
+        )
+    }
+
+    private func reportSettingsRecovery(backup: URL?) {
+        let whereItWent = backup.map { "The old file is kept as \($0.lastPathComponent)." }
+            ?? "The old file couldn't be kept."
+        warn(
+            "Your settings file couldn't be read",
+            "Downright has started from its defaults. \(whereItWent)"
+        )
+    }
+
+    private func reportUnavailableStorage(_ failures: [AppPaths.PreparationFailure]) {
+        guard !failures.isEmpty else { return }
+        let lost = failures.map { "• \($0.purpose.featureDescription)" }.joined(separator: "\n")
+        warn(
+            "Downright can't use its support folder",
+            """
+            Until this is fixed, Downright can't save:
+
+            \(lost)
+
+            \(failures[0].error.localizedDescription)
+            """
+        )
+    }
+
+    private func reportSkippedSessionFiles(_ names: [String]) {
+        guard !names.isEmpty else { return }
+        let list = names.prefix(6).map { "• \($0)" }.joined(separator: "\n")
+        let more = names.count > 6 ? "\n• and \(names.count - 6) more" : ""
+        warn(
+            names.count == 1 ? "One file from your last session is gone" : "Some files from your last session are gone",
+            "These weren't reopened because they're no longer where they were:\n\n\(list)\(more)"
+        )
     }
 
     private func showComparePanel() {
@@ -479,5 +728,17 @@ extension AppDelegate: CommandResponder {
     @objc func performDownrightCommand(_ sender: Any?) {
         guard let item = sender as? NSMenuItem, let command = MainMenu.command(for: item) else { return }
         _ = handleApplicationCommand(command)
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    /// The app delegate is the last responder to see a command item, so what
+    /// it answers is the no-document state: Save and Print… must be disabled
+    /// with only the start window up, not enabled and silently inert.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        MainMenu.validate(
+            menuItem,
+            in: .applicationOnly(canCheckForUpdates: UpdateCoordinator.shared.canCheckForUpdates)
+        )
     }
 }

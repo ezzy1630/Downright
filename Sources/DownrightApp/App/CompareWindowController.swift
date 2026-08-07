@@ -59,11 +59,23 @@ final class CompareWindowController: NSWindowController {
         // on the right, rather than both sides showing the same hunk list.
         let forward = TextDiff.hunks(old: leftText, new: rightText)
         rightContainer.textView.changeMarks = forward.map {
-            (kind: $0.kind, range: $0.newRange, words: $0.wordRanges)
+            MarkdownTextView.ChangeMark(
+                kind: $0.kind,
+                range: TextDiff.anchorRange(for: $0, inNewTextOfLength: (rightText as NSString).length),
+                words: $0.wordRanges,
+                deletedText: $0.kind == .deleted
+                    ? (leftText as NSString).substring(with: $0.oldRange) : ""
+            )
         }
         let backward = TextDiff.hunks(old: rightText, new: leftText)
         leftContainer.textView.changeMarks = backward.map {
-            (kind: $0.kind, range: $0.newRange, words: $0.wordRanges)
+            MarkdownTextView.ChangeMark(
+                kind: $0.kind,
+                range: TextDiff.anchorRange(for: $0, inNewTextOfLength: (leftText as NSString).length),
+                words: $0.wordRanges,
+                deletedText: $0.kind == .deleted
+                    ? (rightText as NSString).substring(with: $0.oldRange) : ""
+            )
         }
 
         let split = NSSplitView()

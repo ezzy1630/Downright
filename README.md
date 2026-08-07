@@ -280,6 +280,13 @@ approximate, and where this build deviates from the spec.
 
 MIT. See [LICENSE](LICENSE).
 
+`Vendor/SwiftMath` is a vendored copy of
+[SwiftMath](https://github.com/mgriebling/SwiftMath) 1.7.3, MIT, © 2023
+Computer Inspirations — its own `LICENSE` travels with it. It carries a
+three-line patch so the math fonts resolve inside a shipped app bundle;
+[`Vendor/SwiftMath/PATCHES.md`](Vendor/SwiftMath/PATCHES.md) records what and
+why.
+
 The spec left this open, weighing MIT's pull for contributors against copyleft's
 protection of `MarkdownRender` from a paid App Store fork. MIT wins here: the
 renderer's value compounds through adoption, a fork has to keep pace with the

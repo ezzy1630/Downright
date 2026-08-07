@@ -26,8 +26,21 @@ extension MarkdownTextView {
     /// index as well, because an insertion index sits *between* characters and
     /// a link's last glyph would otherwise not be hoverable.
     func attribute(_ key: NSAttributedString.Key, at point: NSPoint) -> (value: Any, range: NSRange)? {
+        attribute(key, atSourceOffset: sourceOffset(at: point))
+    }
+
+    /// The same hit test against an offset the caller already resolved.
+    ///
+    /// `sourceOffset(at:)` forces a TextKit hit test, and hover asks several
+    /// independent questions about one pointer position — fragment, link,
+    /// footnote, path, checkbox.  Resolving the offset once per event and
+    /// sharing it is the difference between one hit test per mouse move and
+    /// six, which is what made the pointer lag on a long document (§7.1, §12).
+    func attribute(
+        _ key: NSAttributedString.Key,
+        atSourceOffset offset: Int
+    ) -> (value: Any, range: NSRange)? {
         guard let storage = textStorage, storage.length > 0 else { return nil }
-        let offset = sourceOffset(at: point)
         for candidate in [offset, offset - 1] where candidate >= 0 && candidate < storage.length {
             var range = NSRange(location: 0, length: 0)
             if let value = storage.attribute(key, at: candidate, effectiveRange: &range) {
@@ -38,7 +51,12 @@ extension MarkdownTextView {
     }
 
     func fragmentPayload(at point: NSPoint) -> (payload: FragmentPayload, range: NSRange)? {
-        guard let hit = attribute(.drFragment, at: point), let payload = hit.value as? FragmentPayload else { return nil }
+        fragmentPayload(atSourceOffset: sourceOffset(at: point))
+    }
+
+    func fragmentPayload(atSourceOffset offset: Int) -> (payload: FragmentPayload, range: NSRange)? {
+        guard let hit = attribute(.drFragment, atSourceOffset: offset),
+              let payload = hit.value as? FragmentPayload else { return nil }
         return (payload, hit.range)
     }
 
@@ -51,25 +69,30 @@ extension MarkdownTextView {
 
     public override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        clearHover()
+        clearHoverState()
     }
 
     private func updateHover(at point: NSPoint) {
         var needsRedraw = false
-        let payload = fragmentPayload(at: point)?.payload
+        // One TextKit hit test answers every question this method asks.
+        let offset = sourceOffset(at: point)
+        let payload = fragmentPayload(atSourceOffset: offset)?.payload
+        let linkHit = attribute(.drLink, atSourceOffset: offset)
 
-        // Code blocks reveal a copy button; tables zebra the row under the
-        // pointer (§7.1, §11.3).
-        let codeRange = (payload?.kind == .codeBlock || payload?.kind == .collapsedCodeBlock)
-            ? payload?.sourceRange : nil
-        if fragmentContext.hoveredFragmentRange != codeRange {
-            fragmentContext.hoveredFragmentRange = codeRange
+        // Code blocks reveal a copy button; images reveal that they open; tables
+        // zebra the row under the pointer (§7.1, §11.3).
+        let hoveredFragment: NSRange?
+        switch payload?.kind {
+        case .codeBlock, .collapsedCodeBlock, .image: hoveredFragment = payload?.sourceRange
+        default: hoveredFragment = nil
+        }
+        if fragmentContext.hoveredFragmentRange != hoveredFragment {
+            fragmentContext.hoveredFragmentRange = hoveredFragment
             needsRedraw = true
         }
 
         var rowRange: NSRange?
         if payload?.kind == .table, let table = payload?.tableData {
-            let offset = sourceOffset(at: point)
             rowRange = table.rows.first { !$0.isHeader && $0.range.contains(offset: offset) }?.range
         }
         if fragmentContext.hoveredTableRow != rowRange {
@@ -78,27 +101,21 @@ extension MarkdownTextView {
         }
 
         // Hovering a heading puts an anchor glyph in the gutter (§7.1).
-        let offset = sourceOffset(at: point)
         let headingIndex = parsedDocument.headings.firstIndex { $0.range.contains(offset: offset) }
         if hoveredHeadingIndex != headingIndex {
             hoveredHeadingIndex = headingIndex
             gutterRail?.needsDisplay = true
         }
 
-        let hasInteractiveTarget = semanticCheckbox(at: point) != nil
-            || attribute(.drLink, at: point) != nil
-            || attribute(.drReference, at: point) != nil
-            || attribute(.drPathToken, at: point) != nil
-            || (mode != .source && attribute(.drCheckbox, at: point) != nil)
-        setPointerCursor(interactive: hasInteractiveTarget)
+        // The cursor is owned by `cursorUpdate`, which is AppKit's sanctioned
+        // path and cooperates with the text view's own i-beam cursor rect.
+        // Setting it from a mouse-moved handler as well made it flicker.
 
         // Links underline under the pointer (§7.1).  Images carry `.drLink`
         // for their source too, but an image has no text to underline.
         var linkRange: NSRange?
-        if let hit = attribute(.drLink, at: point),
-           hit.range.length > 0,
-           fragmentPayload(at: point)?.payload.kind != .image {
-            linkRange = hit.range
+        if let linkHit, linkHit.range.length > 0, payload?.kind != .image {
+            linkRange = linkHit.range
         }
         if linkRange != hoveredLinkRange {
             hoveredLinkRange = linkRange
@@ -106,13 +123,17 @@ extension MarkdownTextView {
         }
 
         let nextToolTip: String?
-        if payload?.kind != .image,
-           let hit = attribute(.drReference, at: point),
-           let identifier = hit.value as? String,
-           let footnote = parsedDocument.footnotes[identifier] {
+        if payload?.kind == .image {
+            // The alt text is the one thing about an image the reader cannot
+            // see, and it doubles as the cue that the image opens.
+            let alt = payload?.detail.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            nextToolTip = alt.isEmpty ? nil : alt
+        } else if let hit = attribute(.drReference, atSourceOffset: offset),
+                  let identifier = hit.value as? String,
+                  let footnote = parsedDocument.footnotes[identifier] {
             nextToolTip = parsedDocument.substring(footnote.contentRange)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if let hit = attribute(.drLink, at: point), let destination = hit.value as? String {
+        } else if let destination = linkHit?.value as? String {
             nextToolTip = destination
         } else {
             nextToolTip = nil
@@ -122,15 +143,29 @@ extension MarkdownTextView {
         if needsRedraw { needsDisplay = true }
     }
 
-    private func clearHover() {
+    func clearHoverState() {
         fragmentContext.hoveredFragmentRange = nil
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
         hoveredLinkRange = nil
         toolTip = nil
-        setPointerCursor(interactive: false)
         needsDisplay = true
         gutterRail?.needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    /// One definition of "the pointer is over something that responds", shared
+    /// by the cursor and by hover feedback so they can never disagree.
+    private func hasInteractiveTarget(at point: NSPoint) -> Bool {
+        // The checkbox probe samples its own x inside the measure, so it keeps
+        // its own hit test; every remaining question shares one.
+        if semanticCheckbox(at: point) != nil { return true }
+        let offset = sourceOffset(at: point)
+        return attribute(.drLink, atSourceOffset: offset) != nil
+            || attribute(.drReference, atSourceOffset: offset) != nil
+            || attribute(.drPathToken, atSourceOffset: offset) != nil
+            || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
+            || (mode != .source && attribute(.drCheckbox, atSourceOffset: offset) != nil)
     }
 
     private func setPointerCursor(interactive: Bool) {
@@ -143,6 +178,18 @@ extension MarkdownTextView {
         }
     }
 
+    /// Confirms a toggle with a short pop, unless the user asked for less
+    /// motion — the box already changes to a filled accent tick, which is
+    /// answer enough on its own.
+    private func confirmCheckboxToggle(in blockRange: NSRange, checked: Bool) {
+        guard !styleSheet.reduceMotion else {
+            setNeedsDisplay(pulseInvalidationRect(for: [blockRange]))
+            return
+        }
+        fragmentContext.beginCheckboxPulse(blockRange, checked: checked)
+        driveCheckboxPulseRedraw()
+    }
+
     /// Keeps redrawing while any checkbox pulse is live, then stops.  The pop
     /// is drawn by the fragment, not stored as text attributes, so the only
     /// thing this has to do is ask for frames.
@@ -151,31 +198,66 @@ extension MarkdownTextView {
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             let now = CFAbsoluteTimeGetCurrent()
-            let active = self.fragmentContext.checkboxPulses.contains {
+            let live = self.fragmentContext.checkboxPulses.filter {
                 now - $0.started < CheckboxPulse.duration
             }
-            guard active else {
+            guard !live.isEmpty else {
                 self.checkboxPulseTimer?.invalidate()
                 self.checkboxPulseTimer = nil
                 return
             }
-            self.needsDisplay = true
+            // Invalidating the whole view at 60fps meant one tick on a long
+            // checklist redrew every fragment in the document.
+            self.setNeedsDisplay(self.pulseInvalidationRect(for: live.map(\.sourceRange)))
         }
         RunLoop.main.add(timer, forMode: .common)
         checkboxPulseTimer = timer
     }
 
+    /// The area a pulsing ornament can reach: the blocks holding the boxes,
+    /// widened into the hanging indent the ornament is drawn in.
+    private func pulseInvalidationRect(for ranges: [NSRange]) -> NSRect {
+        var union = NSRect.zero
+        for range in ranges {
+            guard let start = rect(forOffset: range.location) else { continue }
+            let end = rect(forOffset: max(range.location, range.upperBound - 1)) ?? start
+            union = union.isEmpty ? start.union(end) : union.union(start.union(end))
+        }
+        guard !union.isEmpty else { return bounds }
+        union.origin.x = bounds.minX
+        union.size.width = bounds.width
+        return union.insetBy(dx: 0, dy: -RenderMetrics.verticalInset)
+    }
+
     public override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hasInteractiveTarget = semanticCheckbox(at: point) != nil
-            || attribute(.drLink, at: point) != nil
-            || attribute(.drReference, at: point) != nil
-            || attribute(.drPathToken, at: point) != nil
-            || (mode != .source && attribute(.drCheckbox, at: point) != nil)
-        setPointerCursor(interactive: hasInteractiveTarget)
+        setPointerCursor(interactive: hasInteractiveTarget(at: point))
     }
 
     // MARK: - Click (§7.1)
+
+    /// Whether a click on `range` should follow the target instead of placing
+    /// the caret.
+    ///
+    /// The pointer already promises activation — a pointing hand, and a hover
+    /// underline on links — and Preview, the reference for quiet reading,
+    /// follows a link on a plain click.  Requiring ⌘ in Live mode meant the
+    /// only mode the document window ever uses ignored its own strongest
+    /// affordance, so the first click every reader makes did nothing.
+    ///
+    /// Two escape hatches keep the text editable: ⌥ always places the caret,
+    /// and once the caret is already inside the span, clicks there behave like
+    /// ordinary text again — so editing link text stays a matter of clicking
+    /// beside it once and then working normally.  Source mode is raw text, so
+    /// there activation stays explicit.
+    private func clickActivates(_ range: NSRange, modifiers: NSEvent.ModifierFlags) -> Bool {
+        if modifiers.contains(.command) { return true }
+        guard mode != .source else { return false }
+        if mode == .read { return true }
+        if modifiers.contains(.option) { return false }
+        let caret = sourceSelectedRange
+        return !(caret.length == 0 && range.contains(offset: caret.location))
+    }
 
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
@@ -194,8 +276,7 @@ extension MarkdownTextView {
         // the literal `[ ]` remains ordinary editable text.
         if let hit = semanticCheckbox(at: point) {
             markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.markOffset)
-            fragmentContext.beginCheckboxPulse(hit.blockRange, checked: !hit.checked)
-            driveCheckboxPulseRedraw()
+            confirmCheckboxToggle(in: hit.blockRange, checked: !hit.checked)
             return
         }
 
@@ -203,32 +284,31 @@ extension MarkdownTextView {
             let wasChecked = (hit.value as? Bool) ?? false
             markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.range.location)
             if let blockRange = fragmentPayload(at: point)?.payload.sourceRange {
-                fragmentContext.beginCheckboxPulse(blockRange, checked: !wasChecked)
-                driveCheckboxPulseRedraw()
+                confirmCheckboxToggle(in: blockRange, checked: !wasChecked)
             }
             return
         }
 
-        // In Live and Source a plain click places the caret; ⌘ activates.
-        // In Read there is no caret, so a plain click activates (§3.2, §5).
-        let activates = (mode == .read) || modifiers.contains(.command)
-
-        if activates, let hit = attribute(.drPathToken, at: point), let token = hit.value as? PathToken {
+        if let hit = attribute(.drPathToken, at: point), let token = hit.value as? PathToken,
+           clickActivates(hit.range, modifiers: modifiers) {
             markdownDelegate?.markdownTextView(self, didActivatePathToken: token, at: hit.range)
             return
         }
-        if activates, let hit = attribute(.drLink, at: point), let destination = hit.value as? String {
+        if let hit = attribute(.drLink, at: point), let destination = hit.value as? String,
+           clickActivates(hit.range, modifiers: modifiers) {
             markdownDelegate?.markdownTextView(self, didActivateLink: destination, at: hit.range, modifiers: modifiers)
             return
         }
-        if activates,
-           let hit = attribute(.drReference, at: point),
+        if let hit = attribute(.drReference, at: point),
            let identifier = hit.value as? String,
-           let footnote = parsedDocument.footnotes[identifier] {
+           let footnote = parsedDocument.footnotes[identifier],
+           clickActivates(hit.range, modifiers: modifiers) {
+            markdownDelegate?.markdownTextView(self, didNavigateTo: footnote.range.location)
             scroll(toOffset: footnote.range.location, position: .center, animated: true)
             return
         }
-        if activates, let payload = fragmentPayload(at: point)?.payload, payload.kind == .image {
+        if let payload = fragmentPayload(at: point)?.payload, payload.kind == .image,
+           clickActivates(payload.sourceRange, modifiers: modifiers) {
             // §7.1: click an image → lightbox.  The render package owns no
             // windows, so it reports and the app presents.
             markdownDelegate?.markdownTextView(
@@ -263,12 +343,24 @@ extension MarkdownTextView {
 
     private func semanticCheckbox(at point: NSPoint) -> CheckboxHit? {
         guard mode != .source else { return nil }
+        // Called from every mouse-moved event, and `rect(forOffset:)` forces
+        // TextKit layout — so walking every task in the document made the
+        // pointer visibly lag on exactly the documents this app is for
+        // (agent checklists).  Only a task occupying the pointer's own line
+        // can be under it, so resolve that line once and skip the rest.
+        // Sample inside the measure: the ornament itself lives in the hanging
+        // indent, where there are no glyphs to hit-test against.
+        let columnLeft = textContainerOrigin.x
+        let sampleX = min(max(point.x, columnLeft + 1), columnLeft + styleSheet.measureWidth - 1)
+        let pointOffset = sourceOffset(at: NSPoint(x: sampleX, y: point.y))
         let bodySize = styleSheet.bodyFont().pointSize
         for task in parsedDocument.tasks {
             if let focus = sourceFocus.range,
                focus.contains(offset: task.markRange.location) {
                 continue
             }
+            guard task.contentRange.contains(offset: pointOffset)
+                || task.markRange.contains(offset: pointOffset) else { continue }
             guard let textRect = rect(forOffset: task.contentRange.location) else { continue }
             let centreY = textRect.minY + min(styleSheet.lineHeight, textRect.height) * 0.44
             let target = ListOrnamentFragment.taskHitRect(
@@ -384,8 +476,15 @@ extension MarkdownTextView {
         let lines = storage.attributedSubstring(from: range).string
             .components(separatedBy: "\n")
         var body = lines
-        if body.first?.trimmingCharacters(in: .whitespaces).hasPrefix("```") == true { body.removeFirst() }
-        if body.last?.trimmingCharacters(in: .whitespaces).hasPrefix("```") == true { body.removeLast() }
+        // Tilde fences are as valid as backtick fences and the parser accepts
+        // both, so the pasteboard has to recognise both.
+        func isFence(_ line: String?) -> Bool {
+            guard let trimmed = line?.trimmingCharacters(in: .whitespaces),
+                  let marker = trimmed.first, marker == "`" || marker == "~" else { return false }
+            return trimmed.prefix(while: { $0 == marker }).count >= 3
+        }
+        if isFence(body.first) { body.removeFirst() }
+        if isFence(body.last) { body.removeLast() }
         if body.last?.isEmpty == true { body.removeLast() }
         return body.joined(separator: "\n")
     }
@@ -662,7 +761,7 @@ extension MarkdownTextView {
         guard range.length > 0, let storage = textStorage else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        let visible = attributedStringForRichTextCopy(range: range)
+        let visible = exportableAttributedString(range: range)
         let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
         let markdown = storage.attributedSubstring(from: markdownRange).string
         pasteboard.declareTypes([.string, .rtf, .downrightMarkdown], owner: nil)
@@ -687,7 +786,7 @@ extension MarkdownTextView {
         let range = sourceSelectedRange
         guard range.length > 0, let storage = textStorage else { return false }
         pboard.declareTypes([.string, .rtf, .downrightMarkdown], owner: nil)
-        let rich = attributedStringForRichTextCopy(range: range)
+        let rich = exportableAttributedString(range: range)
         pboard.setString(rich.string, forType: .string)
         let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
         pboard.setString(
@@ -759,6 +858,44 @@ extension MarkdownTextView {
         }
         for key in MarkdownTextView.privateAttributeKeys { out.removeAttribute(key, range: whole) }
         for (range, url) in links { out.addAttribute(.link, value: url, range: range) }
+        return out
+    }
+
+    /// Characters the display map inserts purely to hold TextKit's coordinate
+    /// space level with the source: word joiners standing in for hidden
+    /// markers, and the zero-width space that joins a hard-wrapped line.  They
+    /// are invisible on screen and meaningless outside Downright, so anything
+    /// leaving the app has to shed them — a paste into a terminal, a diff, a
+    /// commit message or a search box would otherwise look right and compare
+    /// wrong (§9.5).
+    private static let layoutFillers: Set<unichar> = [0x2060, 0x200B, 0xFEFF]
+
+    /// The selection as another application should receive it.
+    ///
+    /// Kept separate from `attributedStringForRichTextCopy`, which speech still
+    /// needs verbatim: `speechProjection` maps spoken ranges back through
+    /// TextKit offsets, and that arithmetic only holds while the fillers are
+    /// still standing.
+    public func exportableAttributedString(range: NSRange) -> NSAttributedString {
+        let out = NSMutableAttributedString(
+            attributedString: attributedStringForRichTextCopy(range: range)
+        )
+        let text = out.string as NSString
+        var fillerRuns: [NSRange] = []
+        var runStart: Int?
+        for index in 0..<text.length {
+            if Self.layoutFillers.contains(text.character(at: index)) {
+                if runStart == nil { runStart = index }
+            } else if let start = runStart {
+                fillerRuns.append(NSRange(location: start, length: index - start))
+                runStart = nil
+            }
+        }
+        if let start = runStart {
+            fillerRuns.append(NSRange(location: start, length: text.length - start))
+        }
+        // Back to front, so each deletion leaves the earlier ranges valid.
+        for run in fillerRuns.reversed() { out.deleteCharacters(in: run) }
         return out
     }
 

@@ -31,12 +31,12 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         }
     }
 
-    var preferredWidth: CGFloat { PanelMetrics.searchResultsWidth }
+    var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Results")
+    private let titleLabel = NSTextField(labelWithString: Command.findInSiblings.panelTitle)
     private let statusLabel = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
@@ -198,9 +198,9 @@ extension SearchResultsPanelView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < rows.count else { return 34 }
+        guard row < rows.count else { return PanelMetrics.detailRowHeight }
         if case .group = rows[row] { return PanelMetrics.groupRowHeight }
-        return 34
+        return PanelMetrics.detailRowHeight
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {

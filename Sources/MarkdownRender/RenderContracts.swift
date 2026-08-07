@@ -174,6 +174,10 @@ extension NSAttributedString.Key {
     public static let drCheckbox = NSAttributedString.Key("drCheckbox")
     /// `ChangeKind.rawValue` for change highlighting (§8.1).
     public static let drChange = NSAttributedString.Key("drChange")
+    /// `String` — text an external write removed, held on the character at the
+    /// join point.  A deletion has no range of its own in the new buffer, so
+    /// this is the only place the removed bytes survive for the reader (§8.1).
+    public static let drChangeGhost = NSAttributedString.Key("drChangeGhost")
     /// Footnote or reference-link identifier, for hover popovers.
     public static let drReference = NSAttributedString.Key("drReference")
     /// Set on ranges elided by structural zoom (§5.2) or folding.

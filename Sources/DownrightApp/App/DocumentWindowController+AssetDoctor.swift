@@ -33,7 +33,7 @@ extension DocumentWindowController: AssetDoctorViewDelegate {
         let panel = AssetDoctorView(styleSheet: activeStyleSheet)
         assetDoctorPanel = panel
         configureAssetDoctor(panel)
-        installTrailing(panel)
+        installTrailing(panel, title: Command.assetDoctor.panelTitle)
     }
 
     func configureAssetDoctor(_ view: AssetDoctorView) {

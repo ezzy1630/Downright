@@ -32,7 +32,8 @@ final class ImageFragment: DownrightFragment {
             cg.setShadow(offset: CGSize(width: 0, height: 2),
                          blur: RenderMetrics.imageShadowRadius,
                          color: NSColor.black.withAlphaComponent(style.increaseContrast ? 0 : 0.18).cgColor)
-            cg.fillRect(rect, color: style.background, radius: RenderMetrics.imageCornerRadius)
+            cg.fillRect(rect, color: matte(for: image, style: style),
+                        radius: RenderMetrics.imageCornerRadius)
             cg.restoreGState()
             draw(image: image, in: rect, in: cg, cornerRadius: RenderMetrics.imageCornerRadius)
             if style.theme.appearance == .dark {
@@ -43,12 +44,7 @@ final class ImageFragment: DownrightFragment {
         } else {
             // §8.4's trust instrument applied to images: a picture the agent
             // says it wrote and did not is visibly absent, not silently blank.
-            cg.fillRect(rect, color: style.codeBackground, radius: RenderMetrics.imageCornerRadius)
-            let missing = NSAttributedString(string: "Missing image · \(payload.detail)", attributes: [
-                .font: style.monoFont(size: style.bodyFont().pointSize * 0.85),
-                .foregroundColor: style.pathMissing,
-            ])
-            cg.drawText(missing, in: rect.insetBy(dx: 12, dy: 10), flipped: true)
+            drawFailedObject(missing, in: rect, style: style, in: cg)
         }
 
         guard !caption.isEmpty else { return }
@@ -70,9 +66,38 @@ final class ImageFragment: DownrightFragment {
         return storage.attribute(.drReference, at: payload.sourceRange.location, effectiveRange: nil) as? String ?? ""
     }
 
+    /// The placeholder for a file that is not there.  The path is the whole
+    /// message, so it lives in the mono line and wraps; a fixed 64pt box just
+    /// clipped anything longer than the measure.
+    private var missing: FailedObject {
+        FailedObject(label: "Missing image", source: payload.detail)
+    }
+
+    /// What the image is composited over.
+    ///
+    /// Transparent line art is usually black ink, so compositing it on the page
+    /// makes it disappear in a dark theme.  DESIGN rules out auto-inverting the
+    /// artwork, so it gets a plate instead: the lighter of the theme's two
+    /// poles — the page itself in a light theme, a warm near-white in a dark
+    /// one.  An opaque image covers the plate entirely, so this costs nothing
+    /// when there is no alpha to matte.
+    private func matte(for image: NSImage, style: StyleSheet) -> NSColor {
+        guard image.representations.first?.hasAlpha == true else { return style.background }
+        let page = style.background
+        let ink = style.text
+        guard Self.brightness(of: ink) > Self.brightness(of: page) else { return page }
+        return ink.mixed(with: page, amount: 0.06)
+    }
+
+    private static func brightness(of color: NSColor) -> CGFloat {
+        (color.usingColorSpace(.sRGB) ?? color).brightnessComponent
+    }
+
     private func displaySize() -> CGSize {
         guard let image = loadedImage(), image.size.width > 0 else {
-            return CGSize(width: contentWidth, height: 64)
+            guard let style = styleSheet else { return CGSize(width: contentWidth, height: 64) }
+            return CGSize(width: contentWidth,
+                          height: failedObjectHeight(missing, style: style))
         }
         let natural = image.size
         let viewportCap = viewportHeightCap

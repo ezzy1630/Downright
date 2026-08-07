@@ -42,6 +42,8 @@ final class VersionTimelineView: NSView {
 
     private let restoreButton: NSButton
     private var restoreAction: ButtonAction?
+    private var trackingArea: NSTrackingArea?
+    private var hoveredIndex: Int?
 
     private let trackHeight: CGFloat = 3
     private let tickHeight: CGFloat = 16
@@ -177,10 +179,15 @@ final class VersionTimelineView: NSView {
 
         for (index, record) in versions.enumerated() where index != selectedIndex {
             // Semi-transparent so a cluster of writes reads darker than a lone
-            // one — the density *is* the signal.
-            color(for: record.kind).panelAlpha(0.55, increaseContrast: contrast).setFill()
+            // one — the density *is* the signal.  The tick under the pointer
+            // comes forward, so a burst is scrubbable rather than a smudge.
+            let hovered = index == hoveredIndex
+            color(for: record.kind)
+                .panelAlpha(hovered ? 0.95 : 0.55, increaseContrast: contrast)
+                .setFill()
             let position = x(for: record.date)
-            NSRect(x: position - 1, y: track.midY - tickHeight / 2, width: 2, height: tickHeight).fill()
+            let height = hovered ? tickHeight + 4 : tickHeight
+            NSRect(x: position - 1, y: track.midY - height / 2, width: hovered ? 3 : 2, height: height).fill()
         }
 
         guard let record = selectedRecord else { return }
@@ -204,7 +211,12 @@ final class VersionTimelineView: NSView {
         ]
         let size = (text as NSString).size(withAttributes: attributes)
         let track = trackRect
-        let x = min(max(track.minX, centerX - size.width / 2), track.maxX - size.width)
+        // A caption wider than the track used to invert this clamp and push
+        // itself off the leading edge — likely at the inspector's minimum
+        // width.  Clamping the upper bound to the lower one keeps it on screen.
+        let lower = track.minX
+        let upper = max(lower, track.maxX - size.width)
+        let x = min(max(lower, centerX - size.width / 2), upper)
         (text as NSString).draw(at: NSPoint(x: x, y: track.maxY + 12), withAttributes: attributes)
     }
 
@@ -213,8 +225,62 @@ final class VersionTimelineView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    /// The scrubber takes the keyboard, so it has to show that it has it.
+    override var focusRingMaskBounds: NSRect { trackRect.insetBy(dx: -4, dy: -tickHeight) }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(
+            roundedRect: trackRect.insetBy(dx: -4, dy: -tickHeight),
+            xRadius: 6, yRadius: 6
+        ).fill()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        needsDisplay = true
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        needsDisplay = true
+        return true
+    }
+
     override func mouseDown(with event: NSEvent) { scrub(event) }
     override func mouseDragged(with event: NSEvent) { scrub(event) }
+
+    // MARK: - Hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = abs(point.y - trackRect.midY) <= tickHeight ? nearestIndex(toX: point.x) : nil
+        guard index != hoveredIndex else { return }
+        hoveredIndex = index
+        // The tooltip names the version the pointer is over, which is the one
+        // thing a tick cannot say by itself.
+        toolTip = index.flatMap { versions.element(at: $0) }.map {
+            "\(RelativeTime.stamp($0.date)) · \(RelativeTime.long($0.date))"
+        }
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard hoveredIndex != nil else { return }
+        hoveredIndex = nil
+        toolTip = nil
+        needsDisplay = true
+    }
 
     private func scrub(_ event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)

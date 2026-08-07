@@ -56,6 +56,10 @@ public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus)
     /// Text was edited in Live mode.  The app owns the document and reparses.
     func markdownTextView(_ view: MarkdownTextView, didEdit range: NSRange, delta: Int)
+    /// The view moved the reader within the same document on its own — today
+    /// only a footnote jump.  The render package cannot reach jump history, so
+    /// it reports the hop and the app decides whether Back should undo it.
+    func markdownTextView(_ view: MarkdownTextView, didNavigateTo destination: Int)
 }
 
 /// Defaults so a host that only cares about links does not have to implement
@@ -72,4 +76,5 @@ public extension MarkdownTextViewDelegate {
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {}
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {}
     func markdownTextView(_ view: MarkdownTextView, didEdit range: NSRange, delta: Int) {}
+    func markdownTextView(_ view: MarkdownTextView, didNavigateTo destination: Int) {}
 }

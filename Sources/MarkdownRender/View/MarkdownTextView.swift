@@ -209,8 +209,37 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// One external change, as the document surface needs to draw it (§8.1).
+    ///
+    /// `visited` is presentation, not filtering: a change the reader has already
+    /// looked at dims but stays on the page, because a review queue that erases
+    /// itself as you walk it is not a queue.  `deletedText` is what makes a
+    /// deletion drawable at all — the removed bytes are by definition not in the
+    /// buffer, so the mark has to carry them.
+    public struct ChangeMark {
+        public var kind: ChangeKind
+        public var range: NSRange
+        public var words: [NSRange]
+        public var visited: Bool
+        public var deletedText: String
+
+        public init(
+            kind: ChangeKind,
+            range: NSRange,
+            words: [NSRange],
+            visited: Bool = false,
+            deletedText: String = ""
+        ) {
+            self.kind = kind
+            self.range = range
+            self.words = words
+            self.visited = visited
+            self.deletedText = deletedText
+        }
+    }
+
     /// Change marks from §8.1.
-    public var changeMarks: [(kind: ChangeKind, range: NSRange, words: [NSRange])] = [] {
+    public var changeMarks: [ChangeMark] = [] {
         didSet {
             let invalidated = oldValue.map(\.range) + changeMarks.map(\.range)
             reapplyOverlays(invalidating: invalidated)
@@ -288,6 +317,14 @@ public final class MarkdownTextView: NSTextView {
     /// the policy, or the parse changes.  Every caret move is an override on
     /// top of this rather than a rebuild of it (§12).
     private var baseDisplayMap: DisplayMap = .identity
+    /// `baseDisplayMap` in layout space, cached beside it.
+    ///
+    /// Deriving this walks every substitution in the document and builds an
+    /// attributed string for each, so it is far too expensive to redo on a
+    /// caret move.  It does not have to be: a reveal only ever *drops* entries
+    /// from one paragraph, so the layout map for a reveal is the same
+    /// subsetting applied to this cache (§12).
+    private var baseLayoutMap: DisplayMap = .identity
     var paragraphIndex: ParagraphIndex = .empty
     private var displayMap: DisplayMap = .identity
     private var hardWrapRanges: [NSRange] = []
@@ -328,6 +365,7 @@ public final class MarkdownTextView: NSTextView {
     private var invisiblesApplied = false
     private var hoverTracking: NSTrackingArea?
     private var scrollObserver: NSObjectProtocol?
+    private var resignKeyObserver: NSObjectProtocol?
     private var pendingResizeRequest: ContentResizeRequest?
     private var resizeWorkItem: DispatchWorkItem?
     var copiedCodeFeedbackWorkItem: DispatchWorkItem?
@@ -455,6 +493,7 @@ public final class MarkdownTextView: NSTextView {
 
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        if let resignKeyObserver { NotificationCenter.default.removeObserver(resignKeyObserver) }
         resizeWorkItem?.cancel()
         scrollCoalesceWorkItem?.cancel()
         copiedCodeFeedbackWorkItem?.cancel()
@@ -675,6 +714,9 @@ public final class MarkdownTextView: NSTextView {
         resizeToFitContent(layoutScope: .document)
         let targetHeight = frame.height
         guard abs(targetHeight - previousHeight) > 0.5 else { return }
+        // The largest movement in the app: the whole document's height. Reduce
+        // Motion has to reach it, and it is the one animation §11.4 names.
+        guard !styleSheet.reduceMotion else { return }
         wantsLayer = true
         guard let animationLayer = self.layer else { return }
         animationLayer.removeAnimation(forKey: "downrightStructuralZoom")
@@ -778,6 +820,11 @@ public final class MarkdownTextView: NSTextView {
 
     private func rebuildEverything() {
         guard let storage = textStorage else { return }
+        // The content storage is reconfigured from the paragraph index below,
+        // so it has to describe the text that is in the buffer right now.  A
+        // configuration change can arrive before the first `update(document:)`
+        // — the buffer already holds the file, the index is still empty.
+        rebuildParagraphIndex()
         engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
         applySourcePresentation()
         applyInvisibles()
@@ -797,9 +844,21 @@ public final class MarkdownTextView: NSTextView {
         applySourcePresentation()
         applyOverlays()
         applyPathExistence()
+        refreshBaseLayoutMap()
         invalidateAllFragments()
         gutterRail?.reload()
         needsDisplay = true
+    }
+
+    /// Re-reads the layout replacements after decoration changed attributes
+    /// without changing the substitution set.
+    ///
+    /// `restoreAnchorShift` deliberately does *not* call this: it re-decorates
+    /// one paragraph back to exactly the state the cache was built from, and
+    /// putting a document-wide pass on the caret path is the cost this cache
+    /// exists to remove.
+    private func refreshBaseLayoutMap() {
+        baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
     }
 
     private func rebuildBaseDisplayMap(document: ParsedDocument) {
@@ -843,7 +902,8 @@ public final class MarkdownTextView: NSTextView {
         // Selection / hit-testing speak TextKit coordinates from the layout map
         // (length-preserving joiners). Collapsed logical maps stay on the
         // substitution fallback path only.
-        displayMap = layoutDisplayMap(from: baseDisplayMap)
+        baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
+        displayMap = baseLayoutMap
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: hardWrapRanges,
@@ -856,45 +916,73 @@ public final class MarkdownTextView: NSTextView {
     /// the logical map used by marker policy still collapses them for semantic
     /// selection and reveal decisions.
     private func layoutDisplayMap(from logical: DisplayMap) -> DisplayMap {
-        let substitutions = logical.substitutions.map { substitution in
-            guard !substitution.isHidden,
-                  let replacement = substitution.replacement,
-                  replacement.length < substitution.sourceRange.length,
-                  replacement.attribute(.attachment, at: 0, effectiveRange: nil) != nil else {
-                guard substitution.isHidden else { return substitution }
-                let length = substitution.sourceRange.length
-                let replacement = NSAttributedString(
-                    string: String(repeating: "\u{2060}", count: length),
-                    attributes: textStorage?.attributes(
-                        at: substitution.sourceRange.location,
-                        effectiveRange: nil
-                    ) ?? [:]
-                )
-                return DisplaySubstitution(
-                    sourceRange: substitution.sourceRange,
-                    displayLength: length,
-                    replacement: replacement,
-                    isHidden: true,
-                    preservesSourceOffsets: true
-                )
-            }
-            let fillerCount = substitution.sourceRange.length - replacement.length
-            let layoutReplacement = NSMutableAttributedString(attributedString: replacement)
-            layoutReplacement.append(NSAttributedString(
-                string: String(repeating: "\u{2060}", count: fillerCount),
-                attributes: textStorage?.attributes(
-                    at: substitution.sourceRange.location,
-                    effectiveRange: nil
-                ) ?? [:]
-            ))
+        let substitutions = logical.substitutions.map(layoutSubstitution)
+        return DisplayMap(paragraphs: paragraphIndex, substitutions: substitutions)
+    }
+
+    /// One logical substitution in layout space.  Kept separate from the map so
+    /// a paragraph-local reveal can transform only its own handful of entries.
+    private func layoutSubstitution(_ substitution: DisplaySubstitution) -> DisplaySubstitution {
+        guard !substitution.isHidden,
+              let replacement = substitution.replacement,
+              replacement.length < substitution.sourceRange.length,
+              replacement.attribute(.attachment, at: 0, effectiveRange: nil) != nil else {
+            guard substitution.isHidden else { return substitution }
+            let length = substitution.sourceRange.length
             return DisplaySubstitution(
                 sourceRange: substitution.sourceRange,
-                displayLength: substitution.sourceRange.length,
-                replacement: layoutReplacement,
+                displayLength: length,
+                replacement: layoutFiller(length: length, styledLike: substitution.sourceRange.location),
+                isHidden: true,
                 preservesSourceOffsets: true
             )
         }
-        return DisplayMap(paragraphs: paragraphIndex, substitutions: substitutions)
+        let fillerCount = substitution.sourceRange.length - replacement.length
+        let layoutReplacement = NSMutableAttributedString(attributedString: replacement)
+        layoutReplacement.append(
+            layoutFiller(length: fillerCount, styledLike: substitution.sourceRange.location)
+        )
+        return DisplaySubstitution(
+            sourceRange: substitution.sourceRange,
+            displayLength: substitution.sourceRange.length,
+            replacement: layoutReplacement,
+            preservesSourceOffsets: true
+        )
+    }
+
+    /// A run of `length` word joiners carrying the storage's own attributes at
+    /// `offset`.
+    ///
+    /// Reading those attributes with `storage.attributes(at:)` and handing them
+    /// to `NSAttributedString(string:attributes:)` bridges one attribute
+    /// dictionary out of Objective-C and straight back into it, per hidden
+    /// marker, on every keystroke.  On a 5,000-line document that round trip
+    /// measured as most of the keystroke budget, and it buys nothing:
+    /// `attributedSubstring` hands back the storage's own dictionary without
+    /// bridging, and `replaceCharacters` extends the first replaced character's
+    /// attributes over the whole replacement.
+    private func layoutFiller(length: Int, styledLike offset: Int) -> NSAttributedString {
+        let joiners = wordJoiners(length)
+        guard let storage = textStorage, offset >= 0, offset < storage.length else {
+            return NSAttributedString(string: joiners)
+        }
+        let styled = NSMutableAttributedString(
+            attributedString: storage.attributedSubstring(from: NSRange(location: offset, length: 1))
+        )
+        styled.replaceCharacters(in: NSRange(location: 0, length: 1), with: joiners)
+        return styled
+    }
+
+    /// Word-joiner runs by length.  A document uses the same handful of marker
+    /// lengths over and over — `# `, `- [ ] `, a single `*` — so building the
+    /// string once keeps the allocation off the keystroke path.
+    private var wordJoinerRuns: [Int: String] = [:]
+
+    private func wordJoiners(_ length: Int) -> String {
+        if let cached = wordJoinerRuns[length] { return cached }
+        let run = String(repeating: "\u{2060}", count: max(0, length))
+        wordJoinerRuns[length] = run
+        return run
     }
 
     /// Source Focus changes typography and local material, never characters.
@@ -1050,7 +1138,8 @@ public final class MarkdownTextView: NSTextView {
             substitutions: projectedHidden.map(DisplaySubstitution.hide)
                 + projectedHardWrapSubstitutions
         )
-        displayMap = layoutDisplayMap(from: baseDisplayMap)
+        baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
+        displayMap = baseLayoutMap
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: projectedHardWrapRanges,
@@ -1105,16 +1194,27 @@ public final class MarkdownTextView: NSTextView {
         var revealedForAttributes: [NSRange] = []
         var requiresFullHiddenRefresh = false
         var logicalDisplayMap = baseDisplayMap
+        // Both maps are derived from the cached bases by the *same* subsetting.
+        // A reveal only ever drops entries, and `baseLayoutMap` already holds
+        // every surviving entry in layout form, so nothing here has to rebuild
+        // a layout replacement — doing that walked every substitution in the
+        // document on every keystroke and was most of the keystroke cost (§12).
+        var layoutMap = baseLayoutMap
 
         if let composing = composingParagraph {
             // Composition suspends hiding in its paragraph so the hybrid and
             // source spaces coincide there and AppKit's marked-text
             // bookkeeping is exactly right.
             hidden = hidden.filter { $0.upperBound <= composing.location || $0.location >= composing.upperBound }
-            let entries = baseDisplayMap.substitutions(inParagraphContaining: composing.location).filter { entry in
-                !baseHiddenRanges.contains { hiddenRange in hiddenRange == entry.sourceRange }
+            func stillHiding(in map: DisplayMap) -> [DisplaySubstitution] {
+                map.substitutions(inParagraphContaining: composing.location).filter { entry in
+                    !baseHiddenRanges.contains { hiddenRange in hiddenRange == entry.sourceRange }
+                }
             }
-            logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: composing.location, with: entries)
+            logicalDisplayMap = baseDisplayMap.replacingParagraph(
+                containing: composing.location, with: stillHiding(in: baseDisplayMap))
+            layoutMap = baseLayoutMap.replacingParagraph(
+                containing: composing.location, with: stillHiding(in: baseLayoutMap))
             requiresFullHiddenRefresh = caret == nil
         } else if effectivePolicy.revealsAtCaret {
             let revealed = MarkerPolicy.revealedMarkerRanges(
@@ -1139,6 +1239,8 @@ public final class MarkdownTextView: NSTextView {
                 if !revealedDisplayObjects.isEmpty {
                     logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
                                                                            excluding: revealedDisplayObjects)
+                    layoutMap = baseLayoutMap.replacingParagraph(containing: paragraph.location,
+                                                                 excluding: revealedDisplayObjects)
                     // Keep the cached document-wide set intact.  The display
                     // map and this exclusion list together describe the one
                     // paragraph that is currently revealed; no global filter
@@ -1153,10 +1255,15 @@ public final class MarkdownTextView: NSTextView {
                 }
             } else if !revealed.isEmpty {
                 hidden = subtract(revealed, from: hidden)
-                let revealedMapEntries = baseDisplayMap.substitutions.filter { entry in
-                    !revealedDisplayObjects.contains { $0 == entry.sourceRange }
+                func unrevealed(in map: DisplayMap) -> [DisplaySubstitution] {
+                    map.substitutions.filter { entry in
+                        !revealedDisplayObjects.contains { $0 == entry.sourceRange }
+                    }
                 }
-                logicalDisplayMap = DisplayMap(paragraphs: paragraphIndex, substitutions: revealedMapEntries)
+                logicalDisplayMap = DisplayMap(
+                    paragraphs: paragraphIndex, substitutions: unrevealed(in: baseDisplayMap))
+                layoutMap = DisplayMap(
+                    paragraphs: paragraphIndex, substitutions: unrevealed(in: baseLayoutMap))
                 // A selection can span any number of paragraphs. The map was
                 // rebuilt for the whole document, so its mirrored attributes
                 // must use the same scope. This path is gesture-driven and is
@@ -1165,7 +1272,7 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         substitution.displayMap = logicalDisplayMap
-        displayMap = layoutDisplayMap(from: logicalDisplayMap)
+        displayMap = layoutMap
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: hardWrapRanges,
@@ -1228,10 +1335,15 @@ public final class MarkdownTextView: NSTextView {
     // MARK: - Elision (§5.2, §7.1, §9.4)
 
     private func refreshElision(rebuildingMap: Bool = true) {
+        // Selection is observation, not edit intent (§DESIGN "Surface model"),
+        // so it must not force elided content back into view.  It used to be a
+        // probe here while nothing refreshed elision on a selection change —
+        // so a select-all did nothing until some unrelated reparse fired and
+        // then expanded every folded section at once.
         elision = ElisionPlan.make(
             document: parsedDocument, zoom: zoomLevel,
             foldedHeadingSlugs: foldedHeadingSlugs, searchHits: searchHits,
-            caret: primarySourceCaret, selections: sourceSelectedRanges)
+            caret: primarySourceCaret, selections: [])
         let definitionElisions: [NSRange]
         if effectivePolicy.hidesBlockMarkers {
             let source = (textStorage?.string ?? "") as NSString
@@ -1333,6 +1445,7 @@ public final class MarkdownTextView: NSTextView {
         }
         applyOverlays()
         applyPathExistence()
+        refreshBaseLayoutMap()
         if invalidateFragments {
             invalidateAllFragments()
         }
@@ -1367,17 +1480,62 @@ public final class MarkdownTextView: NSTextView {
         for mark in changeMarks {
             guard let range = clampToStorage(mark.range) else { continue }
             storage.addAttribute(.drChange, value: mark.kind.rawValue, range: range)
+            if mark.kind == .deleted {
+                // Removed text is not in the buffer, so there is nothing to
+                // tint.  Carry the bytes on the anchor character instead and
+                // let the rule in `drawDeletedChangeMarks` stand for them —
+                // otherwise the one change the reader most needs to see, an
+                // agent dropping a section, is the one the diff cannot show.
+                storage.addAttribute(.drChangeGhost, value: mark.deletedText, range: range)
+                continue
+            }
             // §8.1: changed words are highlighted *in the rendered prose*,
-            // never as +/- source lines.
+            // never as +/- source lines.  A visited change dims rather than
+            // disappearing, so the reader can still see what they reviewed.
+            let alpha: CGFloat = mark.visited ? 0.06 : 0.18
             for word in mark.words {
                 guard let wordRange = clampToStorage(word) else { continue }
                 storage.addAttribute(.backgroundColor,
-                                     value: styleSheet.changeColor(mark.kind).withAlphaComponent(0.18),
+                                     value: styleSheet.changeColor(mark.kind).withAlphaComponent(alpha),
                                      range: wordRange)
             }
         }
         storage.endEditing()
         overlayRanges = searchHits + changeMarks.map(\.range) + [speechHighlight].compactMap { $0 }
+    }
+
+    /// Deleted text has no extent in the buffer, so it gets a mark of its own:
+    /// a short wedge in the margin at the join point, standing for the bytes
+    /// that used to be there.  Hovering it names how much was removed; the
+    /// context menu offers the text itself.
+    ///
+    /// Without this, an agent replacing a section — the case `SnapshotStore`'s
+    /// own header calls the reason the feature exists — was the one change the
+    /// document surface drew nothing at all for.
+    private func drawDeletedChangeMarks(in dirtyRect: NSRect) {
+        let deletions = changeMarks.filter { $0.kind == .deleted }
+        guard !deletions.isEmpty, let context = NSGraphicsContext.current?.cgContext else { return }
+        let colour = styleSheet.changeColor(.deleted)
+        let width: CGFloat = 3
+        for mark in deletions {
+            guard let rect = rect(forOffset: mark.range.location), rect.intersects(dirtyRect) else { continue }
+            let wedge = NSRect(
+                x: max(0, rect.minX - width - 2),
+                y: rect.minY,
+                width: width,
+                height: max(4, min(rect.height, styleSheet.lineHeight))
+            )
+            context.setFillColor(colour.withAlphaComponent(mark.visited ? 0.35 : 0.9).cgColor)
+            context.fill(wedge)
+        }
+    }
+
+    /// The text an external write removed at `offset`, if any — for the hover
+    /// cue and the context menu.
+    public func deletedTextMark(at offset: Int) -> String? {
+        changeMarks.first { $0.kind == .deleted && $0.range.contains(offset: offset) }
+            .map(\.deletedText)
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// §8.4's trust instrument: a path the agent claims it touched that is not
@@ -1458,6 +1616,9 @@ public final class MarkdownTextView: NSTextView {
     /// is read-only — the bare 1–5 zoom / `n`/`p` / vim letters) can run.  A
     /// key the host does not claim falls through to normal text editing.
     public override func keyDown(with event: NSEvent) {
+        // Arrow and page keys move the viewport too, so they interrupt a
+        // running scroll animation for the same reason a gesture does.
+        interruptAnimatedScroll()
         if keyEventHandler?(event) == true { return }
         super.keyDown(with: event)
     }
@@ -1581,7 +1742,41 @@ public final class MarkdownTextView: NSTextView {
         return sourceOffset(at: NSPoint(x: origin.x + 1, y: sampleY))
     }
 
+    /// The clip view currently being scrolled by `scroll(toOffset:)`, held only
+    /// for the length of that animation so a gesture can take it back.
+    private weak var animatingScrollClip: NSClipView?
+
+    /// DESIGN.md: "User scroll must interrupt animated scrolling." Without
+    /// this, flicking the trackpad during the 0.32 s settle after a heading
+    /// jump made the animation fight the gesture and yank the page back.
+    ///
+    /// Stops at wherever the animation has actually reached rather than its
+    /// destination, so the gesture continues from what the reader can see.
+    func interruptAnimatedScroll() {
+        guard let clip = animatingScrollClip else { return }
+        animatingScrollClip = nil
+        let reached = clip.layer?.presentation()?.bounds.origin ?? clip.bounds.origin
+        clip.layer?.removeAllAnimations()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            clip.setBoundsOrigin(reached)
+        }
+        enclosingScrollView?.reflectScrolledClipView(clip)
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        interruptAnimatedScroll()
+        super.scrollWheel(with: event)
+    }
+
     public func scroll(toOffset offset: Int, position: ScrollPosition, animated: Bool) {
+        // Navigating into a folded section has to reveal it.  An elided offset
+        // resolves to a zero-height fragment, so without this the outline, the
+        // command palette and Back/Forward all silently did nothing.  Search
+        // already makes exactly this exception.
+        if elision.isElided(offset) {
+            unfoldHeadingsContaining([NSRange(location: offset, length: 1)])
+        }
         guard let rect = rect(forOffset: offset) else { return }
         guard let scrollView = enclosingScrollView else { scrollToVisible(rect); return }
         let clip = scrollView.contentView
@@ -1600,12 +1795,16 @@ public final class MarkdownTextView: NSTextView {
 
         // §11.4: full respect for Reduce Motion.
         if animated && !styleSheet.reduceMotion {
+            animatingScrollClip = clip
             Motion.run(
                 reduceMotion: false,
                 duration: Motion.deliberate,
                 curve: .spring,
                 changes: { _ in clip.animator().setBoundsOrigin(target) },
-                completion: { scrollView.reflectScrolledClipView(clip) }
+                completion: { [weak self] in
+                    self?.animatingScrollClip = nil
+                    scrollView.reflectScrolledClipView(clip)
+                }
             )
         } else {
             // Use the clip view's scrolling entry point instead of mutating
@@ -1621,6 +1820,7 @@ public final class MarkdownTextView: NSTextView {
 
     public override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        drawDeletedChangeMarks(in: dirtyRect)
         drawHoveredLinkUnderline(in: dirtyRect)
     }
 
@@ -1671,9 +1871,8 @@ public final class MarkdownTextView: NSTextView {
             if let cached = self.inlineCodeBandCache[range] {
                 bands = cached
             } else {
-                guard let start = self.rect(forOffset: range.location),
-                      let end = self.rect(forOffset: range.upperBound) else { return }
-                bands = self.inlineCodeBands(start: start, end: end)
+                bands = self.inlineCodeBands(forSourceRange: range)
+                guard !bands.isEmpty else { return }
                 self.inlineCodeBandCache[range] = bands
             }
             self.styleSheet.inlineCodeBackground.setFill()
@@ -1822,37 +2021,33 @@ public final class MarkdownTextView: NSTextView {
         return NSRect(x: band.maxX - 56, y: band.minY, width: 56, height: 24)
     }
 
-    private func inlineCodeBands(start: CGRect, end: CGRect) -> [CGRect] {
+    /// The tinted bands behind an inline code span, one per visual line.
+    ///
+    /// Asks TextKit for the span's own laid-out segments rather than rebuilding
+    /// them from two caret rects.  The old reconstruction could not tell a span
+    /// that merely *ended* a line from one that wrapped — the caret after the
+    /// last character has already moved to the next line — so a single-line
+    /// span ending at a wrap painted a slab across the whole measure.
+    private func inlineCodeBands(forSourceRange range: NSRange) -> [CGRect] {
+        let startOffset = displayMap.textKitOffset(forSource: range.location)
+        let endOffset = displayMap.textKitOffset(forSource: range.upperBound)
+        guard endOffset > startOffset,
+              let start = contentStorage.location(contentStorage.documentRange.location, offsetBy: startOffset),
+              let end = contentStorage.location(contentStorage.documentRange.location, offsetBy: endOffset),
+              let textRange = NSTextRange(location: start, end: end) else { return [] }
+        markdownLayoutManager.ensureLayout(for: textRange)
+        let origin = textContainerOrigin
         let padX: CGFloat = 3
         let padY: CGFloat = 1
-        if abs(start.minY - end.minY) < 1 {
-            return [CGRect(
-                x: start.minX - padX,
-                y: start.minY - padY,
-                width: max(1, end.minX - start.minX + padX * 2),
-                height: max(start.height, end.height) + padY * 2
-            )]
-        }
-
         var bands: [CGRect] = []
-        let lineHeight = max(1, styleSheet.lineHeight)
-        bands.append(CGRect(
-            x: start.minX - padX,
-            y: start.minY - padY,
-            width: max(1, bounds.maxX - start.minX),
-            height: start.height + padY * 2
-        ))
-        var y = start.minY + lineHeight
-        while y + lineHeight / 2 < end.minY {
-            bands.append(CGRect(x: 0, y: y - padY, width: bounds.width, height: lineHeight + padY * 2))
-            y += lineHeight
+        markdownLayoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, _, _ in
+            guard frame.width > 0.5 else { return true }
+            var rect = frame
+            rect.origin.x += origin.x
+            rect.origin.y += origin.y
+            bands.append(rect.insetBy(dx: -padX, dy: -padY))
+            return true
         }
-        bands.append(CGRect(
-            x: 0,
-            y: end.minY - padY,
-            width: max(1, end.minX + padX),
-            height: end.height + padY * 2
-        ))
         return bands
     }
 
@@ -1954,6 +2149,22 @@ public final class MarkdownTextView: NSTextView {
         if let scrollObserver {
             NotificationCenter.default.removeObserver(scrollObserver)
             self.scrollObserver = nil
+        }
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+            self.resignKeyObserver = nil
+        }
+        if let window {
+            // Hover tracking is `.activeInKeyWindow`, so no `mouseExited`
+            // arrives when the window stops being key with the pointer still
+            // over a link — the underline, tooltip and copy button would stay
+            // drawn on an inactive window.
+            resignKeyObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification,
+                object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.clearHoverState() }
+            }
         }
         if let scrollView = enclosingScrollView {
             scrollView.contentView.postsBoundsChangedNotifications = true
