@@ -26,6 +26,7 @@ final class DocumentWindowController: NSWindowController {
     // Persistent chrome
     let breadcrumbView = BreadcrumbView()
     let densityGutterView = DensityGutterView()
+    var statusBarView: DocumentStatusBarView!
     /// Activity cue for sustained work (parses and exports past a second).
     let activityIndicator = ActivityIndicatorView()
 
@@ -101,6 +102,7 @@ final class DocumentWindowController: NSWindowController {
     private var cachedMetricsDocumentID: ObjectIdentifier?
     private var cachedSectionMetrics: [ReadingMetrics] = []
     private var cachedWordCount = 0
+    private var autosaveWorkItem: DispatchWorkItem?
 
     // MARK: - Construction
 
@@ -204,6 +206,7 @@ final class DocumentWindowController: NSWindowController {
     func resetTransientChrome() {
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
+        autosaveWorkItem?.cancel()
         cachedMetricsDocumentID = nil
         cachedSectionMetrics = []
         cachedWordCount = 0
@@ -421,7 +424,9 @@ final class DocumentWindowController: NSWindowController {
         barStack.distribution = .fill
         barStack.alignment = .centerX
 
-        for view in [primaryContainer, barStack] as [NSView] {
+        statusBarView = DocumentStatusBarView(styleSheet: activeStyleSheet)
+
+        for view in [primaryContainer, barStack, statusBarView] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -460,7 +465,11 @@ final class DocumentWindowController: NSWindowController {
             primaryContainer!.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             primaryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             primaryContainer.topAnchor.constraint(equalTo: barStack.bottomAnchor),
-            primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            primaryContainer.bottomAnchor.constraint(equalTo: statusBarView.topAnchor),
+
+            statusBarView.leadingAnchor.constraint(equalTo: primaryContainer!.leadingAnchor),
+            statusBarView.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
+            statusBarView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             barStack.leadingAnchor.constraint(equalTo: primaryContainer!.leadingAnchor),
             barStack.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
@@ -501,6 +510,7 @@ final class DocumentWindowController: NSWindowController {
         markdownDocument.onExternalEvent = { [weak self] event in self?.handleExternalEvent(event) }
         markdownDocument.onDirtyChanged = { [weak self] dirty in
             self?.window?.isDocumentEdited = dirty
+            if dirty { self?.scheduleAutosave() }
         }
         markdownDocument.onSaveFailure = { [weak self] error in
             self?.presentSaveError(error)
@@ -592,6 +602,7 @@ final class DocumentWindowController: NSWindowController {
         splitContainer?.styleSheet = activeStyleSheet
         breadcrumbView.styleSheet = activeStyleSheet
         densityGutterView.styleSheet = activeStyleSheet
+        statusBarView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
         outlinePanel?.styleSheet = activeStyleSheet
         navigationPanel?.styleSheet = activeStyleSheet
@@ -726,6 +737,23 @@ final class DocumentWindowController: NSWindowController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
     }
 
+    // MARK: - Autosave
+
+    /// Schedules a save after a brief idle period when the document is dirty
+    /// and autosave is enabled.  Repeated edits reset the timer, so a rapid
+    /// typing burst produces one save, not one per keystroke.
+    private func scheduleAutosave() {
+        guard Preferences.shared.values.autosaveEnabled,
+              markdownDocument.url != nil else { return }
+        autosaveWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.markdownDocument.isDirty else { return }
+            _ = self.saveDocument()
+        }
+        autosaveWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
     func refreshDerivedUI() {
         let parsed = markdownDocument.parsed
         let source = containerTextView
@@ -807,6 +835,9 @@ final class DocumentWindowController: NSWindowController {
         let wordCount = cachedWordCount
         let readMinutes = max(1, (wordCount + 199) / 200)
         densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
+        statusBarView.wordCount = wordCount
+        statusBarView.readMinutes = readMinutes
+        statusBarView.hasFileURL = markdownDocument.url != nil
         let changes = markdownDocument.changes.marks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
             for: parsed, changes: changes, searchHits: findSession.matches
@@ -1364,10 +1395,11 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func dismissFindBar() {
-        if let findBar, barStack.arrangedSubviews.contains(findBar) {
-            barStack.removeArrangedSubview(findBar)
-        }
-        findBar?.removeFromSuperview()
+        // Hold the pill so it can leave gracefully while the state tears down
+        // now. `findBar` is nilled immediately so nothing can act on a gone
+        // bar.
+        let leaving = findBar
+
         searchInspector?.removeFromSuperview()
         inspectorHost?.removeContent(section: .search)
         searchInspector = nil
@@ -1383,6 +1415,22 @@ final class DocumentWindowController: NSWindowController {
         refreshDensityBands()
         if inspectorHost?.hasContent != true { closeInspector() }
         else { refreshToolbarSelectionState() }
+
+        // Exit: fade the pill out, then drop it from the stack. The stack keeps
+        // its space during the fade so the collapse happens after the pill is
+        // gone; Reduce Motion skips straight to removal.
+        guard let leaving, leaving.superview != nil else { return }
+        if activeStyleSheet.reduceMotion {
+            leaving.removeFromSuperview()
+            barStack.removeArrangedSubview(leaving)
+        } else {
+            Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+                leaving.animator().alphaValue = 0
+            } completion: { [weak self] in
+                leaving.removeFromSuperview()
+                self?.barStack.removeArrangedSubview(leaving)
+            }
+        }
     }
 
     var currentFindQuery: FindQuery { findSession.query }
@@ -1437,7 +1485,13 @@ final class DocumentWindowController: NSWindowController {
     func jump(to offset: Int, label: String, animated: Bool = true) {
         recordJump(to: offset, label: label)
         let source = containerTextView
-        source.scroll(toOffset: offset, position: .center, animated: animated)
+        // `.visible`: a jump to a target that is already on screen (a task in the
+        // panel, a heading in the outline, a footnote below) must not move the
+        // page at all — centring it yanks everything the reader was looking at
+        // out from under them.  Off-screen targets get the minimal scroll that
+        // brings them in, not a reframe.  Back/Forward keep `.center`: those
+        // restore a *recorded* reading position, which is a deliberate reframe.
+        source.scroll(toOffset: offset, position: .visible, animated: animated)
         synchronizePanes(from: source)
         refreshBreadcrumb()
     }
@@ -1478,7 +1532,7 @@ final class DocumentWindowController: NSWindowController {
                 primaryContainer.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
                 primaryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
                 primaryContainer.topAnchor.constraint(equalTo: barStack.bottomAnchor),
-                primaryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+                primaryContainer.bottomAnchor.constraint(equalTo: statusBarView.topAnchor),
             ])
             markdownDocument.state.splitViewEnabled = false
             return
@@ -1516,7 +1570,7 @@ final class DocumentWindowController: NSWindowController {
             split.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             split.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             split.topAnchor.constraint(equalTo: barStack.bottomAnchor),
-            split.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            split.bottomAnchor.constraint(equalTo: statusBarView.topAnchor),
         ])
         rootView.layoutSubtreeIfNeeded()
         split.setPosition(max(1, split.bounds.width / 2), ofDividerAt: 0)

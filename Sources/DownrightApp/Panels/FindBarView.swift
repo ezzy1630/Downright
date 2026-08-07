@@ -167,11 +167,15 @@ final class FindBarView: NSView {
 
         // The .bar form floats over the document as a card rather than a
         // full-width strip. Rounded corners let the material read as its own
-        // surface (§9.4); `masksToBounds` clips the vibrancy to the card.
+        // surface; `masksToBounds` clips the vibrancy to the card, and the
+        // layer border draws the polished outline on top of it. (A layer
+        // shadow cannot survive `masksToBounds`, so the outline stays flat;
+        // the pill's own height separates it from the page underneath.)
         if presentation == .bar {
             wantsLayer = true
             layer?.cornerRadius = PanelMetrics.cornerRadius
             layer?.masksToBounds = true
+            layer?.borderWidth = 1
         }
     }
 
@@ -404,6 +408,12 @@ final class FindBarView: NSView {
 
     private func applyStyle() {
         trailerDivider.layer?.backgroundColor = styleSheet.rule.cgColor
+        // The bar's outline follows the theme so it stays legible in both
+        // appearances (the inspector form has no border width, so this is a
+        // no-op there).
+        if presentation == .bar {
+            layer?.borderColor = styleSheet.rule.cgColor
+        }
         applyStatusColor()
         warningImage.contentTintColor = styleSheet.changeColor(.deleted)
         applyValidity()
@@ -433,22 +443,9 @@ final class FindBarView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        switch presentation {
-        case .inspector:
-            styleSheet.rule.setFill()
-            NSRect(x: 0, y: 0, width: bounds.width, height: PanelMetrics.hairline).fill()
-        case .bar:
-            // A hairline border over the rounded material, so the card reads
-            // against a light page instead of bleeding into it.
-            let path = NSBezierPath(
-                roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                xRadius: PanelMetrics.cornerRadius,
-                yRadius: PanelMetrics.cornerRadius
-            )
-            styleSheet.rule.setStroke()
-            path.lineWidth = 1
-            path.stroke()
-        }
+        guard presentation == .inspector else { return }
+        styleSheet.rule.setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: PanelMetrics.hairline).fill()
     }
 
     override func viewDidChangeEffectiveAppearance() {
