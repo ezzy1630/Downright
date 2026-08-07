@@ -419,12 +419,15 @@ final class DocumentWindowController: NSWindowController {
         barStack.orientation = .vertical
         barStack.spacing = 0
         barStack.distribution = .fill
-        barStack.alignment = .leading
+        barStack.alignment = .centerX
 
         for view in [primaryContainer, barStack] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
+        // Keep transient bars (conflict, find) off the very top edge so a
+        // centred find bar does not feel nailed to the toolbar.
+        barStack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
 
         let sidebarController = NSViewController()
         sidebarController.view = leadingPane
@@ -1293,12 +1296,52 @@ final class DocumentWindowController: NSWindowController {
             created.delegate = self
             findBar = created
             barStack.addArrangedSubview(created)
-            created.widthAnchor.constraint(equalTo: barStack.widthAnchor).isActive = true
+            // A find bar is a compact tool, not a full-width strip. The stack's
+            // `.centerX` alignment centres the pill; demand a settled width that
+            // can give way to a narrow window (§9.4).
+            let width = created.widthAnchor.constraint(equalToConstant: FindBarDensity.barWidth)
+            width.priority = .defaultHigh
+            width.isActive = true
+            created.widthAnchor.constraint(
+                lessThanOrEqualTo: barStack.widthAnchor,
+                constant: -2 * PanelMetrics.inset
+            ).isActive = true
             bar = created
+            // #3 entrance: settle the pill in after the stack has laid it out.
+            created.alphaValue = 0
+            barStack.layoutSubtreeIfNeeded()
+            Motion.run(reduceMotion: activeStyleSheet.reduceMotion, duration: Motion.quick) { _ in
+                created.animator().alphaValue = 1
+            }
         }
+
         bar.showsReplace = replace
+        // ⌘F means "find this" when text is selected: seed from the selection.
+        // Otherwise the bar reopens on its last query (#2) so it never starts
+        // empty.
+        if selectionRange().length > 0 {
+            seedFindBarFromSelection(bar)
+        } else if !findSession.query.isEmpty {
+            bar.setQueryText(findSession.query.text)
+            runFind(findSession.query)
+        }
         bar.focusSearchField()
         refreshToolbarSelectionState()
+    }
+
+    /// ⌘F on a selection is "find this", so the field starts from what is
+    /// selected and the document advances past the very occurrence that seeded it.
+    private func seedFindBarFromSelection(_ bar: FindBarView) {
+        let sel = selectionRange()
+        guard sel.length > 0 else { return }
+        let text = (markdownDocument.text as NSString).substring(with: sel)
+        bar.setQueryText(text)
+        var query = FindQuery()
+        query.text = text
+        // Compute the match set without jumping to the seeded occurrence; the
+        // advance below moves straight to the next match past the selection.
+        runFind(query, scrollToMatch: false)
+        advanceFind(forward: true)
     }
 
     func showFindInspector(replace: Bool) {
@@ -1330,7 +1373,9 @@ final class DocumentWindowController: NSWindowController {
         searchInspector = nil
         findBar = nil
         searchResults = nil
-        findSession.clear()
+        // Keep the query & matches so ⌘G/Find Next still advance after the bar
+        // closes, and so reopening ⌘F does not start empty (#2). Only the
+        // visible highlights are torn down.
         for pane in documentPanes {
             pane.textView.searchHits = []
             pane.textView.currentSearchHit = nil
@@ -1344,14 +1389,14 @@ final class DocumentWindowController: NSWindowController {
 
     func applyFindQuery(_ query: FindQuery) { runFind(query) }
 
-    func runFind(_ query: FindQuery, scrollToMatch: Bool = true) {
+    func runFind(_ query: FindQuery, scrollToMatch: Bool = true, highlightAll: Bool = true) {
         findRefreshWorkItem?.cancel()
         let source = containerTextView
         findSession.update(query: query, in: markdownDocument.text, caret: source.topVisibleOffset)
         // A hit inside a folded or elided range forces that range visible; the
         // text view owns that rule (§14's four-way interaction).
         for pane in documentPanes {
-            pane.textView.searchHits = findSession.matches
+            if highlightAll { pane.textView.searchHits = findSession.matches }
             pane.textView.currentSearchHit = findSession.currentMatch
         }
         findBar?.statusText = findSession.statusText
@@ -1364,6 +1409,13 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func advanceFind(forward: Bool) {
+        // With the bar closed, ⌘G still advances but first re-checks the query
+        // against the buffer so a stale match set cannot point at moved text.
+        // Only the current match is highlighted — a closed bar shows "here",
+        // not the full sweep it cleared on dismiss.
+        if findBar == nil, !findSession.query.isEmpty {
+            runFind(findSession.query, scrollToMatch: false, highlightAll: false)
+        }
         guard let match = findSession.advance(forward: forward) else { return }
         let source = containerTextView
         for pane in documentPanes { pane.textView.currentSearchHit = match }

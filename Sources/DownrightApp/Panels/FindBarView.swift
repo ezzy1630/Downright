@@ -17,6 +17,13 @@ protocol FindBarDelegate: AnyObject {
 /// looking at.  A half-typed regex is not an error — the field warns quietly
 /// and the document keeps its previous highlighting rather than throwing a
 /// dialog per character.
+
+/// The find bar's typographic span. The document stack compresses this with a
+/// high-priority cap so a narrow window shrinks the pill instead of clipping it.
+enum FindBarDensity {
+    static let barWidth: CGFloat = 440
+}
+
 final class FindBarView: NSView {
     enum Presentation {
         case bar
@@ -42,8 +49,10 @@ final class FindBarView: NSView {
 
     var statusText: String = "" {
         didSet {
+            guard statusText != oldValue else { return }
             statusLabel.stringValue = statusText
             statusLabel.setAccessibilityLabel(statusText.isEmpty ? "No search" : statusText)
+            applyStatusColor()
         }
     }
 
@@ -74,6 +83,7 @@ final class FindBarView: NSView {
     private let replaceField = NSTextField()
     private let statusLabel = NSTextField(labelWithString: "")
     private let warningImage = NSImageView()
+    private let trailerDivider = NSView()
     private let regexToggle: NSButton
     private let caseToggle: NSButton
     private let wordToggle: NSButton
@@ -154,6 +164,15 @@ final class FindBarView: NSView {
         applyValidity()
         setAccessibilityRole(.group)
         setAccessibilityLabel("Find")
+
+        // The .bar form floats over the document as a card rather than a
+        // full-width strip. Rounded corners let the material read as its own
+        // surface (§9.4); `masksToBounds` clips the vibrancy to the card.
+        if presentation == .bar {
+            wantsLayer = true
+            layer?.cornerRadius = PanelMetrics.cornerRadius
+            layer?.masksToBounds = true
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -179,6 +198,9 @@ final class FindBarView: NSView {
         statusLabel.alignment = .right
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // A settled slot for the count so "1 of 1" and "12 of 12" never nudge
+        // the surrounding buttons (§9.4).
+        statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
 
         let previous = ButtonAction { [weak self] in
             guard let self else { return }
@@ -202,10 +224,26 @@ final class FindBarView: NSView {
                 self.delegate?.findBarDidRequestClose(self)
             }
             actions.append(close)
+            // The field stretches to fill the pill; the bar's own fixed width
+            // (FindBarDensity.barWidth) gives it a settled, centred extent.
             findRow.orientation = .horizontal
             findRow.spacing = 6
             findRow.alignment = .centerY
-            for view in [searchField, warningImage, statusLabel, optionsButton, previousButton, nextButton,
+            // The count and chevrons sit as one tray on the field's trailing
+            // edge (split by a hairline) so the pill reads as a single control,
+            // with options and the close key trailing after (§9.4).
+            let trailer = NSStackView()
+            trailer.orientation = .horizontal
+            trailer.spacing = 2
+            trailer.alignment = .centerY
+            for view in [statusLabel, previousButton, nextButton] {
+                trailer.addArrangedSubview(view)
+            }
+            trailerDivider.wantsLayer = true
+            trailerDivider.layer?.cornerRadius = 1
+            trailerDivider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+            trailerDivider.heightAnchor.constraint(equalToConstant: 14).isActive = true
+            for view in [searchField, warningImage, trailerDivider, trailer, optionsButton,
                          PanelButton.symbol("xmark", label: "Close find bar", action: close)] {
                 findRow.addArrangedSubview(view)
             }
@@ -365,10 +403,26 @@ final class FindBarView: NSView {
     // MARK: - Style
 
     private func applyStyle() {
-        statusLabel.textColor = styleSheet.textSecondary
+        trailerDivider.layer?.backgroundColor = styleSheet.rule.cgColor
+        applyStatusColor()
         warningImage.contentTintColor = styleSheet.changeColor(.deleted)
         applyValidity()
         needsDisplay = true
+    }
+
+    /// The count echoes the theme's accent once a match is pinned (reads as
+    /// the same "here" as the current-hit highlight); a failure stays in the
+    /// delete tone; a bare total stays secondary. Replace confirmations read as
+    /// success, so they share the accent (§9.4).
+    private func applyStatusColor() {
+        switch statusText {
+        case "No matches":
+            statusLabel.textColor = styleSheet.changeColor(.deleted)
+        case let t where t.contains(" of ") || t.hasPrefix("Replaced"):
+            statusLabel.textColor = styleSheet.accent
+        default:
+            statusLabel.textColor = styleSheet.textSecondary
+        }
     }
 
     /// Subtle by design: an invalid pattern while you are still typing one is
@@ -379,8 +433,22 @@ final class FindBarView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        styleSheet.rule.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width, height: PanelMetrics.hairline).fill()
+        switch presentation {
+        case .inspector:
+            styleSheet.rule.setFill()
+            NSRect(x: 0, y: 0, width: bounds.width, height: PanelMetrics.hairline).fill()
+        case .bar:
+            // A hairline border over the rounded material, so the card reads
+            // against a light page instead of bleeding into it.
+            let path = NSBezierPath(
+                roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                xRadius: PanelMetrics.cornerRadius,
+                yRadius: PanelMetrics.cornerRadius
+            )
+            styleSheet.rule.setStroke()
+            path.lineWidth = 1
+            path.stroke()
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {

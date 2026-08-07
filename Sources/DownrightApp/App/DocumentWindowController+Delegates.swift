@@ -459,16 +459,29 @@ extension DocumentWindowController: FindBarDelegate {
         if all {
             let edits = FindEngine.replaceAllEdits(in: markdownDocument.text, query: currentFindQuery, template: replacement)
             markdownDocument.apply(edits, actionName: "Replace All")
+            runFind(currentFindQuery)
+            replaceResults("Replaced \(edits.count)")
         } else if let match = findSession.currentMatch {
             let text = FindEngine.replacement(
                 for: match, in: markdownDocument.text, query: currentFindQuery, template: replacement
             )
             markdownDocument.replace(match, with: text, actionName: "Replace")
+            runFind(currentFindQuery)
+            replaceResults("Replaced 1")
+        } else {
+            // Nothing to replace (empty bar). Surface that rather than silently
+            // doing nothing when the pill is in replace mode.
+            replaceResults("Nothing to replace")
         }
-        runFind(currentFindQuery)
     }
 
     func findBarDidRequestClose(_ bar: FindBarView) { dismissFindBar() }
+
+    /// A short-lived row confirmation after a replace, so the reader sees the
+    /// result instead of a stale "N of M" count.
+    private func replaceResults(_ message: String) {
+        findBar?.statusText = message
+    }
 }
 
 extension DocumentWindowController: ConflictBarDelegate {
