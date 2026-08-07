@@ -69,7 +69,12 @@ let package = Package(
             url: "https://github.com/apple/swift-markdown.git",
             revision: "27b7fc1a19068bcea3d2072db0ce86360d1400ed"
         ),
-        .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.0"),
+        // SwiftMath is vendored, not fetched: its generated `Bundle.module`
+        // accessor resolves only on the machine that compiled it and calls
+        // `fatalError` everywhere else, so a shipped bundle needs a three-line
+        // patch inside the package.  Vendor/SwiftMath/PATCHES.md records the
+        // version, the diff, and how to re-apply it after an update.
+        .package(path: "Vendor/SwiftMath"),
         .package(url: "https://github.com/lukilabs/beautiful-mermaid-swift.git", from: "1.0.0"),
         // Sparkle is a binary framework pinned exactly: update ordering, secure
         // download, validation, extraction, authorization, atomic replacement,

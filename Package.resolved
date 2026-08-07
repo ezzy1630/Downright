@@ -1,5 +1,5 @@
 {
-  "originHash" : "aa8cc366e3ac9ed0fa3b25caebebf180be93bbc79e5b3900f46042902307bcba",
+  "originHash" : "fb43bbf6fdf199c570b2c0105026b2878afbcc7dd0a87be7b82f13b3490aa38f",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -43,15 +43,6 @@
       "location" : "https://github.com/apple/swift-markdown.git",
       "state" : {
         "revision" : "27b7fc1a19068bcea3d2072db0ce86360d1400ed"
-      }
-    },
-    {
-      "identity" : "swiftmath",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/mgriebling/SwiftMath.git",
-      "state" : {
-        "revision" : "fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7",
-        "version" : "1.7.3"
       }
     }
   ],
