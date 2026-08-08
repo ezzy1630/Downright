@@ -226,6 +226,11 @@ enum MainMenu {
                     .convertToTaskList, .convertToBlockquote,
                 ]),
                 .commands([.indentList, .outdentList, .toggleTaskAtCaret]),
+                .commands([
+                    .promoteHeading, .demoteHeading,
+                    .headingLevel1, .headingLevel2, .headingLevel3,
+                    .headingLevel4, .headingLevel5, .headingLevel6, .headingToBody,
+                ]),
             ]
 
         case .view:
@@ -265,7 +270,7 @@ enum MainMenu {
         case .document:
             return [
                 .commands([.tidyDocument]),
-                .commands([.promoteHeading, .demoteHeading, .moveBlockUp, .moveBlockDown]),
+                .commands([.moveBlockUp, .moveBlockDown]),
                 .commands([.foldSection, .unfoldSection, .foldAll, .unfoldAll]),
                 .commands([.sortListAlphabetically, .sortListByState, .insertTableOfContents]),
                 .commands([.frontMatterEditor, .tableEditor, .assetDoctor]),

@@ -379,6 +379,7 @@ public final class DecorationEngine {
             for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
                 walk(block.children[childIndex], context: childContext, state: &state)
             }
+            applyTrailingListSpacing(block, state: &state)
             return
 
         case .blockQuote:
@@ -434,9 +435,9 @@ public final class DecorationEngine {
             }
             if checkbox?.isChecked == true {
                 let completed: [NSAttributedString.Key: Any] = [
-                    .foregroundColor: styleSheet.textSecondary,
+                    .foregroundColor: styleSheet.text.withAlphaComponent(0.55),
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                    .strikethroughColor: styleSheet.textFaint,
+                    .strikethroughColor: styleSheet.text.withAlphaComponent(0.40),
                 ]
                 // A completed task strikes out *its own* text and stops.
                 // `contentRange` spans the item's whole subtree, so styling it
@@ -516,6 +517,26 @@ public final class DecorationEngine {
     }
 
     // MARK: - Attribute application
+
+    private func applyTrailingListSpacing(_ list: MDBlock, state: inout DecorateState) {
+        guard let last = list.children.last, last.range.length > 0 else { return }
+        let source = state.storage.string as NSString
+        let offset = min(source.length - 1, max(last.range.location, last.range.upperBound - 1))
+        guard offset >= 0 else { return }
+        let paragraph = source.paragraphRange(for: NSRange(location: offset, length: 0))
+        guard paragraph.location < state.target.upperBound,
+              state.target.location < paragraph.upperBound,
+              let existing = state.storage.attribute(
+                .paragraphStyle, at: offset, effectiveRange: nil
+              ) as? NSParagraphStyle,
+              let spaced = existing.mutableCopy() as? NSMutableParagraphStyle
+        else { return }
+        spaced.paragraphSpacing = RenderMetrics.snap(
+            styleSheet.lineHeight * 0.45,
+            grid: max(1, styleSheet.baselineGrid)
+        )
+        apply([.paragraphStyle: spaced.copy() as Any], to: paragraph, state: &state)
+    }
 
     private func apply(
         _ attributes: [NSAttributedString.Key: Any],
@@ -772,15 +793,16 @@ public final class DecorationEngine {
                 apply([
                     .drPathToken: token,
                     .drPathExists: true,
+                    .drInlineCode: true,
                     .font: styleSheet.monoFont(size: blockFont.pointSize * 0.94),
                     .foregroundColor: styleSheet.textSecondary,
                 ], to: span.range, state: &state)
             case .footnoteReference(let identifier):
                 apply([
                     .drReference: identifier,
-                    .foregroundColor: styleSheet.link,
-                    .baselineOffset: blockFont.pointSize * 0.3,
-                    .font: blockFont.withSize(blockFont.pointSize * 0.70),
+                    .foregroundColor: styleSheet.accent,
+                    .baselineOffset: blockFont.xHeight * 0.42,
+                    .font: blockFont.withSize(blockFont.pointSize * 0.62),
                 ], to: span.range, state: &state)
             case .inlineHTML:
                 apply([.foregroundColor: styleSheet.textFaint], to: span.range, state: &state)
@@ -1066,21 +1088,7 @@ public final class DecorationEngine {
     static func gutterText(for block: MDBlock, context: BlockContext) -> String? {
         switch block.content {
         case .heading(let level):
-            return String(repeating: "#", count: max(1, min(level, 6)))
-        case .blockQuote, .callout:
-            return ">"
-        case .listItem:
-            return nil
-        case .codeBlock(_, let isFenced, _):
-            return isFenced ? "```" : nil
-        case .mermaid:
-            return "```"
-        case .mathBlock:
-            return "$$"
-        case .frontMatter:
-            return "---"
-        case .thematicBreak:
-            return "---"
+            return "H\(max(1, min(level, 6)))"
         default:
             return nil
         }

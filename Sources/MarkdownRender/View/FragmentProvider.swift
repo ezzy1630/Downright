@@ -30,6 +30,16 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         // Elision wins over everything: a folded or zoomed-away paragraph has
         // no height whatever it contains (§5.2, §7.1).
         if context.elision.isElided(source.location) {
+            if let hidden = context.cueElision.range(containing: source.location),
+               context.paragraphIndex.index(containing: source.location)
+                    == context.paragraphIndex.index(containing: hidden.location) {
+                return ElisionCueFragment(
+                    textElement: textElement,
+                    range: elementRange,
+                    hiddenRange: hidden,
+                    context: context
+                )
+            }
             return ElidedFragment(textElement: textElement, range: elementRange)
         }
 

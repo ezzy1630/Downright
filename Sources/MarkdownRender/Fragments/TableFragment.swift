@@ -196,10 +196,8 @@ struct TableLayout {
                     remaining -= addition
                 }
             }
-            if remaining > 0.5 {
-                let share = remaining / CGFloat(columns)
-                widths = widths.map { $0 + share }
-            }
+            // Content-sized columns keep their natural grouping. Spare width
+            // belongs to the trailing table margin, not to an arbitrary cell.
         } else {
             widths = [CGFloat](repeating: available / CGFloat(columns), count: columns)
         }
@@ -336,6 +334,7 @@ struct TableLayout {
         scale: CGFloat,
         prose: [[Bool]]? = nil
     ) -> ColumnDemand {
+        let measurementSafety: CGFloat = 2
         var natural = [CGFloat](repeating: 0, count: columns)
         var minimums = [CGFloat](repeating: 0, count: columns)
         // Verdicts are shaped like `cellText`, and the ladder hands back the ones
@@ -348,7 +347,11 @@ struct TableLayout {
         for (rowIndex, row) in rows.enumerated() where rowIndex < cellText.count {
             let attributes = row.isHeader ? headerAttributes : cellAttributes
             for (index, text) in cellText[rowIndex].enumerated() where index < columns {
-                let measured = NSAttributedString(string: text, attributes: attributes).size().width
+                // Core Text's fractional advance is not a safe clipping width.
+                // Column separation is accounted for separately below.
+                let measured = ceil(
+                    NSAttributedString(string: text, attributes: attributes).size().width
+                ) + measurementSafety
                 natural[index] = max(natural[index], measured)
                 let hasVerdict = rowIndex < verdicts.count && index < verdicts[rowIndex].count
                 if decide, hasVerdict { verdicts[rowIndex][index] = measured > proseWidth }
@@ -360,7 +363,10 @@ struct TableLayout {
                 // common case and it is on the keystroke path (§12).
                 let longestToken = text
                     .split(whereSeparator: \.isWhitespace)
-                    .map { NSAttributedString(string: String($0), attributes: attributes).size().width }
+                    .map {
+                        ceil(NSAttributedString(string: String($0), attributes: attributes).size().width)
+                            + measurementSafety
+                    }
                     .max() ?? 0
                 minimums[index] = max(minimums[index], longestToken)
             }
@@ -615,7 +621,10 @@ final class TableRowFragment: DownrightFragment {
             // ends in an ellipsis, so a clipped cell reads as "there is more"
             // rather than as a sentence that stops mid-word.
             let visible = text.clipped(
-                toHeight: rowHeight - RenderMetrics.tableRowPadding * 2,
+                // Match the actual draw rect. Subtracting both top and bottom
+                // padding here while drawing into a one-padding rect made every
+                // one-line cell look too tall and ellipsised its final glyph.
+                toHeight: cellRect.height,
                 width: layout.columnWidths[index])
             cg.drawText(visible, in: cellRect, flipped: true)
         }

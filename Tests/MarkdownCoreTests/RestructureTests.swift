@@ -30,6 +30,15 @@ import Testing
         #expect(back == text)
     }
 
+    @Test func setsAnExactHeadingLevelAndMovesItsSubtree() {
+        let text = "# Top\n\n## Section\n\n### Child\n\n## Other\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.setHeadingLevel(doc, headingIndex: 1, level: 4))
+        #expect(out == "# Top\n\n#### Section\n\n##### Child\n\n## Other\n")
+        #expect(Restructure.setHeadingLevel(doc, headingIndex: 1, level: 2).isEmpty)
+        #expect(Restructure.setHeadingLevel(doc, headingIndex: 1, level: 0).isEmpty)
+    }
+
     @Test func clampsAtTheEnds() {
         let top = MarkdownParser.parse("# A\n\n## B\n")
         #expect(Restructure.promoteHeading(top, headingIndex: 0).isEmpty)

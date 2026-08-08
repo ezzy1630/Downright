@@ -79,6 +79,7 @@ final class DocumentWindowController: NSWindowController {
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
+    weak var toolbarDocumentIdentityView: ToolbarDocumentIdentityView?
     /// The two panel buttons promoted out of the `···` overflow.  Weak, because
     /// the toolbar item owns its view; the controller only needs them to keep
     /// their lit state in step with the panels they open.
@@ -721,6 +722,18 @@ final class DocumentWindowController: NSWindowController {
         source.zoomLevel = level
         synchronizePanes(from: source)
         markdownDocument.state.zoomLevel = level
+        breadcrumbView.zoomLevel = level
+        announceTransientStatus(zoomAnnouncement(level))
+    }
+
+    private func zoomAnnouncement(_ level: ZoomLevel) -> String {
+        switch level {
+        case .h1: return "Top level — top-level headings"
+        case .h2: return "Two levels — headings through level two"
+        case .headings: return "Headings — all headings"
+        case .skeleton: return "Skeleton — headings, first sentences, artifacts"
+        case .everything: return "Everything — all content visible"
+        }
     }
 
     func setSharedFolds(_ folded: Set<String>, from source: MarkdownTextView? = nil) {
@@ -846,9 +859,12 @@ final class DocumentWindowController: NSWindowController {
         markdownDocument.changes.noteVisibleRange(
             NSRange(location: min(top, bottom), length: abs(bottom - top))
         )
+        toolbarDocumentIdentityView?.hasExternalChanges = markdownDocument.changes.unreadCount > 0
     }
 
     func refreshDensityBands(metrics: [ReadingMetrics]? = nil) {
+        primaryContainer.refreshMarginNotes()
+        splitContainer?.refreshMarginNotes()
         let parsed = markdownDocument.parsed
         _ = metrics ?? sectionMetrics(for: parsed)
         let wordCount = cachedWordCount
@@ -877,6 +893,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func refreshBreadcrumb() {
+        breadcrumbView.zoomLevel = containerTextView.zoomLevel
         let offset = containerTextView.topVisibleOffset
         // Skip the heading tree walk if the offset hasn't crossed a heading
         // boundary since the last scroll.  The breadcrumb view's own
@@ -926,16 +943,20 @@ final class DocumentWindowController: NSWindowController {
             pathResolver?.invalidate()
             scheduleFindRefresh()
             guard !hunks.isEmpty else { return }
+            toolbarDocumentIdentityView?.hasExternalChanges = true
             showChangeSummary()
 
         case .conflict(let conflict):
+            toolbarDocumentIdentityView?.hasExternalChanges = true
             pendingConflict = conflict
             showConflictBar("Changed on disk — \(conflict.changedBlockCount) block\(conflict.changedBlockCount == 1 ? "" : "s")")
 
         case .fileRemoved:
+            toolbarDocumentIdentityView?.hasExternalChanges = true
             showConflictBar("File was moved or deleted")
 
         case .fileRestored:
+            toolbarDocumentIdentityView?.hasExternalChanges = false
             dismissConflictBar()
         }
     }

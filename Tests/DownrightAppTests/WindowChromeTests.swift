@@ -113,7 +113,7 @@ struct WindowChromeTests {
         #expect(button.attributedTitle.string == "Typography and colour")
         #expect(button.accessibilityLabel() == "Current section: Typography and colour")
         #expect(!button.isHidden)
-        #expect(crumb.currentTitleOrigin > 0)
+        #expect(crumb.currentTitleOrigin == 0)
 
         let menu = crumb.makePathMenu()
         #expect(menu.items.map(\.title) == ["Downright Design", "Typography and colour"])
@@ -148,10 +148,11 @@ struct WindowChromeTests {
         #expect(toolbar.identifier == "DownrightToolbar.v10")
         #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
+        let fixedSpace = NSToolbarItem.Identifier.space.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             "document-identity", flexibleSpace,
             "presentation-mode", flexibleSpace,
-            "activity", "find", "tasks-progress", "update-pill", "overflow",
+            "activity", "find", fixedSpace, "tasks-progress", "update-pill", "overflow",
         ])
 
         let identity = try #require(
@@ -201,7 +202,7 @@ struct WindowChromeTests {
         )
         #expect(overflow.intrinsicContentSize.width == 30)
         #expect(overflow.intrinsicContentSize.height == 30)
-        #expect(overflow.popupMenuItems.contains { $0.title == "Structural Zoom" })
+        #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })
         #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
         #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "activity" })
         #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "tasks-progress" })

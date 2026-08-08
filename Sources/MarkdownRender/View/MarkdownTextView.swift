@@ -61,6 +61,7 @@ public final class MarkdownTextView: NSTextView {
     // MARK: - Public surface
 
     public weak var markdownDelegate: MarkdownTextViewDelegate?
+    private var textMagnificationAccumulator: CGFloat = 0
 
     /// Host hook for the command/keybinding layer.  Invoked before the view's
     /// own key handling on every `keyDown`; return `true` to claim the event
@@ -159,6 +160,7 @@ public final class MarkdownTextView: NSTextView {
     public var zoomLevel: ZoomLevel = .everything {
         didSet {
             guard zoomLevel != oldValue else { return }
+            expandedElisionRanges.removeAll(keepingCapacity: true)
             let previousHeight = frame.height
             refreshElision()
             // The display map has changed and TextKit 2 only lays out lazily.
@@ -330,6 +332,7 @@ public final class MarkdownTextView: NSTextView {
     private var hardWrapRanges: [NSRange] = []
     private var hardWrapSubstitutions: [DisplaySubstitution] = []
     private var elision: ElisionPlan = .none
+    private var expandedElisionRanges: [NSRange] = []
 
     private var isApplyingSelection = false
     private var isPerformingSourceEdit = false
@@ -1052,6 +1055,23 @@ public final class MarkdownTextView: NSTextView {
                 in: document, styleSheet: styleSheet, excluding: sourceFocus.range)
             : []
 
+        let footnoteReferences = effectivePolicy.hidesInlineMarkers
+            ? FootnoteReferenceDisplay.references(in: document).filter { reference in
+                guard let focus = sourceFocus.range else { return true }
+                return NSIntersectionRange(reference.range, focus).length == 0
+            }
+            : []
+        hidden.removeAll { hiddenRange in
+            footnoteReferences.contains {
+                NSIntersectionRange(hiddenRange, $0.range).length > 0
+            }
+        }
+        let footnoteSubstitutions = effectivePolicy.hidesInlineMarkers
+            ? FootnoteReferenceDisplay.substitutions(
+                in: document, styleSheet: styleSheet, excluding: sourceFocus.range
+            )
+            : []
+
         baseHiddenRanges = hidden
         let plan = HardWrapReflow.plan(
             document: document,
@@ -1065,6 +1085,7 @@ public final class MarkdownTextView: NSTextView {
             paragraphs: paragraphIndex,
             substitutions: hidden.map(DisplaySubstitution.hide)
                 + mathSubstitutions
+                + footnoteSubstitutions
                 + hardWrapSubstitutions
         )
         // Selection / hit-testing speak TextKit coordinates from the layout map
@@ -1536,7 +1557,8 @@ public final class MarkdownTextView: NSTextView {
         elision = ElisionPlan.make(
             document: parsedDocument, zoom: zoomLevel,
             foldedHeadingSlugs: foldedHeadingSlugs, searchHits: searchHits,
-            caret: primarySourceCaret, selections: [])
+            caret: primarySourceCaret, selections: expandedElisionRanges)
+        fragmentContext.cueElision = elision
         let definitionElisions: [NSRange]
         if effectivePolicy.hidesBlockMarkers {
             let source = (textStorage?.string ?? "") as NSString
@@ -1595,6 +1617,12 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         if unfolded != foldedHeadingSlugs { foldedHeadingSlugs = unfolded }
+    }
+
+    func expandElision(at offset: Int) {
+        guard let range = elision.range(containing: offset) else { return }
+        expandedElisionRanges.append(range)
+        refreshElision()
     }
 
     // MARK: - Code block collapse (§5.1)
@@ -1844,12 +1872,14 @@ public final class MarkdownTextView: NSTextView {
             }
             storage.addAttribute(.drPathExists, value: exists, range: range)
             if exists {
-                storage.addAttribute(.foregroundColor, value: styleSheet.accent, range: range)
+                storage.addAttribute(.foregroundColor, value: styleSheet.textSecondary, range: range)
+                storage.removeAttribute(.underlineStyle, range: range)
+                storage.removeAttribute(.underlineColor, range: range)
             } else {
                 storage.addAttributes([
-                    .foregroundColor: styleSheet.pathMissing,
+                    .foregroundColor: styleSheet.textSecondary,
                     .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue,
-                    .underlineColor: styleSheet.pathMissing,
+                    .underlineColor: styleSheet.textFaint,
                 ], range: range)
             }
         }
@@ -2069,7 +2099,22 @@ public final class MarkdownTextView: NSTextView {
 
     public override func magnify(with event: NSEvent) {
         interruptAnimatedScroll()
-        super.magnify(with: event)
+        if event.phase == .began { textMagnificationAccumulator = 0 }
+        textMagnificationAccumulator += event.magnification
+        let stepThreshold: CGFloat = 0.075
+        let steps = Int(textMagnificationAccumulator / stepThreshold)
+        if steps != 0 {
+            markdownDelegate?.markdownTextView(self, didRequestTextSizeSteps: steps)
+            textMagnificationAccumulator -= CGFloat(steps) * stepThreshold
+        }
+        if event.phase == .ended || event.phase == .cancelled {
+            textMagnificationAccumulator = 0
+        }
+    }
+
+    public override func smartMagnify(with event: NSEvent) {
+        interruptAnimatedScroll()
+        markdownDelegate?.markdownTextViewDidRequestSmartTextZoom(self)
     }
 
     public override func swipe(with event: NSEvent) {
@@ -2200,6 +2245,16 @@ public final class MarkdownTextView: NSTextView {
                 path.fill()
                 path.lineWidth = 1
                 path.stroke()
+            }
+        }
+        storage.enumerateAttribute(.drPathToken, in: visible) { value, range, _ in
+            guard value != nil,
+                  storage.attribute(.drPathExists, at: range.location, effectiveRange: nil) as? Bool == true
+            else { return }
+            for band in self.inlineCodeBands(forSourceRange: range) where band.intersects(rect) {
+                let edge = NSRect(x: band.minX, y: band.minY + 1, width: 2, height: max(1, band.height - 2))
+                self.styleSheet.accent.setFill()
+                NSBezierPath(roundedRect: edge, xRadius: 1, yRadius: 1).fill()
             }
         }
         drawInvisibles(in: visibleSourceRange ?? NSRange(location: 0, length: 0), dirtyRect: rect)

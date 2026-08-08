@@ -273,6 +273,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             .flexibleSpace,
             Self.activityItem,
             Self.findItem,
+            .space,
             Self.tasksItem,
             Self.updateItem,
             Self.overflowItem,
@@ -291,7 +292,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         case Self.identityItem:
             guard let window else { return nil }
             let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = ToolbarDocumentIdentityView(window: window)
+            let identity = ToolbarDocumentIdentityView(window: window)
+            item.view = identity
+            toolbarDocumentIdentityView = identity
             item.isBordered = false
             item.label = "Document"
             item.visibilityPriority = .high
@@ -478,11 +481,11 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         addCommands([.sourceMode, .focusMode, .splitView, .pinWindow], to: menu)
 
         menu.addItem(sectionHeader("Document"))
-        let zoom = NSMenu(title: "Structural Zoom")
+        let zoom = NSMenu(title: "Document Detail")
         addCommands([.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5], to: zoom)
         zoom.addItem(.separator())
         addCommands([.zoomIn, .zoomOut], to: zoom)
-        let zoomItem = NSMenuItem(title: "Structural Zoom", action: nil, keyEquivalent: "")
+        let zoomItem = NSMenuItem(title: "Document Detail", action: nil, keyEquivalent: "")
         zoomItem.image = NSImage(systemSymbolName: "text.magnifyingglass", accessibilityDescription: nil)
         zoomItem.submenu = zoom
         menu.addItem(zoomItem)

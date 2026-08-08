@@ -322,6 +322,11 @@ extension MarkdownTextView {
 
         if handleCodeBlockChrome(at: point) { return }
 
+        if mode != .source, let hit = attribute(.drElided, at: point) {
+            expandElision(at: hit.range.location)
+            return
+        }
+
         // The ornament lives in the hanging indent, outside the hidden source
         // marker's glyph rect. Hit-test the same 28pt control that is drawn,
         // so Document mode does not require a trip to Source. In Source mode

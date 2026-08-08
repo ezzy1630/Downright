@@ -15,6 +15,131 @@ import NaturalLanguage
 // trivial.
 
 public enum StructuralZoom {
+    /// Semantic navigation summary for a section. Markdown markers are removed,
+    /// inline math becomes a readable placeholder, and two sentences provide
+    /// enough context to judge a jump without turning the preview into a reader.
+    public static func sectionPreview(_ doc: ParsedDocument, headingIndex: Int) -> String? {
+        guard doc.headings.indices.contains(headingIndex) else { return nil }
+        let heading = doc.headings[headingIndex]
+        let end = headingIndex + 1 < doc.headings.count
+            ? doc.headings[headingIndex + 1].range.location
+            : doc.length
+        let start = heading.range.upperBound
+        guard end > start else { return nil }
+        let range = NSRange(location: start, length: end - start)
+        let prose = previewProse(in: doc, range: range)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        guard !prose.isEmpty else { return artifactSummary(in: doc, range: range) }
+
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = prose
+        var sentences: [String] = []
+        tokenizer.enumerateTokens(in: prose.startIndex..<prose.endIndex) { token, _ in
+            sentences.append(String(prose[token]).trimmingCharacters(in: .whitespacesAndNewlines))
+            return sentences.count < 2 && sentences.joined(separator: " ").count < 220
+        }
+        let summary = sentences.joined(separator: " ")
+        return summary.count > 260 ? String(summary.prefix(257)) + "…" : summary
+    }
+
+    private static func artifactSummary(in doc: ParsedDocument, range: NSRange) -> String? {
+        var codeLanguages: [String] = []
+        var codeCount = 0
+        var tableCount = 0
+        var mathCount = 0
+        var diagramCount = 0
+        var taskListCount = 0
+        doc.root.walkPruning { block in
+            guard block.range.upperBound > range.location,
+                  block.range.location < range.upperBound
+            else { return false }
+            switch block.content {
+            case .document, .blockQuote, .callout, .listItem:
+                return true
+            case .list:
+                if containsTask(block) { taskListCount += 1; return false }
+                return true
+            case .codeBlock(let language, _, _):
+                codeCount += 1
+                if let language, !language.isEmpty,
+                   !codeLanguages.contains(where: { $0.caseInsensitiveCompare(language) == .orderedSame }) {
+                    codeLanguages.append(language.capitalized)
+                }
+                return false
+            case .table:
+                tableCount += 1
+                return false
+            case .mathBlock:
+                mathCount += 1
+                return false
+            case .mermaid:
+                diagramCount += 1
+                return false
+            default:
+                return false
+            }
+        }
+
+        var parts: [String] = []
+        if codeCount > 0 {
+            let languages = codeLanguages.prefix(3).joined(separator: ", ")
+            parts.append("\(codeCount) code \(codeCount == 1 ? "block" : "blocks")"
+                + (languages.isEmpty ? "" : " · \(languages)"))
+        }
+        if tableCount > 0 { parts.append("\(tableCount) \(tableCount == 1 ? "table" : "tables")") }
+        if mathCount > 0 { parts.append("\(mathCount) math \(mathCount == 1 ? "block" : "blocks")") }
+        if diagramCount > 0 { parts.append("\(diagramCount) \(diagramCount == 1 ? "diagram" : "diagrams")") }
+        if taskListCount > 0 { parts.append("\(taskListCount) task \(taskListCount == 1 ? "list" : "lists")") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private static func previewProse(in doc: ParsedDocument, range: NSRange) -> String {
+        let source = doc.text as NSString
+        var pieces: [String] = []
+        doc.root.walkPruning { block in
+            guard block.range.upperBound > range.location,
+                  block.range.location < range.upperBound
+            else { return false }
+            switch block.content {
+            case .document, .blockQuote, .callout, .list, .listItem:
+                return true
+            case .paragraph:
+                let text = previewText(block.inlines, source: source)
+                if !text.isEmpty { pieces.append(text) }
+                return false
+            default:
+                return false
+            }
+        }
+        return pieces.joined(separator: " ")
+    }
+
+    private static func previewText(_ spans: [InlineSpan], source: NSString) -> String {
+        spans.map { span in
+            switch span.kind {
+            case .text, .pathToken:
+                return source.substring(with: span.range)
+            case .inlineCode:
+                return source.substring(with: span.contentRange)
+            case .softBreak, .lineBreak:
+                return " "
+            case .inlineMath:
+                return "a formula"
+            case .wikilink(let target, let label):
+                return label ?? target
+            case .image(_, let alt):
+                return alt.isEmpty ? "image" : alt
+            case .footnoteReference, .inlineHTML:
+                return ""
+            case .autolink(let destination):
+                return destination
+            default:
+                return previewText(span.children, source: source)
+            }
+        }.joined()
+    }
+
     public static func plan(_ doc: ParsedDocument, level: ZoomLevel) -> ZoomPlan {
         guard level != .everything, doc.length > 0 else { return .all }
         let map = SourceMap(doc.text)

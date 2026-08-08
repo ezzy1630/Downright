@@ -54,7 +54,7 @@ final class MathFragment: DownrightFragment {
 
     private func renderedImage() -> NSImage? {
         guard let style = styleSheet else { return nil }
-        let pointSize = style.mathPointSize * 1.25
+        let pointSize = style.mathPointSize * 1.12
         // SwiftMath crops tightly to the glyph bounds; the padded bitmap keeps
         // ≥ 8pt of air on every edge so a tall formula never clips through its
         // own line box (§11.3).

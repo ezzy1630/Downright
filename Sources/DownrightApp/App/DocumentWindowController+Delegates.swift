@@ -5,6 +5,45 @@ import MarkdownRender
 // MARK: - Text surface
 
 extension DocumentWindowController: MarkdownTextViewDelegate {
+    func markdownTextView(_ view: MarkdownTextView, didRequestTextSizeSteps steps: Int) {
+        guard steps != 0 else { return }
+        adjustTextSize(by: CGFloat(steps))
+    }
+
+    func markdownTextViewDidRequestSmartTextZoom(_ view: MarkdownTextView) {
+        Preferences.shared.update {
+            $0.textSizeAdjustment = $0.textSizeAdjustment == 0 ? 3 : 0
+        }
+    }
+    func markdownTextView(
+        _ view: MarkdownTextView, didRequestHeadingLevel level: Int?, headingIndex: Int
+    ) {
+        markdownDocument.ensureParsedCurrent()
+        guard markdownDocument.parsed.headings.indices.contains(headingIndex) else { return }
+        if let level {
+            let edits = Restructure.setHeadingLevel(
+                markdownDocument.parsed, headingIndex: headingIndex, level: level
+            )
+            markdownDocument.apply(edits, actionName: "Set Heading \(level)")
+            return
+        }
+        let heading = markdownDocument.parsed.headings[headingIndex]
+        let line = markdownDocument.parsed.range(ofLine: markdownDocument.parsed.line(at: heading.range.location))
+        let source = markdownDocument.parsed.substring(line)
+        let indent = source.prefix { $0 == " " || $0 == "\t" }
+        let hashes = source.dropFirst(indent.count).prefix { $0 == "#" }
+        guard !hashes.isEmpty else { return }
+        markdownDocument.apply([
+            TextEdit(
+                range: NSRange(
+                    location: line.location + indent.utf16.count,
+                    length: hashes.utf16.count + 1
+                ),
+                replacement: "",
+                summary: "Heading to body text"
+            ),
+        ], actionName: "Body Text")
+    }
     func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange) {
         presentLightbox(source: source, caption: nil)
     }
@@ -120,8 +159,13 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         synchronizePanes(from: view)
         updateBreadcrumbAndGutter()
         noteVisibleChangeMarks()
-        if let first = markdownDocument.parsed.headings.first,
-           view.topVisibleOffset > first.range.upperBound {
+        let visible = view.enclosingScrollView?.documentVisibleRect ?? view.visibleRect
+        let current = markdownDocument.parsed.headings.last {
+            $0.range.location <= view.topVisibleOffset
+        }
+        if let current,
+           let headingRect = view.rect(forOffset: current.range.location),
+           headingRect.maxY < visible.minY + 1 {
             breadcrumbView.showCurrentSection()
         } else {
             breadcrumbView.hideCurrentSection()
@@ -375,13 +419,29 @@ extension DocumentWindowController: DensityGutterDelegate {
 
     func densityGutter(
         _ gutter: DensityGutterView, previewAtFraction fraction: CGFloat
-    ) -> (title: String, snippet: String)? {
+    ) -> (title: String, snippet: String, context: String)? {
         let offset = Int(fraction * CGFloat(markdownDocument.parsed.length))
-        guard let heading = markdownDocument.parsed.headings.last(where: { $0.range.location <= offset }) else {
-            return ("Top", String(markdownDocument.parsed.substring(NSRange(location: 0, length: min(120, markdownDocument.parsed.length)))))
+        guard let index = markdownDocument.parsed.headings.lastIndex(where: { $0.range.location <= offset }) else {
+            return ("Document start", "", densityGutterView.metricsSummary)
         }
-        let snippetLength = min(160, max(0, markdownDocument.parsed.length - offset))
-        return (heading.title, markdownDocument.parsed.substring(NSRange(location: offset, length: snippetLength)))
+        let heading = markdownDocument.parsed.headings[index]
+        let sectionPosition = "Section \(index + 1) of \(markdownDocument.parsed.headings.count)"
+        let context = heading.wordCount > 0
+            ? "\(sectionPosition) · \(heading.wordCount) words"
+            : sectionPosition
+        if containerTextView.mode == .source || containerTextView.sourceFocus == .document {
+            let snippetLength = min(160, max(0, markdownDocument.parsed.length - offset))
+            return (
+                heading.title,
+                markdownDocument.parsed.substring(NSRange(location: offset, length: snippetLength)),
+                context
+            )
+        }
+        return (
+            heading.title,
+            StructuralZoom.sectionPreview(markdownDocument.parsed, headingIndex: index) ?? "Section overview",
+            context
+        )
     }
 }
 

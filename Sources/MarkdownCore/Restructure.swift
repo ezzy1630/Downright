@@ -27,11 +27,22 @@ public enum Restructure {
         relevel(doc, headingIndex: headingIndex, delta: +1)
     }
 
+    /// Sets one heading subtree to an exact root level while preserving the
+    /// relative depth of every descendant. This is the direct H1...H6 path;
+    /// it shares the same subtree invariant as promote/demote.
+    public static func setHeadingLevel(
+        _ doc: ParsedDocument, headingIndex: Int, level: Int
+    ) -> [TextEdit] {
+        guard doc.headings.indices.contains(headingIndex), (1...6).contains(level) else { return [] }
+        return relevel(doc, headingIndex: headingIndex, delta: level - doc.headings[headingIndex].level)
+    }
+
     /// Moves the whole subtree: the heading and every heading beneath it shift
     /// by `delta`, clamped to 1...6.  A no-op at the clamp rather than a
     /// partial move, so the subtree's shape is never flattened.
     private static func relevel(_ doc: ParsedDocument, headingIndex: Int, delta: Int) -> [TextEdit] {
         guard doc.headings.indices.contains(headingIndex) else { return [] }
+        guard delta != 0 else { return [] }
         let root = doc.headings[headingIndex]
         let target = root.level + delta
         guard target >= 1, target <= 6 else { return [] }

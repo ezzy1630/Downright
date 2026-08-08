@@ -176,6 +176,13 @@ extension DocumentWindowController: CommandResponder {
         // MARK: Restructuring (§9.2)
         case .promoteHeading: restructureHeading(promote: true)
         case .demoteHeading: restructureHeading(promote: false)
+        case .headingLevel1: setHeadingLevel(1)
+        case .headingLevel2: setHeadingLevel(2)
+        case .headingLevel3: setHeadingLevel(3)
+        case .headingLevel4: setHeadingLevel(4)
+        case .headingLevel5: setHeadingLevel(5)
+        case .headingLevel6: setHeadingLevel(6)
+        case .headingToBody: convertHeadingToBody()
         case .moveBlockUp: moveBlock(.up)
         case .moveBlockDown: moveBlock(.down)
         case .foldSection: foldCurrentSection(fold: true)
@@ -295,6 +302,29 @@ extension DocumentWindowController: CommandResponder {
             ? Restructure.promoteHeading(markdownDocument.parsed, headingIndex: index)
             : Restructure.demoteHeading(markdownDocument.parsed, headingIndex: index)
         markdownDocument.apply(edits, actionName: promote ? "Promote Heading" : "Demote Heading")
+    }
+
+    private func setHeadingLevel(_ level: Int) {
+        markdownDocument.ensureParsedCurrent()
+        guard let index = currentHeadingIndex() else { return }
+        let edits = Restructure.setHeadingLevel(markdownDocument.parsed, headingIndex: index, level: level)
+        markdownDocument.apply(edits, actionName: "Set Heading (level)")
+    }
+
+    private func convertHeadingToBody() {
+        markdownDocument.ensureParsedCurrent()
+        guard let index = currentHeadingIndex() else { return }
+        let heading = markdownDocument.parsed.headings[index]
+        let line = markdownDocument.parsed.range(ofLine: markdownDocument.parsed.line(at: heading.range.location))
+        let source = markdownDocument.parsed.substring(line)
+        let indent = source.prefix { $0 == " " || $0 == "\t" }
+        let hashes = source.dropFirst(indent.count).prefix { $0 == "#" }
+        guard !hashes.isEmpty else { return }
+        let marker = NSRange(location: line.location + indent.utf16.count, length: hashes.utf16.count + 1)
+        markdownDocument.apply(
+            [TextEdit(range: marker, replacement: "", summary: "Heading to body text")],
+            actionName: "Body Text"
+        )
     }
 
     private func moveBlock(_ direction: MoveDirection) {
@@ -468,7 +498,7 @@ extension DocumentWindowController: CommandResponder {
 
     // MARK: - Text size
 
-    private func adjustTextSize(by delta: CGFloat) {
+    func adjustTextSize(by delta: CGFloat) {
         Preferences.shared.update {
             $0.textSizeAdjustment = max(-4, min(10, $0.textSizeAdjustment + delta))
         }

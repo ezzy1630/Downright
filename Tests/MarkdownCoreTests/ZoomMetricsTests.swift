@@ -121,6 +121,22 @@ import Testing
         #expect(visibleText(plan, in: text).contains("First sentence here."))
     }
 
+    @Test func sectionPreviewProvidesTwoCleanSentences() {
+        let doc = MarkdownParser.parse(document)
+        let alpha = doc.headings.firstIndex { $0.title == "Alpha" }
+        #expect(alpha != nil)
+        #expect(alpha.flatMap { StructuralZoom.sectionPreview(doc, headingIndex: $0) }
+            == "Alpha's first sentence. Alpha's second sentence goes on for a while.")
+
+        let math = MarkdownParser.parse("## Math\n\nInline $e^{i\\pi} + 1 = 0$ works. More context.\n")
+        #expect(StructuralZoom.sectionPreview(math, headingIndex: 0)
+            == "Inline a formula works. More context.")
+
+        let code = MarkdownParser.parse("## Code\n\n```swift\nlet x = 1\n```\n\n```python\nprint(1)\n```\n")
+        #expect(StructuralZoom.sectionPreview(code, headingIndex: 0)
+            == "2 code blocks · Swift, Python")
+    }
+
     @Test func frontMatterSurvivesEveryLevel() {
         let text = "---\ntitle: X\n---\n\n# H\n\nbody\n"
         let doc = MarkdownParser.parse(text)

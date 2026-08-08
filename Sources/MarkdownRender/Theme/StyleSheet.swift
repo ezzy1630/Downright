@@ -224,7 +224,7 @@ public struct StyleSheet {
     /// Vertical rhythm in whole grid units, so a heading never knocks the body
     /// text off the baseline grid (§11.1).
     public func headingSpacing(level: Int) -> (before: CGFloat, after: CGFloat) {
-        let before: [CGFloat] = [4, 5, 4, 3, 2, 2]
+        let before: [CGFloat] = [6, 6, 6, 3, 3, 3]
         let after: [CGFloat] = [2, 2, 2, 1, 1, 1]
         let index = StyleSheet.clampLevel(level) - 1
         return (before[index] * baselineGrid, after[index] * baselineGrid)

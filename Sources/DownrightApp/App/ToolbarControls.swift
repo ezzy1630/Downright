@@ -95,6 +95,7 @@ final class ToolbarDocumentIdentityView: NSView {
     private weak var hostWindow: NSWindow?
     private let proxyButton = ToolbarInteractiveButton(frame: .zero)
     private let dirtyDot = NSView()
+    private let externalDot = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let contextLabel = NSTextField(labelWithString: "")
     private let titleRow = NSStackView()
@@ -109,6 +110,14 @@ final class ToolbarDocumentIdentityView: NSView {
         didSet {
             guard isEdited != oldValue else { return }
             dirtyDot.isHidden = !isEdited
+            refreshAccessibility()
+        }
+    }
+
+    var hasExternalChanges: Bool = false {
+        didSet {
+            guard hasExternalChanges != oldValue else { return }
+            externalDot.isHidden = !hasExternalChanges
             refreshAccessibility()
         }
     }
@@ -146,6 +155,15 @@ final class ToolbarDocumentIdentityView: NSView {
         dirtyDot.setContentHuggingPriority(.required, for: .horizontal)
         dirtyDot.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        externalDot.wantsLayer = true
+        externalDot.layer?.backgroundColor = NSColor.clear.cgColor
+        externalDot.layer?.borderColor = NSColor.systemBlue.cgColor
+        externalDot.layer?.borderWidth = 1.5
+        externalDot.layer?.cornerRadius = Metrics.dirtySize / 2
+        externalDot.isHidden = true
+        externalDot.setContentHuggingPriority(.required, for: .horizontal)
+        externalDot.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.maximumNumberOfLines = 1
         titleLabel.font = .systemFont(ofSize: Metrics.titleSize, weight: .semibold)
@@ -162,6 +180,7 @@ final class ToolbarDocumentIdentityView: NSView {
         titleRow.alignment = .centerY
         titleRow.spacing = 5
         titleRow.detachesHiddenViews = true
+        titleRow.addArrangedSubview(externalDot)
         titleRow.addArrangedSubview(dirtyDot)
         titleRow.addArrangedSubview(titleLabel)
 
@@ -174,6 +193,7 @@ final class ToolbarDocumentIdentityView: NSView {
         proxyButton.translatesAutoresizingMaskIntoConstraints = false
         textColumn.translatesAutoresizingMaskIntoConstraints = false
         dirtyDot.translatesAutoresizingMaskIntoConstraints = false
+        externalDot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(proxyButton)
         addSubview(textColumn)
 
@@ -188,6 +208,8 @@ final class ToolbarDocumentIdentityView: NSView {
 
             dirtyDot.widthAnchor.constraint(equalToConstant: Metrics.dirtySize),
             dirtyDot.heightAnchor.constraint(equalToConstant: Metrics.dirtySize),
+            externalDot.widthAnchor.constraint(equalToConstant: Metrics.dirtySize),
+            externalDot.heightAnchor.constraint(equalToConstant: Metrics.dirtySize),
 
             textColumn.leadingAnchor.constraint(equalTo: proxyButton.trailingAnchor, constant: 5),
             textColumn.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
@@ -348,7 +370,10 @@ final class ToolbarDocumentIdentityView: NSView {
         let base = contextLabel.stringValue.isEmpty
             ? titleLabel.stringValue
             : "\(titleLabel.stringValue), \(contextLabel.stringValue)"
-        let label = isEdited ? "\(base), edited" : base
+        var states: [String] = []
+        if isEdited { states.append("edited") }
+        if hasExternalChanges { states.append("changed on disk") }
+        let label = states.isEmpty ? base : "\(base), \(states.joined(separator: ", "))"
         setAccessibilityRole(.group)
         setAccessibilityLabel(label)
     }
@@ -357,6 +382,7 @@ final class ToolbarDocumentIdentityView: NSView {
         titleLabel.textColor = hostWindow?.isKeyWindow == true ? .labelColor : .secondaryLabelColor
         contextLabel.textColor = .tertiaryLabelColor
         dirtyDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        externalDot.layer?.borderColor = NSColor.systemBlue.cgColor
         updateProxyIcon(for: hostWindow?.representedURL)
     }
 }

@@ -421,17 +421,21 @@ extension PreviewViewController: DensityGutterDelegate {
 
     func densityGutter(
         _ gutter: DensityGutterView, previewAtFraction fraction: CGFloat
-    ) -> (title: String, snippet: String)? {
+    ) -> (title: String, snippet: String, context: String)? {
         guard let document = parsedDocument else { return nil }
         let offset = min(document.length, Int(fraction * CGFloat(document.length)))
-        guard let heading = document.headings.last(where: { $0.range.location <= offset }) else {
-            let length = min(120, document.length)
-            return ("Top", document.substring(NSRange(location: 0, length: length)))
+        guard let index = document.headings.lastIndex(where: { $0.range.location <= offset }) else {
+            return ("Document start", "", gutter.metricsSummary)
         }
-        let snippetLength = min(160, max(0, document.length - offset))
+        let heading = document.headings[index]
+        let sectionPosition = "Section \(index + 1) of \(document.headings.count)"
+        let context = heading.wordCount > 0
+            ? "\(sectionPosition) · \(heading.wordCount) words"
+            : sectionPosition
         return (
             heading.title,
-            document.substring(NSRange(location: offset, length: snippetLength))
+            StructuralZoom.sectionPreview(document, headingIndex: index) ?? "Section overview",
+            context
         )
     }
 }

@@ -95,6 +95,7 @@ public final class FragmentContext {
     var paragraphIndex: ParagraphIndex = .empty
     /// Zoom + fold + search visibility (§5.2, §7.1, §9.4).
     var elision: ElisionPlan = .none
+    var cueElision: ElisionPlan = .none
     /// Explicit per-block code collapse, overriding the Read-mode default
     /// (§5.1).  Keyed by the block's start offset.
     var collapseOverrides: [Int: Bool] = [:]
@@ -295,6 +296,64 @@ public final class ElidedFragment: NSTextLayoutFragment {
     public override var renderingSurfaceBounds: CGRect { .zero }
 
     public override func draw(at point: CGPoint, in context: CGContext) {}
+}
+
+/// First row of a structurally hidden run. Continuation rows remain zero
+/// height, while this row makes the omission and expansion path explicit.
+public final class ElisionCueFragment: NSTextLayoutFragment {
+    private let hiddenRange: NSRange
+    private weak var context: FragmentContext?
+
+    init(
+        textElement: NSTextElement,
+        range: NSTextRange?,
+        hiddenRange: NSRange,
+        context: FragmentContext
+    ) {
+        self.hiddenRange = hiddenRange
+        self.context = context
+        super.init(textElement: textElement, range: range)
+    }
+
+    public required init?(coder: NSCoder) { nil }
+
+    public override var layoutFragmentFrame: CGRect {
+        var frame = super.layoutFragmentFrame
+        frame.size.height = 28
+        return frame
+    }
+
+    public override var renderingSurfaceBounds: CGRect { layoutFragmentFrame }
+
+    public override func draw(at point: CGPoint, in cg: CGContext) {
+        guard let context, let storage = context.storage else { return }
+        let source = storage.string as NSString
+        let clamped = NSIntersectionRange(hiddenRange, NSRange(location: 0, length: source.length))
+        let count = source.substring(with: clamped).components(separatedBy: .newlines).count
+        let lines = max(1, count - 1)
+        let style = context.styleSheet
+        let label = NSAttributedString(string: "⋯  \(lines) line\(lines == 1 ? "" : "s")", attributes: [
+            .font: NSFont.systemFont(ofSize: 10.5, weight: .medium),
+            .foregroundColor: style.textFaint,
+        ])
+        let frame = layoutFragmentFrame
+        let size = label.size()
+        let y = point.y + max(0, (frame.height - size.height) / 2)
+        let center = point.x + frame.width / 2
+        let gap: CGFloat = 9
+        style.rule.setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1
+        path.move(to: NSPoint(x: point.x, y: y + size.height / 2))
+        path.line(to: NSPoint(x: center - size.width / 2 - gap, y: y + size.height / 2))
+        path.move(to: NSPoint(x: center + size.width / 2 + gap, y: y + size.height / 2))
+        path.line(to: NSPoint(x: point.x + frame.width, y: y + size.height / 2))
+        path.stroke()
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+        label.draw(at: NSPoint(x: center - size.width / 2, y: y))
+        NSGraphicsContext.current = previous
+    }
 }
 
 // MARK: - Clipping

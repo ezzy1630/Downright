@@ -35,6 +35,8 @@ final class BreadcrumbView: NSView {
         }
     }
 
+    var zoomLevel: ZoomLevel = .everything
+
     /// Ancestor chain, root first.  Indices are into the document's headings.
     var trail: [(index: Int, title: String, level: Int)] = [] {
         didSet {
@@ -103,7 +105,8 @@ final class BreadcrumbView: NSView {
         // Keep the lane in layout even when the cue itself is absent. Toggling
         // `isHidden` here would move the whole document at the first scroll.
         isHidden = false
-        alphaValue = 0
+        alphaValue = 1
+        sectionButton.alphaValue = 0
         rebuild(animated: false)
     }
 
@@ -171,14 +174,14 @@ final class BreadcrumbView: NSView {
 
     private func fade(to alpha: CGFloat, completion: (() -> Void)? = nil) {
         guard !styleSheet.reduceMotion, window != nil else {
-            alphaValue = alpha
+            sectionButton.alphaValue = alpha
             completion?()
             return
         }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = Metrics.sectionChangeDuration
             context.timingFunction = ToolbarChromePolicy.timingFunction()
-            animator().alphaValue = alpha
+            sectionButton.animator().alphaValue = alpha
         }, completionHandler: completion)
     }
 
@@ -193,7 +196,7 @@ final class BreadcrumbView: NSView {
     /// Belt and braces for the fade itself: while alpha is on its way to zero
     /// the button must already be unclickable.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        isCuePresented ? super.hitTest(point) : nil
+        return isCuePresented ? super.hitTest(point) : nil
     }
 
     private func styledTitle(_ text: String) -> NSAttributedString {
@@ -228,10 +231,10 @@ final class BreadcrumbView: NSView {
         super.layout()
         guard let current = trail.last else { return }
         let titleWidth = styledTitle(current.title).size().width
-        let availableWidth = min(bounds.width, Metrics.maximumButtonWidth)
+        let availableWidth = min(max(44, bounds.width), Metrics.maximumButtonWidth)
         let width = min(availableWidth, titleWidth + Metrics.horizontalContentAllowance)
         sectionButton.frame = NSRect(
-            x: max(0, (bounds.width - max(44, width)) / 2),
+            x: 0,
             y: (bounds.height - Metrics.buttonHeight) / 2,
             width: max(44, width),
             height: Metrics.buttonHeight

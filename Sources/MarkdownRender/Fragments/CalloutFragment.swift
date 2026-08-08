@@ -215,7 +215,7 @@ final class CalloutFragment: DownrightFragment {
         // An untitled callout is still a callout: it gets its kind's name, so
         // `> [!NOTE]` reads as "Note" rather than as an empty tinted row.
         let label = NSAttributedString(string: title.isEmpty ? Self.defaultLabel(kind) : title, attributes: [
-            .font: NSFont.systemFont(ofSize: style.bodyFont().pointSize, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: style.bodyFont().pointSize * 0.94, weight: .semibold),
             .foregroundColor: color,
         ])
         let labelHeight = min(rowHeight, ceil(label.size().height))

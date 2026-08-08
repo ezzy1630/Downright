@@ -680,6 +680,29 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(!rendered.contains("Hidden definition"))
 }
 
+@Test @MainActor func footnoteReferenceIsOneSemanticSuperscript() {
+    let text = "Body with a note[^12].\n\n[^12]: Margin note.\n"
+    let document = MarkdownParser.parse(text)
+    let substitutions = FootnoteReferenceDisplay.substitutions(
+        in: document,
+        styleSheet: styleSheet(),
+        excluding: nil
+    )
+    #expect(substitutions.count == 1)
+    #expect(substitutions.first?.replacement?.string == "¹²")
+    #expect(substitutions.first?.replacement?.attribute(
+        .drReference, at: 0, effectiveRange: nil
+    ) as? String == "12")
+}
+
+@Test @MainActor func documentGutterUsesSemanticHeadingControlsOnly() {
+    let text = "## Heading\n\n> quote\n\n$$\nx\n$$\n"
+    let document = MarkdownParser.parse(text)
+    let markers = engine(.live).gutterMarkers(document: document)
+    #expect(markers.map(\.text) == ["H2"])
+    #expect(!markers.contains { $0.text.contains("#") || $0.text.contains("$") || $0.text == ">" })
+}
+
 @Test @MainActor func listTextAndWrappedLinesShareOneContentEdge() {
     let text = "- [ ] A task with enough words to wrap onto another visual line in a narrow measure.\n"
     let storage = NSTextStorage(string: text)
@@ -713,8 +736,8 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     let content = (source as NSString).range(of: "shipped")
     #expect(storage.attribute(.strikethroughStyle, at: content.location, effectiveRange: nil) as? Int
         == NSUnderlineStyle.single.rawValue)
-    #expect((storage.attribute(.foregroundColor, at: content.location, effectiveRange: nil) as? NSColor)?
-        .isEqual(sheet.textSecondary) == true)
+    let completed = storage.attribute(.foregroundColor, at: content.location, effectiveRange: nil) as? NSColor
+    #expect(completed?.alphaComponent == 0.55)
 }
 
 @Test func taskCheckboxUsesAMacSizedHitTargetAroundTheDrawnBox() {
@@ -750,10 +773,7 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     let markers = engine(.live).gutterMarkers(document: document)
     let texts = Set(markers.map(\.text))
 
-    #expect(texts.contains("#"))
-    #expect(texts.contains("##"))
-    #expect(texts.contains(">"))
-    #expect(texts.contains("```"))
+    #expect(texts == ["H1", "H2"])
 
     // A list item draws a real bullet, ordinal, or checkbox in its hanging
     // column, so repeating the source marker in the rail put the same mark on
@@ -769,8 +789,8 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
 
     // Ascending by offset, so the rail can draw in one pass.
     #expect(markers.map(\.offset) == markers.map(\.offset).sorted())
-    #expect(markers.first { $0.text == "##" }?.level == 2)
-    #expect(markers.first { $0.text == "#" }?.level == 1)
+    #expect(markers.first { $0.text == "H2" }?.level == 2)
+    #expect(markers.first { $0.text == "H1" }?.level == 1)
 
     // Every marker offset points at a real place in the document.
     let length = (text as NSString).length
@@ -919,6 +939,30 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
         TableCellPresentation.plainText(for: row.cells[1], in: storage)
             == "Updates in place with code and links."
     )
+}
+
+@Test func oneLineTableCellsKeepTheirFinalGlyph() {
+    let source = "| Mode | Target |\n|---|---:|\n| Read | 250 |"
+    let document = MarkdownParser.parse(source)
+    guard let block = document.root.children.first,
+          case .table(let data) = block.content,
+          let row = data.bodyRows.first else {
+        Issue.record("the parser did not produce the expected table")
+        return
+    }
+    let style = styleSheet()
+    let storage = NSAttributedString(string: source)
+    let layout = TableLayout.make(data: data, storage: storage, width: 500, style: style)
+    let height = (layout.rowHeights.last ?? 0) - RenderMetrics.tableRowPadding
+    for (index, cell) in row.cells.enumerated() {
+        let text = NSMutableAttributedString(
+            attributedString: TableCellPresentation.attributedContent(for: cell, in: storage)
+        )
+        text.addAttribute(
+            .font, value: style.bodyFont(), range: NSRange(location: 0, length: text.length)
+        )
+        #expect(text.clipped(toHeight: height, width: layout.columnWidths[index]).string == text.string)
+    }
 }
 
 @Test func compactTableLabelsKeepTheirNaturalWidthBesideProse() {

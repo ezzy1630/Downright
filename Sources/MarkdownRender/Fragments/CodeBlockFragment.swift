@@ -126,7 +126,8 @@ final class CodeBlockFragment: DownrightFragment {
     }
 
     private func drawChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
-        if !language.isEmpty {
+        let isHovered = context?.hoveredFragmentRange == payload.sourceRange
+        if !language.isEmpty, !isHovered {
             let chip = Self.chipRect(in: band, style: style, language: language)
             cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
             cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
@@ -216,10 +217,8 @@ final class CodeBlockFragment: DownrightFragment {
         // but the 14pt closing fence collapses the button to fit so the control
         // (like the fill around it) never paints outside the fragment's frame.
         let side = min(copyControlSide, max(0, band.height))
-        let chip = language.isEmpty
-            ? band.maxX - RenderMetrics.codeInsetX
-            : chipRect(in: band, style: style, language: language).minX
-        return CGRect(x: chip - side - 6, y: band.midY - side / 2, width: side, height: side)
+        let trailing = band.maxX - RenderMetrics.codeInsetX
+        return CGRect(x: trailing - side, y: band.midY - side / 2, width: side, height: side)
     }
 }
 

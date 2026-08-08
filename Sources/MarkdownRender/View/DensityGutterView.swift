@@ -4,8 +4,10 @@ import MarkdownCore
 @MainActor
 public protocol DensityGutterDelegate: AnyObject {
     func densityGutter(_ gutter: DensityGutterView, didRequestScrollToFraction fraction: CGFloat)
-    /// Return the heading title and rendered preview for the hover/scrub tooltip.
-    func densityGutter(_ gutter: DensityGutterView, previewAtFraction fraction: CGFloat) -> (title: String, snippet: String)?
+    /// Return a semantic section preview and useful jump context.
+    func densityGutter(
+        _ gutter: DensityGutterView, previewAtFraction fraction: CGFloat
+    ) -> (title: String, snippet: String, context: String)?
 }
 
 public struct DensityBand {
@@ -176,8 +178,6 @@ public final class DensityGutterView: NSView {
     static let jumpPunchBoost: CGFloat = 4
     /// Soft progress wash behind the stack.
     static let progressWashAlpha: CGFloat = 0.055
-    /// Resting spine shown when there is no stack to draw.
-    static let spineAlpha: CGFloat = 0.05
     /// Current-mark glow (same hue, very low opacity).
     static let currentGlowRadius: CGFloat = 10
     static let currentGlowOpacity: Float = 0.12
@@ -210,9 +210,8 @@ public final class DensityGutterView: NSView {
     private var cachedSelection: Selection?
     private var cachedSelectionKey: SelectionKey?
 
-    /// The bars sit on a quiet, centred spine. The spine is deliberately
-    /// narrower than the hit area so the map feels easy to scrub without
-    /// becoming a second scrollbar.
+    /// Marks sit in a generous invisible hit lane. Only the compact mark stack
+    /// is drawn; a viewport-height rule looks like a second scrollbar.
     private let horizontalMargin: CGFloat = 16
     private let trackInset: CGFloat = 28
     private var markLayers: [CALayer] = []
@@ -906,12 +905,8 @@ public final class DensityGutterView: NSView {
         }
     }
 
-    /// Quiet completion trail: a soft wash from the stack top through read
-    /// marks.  With no stack to trail — a document of one or two sections — it
-    /// falls back to a hairline spanning the track, so the lane reads as "this
-    /// document has no sections" rather than as a broken index.  That replaces
-    /// the end-cap dots, which propped up a two-mark cluster instead of
-    /// admitting there was nothing to index.
+    /// Quiet completion trail: a soft wash spanning only the compact mark
+    /// stack. A sparse document draws no substitute full-height rule.
     private func updateProgressWash(entries: [ResolvedMark], animated: Bool) {
         guard let wash = progressWashLayer else { return }
         updateSpine(hasStack: !entries.isEmpty)
@@ -920,10 +915,6 @@ public final class DensityGutterView: NSView {
         let washSpan: (top: CGFloat, bottom: CGFloat)?
         if let first = entries.first, let lastRead = readEntries.last {
             washSpan = (first.y - 6, lastRead.y + 6)
-        } else if entries.isEmpty, !bands.isEmpty {
-            // Spine-only rail: the wash is the read share of the whole track.
-            let track = Self.trackRange(height: bounds.height, trackInset: trackInset)
-            washSpan = (track.top, track.top + (track.bottom - track.top) * min(1, readProgress))
         } else {
             washSpan = nil
         }
@@ -972,44 +963,14 @@ public final class DensityGutterView: NSView {
         wash.add(pos, forKey: "wash-position")
     }
 
-    /// The resting hairline the marks sit on.
-    ///
-    /// It used to appear *only* when there was no stack, which left the common
-    /// case — a document with sections — showing a short cluster of ticks
-    /// floating in an otherwise empty lane, level with nothing and attached to
-    /// nothing.  Read cold it looked like a rendering artefact rather than a
-    /// scroll affordance, which is what §5.1 asks this lane to be.
-    ///
-    /// Drawing the track always gives the cluster somewhere to be: the rail
-    /// spans the viewport, the marks are the dense part of it, and the reader
-    /// can see at a glance both that the lane is a control and roughly where
-    /// in it they are.  At `spineAlpha` it is a whisper — it anchors the stack
-    /// without competing with it.
+    /// Keep the old layer inert for stable layer ordering. The hit lane and
+    /// compact marks provide the affordance without a full-height spine.
     private func updateSpine(hasStack: Bool) {
         guard let spine = spineLayer else { return }
-        guard !bands.isEmpty else {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            spine.isHidden = true
-            CATransaction.commit()
-            return
-        }
-
-        let track = Self.trackRange(height: bounds.height, trackInset: trackInset)
-        // Thinner under a stack: there the track is context for the marks, not
-        // the thing being read.
-        let width: CGFloat = (hasStack ? 1 : 1.5) * railBreathe
+        _ = hasStack
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        spine.frame = CGRect(
-            x: bounds.midX - width / 2,
-            y: track.top,
-            width: width,
-            height: max(1, track.bottom - track.top)
-        )
-        spine.cornerRadius = width / 2
-        spine.backgroundColor = styleSheet.railTick.withAlphaComponent(Self.spineAlpha).cgColor
-        spine.isHidden = false
+        spine.isHidden = true
         CATransaction.commit()
     }
 
@@ -1367,7 +1328,7 @@ public final class DensityGutterView: NSView {
         preview.show(
             title: content.title,
             snippet: showsSnippet ? content.snippet : "",
-            footer: metricsSummary,
+            footer: content.context.isEmpty ? metricsSummary : content.context,
             rightOf: anchor,
             over: window,
             reduceMotion: styleSheet.reduceMotion,

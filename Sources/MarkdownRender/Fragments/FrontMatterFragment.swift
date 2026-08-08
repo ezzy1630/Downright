@@ -25,9 +25,7 @@ final class FrontMatterFragment: DownrightFragment {
 
     required init?(coder: NSCoder) { nil }
 
-    /// A card chip is one line tall; a block-scalar value that spans source
-    /// lines must not push its neighbours into a two-line chip or a clipped
-    /// string.  Interior newlines collapse to a single space.
+    /// Interior YAML newlines become prose spaces in the presentation layer.
     private func singleLine(_ value: String) -> String {
         let collapsed = value.replacingOccurrences(of: "\n", with: " ")
         let squashed = collapsed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -39,55 +37,61 @@ final class FrontMatterFragment: DownrightFragment {
     override var overrideHeight: CGFloat? {
         guard isFirstParagraphOfBlock else { return 0 }
         guard let style = styleSheet, !fields.isEmpty else { return 0 }
-        let showsTitle = context?.documentHasH1 == false && fields.contains { $0.key.lowercased() == "title" }
-        let chipFont = style.bodyFont().withSize(style.bodyFont().pointSize * 0.85)
-        let available = max(80, proseContentWidth)
-        var used: CGFloat = 0
-        var chipLines: CGFloat = 1
-        for field in fields where !(showsTitle && field.key.lowercased() == "title") {
-            let width = min(available, NSAttributedString(
-                string: "\(field.key)  \(singleLine(field.value))", attributes: [.font: chipFont]
-            ).size().width + 22)
-            if used > 0, used + width > available { chipLines += 1; used = 0 }
-            used += width + 6
+        let keyWidth = min(112, max(64, proseContentWidth * 0.20))
+        let valueWidth = max(80, proseContentWidth - keyWidth - 18)
+        let font = style.bodyFont().withSize(style.bodyFont().pointSize * 0.86)
+        let height = fields.reduce(CGFloat.zero) { partial, field in
+            let rect = (singleLine(field.value) as NSString).boundingRect(
+                with: CGSize(width: valueWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font]
+            )
+            return partial + max(style.lineHeight, ceil(rect.height) + 6)
         }
-        let lines = chipLines + (showsTitle ? 1 : 0)
-        return RenderMetrics.snap(lines * style.lineHeight + 18, grid: max(1, style.baselineGrid))
+        return RenderMetrics.snap(height + 14, grid: max(1, style.baselineGrid))
     }
 
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet, !fields.isEmpty else { return }
-        // No disclosure triangle: nothing hit-tests it and the card has no
-        // collapsed state, so it was an affordance that promised an action the
-        // app does not have.  The card starts on the text column instead.
-        // Metadata reads with the prose, so the card keeps to the reading
-        // column rather than spilling into the bleed lane fenced blocks use.
         let card = CGRect(x: point.x, y: point.y,
                           width: proseContentWidth, height: layoutFragmentFrame.height)
-        let title = fields.first { $0.key.lowercased() == "title" }
-        let showsTitle = context?.documentHasH1 == false && title != nil
+        let keyWidth = min(112, max(64, card.width * 0.20))
+        let valueX = card.minX + keyWidth + 18
+        let valueWidth = max(80, card.maxX - valueX)
+        let font = style.bodyFont().withSize(style.bodyFont().pointSize * 0.86)
+        let keyFont = NSFont.systemFont(ofSize: font.pointSize * 0.90, weight: .medium)
         var y = card.minY + 2
-        if let title, showsTitle {
-            cg.drawText(NSAttributedString(string: title.value, attributes: [
-                .font: style.headingFont(level: 1).withSize(style.bodyFont().pointSize * 1.35),
-                .foregroundColor: style.text,
-            ]), in: CGRect(x: card.minX, y: y, width: card.width, height: style.lineHeight), flipped: true)
-            y += style.lineHeight
-        }
-
-        let chipFont = style.bodyFont().withSize(style.bodyFont().pointSize * 0.85)
-        var x = card.minX
-        for field in fields where !(showsTitle && field.key.lowercased() == "title") {
-            let label = "\(field.key)  \(singleLine(field.value))"
-            let text = NSAttributedString(string: label, attributes: [
-                .font: chipFont, .foregroundColor: style.textSecondary,
+        for field in fields {
+            let value = NSAttributedString(string: singleLine(field.value), attributes: [
+                .font: font, .foregroundColor: style.textSecondary,
             ])
-            let width = min(card.width, text.size().width + 16)
-            if x + width > card.maxX { x = card.minX; y += style.lineHeight }
-            let chip = CGRect(x: x, y: y + 2, width: width, height: style.lineHeight - 4)
-            cg.fillRect(chip, color: style.inlineCodeBackground, radius: 6)
-            cg.drawText(text, in: chip.insetBy(dx: 8, dy: 1), flipped: true)
-            x += width + 6
+            let valueHeight = max(style.lineHeight, ceil(value.boundingRect(
+                with: CGSize(width: valueWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).height) + 6)
+            let key = NSAttributedString(string: field.key, attributes: [
+                .font: keyFont, .foregroundColor: style.textFaint,
+            ])
+            cg.drawText(
+                key,
+                in: CGRect(
+                    x: card.minX + max(0, keyWidth - key.size().width),
+                    y: y,
+                    width: min(keyWidth, key.size().width),
+                    height: style.lineHeight
+                ),
+                flipped: true
+            )
+            cg.drawText(
+                value,
+                in: CGRect(x: valueX, y: y, width: valueWidth, height: valueHeight),
+                flipped: true
+            )
+            y += valueHeight
         }
+        cg.fillRect(
+            CGRect(x: card.minX, y: card.maxY - 1, width: card.width, height: 1),
+            color: style.rule
+        )
     }
 }

@@ -34,7 +34,7 @@ struct SpeechAccessibilityTests {
         let density = DensityGutterView(styleSheet: view.styleSheet)
 
         #expect(rail.accessibilityRole() == .group)
-        #expect(rail.accessibilityLabel() == "Markdown gutter")
+        #expect(rail.accessibilityLabel() == "Document margin")
         #expect(rail.accessibilityCustomActions()?.map(\.name) == ["Toggle current heading"])
         #expect(density.accessibilityRole() == .scrollBar)
         #expect(density.accessibilityCustomActions()?.map(\.name) == ["Show document outline"])

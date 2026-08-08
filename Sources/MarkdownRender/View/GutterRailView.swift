@@ -3,12 +3,10 @@ import MarkdownCore
 
 /// §6.1a — the reason Live mode does not jump.
 ///
-/// `#`, `##`, `>`, `-`, `1.`, `- [ ]` are **never inline**.  They live here, in
-/// a narrow left rail: dimmed when inactive, full strength when the caret is in
-/// that block.  Because the block's text never gains or loses a leading marker,
-/// its horizontal origin and its line height are identical whether or not the
-/// caret is in it — which removes every source of vertical jump, the part that
-/// actually hurts.
+/// The source-marker lane is gone. This rail now owns only state that earns a
+/// pointer action: change bars, Source-mode line numbers, and the contextual
+/// H1...H6 control. The chip hangs outside the text column, so its arrival can
+/// never move the heading.
 ///
 /// The rail is a plain `NSView` positioned from the layout manager's fragment
 /// geometry, not a text container of its own; there is exactly one layout in
@@ -19,6 +17,7 @@ public final class GutterRailView: NSView {
     private var markers: [(offset: Int, text: String, level: Int)] = []
     private var changeBars: [(kind: ChangeKind, range: NSRange)] = []
     private var lineStarts: [Int] = [0]
+    private var headingMenuAction: HeadingMenuAction?
 
     /// Gap between the rail's right edge — which is the text column's left edge
     /// — and the shared right edge everything in the rail hangs from.  Named
@@ -42,8 +41,8 @@ public final class GutterRailView: NSView {
         textView.gutterRail = self
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Markdown gutter")
-        setAccessibilityHelp("Block markers and heading navigation")
+        setAccessibilityLabel("Document margin")
+        setAccessibilityHelp("Heading level and change controls")
         setAccessibilityCustomActions([
             NSAccessibilityCustomAction(name: "Toggle current heading") { [weak self] in
                 guard let self, let textView = self.textView else { return false }
@@ -125,52 +124,30 @@ public final class GutterRailView: NSView {
             }
         }
 
-        guard textView.mode.policy.showsGutterMarkers || hoveredHeadingIsVisible else { return }
+        guard textView.mode != .source else { return }
 
-        let font = style.monoFont(size: max(11, style.bodyFont().pointSize * 0.62))
-        // Same draw-ahead band the row intersection has always used, hoisted so
-        // the loop can also stop on it.
-        let band = visible.insetBy(dx: 0, dy: -40)
-        for marker in visibleMarkerSlice(in: textView) {
-            if let focus = textView.sourceFocus.range,
-               focus.contains(offset: marker.offset) { continue }
-            guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView)
-            else { continue }
-            // Rows are laid out top to bottom, so once one clears the band no
-            // later marker can re-enter it; `drawLineNumbers` stops on the same
-            // invariant.  Without the stop this loop measures every marker the
-            // slice contains, and the slice runs to the end of the document
-            // whenever the viewport's lower hit test lands inside a fragment —
-            // a thousand `rect(forOffset:)` calls per scroll event on a long
-            // file, each of which walks the content storage's element list
-            // (§12).
-            if rect.minY > band.maxY { break }
-            guard rect.intersects(band) else { continue }
-            let isActive = activeBlock.map { $0.range.contains(offset: marker.offset) } ?? false
-            let color = isActive ? style.marker.blended(withFraction: 0.5, of: style.text) ?? style.marker
-                                 : style.marker
-            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-            var attributed = NSAttributedString(string: marker.text, attributes: attributes)
-            var size = attributed.size()
-            // A level that cannot fit the rail is *condensed*, never moved.
-            // `######` measures 36pt at a 16pt body and 54pt at a 24pt one, so
-            // the clamp this replaces pushed H4–H6 rightwards out of the shared
-            // edge — each deeper level ending a little closer to the text column
-            // than the last, which is the staircase down the left margin — and
-            // then let `clipsToBounds` cut the final `#` off.
-            let room = bounds.width - Self.markerInset - 2
-            if room > 0, size.width > room {
-                attributes[.font] = NSFont(descriptor: font.fontDescriptor,
-                                           size: font.pointSize * room / size.width) ?? font
-                attributed = NSAttributedString(string: marker.text, attributes: attributes)
-                size = attributed.size()
-            }
-            // Right-aligned: every level shares one right edge `markerInset`
-            // from the text column, so the rail reads as a column of levels
-            // rather than as ragged noise.
-            attributed.draw(at: NSPoint(x: bounds.width - Self.markerInset - size.width,
-                                        y: rect.minY + max(0, (style.lineHeight - size.height) / 2)))
-        }
+        let activeIndex = activeHeadingIndex
+        guard let index = textView.hoveredHeadingIndex ?? activeIndex,
+              textView.parsedDocument.headings.indices.contains(index)
+        else { return }
+        let heading = textView.parsedDocument.headings[index]
+        guard let rect = rowRect(for: heading.range, in: textView), rect.intersects(visible) else { return }
+
+        let font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+        let title = NSAttributedString(string: "H\(heading.level)", attributes: [
+            .font: font,
+            .foregroundColor: textView.hoveredHeadingIndex == index ? style.accent : style.textFaint,
+        ])
+        let size = title.size()
+        let chip = NSRect(
+            x: bounds.maxX - Self.markerInset - size.width - 10,
+            y: rect.minY + max(0, (style.lineHeight - 18) / 2),
+            width: size.width + 10,
+            height: 18
+        )
+        style.inlineCodeBackground.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: chip, xRadius: 4, yRadius: 4).fill()
+        title.draw(at: NSPoint(x: chip.minX + 5, y: chip.minY + (chip.height - size.height) / 2))
 
     }
 
@@ -291,7 +268,10 @@ public final class GutterRailView: NSView {
         }
     }
 
-    private var hoveredHeadingIsVisible: Bool { textView?.hoveredHeadingIndex != nil }
+    private var activeHeadingIndex: Int? {
+        guard let textView, let caret = textView.primarySourceCaret else { return nil }
+        return textView.parsedDocument.headings.firstIndex { $0.range.contains(offset: caret) }
+    }
 
     private func rowRect(for range: NSRange, in textView: MarkdownTextView) -> NSRect? {
         guard let rect = textView.rect(forOffset: range.location) else { return nil }
@@ -306,32 +286,40 @@ public final class GutterRailView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        // Nearest marker row to the click, so a click anywhere on the row's
-        // band counts rather than only on the glyph.  Hit-test only the
-        // markers currently in view: a 5k-line document has thousands of
-        // headings and most are nowhere near the pointer (§12).
-        var best: (offset: Int, distance: CGFloat)?
-        for marker in visibleMarkerSlice(in: textView) {
-            guard let rect = rowRect(for: NSRange(location: marker.offset, length: 1), in: textView) else { continue }
-            guard point.y >= rect.minY - 2, point.y <= rect.maxY + 2 else { continue }
-            let distance = abs(rect.midY - point.y)
-            if best == nil || distance < best!.distance { best = (marker.offset, distance) }
+        guard modifiers.isEmpty,
+              let index = textView.hoveredHeadingIndex ?? activeHeadingIndex,
+              textView.parsedDocument.headings.indices.contains(index),
+              let rect = rowRect(for: textView.parsedDocument.headings[index].range, in: textView),
+              point.y >= rect.minY - 2, point.y <= rect.maxY + 2
+        else { return }
+        let action = HeadingMenuAction { [weak textView] level in
+            guard let textView else { return }
+            textView.markdownDelegate?.markdownTextView(
+                textView, didRequestHeadingLevel: level, headingIndex: index
+            )
         }
-        guard let hit = best else { return }
-
-        if let index = textView.parsedDocument.headings.firstIndex(where: { $0.range.contains(offset: hit.offset) }) {
-            // The controller owns fold state so split views and accessibility
-            // actions observe the same mutation.
-            textView.activateHeadingAnchor(index, modifiers: modifiers)
-            return
+        headingMenuAction = action
+        let menu = NSMenu(title: "Heading Level")
+        for level in 1...6 {
+            let item = NSMenuItem(title: "Heading \(level)", action: #selector(HeadingMenuAction.choose(_:)), keyEquivalent: "")
+            item.target = action
+            item.tag = level
+            item.state = level == textView.parsedDocument.headings[index].level ? .on : .off
+            menu.addItem(item)
         }
-        // Clicking any other gutter marker toggles the checkbox it stands for,
-        // which is the only fold-free block-level action there is.
-        if let task = textView.parsedDocument.tasks.first(where: { $0.contentRange.location >= hit.offset
-            && $0.markRange.location >= hit.offset && $0.markRange.location < hit.offset + 8 }) {
-            textView.markdownDelegate?.markdownTextView(textView, didToggleCheckboxAtMarkOffset: task.markRange.location)
-        }
+        menu.addItem(.separator())
+        let body = NSMenuItem(title: "Body Text", action: #selector(HeadingMenuAction.chooseBody(_:)), keyEquivalent: "")
+        body.target = action
+        menu.addItem(body)
+        menu.popUp(positioning: nil, at: point, in: self)
     }
+}
+
+private final class HeadingMenuAction: NSObject {
+    private let handler: (Int?) -> Void
+    init(_ handler: @escaping (Int?) -> Void) { self.handler = handler }
+    @objc func choose(_ sender: NSMenuItem) { handler(sender.tag) }
+    @objc func chooseBody(_ sender: NSMenuItem) { handler(nil) }
 }
 
 private extension NSBezierPath {

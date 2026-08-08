@@ -48,6 +48,7 @@ public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange)
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int)
     func markdownTextView(_ view: MarkdownTextView, didActivateHeadingAnchor headingIndex: Int, modifiers: NSEvent.ModifierFlags)
+    func markdownTextView(_ view: MarkdownTextView, didRequestHeadingLevel level: Int?, headingIndex: Int)
     func markdownTextView(_ view: MarkdownTextView, wantsContextMenuFor target: ContextTarget) -> NSMenu?
     /// Return false to draw a path token as missing (§8.4).
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool
@@ -60,6 +61,8 @@ public protocol MarkdownTextViewDelegate: AnyObject {
     /// only a footnote jump.  The render package cannot reach jump history, so
     /// it reports the hop and the app decides whether Back should undo it.
     func markdownTextView(_ view: MarkdownTextView, didNavigateTo destination: Int)
+    func markdownTextView(_ view: MarkdownTextView, didRequestTextSizeSteps steps: Int)
+    func markdownTextViewDidRequestSmartTextZoom(_ view: MarkdownTextView)
 }
 
 /// Defaults so a host that only cares about links does not have to implement
@@ -70,6 +73,7 @@ public extension MarkdownTextViewDelegate {
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange) {}
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int) {}
     func markdownTextView(_ view: MarkdownTextView, didActivateHeadingAnchor headingIndex: Int, modifiers: NSEvent.ModifierFlags) {}
+    func markdownTextView(_ view: MarkdownTextView, didRequestHeadingLevel level: Int?, headingIndex: Int) {}
     func markdownTextView(_ view: MarkdownTextView, wantsContextMenuFor target: ContextTarget) -> NSMenu? { nil }
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool { true }
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {}
@@ -77,4 +81,6 @@ public extension MarkdownTextViewDelegate {
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {}
     func markdownTextView(_ view: MarkdownTextView, didEdit range: NSRange, delta: Int) {}
     func markdownTextView(_ view: MarkdownTextView, didNavigateTo destination: Int) {}
+    func markdownTextView(_ view: MarkdownTextView, didRequestTextSizeSteps steps: Int) {}
+    func markdownTextViewDidRequestSmartTextZoom(_ view: MarkdownTextView) {}
 }

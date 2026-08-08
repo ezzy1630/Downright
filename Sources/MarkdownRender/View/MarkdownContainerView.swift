@@ -14,6 +14,7 @@ public final class MarkdownContainerView: NSView {
     public let textView: MarkdownTextView
     public let scrollView: NSScrollView
     private let gutter: GutterRailView
+    private let footnoteMargin: FootnoteMarginView
 
     public var styleSheet: StyleSheet {
         get { textView.styleSheet }
@@ -81,6 +82,7 @@ public final class MarkdownContainerView: NSView {
                                     storage: storage, styleSheet: styleSheet)
         scrollView = NSScrollView(frame: .zero)
         gutter = GutterRailView(textView: textView)
+        footnoteMargin = FootnoteMarginView(textView: textView)
         super.init(frame: .zero)
 
         scrollView.documentView = textView
@@ -106,10 +108,24 @@ public final class MarkdownContainerView: NSView {
         // The rail floats over the scroll view rather than inside it, so it
         // never scrolls horizontally away from the text it annotates.
         addSubview(gutter)
+        addSubview(footnoteMargin, positioned: .above, relativeTo: scrollView)
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scrolled(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
         gutter.reload()
     }
 
     public required init?(coder: NSCoder) { nil }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func scrolled(_ note: Notification) { footnoteMargin.needsDisplay = true }
+
+    public func refreshMarginNotes() { footnoteMargin.needsDisplay = true }
 
     public override var isFlipped: Bool { true }
 
@@ -160,6 +176,9 @@ public final class MarkdownContainerView: NSView {
             return $0.fittingSize.width > 0 ? $0.fittingSize.width : 14
         } ?? 0
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
+        let showsNoteLane = bounds.width >= 1100 && textView.mode != .source
+        let noteLane: CGFloat = showsNoteLane ? 230 : 0
+        let noteGap: CGFloat = showsNoteLane ? 24 : 0
 
         leadingAccessory?.frame = NSRect(x: 0, y: 0,
                                          width: leadingWidth, height: bounds.height)
@@ -223,13 +242,25 @@ public final class MarkdownContainerView: NSView {
         // which is most of the page — half a lane left of centre.  Splitting the
         // lane balances the two: prose sits a touch left of dead centre, full
         // bleed blocks overhang it evenly on both sides.
-        let opticalLeft = max(0, (bounds.width - measure - bleed / 2) / 2 - leadingWidth)
+        // Centre prose independently. Margin notes consume otherwise-empty
+        // space to its right; they must never shift the reading measure left.
+        let opticalLeft = max(0, (bounds.width - measure) / 2 - leadingWidth)
         let textLeft = max(gutterWidth + RenderMetrics.revealSlack, opticalLeft)
         let columnOrigin = textLeft - RenderMetrics.revealSlack
         textView.minSize = NSSize(width: column + RenderMetrics.revealSlack * 2, height: 0)
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)
 
         let textOrigin = scrollView.frame.minX + textLeft
+        let noteX = textOrigin + column + noteGap
+        let availableNoteWidth = max(0, bounds.width - trailingWidth - noteX - 16)
+        let resolvedNoteWidth = min(noteLane, availableNoteWidth)
+        footnoteMargin.isHidden = !showsNoteLane || resolvedNoteWidth < 100
+        footnoteMargin.frame = NSRect(
+            x: noteX,
+            y: scrollView.frame.minY,
+            width: resolvedNoteWidth,
+            height: scrollView.frame.height
+        )
         topAccessory?.frame = NSRect(
             x: textOrigin,
             y: topAccessoryOverlaysContent ? 8 : 4,
@@ -255,6 +286,11 @@ public final class MarkdownContainerView: NSView {
             // Keep the stick above the scroll view / marker rail so its hit
             // lane stays responsive.
             addSubview(densityMap, positioned: .above, relativeTo: nil)
+        }
+
+        if !footnoteMargin.isHidden {
+            addSubview(footnoteMargin, positioned: .above, relativeTo: scrollView)
+            footnoteMargin.needsDisplay = true
         }
 
     }

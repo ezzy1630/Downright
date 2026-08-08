@@ -50,6 +50,10 @@ public struct ElisionPlan: Sendable {
 
     public func isElided(_ offset: Int) -> Bool { RangeSet.covers(elidedRanges, offset) }
 
+    public func range(containing offset: Int) -> NSRange? {
+        elidedRanges.first { $0.contains(offset: offset) }
+    }
+
     // MARK: - Construction
 
     public static func make(

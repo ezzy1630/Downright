@@ -29,7 +29,9 @@ enum Command: String, CaseIterable, Codable {
     case find, findNext, findPrevious, findReplace, findInSiblings, useSelectionForFind
 
     // Restructuring (§9.2)
-    case promoteHeading, demoteHeading, moveBlockUp, moveBlockDown
+    case promoteHeading, demoteHeading
+    case headingLevel1, headingLevel2, headingLevel3, headingLevel4, headingLevel5, headingLevel6
+    case headingToBody, moveBlockUp, moveBlockDown
     case foldSection, unfoldSection, foldAll, unfoldAll
     case convertToParagraph, convertToBulletList, convertToNumberedList
     case convertToTaskList, convertToBlockquote
@@ -91,13 +93,13 @@ enum Command: String, CaseIterable, Codable {
         case .documentEnd: return "End of Document"
         case .goBack: return "Back"
         case .goForward: return "Forward"
-        case .zoomLevel1: return "Zoom: Top Level"
-        case .zoomLevel2: return "Zoom: Two Levels"
-        case .zoomLevel3: return "Zoom: All Headings"
-        case .zoomLevel4: return "Zoom: Skeleton"
-        case .zoomLevel5: return "Zoom: Everything"
-        case .zoomIn: return "Zoom In"
-        case .zoomOut: return "Zoom Out"
+        case .zoomLevel1: return "Detail: Top-Level Headings"
+        case .zoomLevel2: return "Detail: Headings Through Level 2"
+        case .zoomLevel3: return "Detail: All Headings"
+        case .zoomLevel4: return "Detail: Outline and Summaries"
+        case .zoomLevel5: return "Detail: Full Document"
+        case .zoomIn: return "Show More Detail"
+        case .zoomOut: return "Show Less Detail"
         case .find: return "Find…"
         case .findNext: return "Find Next"
         case .findPrevious: return "Find Previous"
@@ -106,6 +108,13 @@ enum Command: String, CaseIterable, Codable {
         case .useSelectionForFind: return "Use Selection for Find"
         case .promoteHeading: return "Promote Heading"
         case .demoteHeading: return "Demote Heading"
+        case .headingLevel1: return "Heading 1"
+        case .headingLevel2: return "Heading 2"
+        case .headingLevel3: return "Heading 3"
+        case .headingLevel4: return "Heading 4"
+        case .headingLevel5: return "Heading 5"
+        case .headingLevel6: return "Heading 6"
+        case .headingToBody: return "Body Text"
         case .moveBlockUp: return "Move Block Up"
         case .moveBlockDown: return "Move Block Down"
         case .foldSection: return "Fold Section"
@@ -186,7 +195,9 @@ enum Command: String, CaseIterable, Codable {
             return .edit
         case .toggleBold, .toggleItalic, .insertLink, .toggleStrikethrough, .toggleInlineCode,
              .convertToParagraph, .convertToBulletList, .convertToNumberedList, .convertToTaskList,
-             .convertToBlockquote, .indentList, .outdentList, .toggleTaskAtCaret:
+             .convertToBlockquote, .indentList, .outdentList, .toggleTaskAtCaret,
+             .promoteHeading, .demoteHeading, .headingLevel1, .headingLevel2, .headingLevel3,
+             .headingLevel4, .headingLevel5, .headingLevel6, .headingToBody:
             return .format
         case .sourceMode, .zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4,
              .zoomLevel5, .zoomIn, .zoomOut, .increaseTextSize, .decreaseTextSize, .resetTextSize,
@@ -199,7 +210,7 @@ enum Command: String, CaseIterable, Codable {
              .followLinkAtCaret, .nextLink, .previousLink, .scrollDown, .scrollUp,
              .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward:
             return .navigate
-        case .promoteHeading, .demoteHeading, .moveBlockUp, .moveBlockDown, .foldSection,
+        case .moveBlockUp, .moveBlockDown, .foldSection,
              .unfoldSection, .foldAll, .unfoldAll, .sortListAlphabetically, .sortListByState,
              .insertTableOfContents, .tidyDocument, .frontMatterEditor, .tableEditor,
              .assetDoctor:
