@@ -96,8 +96,8 @@ struct ContentResizeTests {
         #expect(container.textView.frame.height <= settledHeight + 0.5)
     }
 
-    @Test("local typing keeps the viewport pixel-stable across parse commit")
-    func localTypingDoesNotRescrollTheDocument() async throws {
+    @Test("local typing keeps visible content stable across parse commit")
+    func localTypingKeepsVisibleContentStable() async throws {
         let paragraph = "A paragraph with enough words to form a stable line of document text."
         let text = (0..<80).map { "## Section \($0)\n\n\(paragraph)" }.joined(separator: "\n\n")
         let storage = NSTextStorage(string: text)
@@ -106,26 +106,44 @@ struct ContentResizeTests {
         container.layoutSubtreeIfNeeded()
         container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
         container.textView.resizeToFitContent()
+        #expect(container.textView.cachedLayoutElementCountForTesting > 0)
 
         let clip = container.scrollView.contentView
         clip.scroll(to: NSPoint(x: 0, y: 700))
         container.scrollView.reflectScrolledClipView(clip)
-        let editOffset = container.textView.topVisibleOffset + 8
+        let anchor = container.textView.topVisibleOffset
+        var editOffset = anchor + 8
 
-        #expect(container.textView.performSourceEdit(
-            range: NSRange(location: editOffset, length: 0),
-            replacement: "x"
-        ))
-        let originAfterKeystroke = clip.bounds.origin
-        let changed = storage.string
-        container.textView.update(
-            document: MarkdownParser.parse(changed),
-            dirty: DirtySet(ranges: [NSRange(location: editOffset, length: 1)], isWholesale: false)
-        )
+        func anchorScreenY() throws -> CGFloat {
+            try #require(container.textView.rect(forOffset: anchor)).minY - clip.bounds.origin.y
+        }
+
+        let screenYBeforeEdit = try anchorScreenY()
+
+        for character in "stable typing" {
+            #expect(container.textView.performSourceEdit(
+                range: NSRange(location: editOffset, length: 0),
+                replacement: String(character)
+            ))
+            #expect(
+                container.textView.cachedLayoutElementCountForTesting > 0,
+                "typing discarded every resolved layout element"
+            )
+            #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
+            let changed = storage.string
+            container.textView.update(
+                document: MarkdownParser.parse(changed),
+                dirty: DirtySet(
+                    ranges: [NSRange(location: editOffset, length: 1)],
+                    isWholesale: false
+                )
+            )
+            #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
+            editOffset += 1
+        }
 
         try await Task.sleep(for: .milliseconds(140))
-        #expect(abs(clip.bounds.origin.y - originAfterKeystroke.y) < 0.5)
-        #expect(abs(clip.bounds.origin.x - originAfterKeystroke.x) < 0.5)
+        #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
     }
 
     /// The other half of the same promise, on the path a local edit does *not*

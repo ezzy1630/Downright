@@ -1,6 +1,24 @@
 import AppKit
 import MarkdownCore
 
+/// Accessibility geometry is demand-driven. Resolving every rendered object's
+/// frame during each parse commit forces TextKit to lay out the entire document
+/// on the typing path, even though VoiceOver may never query those objects.
+private final class FragmentAccessibilityElement: NSAccessibilityElement {
+    weak var textView: MarkdownTextView?
+    let sourceOffset: Int
+
+    init(textView: MarkdownTextView, sourceOffset: Int) {
+        self.textView = textView
+        self.sourceOffset = sourceOffset
+        super.init()
+    }
+
+    override func accessibilityFrameInParentSpace() -> NSRect {
+        textView?.rect(forOffset: sourceOffset) ?? .zero
+    }
+}
+
 /// A height update request. Structural updates keep the document height
 /// correct, but semantic parse results wait for an idle gap so typing never
 /// forces a full TextKit layout on the main actor.
@@ -429,6 +447,7 @@ public final class MarkdownTextView: NSTextView {
     // Test seam for the scheduler. It does not expose the view's layout
     // internals to the app target.
     var pendingResizeRequestForTesting: ContentResizeRequest? { pendingResizeRequest }
+    var cachedLayoutElementCountForTesting: Int { contentStorage.cachedElementCountForTesting }
     /// Heading under the pointer, for the gutter's anchor glyph (§7.1).
     var hoveredHeadingIndex: Int?
     /// Link span under the pointer.  Drawn as a transient underline in
@@ -567,7 +586,7 @@ public final class MarkdownTextView: NSTextView {
         inlineCodeBandCache.removeAll(keepingCapacity: true)
         invisibleGlyphCache.removeAll(keepingCapacity: true)
         updateGeneration &+= 1
-        pathExistence.removeAll(keepingCapacity: true)
+        if isWholesaleUpdate { pathExistence.removeAll(keepingCapacity: true) }
         fragmentContext.frontMatterFields = (document.frontMatter?.fields ?? []).map { ($0.key, $0.value) }
         fragmentContext.documentHasH1 = document.headings.contains { $0.level == 1 }
         // Text changed, so any table geometry cached for a previous revision
@@ -588,14 +607,15 @@ public final class MarkdownTextView: NSTextView {
         // and a narrower repair leaves the rest of those blocks claiming nothing
         // is hidden in them.  This is the path an external write takes, so it is
         // the one where it mattered most.
+        let decoratedScopes = isWholesaleUpdate
+            ? []
+            : engine.decoratedBounds(for: dirty, in: document, length: storage.length)
         rebuildDisplayMap(
             fullRefresh: isWholesaleUpdate,
-            additionalScopes: isWholesaleUpdate
-                ? []
-                : engine.decoratedBounds(for: dirty, in: document, length: storage.length)
+            additionalScopes: decoratedScopes
         )
-        applyOverlays()
-        applyPathExistence()
+        applyOverlays(scopes: isWholesaleUpdate ? nil : decoratedScopes)
+        applyPathExistence(scopes: isWholesaleUpdate ? nil : decoratedScopes)
         if isWholesaleUpdate {
             invalidateAllFragments()
         }
@@ -611,7 +631,7 @@ public final class MarkdownTextView: NSTextView {
         }
         requestContentResize(
             resizeRequest,
-            anchor: resizeRequest == .immediate || followsLocalEdit || lockedViewportY != nil
+            anchor: resizeRequest == .immediate || followsCaret || lockedViewportY != nil
                 ? nil
                 : anchor
         )
@@ -626,14 +646,16 @@ public final class MarkdownTextView: NSTextView {
             return NSRange(location: location, length: end - location)
         }
         setSourceSelectedRanges(boundedSelection)
-        // AppKit already owns the clip view during typing. Re-scrolling to a
-        // source-derived top offset after every local parse re-resolves lazy
-        // TextKit geometry and makes the whole page shudder. Vertical metrics
-        // are fixed for inline edits, so leave the pixel viewport untouched;
-        // real line growth still flows through the coalesced resize path.
+        // A local edit can resolve TextKit's estimated layout above the
+        // viewport even when it does not add a line. Keeping the clip's raw
+        // y-coordinate then shows an earlier part of the document: the camera
+        // appears to jump while the frame merely grew around it. Preserve the
+        // source anchor and its exact screen-space gap through both this
+        // commit and its deferred height repair. Typewriter scrolling owns the
+        // camera when enabled, so it remains the one local-edit exception.
         if let lockedViewportY {
             restoreViewport(y: lockedViewportY)
-        } else if !followsCaret, !followsLocalEdit {
+        } else if !followsCaret {
             restoreViewport(to: anchor)
         }
     }
@@ -657,12 +679,13 @@ public final class MarkdownTextView: NSTextView {
             default: nil
             }
             guard let label else { return }
-            let frame = rect(forOffset: block.range.location) ?? .zero
-            let element = NSAccessibilityElement()
+            let element = FragmentAccessibilityElement(
+                textView: self,
+                sourceOffset: block.range.location
+            )
             element.setAccessibilityRole(.group)
             element.setAccessibilityLabel(label)
             element.setAccessibilityParent(self)
-            element.setAccessibilityFrameInParentSpace(frame)
             element.setAccessibilityHelp("Rendered \(label.lowercased())")
             elements.append(element)
         }
@@ -706,7 +729,10 @@ public final class MarkdownTextView: NSTextView {
     }
 
     func captureViewportAnchor() -> ViewportAnchor {
-        let offset = topVisibleOffset
+        captureViewportAnchor(at: topVisibleOffset)
+    }
+
+    private func captureViewportAnchor(at offset: Int) -> ViewportAnchor {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         return ViewportAnchor(
             offset: offset,
@@ -1093,11 +1119,6 @@ public final class MarkdownTextView: NSTextView {
         // substitution fallback path only.
         baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
         displayMap = baseLayoutMap
-        contentStorage.configure(
-            paragraphIndex: paragraphIndex,
-            reflowRanges: hardWrapRanges,
-            displayMap: displayMap
-        )
     }
 
     /// TextKit 2 elements keep source-length ranges even when Markdown syntax
@@ -1294,12 +1315,34 @@ public final class MarkdownTextView: NSTextView {
         oldHiddenRanges: [NSRange],
         preservesParagraphStructure: Bool
     ) {
+        // Keep rendered objects outside the edited range alive until the async
+        // parse lands. Dropping them here made every inline formula and
+        // footnote in the document disappear for one frame on each keystroke,
+        // then reappear at parse commit — a whole-page flash on documents that
+        // use either feature.
+        let oldDisplayObjects = baseDisplayMap.substitutions.filter {
+            !$0.isHidden && !$0.isHardWrapReflow
+        }
         let projection = SourceEditProjection(
             edit: edit,
             insertedLength: insertedLength,
             oldParagraphs: oldParagraphs
         )
-        let projectedHidden = oldHiddenRanges.compactMap(projection.projectUnchanged)
+        func projectPresentationRange(_ range: NSRange) -> NSRange? {
+            preservesParagraphStructure
+                ? projection.projectUnchanged(range)
+                : projection.project(range)
+        }
+        let projectedHidden = oldHiddenRanges.compactMap(projectPresentationRange)
+        let projectedDisplayObjects = oldDisplayObjects.compactMap {
+            substitution -> DisplaySubstitution? in
+            guard let range = projectPresentationRange(substitution.sourceRange) else {
+                return nil
+            }
+            var projected = substitution
+            projected.sourceRange = range
+            return projected
+        }
         let projectedHardWrapRanges = RangeSet.normalized(
             hardWrapRanges.compactMap {
                 projection.projectContainer(
@@ -1325,15 +1368,11 @@ public final class MarkdownTextView: NSTextView {
         baseDisplayMap = DisplayMap(
             paragraphs: paragraphIndex,
             substitutions: projectedHidden.map(DisplaySubstitution.hide)
+                + projectedDisplayObjects
                 + projectedHardWrapSubstitutions
         )
         baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
         displayMap = baseLayoutMap
-        contentStorage.configure(
-            paragraphIndex: paragraphIndex,
-            reflowRanges: projectedHardWrapRanges,
-            displayMap: displayMap
-        )
         // Physical fallback still collapses markers; layout map keeps TextKit
         // selection arithmetic aligned with content storage.
         substitution.displayMap = baseDisplayMap
@@ -1345,6 +1384,12 @@ public final class MarkdownTextView: NSTextView {
         let last = paragraphIndex.paragraphRange(containing: max(edit.location, insertedEnd - 1))
         let affected = first.union(last).intersection(NSRange(location: 0, length: storage.length))
         guard let affected, affected.length > 0 else { return }
+        contentStorage.configure(
+            paragraphIndex: paragraphIndex,
+            reflowRanges: projectedHardWrapRanges,
+            displayMap: displayMap,
+            invalidating: [affected]
+        )
         storage.beginEditing()
         storage.removeAttribute(.drFragment, range: affected)
         storage.removeAttribute(.drElided, range: affected)
@@ -1367,6 +1412,27 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - Hidden ranges and the display map
 
+    private func sameSubstitutions(
+        _ lhs: [DisplaySubstitution],
+        _ rhs: [DisplaySubstitution]
+    ) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            let sameReplacement: Bool
+            switch (left.replacement, right.replacement) {
+            case (nil, nil): sameReplacement = true
+            case let (left?, right?): sameReplacement = left.isEqual(to: right)
+            default: sameReplacement = false
+            }
+            return left.sourceRange == right.sourceRange
+                && left.displayLength == right.displayLength
+                && left.isHidden == right.isHidden
+                && left.isHardWrapReflow == right.isHardWrapReflow
+                && left.preservesSourceOffsets == right.preservesSourceOffsets
+                && sameReplacement
+        }
+    }
+
     /// Rebuilds the substitution set for the current caret.
     ///
     /// Squarely on the keystroke path (§12), so two things it does *not* do:
@@ -1378,6 +1444,7 @@ public final class MarkdownTextView: NSTextView {
         fullRefresh: Bool = false,
         additionalScopes: [NSRange] = []
     ) {
+        let previousSubstitutions = displayMap.substitutions
         let caret = suppressesCaretReveal ? nil : primarySourceCaret
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
@@ -1475,11 +1542,6 @@ public final class MarkdownTextView: NSTextView {
         }
         substitution.displayMap = logicalDisplayMap
         displayMap = layoutMap
-        contentStorage.configure(
-            paragraphIndex: paragraphIndex,
-            reflowRanges: hardWrapRanges,
-            displayMap: displayMap
-        )
 
         let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
         let isFullRefresh = fullRefresh || (requiresFullHiddenRefresh && additionalScopes.isEmpty)
@@ -1498,6 +1560,16 @@ public final class MarkdownTextView: NSTextView {
         // when the caret only moved to a neighbouring paragraph, so the common
         // case costs exactly what it did before.
         let paragraphs = isFullRefresh ? [] : [revealParagraph, current].compactMap { $0 }
+        if !isFullRefresh, additionalScopes.isEmpty,
+           sameSubstitutions(displayMap.substitutions, previousSubstitutions) {
+            // Moving through plain prose changes the caret paragraph but not
+            // its presentation. Reconfiguring and invalidating those elements
+            // anyway makes TextKit replace settled geometry with estimates;
+            // the next rectangle query then corrects a line at a time and the
+            // page appears to twitch even though no marker changed visibility.
+            revealParagraph = current
+            return
+        }
         let touched: [NSRange]
         if hiddenIsParagraphScoped || paragraphs.count < 2 {
             touched = paragraphs
@@ -1507,11 +1579,18 @@ public final class MarkdownTextView: NSTextView {
             touched = [paragraphs[0].union(paragraphs[1])]
         }
         revealParagraph = current
+        let invalidatedScopes = RangeSet.normalized(additionalScopes + touched)
+        contentStorage.configure(
+            paragraphIndex: paragraphIndex,
+            reflowRanges: hardWrapRanges,
+            displayMap: displayMap,
+            invalidating: isFullRefresh ? nil : invalidatedScopes
+        )
         if isFullRefresh {
             applyHiddenAttribute(hidden, scope: nil, excluding: revealedForAttributes)
             invalidateFragments(in: nil)
         } else {
-            for scope in RangeSet.normalized(additionalScopes + touched) {
+            for scope in invalidatedScopes {
                 applyHiddenAttribute(hidden, scope: scope, excluding: revealedForAttributes)
                 invalidateFragments(in: scope)
             }
@@ -1669,7 +1748,7 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
-    private func applyOverlays() {
+    private func applyOverlays(scopes: [NSRange]? = nil) {
         guard let storage = textStorage, storage.length > 0 else { return }
         guard !searchHits.isEmpty || currentSearchHit != nil || !changeMarks.isEmpty || speechHighlight != nil else {
             overlayRanges = []
@@ -1678,19 +1757,25 @@ public final class MarkdownTextView: NSTextView {
             objectChangeMarks = []
             return
         }
+        func needsApplication(_ range: NSRange) -> Bool {
+            guard let scopes else { return true }
+            return scopes.contains { NSIntersectionRange($0, range).length > 0 }
+        }
         storage.beginEditing()
         for hit in searchHits {
-            guard let range = clampToStorage(hit) else { continue }
+            guard let range = clampToStorage(hit), needsApplication(range) else { continue }
             storage.addAttribute(.drSearchHit, value: true, range: range)
             tint(styleSheet.searchHit, over: range, in: storage)
             setReadableForeground(over: range, background: styleSheet.searchHit, in: storage)
         }
-        if let current = currentSearchHit, let range = clampToStorage(current) {
+        if let current = currentSearchHit, let range = clampToStorage(current),
+           needsApplication(range) {
             storage.addAttribute(.drCurrentSearchHit, value: true, range: range)
             tint(styleSheet.searchHitCurrent, over: range, in: storage)
             setReadableForeground(over: range, background: styleSheet.searchHitCurrent, in: storage)
         }
-        if let spoken = speechHighlight, let range = clampToStorage(spoken) {
+        if let spoken = speechHighlight, let range = clampToStorage(spoken),
+           needsApplication(range) {
             storage.addAttribute(.drSpeechHighlight, value: true, range: range)
             tint(styleSheet.searchHitCurrent, over: range, in: storage)
             setReadableForeground(over: range, background: styleSheet.searchHitCurrent, in: storage)
@@ -1698,6 +1783,13 @@ public final class MarkdownTextView: NSTextView {
         objectChangeMarks = []
         for mark in changeMarks {
             guard let range = clampToStorage(mark.range) else { continue }
+            guard needsApplication(range) else {
+                if mark.kind != .deleted,
+                   glyphBearingRanges(in: range, storage: storage).isEmpty {
+                    objectChangeMarks.append(mark)
+                }
+                continue
+            }
             storage.addAttribute(.drChange, value: mark.kind.rawValue, range: range)
             if mark.kind == .deleted {
                 // Removed text is not in the buffer, so there is nothing to
@@ -1858,11 +1950,15 @@ public final class MarkdownTextView: NSTextView {
 
     /// §8.4's trust instrument: a path the agent claims it touched that is not
     /// there gets a dotted red underline.
-    private func applyPathExistence() {
+    private func applyPathExistence(scopes: [NSRange]? = nil) {
         guard let storage = textStorage, !parsedDocument.pathTokens.isEmpty else { return }
         storage.beginEditing()
         for resolvable in parsedDocument.pathTokens {
             guard let range = clampToStorage(resolvable.range) else { continue }
+            if let scopes,
+               !scopes.contains(where: { NSIntersectionRange($0, range).length > 0 }) {
+                continue
+            }
             let exists: Bool
             if let cached = pathExistence[resolvable.token] {
                 exists = cached
@@ -1951,7 +2047,15 @@ public final class MarkdownTextView: NSTextView {
         // A caret/selection gesture is newer than any queued layout pass. The
         // pass may still repair height, but it must not restore an old viewport.
         pendingResizeAnchor = nil
+        // Revealing markers in the new caret paragraph and re-hiding them in
+        // the old one can change wrapping above the viewport. Preserve the
+        // visible source line through that rebuild; a raw clip y-coordinate
+        // points at different content once TextKit resolves the new geometry.
         let sourceSelection = sourceSelectedRanges
+        let viewportAnchor = sourceSelection.first.flatMap { selection -> ViewportAnchor? in
+            guard selection.length == 0 else { return nil }
+            return captureViewportAnchor(at: selection.location)
+        } ?? captureViewportAnchor()
         fragmentContext.caret = suppressesCaretReveal ? nil : primarySourceCaret
         let previousAnchor = anchoredParagraph
 
@@ -1965,6 +2069,7 @@ public final class MarkdownTextView: NSTextView {
             super.setSelectedRanges(restored, affinity: .downstream, stillSelecting: false)
             isApplyingSelection = false
         }
+        restoreViewport(to: viewportAnchor)
         gutterRail?.needsDisplay = true
         markdownDelegate?.markdownTextViewDidChangeSelection(self)
         if allowTypewriterScrolling, !isTrackingMouseSelection,
@@ -2068,6 +2173,18 @@ public final class MarkdownTextView: NSTextView {
         // visible text container, never inside its padding.
         let sampleY = max(visible.minY, origin.y) + 1
         return sourceOffset(at: NSPoint(x: origin.x + 1, y: sampleY))
+    }
+
+    /// One-based source position for status UI. The paragraph index is rebuilt
+    /// with each edit, so this stays O(log lines) and allocation-free instead
+    /// of copying and splitting the whole prefix on every keystroke.
+    public func sourcePosition(at offset: Int) -> (line: Int, column: Int) {
+        let clamped = min(max(0, offset), paragraphIndex.length)
+        let index = paragraphIndex.index(containing: clamped)
+        return (
+            line: index + 1,
+            column: clamped - paragraphIndex.starts[index] + 1
+        )
     }
 
     /// The clip view currently being scrolled by `scroll(toOffset:)`, held only

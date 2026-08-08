@@ -144,15 +144,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         window?.toolbar?.validateVisibleItems()
         refreshVisualDebuggerIfVisible()
         // Push cursor position to the status bar.
-        let text = markdownDocument.text as NSString
-        let offset = selection.location
-        let line = max(1, text.substring(to: min(offset, text.length)).components(separatedBy: "\n").count)
-        let lineStart = text.rangeOfCharacter(
-            from: .newlines, options: .backwards,
-            range: NSRange(location: 0, length: min(offset, text.length))
-        ).location
-        let column = max(1, offset - (lineStart == NSNotFound ? 0 : lineStart))
-        statusBarView.cursorPosition = (line: line, column: column)
+        statusBarView.cursorPosition = view.sourcePosition(at: selection.location)
     }
 
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {

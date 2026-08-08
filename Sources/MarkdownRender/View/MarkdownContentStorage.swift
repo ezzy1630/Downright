@@ -35,12 +35,19 @@ final class MarkdownContentStorage: NSTextContentStorage {
     private var elementCache: [Int: NSTextParagraph] = [:]
     private var displayMap: DisplayMap = .identity
     private var usesCustomLayout = false
+    private var suspendedCustomLayout = false
+
+    var cachedElementCountForTesting: Int { elementCache.count }
 
     func configure(
         paragraphIndex: ParagraphIndex,
         reflowRanges: [NSRange],
-        displayMap: DisplayMap
+        displayMap: DisplayMap,
+        invalidating invalidatedRanges: [NSRange]? = nil
     ) {
+        let previousRanges = sourceRanges
+        let previouslyUsedCustomLayout = usesCustomLayout || suspendedCustomLayout
+        suspendedCustomLayout = false
         self.displayMap = displayMap
         let length = textStorage?.length ?? paragraphIndex.length
         let ranges = Self.layoutRanges(
@@ -48,7 +55,6 @@ final class MarkdownContentStorage: NSTextContentStorage {
             reflowRanges: reflowRanges,
             length: length
         )
-        elementCache.removeAll(keepingCapacity: true)
         // Only take over layout when the ranges describe the whole document.
         // A partial set is worse than none: TextKit resumes enumeration from
         // the location this storage returns, so ranges that cover nothing (a
@@ -56,6 +62,22 @@ final class MarkdownContentStorage: NSTextContentStorage {
         // reflow group straddling a paragraph boundary) make it ask for the
         // same location forever and the app stops responding.
         usesCustomLayout = Self.tiles(ranges, length: length)
+        if let invalidatedRanges, previouslyUsedCustomLayout, usesCustomLayout {
+            // A keystroke changes one element and shifts the ranges after it.
+            // Preserve the exact prefix whose source ranges and presentation
+            // are unchanged. Throwing every cached element away made TextKit
+            // replace resolved layout above the viewport with estimates on
+            // every key, which is the root of the full-window shutter.
+            elementCache = elementCache.filter { index, _ in
+                guard index < previousRanges.count, index < ranges.count,
+                      previousRanges[index] == ranges[index] else { return false }
+                return !invalidatedRanges.contains {
+                    NSIntersectionRange($0, ranges[index]).length > 0
+                }
+            }
+        } else {
+            elementCache.removeAll(keepingCapacity: true)
+        }
         sourceRanges = usesCustomLayout ? ranges : []
     }
 
@@ -71,9 +93,8 @@ final class MarkdownContentStorage: NSTextContentStorage {
     }
 
     func suspendCustomLayout() {
+        suspendedCustomLayout = usesCustomLayout
         usesCustomLayout = false
-        sourceRanges.removeAll(keepingCapacity: true)
-        elementCache.removeAll(keepingCapacity: true)
         displayMap = .identity
     }
 
