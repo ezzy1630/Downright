@@ -26,30 +26,31 @@ native render path.
 
 Downright is an active source build. The repository builds the app, the
 `down` CLI, the `MarkdownCore` and `MarkdownRender` libraries, test targets,
-and the release benchmark. Distribution is end-to-end: a signed + notarized
-release pipeline (`.github/workflows/release.yml`), Sparkle 2.9.5 auto-update
-with a custom update pill and release-notes window, scripted
-sign-and-notarize / make-dmg / verify-bundle paths, one canonical version
-source in `Config/version.env`, and privacy manifests. Dev bundles build with
-ad-hoc signing; the Quick Look `.appex` extensions are embedded through
-`Scripts/bundle-quicklook.sh`, which keeps every target on the same
-Command-Line-Tools-only path as the app — Xcode is not required to build any of
-it. `project.yml` generates an Xcode project through `xcodegen` for machines
-that have both; that path is an alternative, and the generated
-`Downright.xcodeproj` is not committed.
+and the release benchmark. It also contains Sparkle 2.9.5 updater code, a
+custom update pill and release-notes window, scripted sign-and-notarize /
+make-dmg / verify-bundle paths, one canonical version source in
+`Config/version.env`, and privacy manifests. Dev bundles use ad-hoc signing
+and omit production updater configuration. The checked-in release workflow
+automates Developer ID signing, notarization, appcast generation, and GitHub
+Release/Pages publication. Until a tagged production run is verified, treat
+distribution as release automation rather than a proven release artifact.
 
-Recent work on `main` fixed a launch hang — opening any document could spin
-forever — and drove a full UI/UX audit: invisible zero-width characters no
-longer leak into the pasteboard, callout / table / list rendering was
-corrected, and eight shortcut conflicts with macOS were removed. On the
-interactive path, keystroke p95 on a 5,034-line document dropped from
-17.34 to 6.13 ms (the `layoutDisplayMap` bridge was 88% of it) and hover cost
-fell from 2.86 to 0.67 ms per mouse-move. Earlier passes this cycle brought a
-file-first start window and stable document/tab workflow; viewport, paragraph,
-and hard-wrap stability while typing; unread external-change review with
-bounded diff and resource work; an interactive Quick Look preview; and a task
-worklist with progress, filtering, grouped headings, direct navigation, and
-immediate checkbox writes.
+The app and Quick Look extensions can be assembled from the SwiftPM products
+with the Command Line Tools: run `Scripts/bundle-app.sh`, then
+`Scripts/bundle-quicklook.sh`. `Scripts/bundle-xcode-app.sh` remains the
+XcodeGen/Xcode alternative. The generated `Downright.xcodeproj` is ignored and
+not committed.
+
+Recent work fixed a launch hang — opening any document could spin forever —
+and drove a full UI/UX audit: invisible zero-width characters no longer leak
+into the pasteboard, callout / table / list rendering was corrected, and eight
+shortcut conflicts with macOS were removed. The current reading surface also
+has five-level structural zoom, heading navigation, footnote support, a
+section-mapped task worklist, and a density gutter without the old vertical
+rail. Earlier passes brought a file-first start window and stable
+document/tab workflow; unread external-change review with bounded diff and
+resource work; an interactive Quick Look preview; and immediate checkbox
+writes from the task panel.
 
 ---
 
@@ -58,7 +59,7 @@ immediate checkbox writes.
 | | |
 |---|---|
 | **Rendered diff** | The file is watched. When an agent rewrites it, the view updates *in place* — scroll position held by heading anchor, changed words highlighted inside the rendered prose, unread changes marked until you review them, and `[` / `]` to jump between changes. If your buffer is dirty, nothing is clobbered: a non-modal bar offers Review / Keep mine / Take theirs. |
-| **Structural zoom** | `⌃⌘1`–`⌃⌘5` (or bare `1`–`5` when no caret is in the document) change the document's *resolution in place*. Level 4 is the one that matters for agent output: every heading, the first sentence of each section, and every code block, table, and task list — none of the connective padding. |
+| **Structural zoom** | `⌃⌥⌘1`–`⌃⌥⌘5` change the document's *resolution in place*. Level 4 is the one that matters for agent output: every heading, the first sentence of each section, and every code block, table, and task list — none of the connective padding. |
 | **Local time travel** | Every external write is snapshotted to a content-addressed store. `⌥⌘V` scrubs through a month of an agent's rewrites, rendered, with changes highlighted between steps. Agents don't commit; git doesn't help you here. |
 | **Live path resolution** | `src/auth/session.ts:42` resolves against the document's directory and the git root. Present files are clickable and open at the right line in your editor. **Missing files get a dotted red underline** — so you can see at a glance which files an agent claims to have touched that aren't there. |
 | **Density gutter** | Replaces the scrollbar with the shape of the whole document: headings by level, code, tables, math, tasks, search hits, and changed regions. |
@@ -108,6 +109,7 @@ Sources/
   DownrightApp/     windows, modes, panels, the agent layer
   DownrightQL/      Quick Look preview extension
   DownrightThumb/   Quick Look thumbnail extension
+  drdownright/      shared agent bridge and CLI support
   down/             terminal launcher
 ```
 
@@ -131,6 +133,12 @@ That assembles `.build-main/bundle/Downright.app` — executable, resource
 bundles, `Info.plist` with the document types and UTIs, ad-hoc signature, and
 Launch Services registration.
 
+To add the native Quick Look preview and thumbnail extensions to that app:
+
+```bash
+Scripts/bundle-quicklook.sh
+```
+
 ```bash
 Scripts/install.sh
 ```
@@ -146,16 +154,18 @@ down PLAN.md
 claude -p "summarise this repo" | down
 ```
 
-Run the tests with:
+Run the tests and repository gates with:
 
 ```bash
 Scripts/check.sh
 ```
 
 The script supplies the Swift Testing framework path when the active toolchain
-needs it, builds every product, and rejects a run where Swift Testing executed
-zero tests. For render work, set `DOWNRIGHT_RENDER_DUMP` to keep the smoke-test
-PNGs for visual comparison:
+needs it, builds the package, checks version and dependency boundaries, runs
+the test suites, runs the debug benchmark, and rejects a run where Swift
+Testing executed zero tests. Set `RUN_DRBENCH=1` to enforce the release
+benchmark budgets as CI does. For render work, set `DOWNRIGHT_RENDER_DUMP` to
+keep the smoke-test PNGs for visual comparison:
 
 ```bash
 DOWNRIGHT_RENDER_DUMP=/tmp/downright-render Scripts/check.sh
@@ -189,20 +199,21 @@ Look releases prior render graphs and falls back to plain text when it crosses
 its memory ceiling. Workspace indexing streams files through a small worker
 pool with 10 MB per-file and 100 MB total-byte limits.
 
-Latest local release benchmark (`drbench`, measured 2026-08-06):
+Latest local release benchmark for this checkout (`drbench`, measured
+2026-08-08):
 
 | Metric | p95 | Budget |
 |---|---:|---:|
-| Typing response | 0.153 ms | 8 ms |
-| Incremental decoration | 0.104 ms | 8 ms |
-| Semantic convergence | 31.445 ms | 100 ms |
-| 100 KB cold parse | 12.395 ms | 250 ms |
+| Typing response | 0.147 ms | 8 ms |
+| Incremental decoration | 0.105 ms | 8 ms |
+| Semantic convergence | 30.708 ms | 100 ms |
+| 100 KB cold parse | 14.432 ms | 250 ms |
 
-Run the complete validation suite with `Scripts/check.sh`. At the current
-commit it covers 716 tests in 71 suites, builds every product, runs the debug
-benchmark, and fails if the test runner executes nothing. See
-[Docs/PERFORMANCE.md](Docs/PERFORMANCE.md) for the full baseline and its
-measurement limits.
+Run the complete validation suite with `Scripts/check.sh`. The test count is
+reported by the run and changes with the source; the script deliberately fails
+if the test runner executes nothing. Set `RUN_DRBENCH=1` when the release
+performance budgets must be enforced. See [Docs/PERFORMANCE.md](Docs/PERFORMANCE.md)
+for the benchmark baseline and its measurement limits.
 
 ## CLI
 
@@ -241,11 +252,11 @@ Keys, which is generated from the same command table as the menus.
 | `⌘E` | Use selection for Find | `⌥⇧↓` / `⌥⇧↑` | Next / previous change |
 | `⌘⇧E` | Toggle full Source Focus | `⌃⌥⌘N` / `⌃⌥⌘P` | Next / previous heading |
 | `⌘⇧K` | Command palette | `⌃⌥⌘1`–`⌃⌥⌘5` | Structural zoom |
-| `⌥⌘2` | Document lens | `⌘F` | Find |
-| `⌥⌘3` | Task worklist | `⌘G` / `⌘⇧G` | Next / previous match |
+| `⌥⇧⌘2` | Document lens | `⌘F` | Find |
+| `⌥⇧⌘3` | Task worklist | `⌘G` / `⌘⇧G` | Next / previous match |
 | `⌥⌘V` | Version timeline | `⌘⇧F` | Search sibling files |
 | `⌘\` | Split view | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |
-| `⌘C` / `⌥⇧⌘C` | Copy visible text / Markdown | `⌘[` / `⌘]` | Back / forward |
+| `⌘C` / `⌥⇧⌘C` | Copy visible text / Markdown | `⌘⌃[` / `⌘⌃]` | Back / forward |
 
 Nothing here shadows a macOS convention: `⌘0` stays Actual Size, `⌘⇧V` stays
 Paste and Match Style, and `⌘T` / `⌘⇧T` stay free for the tab chords.
@@ -271,9 +282,10 @@ which is also where to go if a macOS update knocks the extensions loose.
 
 The `.appex` bundles are embedded with `Scripts/bundle-quicklook.sh`, which
 builds them on the same Command-Line-Tools-only path as the rest of the app —
-no Xcode required. (With Xcode and `xcodegen` installed, `Scripts/bundle-xcode-app.sh`
-still works as an alternative.) `Scripts/install.sh` does the same registration
-for a source install without launching the app. See
+no Xcode required. With Xcode and `xcodegen` installed,
+`Scripts/bundle-xcode-app.sh` remains an alternative that builds the app and
+extensions through the generated project. `Scripts/install.sh` does the same
+registration for a source install without launching the app. See
 [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for details.
 
 ## Privacy and AI
