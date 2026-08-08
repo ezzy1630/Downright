@@ -91,9 +91,8 @@ public final class DensityGutterView: NSView {
         }
     }
 
-    /// How far the reader has got, shaded behind everything (§5.1).
-    /// Scroll-driven updates do not animate; mark opacity changes are cheap
-    /// implicit transactions.
+    /// How far the reader has got. Read state changes only the compact marks;
+    /// it never draws a vertical track behind them.
     public var readProgress: CGFloat = 0 {
         didSet {
             // Hosts assign this as `max(current, …)` on every scroll event, so
@@ -176,8 +175,6 @@ public final class DensityGutterView: NSView {
 
     /// Optical boost on click / scrub release (points of extra width).
     static let jumpPunchBoost: CGFloat = 4
-    /// Soft progress wash behind the stack.
-    static let progressWashAlpha: CGFloat = 0.055
     /// Current-mark glow (same hue, very low opacity).
     static let currentGlowRadius: CGFloat = 10
     static let currentGlowOpacity: Float = 0.12
@@ -199,8 +196,6 @@ public final class DensityGutterView: NSView {
     private var lastPointerSample: (y: CGFloat, time: CFTimeInterval)?
     private var pointerVelocityY: CGFloat = 0
     private var previousCurrentFraction: CGFloat?
-    private var progressWashLayer: CALayer?
-    private var spineLayer: CALayer?
     private var breatheWorkItem: DispatchWorkItem?
 
     /// Bumped on every `bands` assignment so the selection cache can be keyed
@@ -657,8 +652,6 @@ public final class DensityGutterView: NSView {
             : 0
         let magneticCap = Self.magneticPull + velocityPull
 
-        ensureChromeLayers()
-
         while markLayers.count < entries.count {
             let mark = CALayer()
             mark.cornerCurve = .continuous
@@ -698,8 +691,7 @@ public final class DensityGutterView: NSView {
             } else if case .heading = entry.band.kind {
                 // Every mark stays a solid line.  The deeply faded unread
                 // ticks (0.28) read as useless mini-lines next to the brighter
-                // ones, so read state is only a quiet step here — the progress
-                // wash behind the stack carries the detail.
+                // ones, so read state is only a quiet alpha step here.
                 bandStyle.color = styleSheet.railTick.withAlphaComponent(
                     entry.band.startFraction <= readProgress ? 0.56 : 0.44
                 )
@@ -823,7 +815,6 @@ public final class DensityGutterView: NSView {
         }
 
         updatePipLayers(entries: entries)
-        updateProgressWash(entries: entries, animated: animated)
     }
 
     /// Review overlays sit on a fixed leading offset from the *resting* mark
@@ -886,92 +877,6 @@ public final class DensityGutterView: NSView {
         if distance == 0 { return 1 }
         if distance <= neighborhoodLiftRadius { return 0.92 }
         return neighborhoodDim
-    }
-
-    private func ensureChromeLayers() {
-        if spineLayer == nil {
-            let spine = CALayer()
-            spine.cornerCurve = .continuous
-            spine.masksToBounds = true
-            layer?.insertSublayer(spine, at: 0)
-            spineLayer = spine
-        }
-        if progressWashLayer == nil {
-            let wash = CALayer()
-            wash.cornerCurve = .continuous
-            wash.masksToBounds = true
-            layer?.insertSublayer(wash, at: 1)
-            progressWashLayer = wash
-        }
-    }
-
-    /// Quiet completion trail: a soft wash spanning only the compact mark
-    /// stack. A sparse document draws no substitute full-height rule.
-    private func updateProgressWash(entries: [ResolvedMark], animated: Bool) {
-        guard let wash = progressWashLayer else { return }
-        updateSpine(hasStack: !entries.isEmpty)
-
-        let readEntries = entries.filter { $0.band.startFraction <= readProgress }
-        let washSpan: (top: CGFloat, bottom: CGFloat)?
-        if let first = entries.first, let lastRead = readEntries.last {
-            washSpan = (first.y - 6, lastRead.y + 6)
-        } else {
-            washSpan = nil
-        }
-
-        guard let span = washSpan, readProgress > 0.001 else {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            wash.isHidden = true
-            CATransaction.commit()
-            return
-        }
-
-        let top = span.top
-        let bottom = span.bottom
-        let height = max(4, bottom - top)
-        let width: CGFloat = (entries.isEmpty ? 1.5 : 6) * railBreathe
-        let frame = CGRect(
-            x: bounds.midX - width / 2,
-            y: top,
-            width: width,
-            height: height
-        )
-        let color = styleSheet.railTick.withAlphaComponent(Self.progressWashAlpha).cgColor
-        let previous = wash.presentation()?.frame ?? wash.frame
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        wash.cornerRadius = width / 2
-        wash.frame = frame
-        wash.backgroundColor = color
-        wash.isHidden = false
-        CATransaction.commit()
-
-        guard animated, !styleSheet.reduceMotion, previous != .zero, previous != frame else { return }
-        let anim = CABasicAnimation(keyPath: "bounds")
-        anim.fromValue = NSValue(rect: previous.offsetBy(dx: -previous.minX, dy: -previous.minY))
-        anim.toValue = NSValue(rect: wash.bounds)
-        anim.duration = Motion.settle
-        anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        wash.add(anim, forKey: "wash-bounds")
-        let pos = CABasicAnimation(keyPath: "position")
-        pos.fromValue = NSValue(point: NSPoint(x: previous.midX, y: previous.midY))
-        pos.toValue = NSValue(point: wash.position)
-        pos.duration = Motion.settle
-        pos.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        wash.add(pos, forKey: "wash-position")
-    }
-
-    /// Keep the old layer inert for stable layer ordering. The hit lane and
-    /// compact marks provide the affordance without a full-height spine.
-    private func updateSpine(hasStack: Bool) {
-        guard let spine = spineLayer else { return }
-        _ = hasStack
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        spine.isHidden = true
-        CATransaction.commit()
     }
 
     public override func layout() {
