@@ -210,9 +210,7 @@ public final class MarkdownContainerView: NSView {
         } else {
             responsiveCharacters = renderedTarget
         }
-        let preferredMeasure = textView.mode == .source || textView.sourceFocus != .none
-            ? max(RenderMetrics.minimumProseWidth, contentWidth - 64 - RenderMetrics.codeBleed)
-            : textView.styleSheet.averageCharacterWidth * responsiveCharacters
+        let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
         // Keep the column out from under the overlay thumb when the measure is
         // capped by a narrow window; a wide window's centring margin already
         // clears it (§7).
