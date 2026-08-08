@@ -8,7 +8,6 @@ protocol ReviewPanelViewDelegate: AnyObject {
     func reviewPanel(_ panel: ReviewPanelView, didApply review: ReviewItem)
     func reviewPanel(_ panel: ReviewPanelView, didReject review: ReviewItem)
     func reviewPanel(_ panel: ReviewPanelView, didResolve review: ReviewItem)
-    func reviewPanelDidRequestClose(_ panel: ReviewPanelView)
 }
 
 @MainActor
@@ -58,9 +57,7 @@ final class ReviewPanelView: NSView, PanelSurface {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
         buildHeader()
         buildTable()
         applyStyle()

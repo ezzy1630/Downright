@@ -14,6 +14,9 @@ public enum MarkdownCLI {
         case export(format: ExportFormat, output: String?, paths: [String])
         case check(json: Bool, target: BuiltInRenderTarget?, paths: [String])
         case outline(json: Bool, paths: [String])
+        case notify(NotifyOptions)
+        case watch(WatchOptions, paths: [String])
+        case hook(HookOptions)
         case help
         case version
     }
@@ -23,6 +26,43 @@ public enum MarkdownCLI {
         public var background = false
         public var wait = false
         public var edit = false
+
+        public init() {}
+    }
+
+    /// `down notify` — the agent hook endpoint.  Reads a hook payload on stdin
+    /// and hands any Markdown file it names to Downright.
+    public struct NotifyOptions: Equatable, Sendable {
+        /// Bring Downright to the front.  Off by default: the whole point is to
+        /// queue a change for review without pulling focus out of the terminal
+        /// the agent is running in.
+        public var focus = false
+        /// Print the resolved paths instead of opening them, for wiring up a
+        /// hook without launching anything.
+        public var dryRun = false
+
+        public init() {}
+    }
+
+    /// `down watch` — the no-hook fallback for agents with no hook system.
+    public struct WatchOptions: Equatable, Sendable {
+        public var focus = false
+        public var debounce = AgentWatcher.defaultDebounce
+
+        public init() {}
+    }
+
+    /// `down hook` — print or install the agent configuration that wires
+    /// `down notify` in.
+    public struct HookOptions: Equatable, Sendable {
+        public enum Mode: String, Equatable, Sendable {
+            case print
+            case install
+            case uninstall
+        }
+
+        public var mode: Mode = .print
+        public var scope: AgentBridge.HookScope = .project
 
         public init() {}
     }
@@ -62,6 +102,9 @@ public enum MarkdownCLI {
         case "check": return try parseCheck(Array(arguments.dropFirst()))
         case "outline": return try parseOutline(Array(arguments.dropFirst()))
         case "open": return try parseOpen(Array(arguments.dropFirst()))
+        case "notify": return try parseNotify(Array(arguments.dropFirst()))
+        case "watch": return try parseWatch(Array(arguments.dropFirst()))
+        case "hook": return try parseHook(Array(arguments.dropFirst()))
         default: return try parseOpen(arguments)
         }
     }
@@ -76,6 +119,9 @@ public enum MarkdownCLI {
           down export [--format html] [-o path] [file ...]
           down check [--json] [--target name] [file or folder ...]
           down outline [--json] [file ...]
+          down notify [--focus] [--dry-run]
+          down watch [--focus] [--debounce ms] [file or folder ...]
+          down hook [--print | --install | --uninstall] [--scope user|project]
           … | down [command] -
 
         COMMANDS
@@ -84,6 +130,11 @@ public enum MarkdownCLI {
           export     Write self-contained HTML to stdout or -o a file
           check      Run health and target checks (exit 1 when findings exist)
           outline    List document headings
+          notify     Open the Markdown file named by an agent hook payload on
+                     stdin.  Always exits 0 so a hook never blocks the agent.
+          watch      Open Markdown files in the background as they change.  The
+                     fallback for agents that have no hook system.
+          hook       Print or install the agent configuration that runs `notify`
 
         CHECK TARGETS
           downright, commonmark, github, obsidian, pandoc, multimarkdown,
@@ -96,6 +147,16 @@ public enum MarkdownCLI {
           -e, --edit        open in Live mode instead of Read mode
           -h, --help        show this message
           -v, --version     show the version
+
+        AGENT OPTIONS
+          --focus           bring Downright forward (default: stay in background)
+          --dry-run         print what notify would open, without opening it
+          --debounce ms     quiet period before reporting a burst (default 300)
+          --scope           where `hook --install` writes: user or project
+
+        AGENT SETUP
+          down hook --install            wire this project's agent to Downright
+          down hook --install --scope user   wire every project for this user
         """
     }
 
@@ -189,6 +250,72 @@ public enum MarkdownCLI {
             }
         }
         return .outline(json: json, paths: paths)
+    }
+
+    private static func parseNotify(_ arguments: [String]) throws -> Action {
+        var options = NotifyOptions()
+        for argument in arguments {
+            switch argument {
+            case "--focus": options.focus = true
+            case "--dry-run": options.dryRun = true
+            case "-h", "--help": return .help
+            case "-v", "--version": return .version
+            default: throw ParseError.unknownOption(argument)
+            }
+        }
+        return .notify(options)
+    }
+
+    private static func parseWatch(_ arguments: [String]) throws -> Action {
+        var options = WatchOptions()
+        var paths: [String] = []
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--focus": options.focus = true
+            case "--debounce":
+                index += 1
+                guard index < arguments.count else { throw ParseError.missingValue(argument) }
+                guard let milliseconds = Double(arguments[index]), milliseconds >= 0 else {
+                    throw ParseError.unexpectedArgument("--debounce expects milliseconds, got \(arguments[index])")
+                }
+                options.debounce = milliseconds / 1000
+            case "--": paths.append(contentsOf: arguments[(index + 1)...]); index = arguments.count
+            case "-h", "--help": return .help
+            case "-v", "--version": return .version
+            default:
+                if argument.hasPrefix("-"), argument.count > 1 { throw ParseError.unknownOption(argument) }
+                paths.append(argument)
+            }
+            index += 1
+        }
+        return .watch(options, paths: paths)
+    }
+
+    private static func parseHook(_ arguments: [String]) throws -> Action {
+        var options = HookOptions()
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--print": options.mode = .print
+            case "--install": options.mode = .install
+            case "--uninstall": options.mode = .uninstall
+            case "--scope":
+                index += 1
+                guard index < arguments.count else { throw ParseError.missingValue(argument) }
+                guard let scope = AgentBridge.HookScope(rawValue: arguments[index].lowercased()) else {
+                    throw ParseError.unexpectedArgument("unknown scope \(arguments[index]); expected user or project")
+                }
+                options.scope = scope
+            case "-h", "--help": return .help
+            case "-v", "--version": return .version
+            default: throw ParseError.unknownOption(argument)
+            }
+            index += 1
+        }
+        return .hook(options)
     }
 
     private static func parseExport(_ arguments: [String]) throws -> Action {

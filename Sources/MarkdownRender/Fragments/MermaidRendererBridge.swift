@@ -37,15 +37,29 @@ public enum MermaidRendererBridge {
 
     /// Draws a prepared diagram into a bitmap context that has been flipped to
     /// y=0-at-top, matching `MermaidLayer.renderImage`'s AppKit transform
-    /// sequence.  The returned image's point size is the diagram bounds plus
-    /// 24pt of air on every side (pixels are `scale`×), which is what the
-    /// fragment expects — the diagram fills its frame without clipping and
-    /// without dead margins.
+    /// sequence, then crops the result to the pixels the diagram actually
+    /// inked.
+    ///
+    /// The crop is the point of this function.  `prepared.bounds` is the
+    /// layout's own idea of its extent, and for several diagram kinds — a
+    /// sequence diagram above all — that is materially taller and wider than
+    /// anything drawn: reserved lifeline runway, room for labels that turned
+    /// out to be short.  Sizing the fragment from it left a band of dead space
+    /// under every diagram that read as a layout bug, and no amount of tuning
+    /// the fragment's own padding could fix it because the emptiness was
+    /// *inside the image*.  Rendering with slack and then measuring the alpha
+    /// channel makes the returned size mean "this is how big the drawing is",
+    /// which is the only size the fragment can lay out honestly.
+    ///
+    /// Air around the diagram is deliberately *not* baked in here — the
+    /// fragment adds it, so one place decides the spacing.
     private static func render(_ prepared: PreparedDiagram, scale: CGFloat) -> NSImage? {
         let bounds = prepared.bounds
         guard bounds.width > 0, bounds.height > 0 else { return nil }
-        let air: CGFloat = 24
-        let padded = bounds.insetBy(dx: -air, dy: -air)
+        // Slack only so a stroke, shadow, or overshooting label near the edge
+        // is not clipped before it can be measured; the crop takes it back.
+        let slack: CGFloat = 32
+        let padded = bounds.insetBy(dx: -slack, dy: -slack)
         let pixelWidth = Int((padded.width * scale).rounded())
         let pixelHeight = Int((padded.height * scale).rounded())
         guard pixelWidth > 0, pixelHeight > 0,
@@ -61,7 +75,48 @@ public enum MermaidRendererBridge {
         ctx.translateBy(x: -padded.minX, y: -padded.minY)
         prepared.render(ctx, bounds)
         guard let cgImage = ctx.makeImage() else { return nil }
-        return NSImage(cgImage: cgImage, size: padded.size)
+
+        guard let ink = inkBounds(of: ctx), let cropped = cgImage.cropping(to: ink) else {
+            return NSImage(cgImage: cgImage, size: padded.size)
+        }
+        return NSImage(cgImage: cropped,
+                       size: CGSize(width: CGFloat(cropped.width) / scale,
+                                    height: CGFloat(cropped.height) / scale))
+    }
+
+    /// The smallest pixel rect containing every non-transparent pixel, in the
+    /// image coordinates `CGImage.cropping(to:)` expects, or nil if the bitmap
+    /// is entirely empty.
+    ///
+    /// The theme renders `transparent: true`, so "inked" is exactly "alpha
+    /// above the noise floor".  The threshold is not zero: antialiasing leaves
+    /// a halo one or two units above nothing at all, and treating that as ink
+    /// would grow the crop back toward the untrimmed bounds.
+    private static func inkBounds(of ctx: CGContext) -> CGRect? {
+        guard let base = ctx.data, ctx.bitsPerComponent == 8 else { return nil }
+        let width = ctx.width
+        let height = ctx.height
+        let stride = ctx.bytesPerRow
+        let pixels = base.assumingMemoryBound(to: UInt8.self)
+        let alphaFloor: UInt8 = 8
+
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            let row = pixels + y * stride
+            var rowMinX = -1
+            var rowMaxX = -1
+            for x in 0..<width where row[x * 4 + 3] > alphaFloor {
+                if rowMinX < 0 { rowMinX = x }
+                rowMaxX = x
+            }
+            guard rowMinX >= 0 else { continue }
+            minX = min(minX, rowMinX)
+            maxX = max(maxX, rowMaxX)
+            minY = min(minY, y)
+            maxY = max(maxY, y)
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
     /// The stylesheet's palette expressed as a diagram theme.  Exposed so the

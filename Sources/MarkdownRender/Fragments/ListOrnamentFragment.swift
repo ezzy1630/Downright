@@ -127,18 +127,31 @@ final class ListOrnamentFragment: DownrightFragment {
             }
         }
 
-        // One checkbox look everywhere (§8.5): a rounded square, accent-filled
-        // when checked with a knocked-out tick, neutral border when open.  Both
-        // the radius and the tick come from `RenderMetrics`, which is also what
-        // the panel checkbox scales, so the two can no longer drift apart —
-        // they used to be the same drawing written out twice.
+        // One checkbox look everywhere (§8.5): a rounded square whose radius and
+        // tick come from `RenderMetrics`, which is also what the panel checkbox
+        // scales, so the two can no longer drift apart — they used to be the
+        // same drawing written out twice.
+        //
+        // Both states are now the *same* object: one ring at one weight, plus a
+        // tinted field and a tick when the task is done.  The checked box used
+        // to be a solid accent slab with a knocked-out tick, which made the
+        // loudest mark on the page the one thing the reader has already
+        // finished with — and said "done" a second time, since the label
+        // carries a strikethrough.  It also spent the accent, which links and
+        // the caret need, on a page's worth of completed rows.
         let radius = box.width * RenderMetrics.taskBoxCornerRatio
         let path = CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        cg.addPath(path)
         if checked {
-            cg.setFillColor(style.accent.cgColor)
+            cg.addPath(path)
+            cg.setFillColor(style.taskFieldColor.cgColor)
             cg.fillPath()
-            cg.setStrokeColor(style.onAccent.cgColor)
+        }
+        cg.addPath(path)
+        cg.setStrokeColor(style.taskRingColor(checked: checked).cgColor)
+        cg.setLineWidth(box.width * RenderMetrics.taskBoxStrokeRatio)
+        cg.strokePath()
+        if checked {
+            cg.setStrokeColor(style.taskTickColor.cgColor)
             cg.setLineWidth(box.width * RenderMetrics.taskTickStrokeRatio)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
@@ -150,10 +163,6 @@ final class ListOrnamentFragment: DownrightFragment {
                 if index == 0 { cg.move(to: point) } else { cg.addLine(to: point) }
             }
             cg.strokePath()
-        } else {
-            cg.setStrokeColor(style.textFaint.cgColor)
-            cg.setLineWidth(box.width * RenderMetrics.taskBoxStrokeRatio)
-            cg.strokePath()
         }
 
         if let ring {
@@ -164,4 +173,5 @@ final class ListOrnamentFragment: DownrightFragment {
             cg.strokeEllipse(in: rect)
         }
     }
+
 }

@@ -65,7 +65,10 @@ public enum MarkerPolicy {
 
         document.root.walk { block in
             if policy.hidesBlockMarkers, blockMarkersAreHidden(block) {
-                if let m = block.markerRange, m.length > 0 { out.append(m) }
+                if let m = block.markerRange, m.length > 0 {
+                    out.append(m)
+                    out.append(contentsOf: containerIndentRange(before: m, in: block, document: document))
+                }
                 if let m = block.trailingMarkerRange, m.length > 0 { out.append(m) }
                 switch block.content {
                 case .blockQuote, .callout:
@@ -84,7 +87,42 @@ public enum MarkerPolicy {
                 collectInlineMarkers(span, anchors: revealAnchors, into: &out)
             }
         }
-        return RangeSet.normalized(out)
+        // `disjoint`, not `normalized`: a marker has to keep its own range so a
+        // caret reveal can name it.  See `RangeSet.disjoint`.
+        return RangeSet.disjoint(out)
+    }
+
+    /// The container indentation in front of a nested item's marker.
+    ///
+    /// A nested item is indented twice over: once by the source spaces that put
+    /// it under its parent, and again by the head indent `BlockStyleFactory`
+    /// derives from its depth.  The spaces are the ones to drop — the ornament
+    /// draws the hanging column, and depth, not byte count, is what should set
+    /// the edge (a two-space and a four-space nesting must line up).
+    ///
+    /// Only whitespace is ever taken, and only on the marker's own line, so a
+    /// marker that follows real glyphs is left alone.
+    private static func containerIndentRange(
+        before marker: NSRange, in block: MDBlock, document: ParsedDocument
+    ) -> [NSRange] {
+        guard case .listItem = block.content, marker.location > 0 else { return [] }
+        let text = document.text as NSString
+        var start = marker.location
+        while start > 0 {
+            let character = text.character(at: start - 1)
+            guard character == 0x20 || character == 0x09 else { break }
+            start -= 1
+        }
+        guard start < marker.location else { return [] }
+        // Refuse unless the run reaches the line start: anything else means the
+        // marker is not what opens this line.
+        guard start == 0 || isLineTerminator(text.character(at: start - 1)) else { return [] }
+        return [NSRange(location: start, length: marker.location - start)]
+    }
+
+    private static func isLineTerminator(_ character: unichar) -> Bool {
+        character == 0x0A || character == 0x0D || character == 0x0085
+            || character == 0x2028 || character == 0x2029
     }
 
     private static func quotePrefixRanges(
@@ -242,21 +280,4 @@ public enum MarkerPolicy {
         for child in span.children { collectRevealed(child, anchors: anchors, into: &out) }
     }
 
-    /// The span whose markers a caret at `offset` reveals, if any.  The view
-    /// uses it to compute the caret-anchored shift (§6.1c).
-    public static func revealedSpan(document: ParsedDocument, caret: Int) -> InlineSpan? {
-        guard let block = document.root.block(at: caret) else { return nil }
-        for span in block.inlines {
-            if let hit = deepestRevealing(span, caret: caret) { return hit }
-        }
-        return nil
-    }
-
-    private static func deepestRevealing(_ span: InlineSpan, caret: Int) -> InlineSpan? {
-        guard span.range.touches(offset: caret) else { return nil }
-        for child in span.children {
-            if let hit = deepestRevealing(child, caret: caret) { return hit }
-        }
-        return span.kind.revealsMarkers ? span : nil
-    }
 }

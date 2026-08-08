@@ -1,12 +1,14 @@
 # Status
 
 An honest accounting of what this build does, what is approximate, and where it
-departs from `markdown-app-spec.md`. Read this before filing a bug.
+departs from the original design. Read this before filing a bug.
 
 ## Environment constraints this build was made under
 
-The whole project builds with the **Command Line Tools only** — no Xcode. That
-shaped three things:
+The whole project builds with the **Command Line Tools only**. Xcode is on the
+development machine now and the `project.yml` path is exercised there, but no
+part of the app requires it, and most of this build was written before it was
+installed. That shaped three things:
 
 ### Tests use swift-testing, and must be run through `Scripts/check.sh`
 
@@ -25,22 +27,27 @@ asserts a non-zero test count, so the silent no-op fails loudly instead.
 Scripts/check.sh
 ```
 
-### Quick Look needs the Xcode release path
+### Quick Look is built on the CLT-only path
 
-`Scripts/bundle-xcode-app.sh` builds and embeds the preview and thumbnail
-`.appex` bundles. The simpler `Scripts/bundle-app.sh` SwiftPM path does not.
-`Sources/DownrightQL/` and `Sources/DownrightThumb/` also compile as libraries
-in CI and carry the full memory discipline §10 demands.
+`Scripts/bundle-quicklook.sh` builds the preview and thumbnail `.appex`
+bundles as ordinary bundles (executables using `NSExtensionMain`) and embeds
+them, keeping every target on the same Command-Line-Tools-only path as the app
+— no Xcode needed. `Scripts/bundle-xcode-app.sh` remains an alternative for
+machines with Xcode and `xcodegen`. `Sources/DownrightQL/` and
+`Sources/DownrightThumb/` also compile as libraries in CI and carry the full
+memory discipline §10 demands.
 
 To make this real rather than aspirational, `DensityGutterView` was moved out of
 the app and into `MarkdownRender`, so the extension draws **the same rail** the
 app draws rather than a second implementation that could drift.
 
-### Sparkle is not embedded
+### Sparkle is embedded via SPM, released via the workflow
 
-It ships as a framework with XPC helpers needing a Copy Files phase and
-per-bundle signing. `AppDelegate` performs no update checks of its own, so
-adding it is purely additive. [RELEASE.md](RELEASE.md) has the steps.
+Sparkle 2.9.5 is a SwiftPM dependency linked by the host app. Update checks are
+gated on the Sparkle Info.plist block, which only signed production bundles
+carry — dev/ad-hoc bundles disable the updater. Signing, notarization,
+stapling, and appcast production run through
+`.github/workflows/release.yml`; [RELEASE.md](RELEASE.md) has the steps.
 
 ## Deliberate deviations from the spec
 
@@ -183,7 +190,11 @@ Approximate:
 
 ## Known gaps
 
-- **Sparkle updates** and **notarised distribution** — see above.
+- **Sparkle updates** and **notarised distribution** ship through the release
+  workflow; dev bundles skip both. The `project.yml` path now builds a Release
+  `Downright.app` locally, but the signed, notarised, stapled pipeline around it
+  has never run end to end — that needs a tagged CI run, and until one happens
+  the release path is unproven.
 - **Spotlight coverage for files that have not been opened.** Downright adds
   each opened document to Core Spotlight. The metadata extractor for a full
   importer exists, but the signed importer bundle does not.
@@ -214,8 +225,8 @@ It prints p50/p95 for parse, AST diff, text diff, synchronous typing response,
 incremental decoration, end-to-end semantic convergence, and cold open. Parse
 and diff run outside the synchronous typing path.
 
-Latest release run: typing response p95 **0.149 ms**, semantic convergence p95
-**46.726 ms**, and cold parse p95 **16.413 ms**. All are inside the product
+Latest release run: typing response p95 **0.153 ms**, semantic convergence p95
+**31.445 ms**, and cold parse p95 **12.395 ms**. All are inside the product
 budget.
 
 See [PERFORMANCE.md](PERFORMANCE.md) for the measured numbers on this build and
@@ -223,7 +234,7 @@ what they mean for §13's P0 kill criterion.
 
 ## Test suites
 
-The full check currently runs **436 tests in 53 suites**.
+The full check currently runs **716 tests in 71 suites**.
 
 | Suite | Covers |
 |---|---|

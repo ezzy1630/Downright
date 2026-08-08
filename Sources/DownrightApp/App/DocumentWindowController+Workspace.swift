@@ -86,19 +86,6 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         index.start(rootURL: root)
     }
 
-    /// Start an index at an explicit folder.  This is useful to the open-folder
-    /// command and keeps tests independent from application state.
-    func startWorkspaceIndex(at rootURL: URL, policy: WorkspaceIndexPolicy = .default) {
-        let index = workspaceIndex ?? WorkspaceIndex(policy: policy)
-        workspaceIndex = index
-        index.start(rootURL: rootURL)
-    }
-
-    func refreshWorkspaceIndex() {
-        guard let index = workspaceIndex else { return }
-        index.start(rootURL: index.snapshot.rootURL)
-    }
-
     func resetWorkspaceState(for documentURL: URL) {
         workspaceSearch?.cancel()
         workspaceGraph = .empty
@@ -109,17 +96,6 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         workspaceSidebar?.backlinks = []
         workspaceSidebar?.selectedFileID = documentURL.standardizedFileURL.path
         index.reroot(to: documentURL.deletingLastPathComponent())
-    }
-
-    func cancelWorkspaceWork() {
-        workspaceSearch?.cancel()
-        workspaceIndex?.cancel()
-        workspaceSearch = nil
-        // Keep the sidebar/index objects only while the panel is open; cancel
-        // in-flight work on close so a dismissed window cannot keep scanning.
-        if workspaceSidebar == nil {
-            workspaceIndex = nil
-        }
     }
 
     func workspaceSidebar(_ view: WorkspaceSidebarView, didSearch query: WorkspaceSearchQuery) {
@@ -141,19 +117,7 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         }
         guard let range, url.standardizedFileURL.path == markdownDocument.url?.standardizedFileURL.path else { return }
         containerTextView.setSourceSelectedRanges([range])
-        containerTextView.scroll(toOffset: range.location, position: .center, animated: true)
+        containerTextView.scroll(toOffset: range.location, position: .visible, animated: true)
         window?.makeFirstResponder(containerTextView)
-    }
-
-    func configureWorkspaceSidebar(_ panel: WorkspaceSidebarView) {
-        panel.styleSheet = activeStyleSheet
-        panel.delegate = self
-        if let index = workspaceIndex {
-            panel.entries = index.snapshot.entries
-            panel.searchResults = []
-            let currentID = markdownDocument.url?.standardizedFileURL.path
-            panel.selectedFileID = currentID
-            panel.backlinks = currentID.map { workspaceGraph.linksTo(fileID: $0) } ?? []
-        }
     }
 }

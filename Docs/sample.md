@@ -13,8 +13,8 @@ build, or point Quick Look at it to compare the extension against the app.
 ## Prose and inline elements
 
 Body text sets at a **capped measure** so lines stay readable, with _emphasis_,
-***both at once***, ~~strikethrough~~, `inline code`, and a [link to the
-spec](../markdown-app-spec.md). Reference links work too, like [this one][ref],
+***both at once***, ~~strikethrough~~, `inline code`, and a [relative link to
+the README](../README.md). Reference links work too, like [this one][ref],
 as do footnotes[^1] and autolinks such as <https://example.com>.
 
 A wikilink renders as a link without becoming a vault: [[sample]] and

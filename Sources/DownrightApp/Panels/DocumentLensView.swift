@@ -83,9 +83,7 @@ final class DocumentLensView: NSView, PanelSurface {
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         buildHeader()
         buildTable()
@@ -253,12 +251,24 @@ final class DocumentLensView: NSView, PanelSurface {
     private func syncTabControl() {
         guard let index = DocumentLensTab.allCases.firstIndex(of: selectedTab) else { return }
         tabControl.selectItem(at: index)
+        theme(tabControl)
     }
 
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
         countLabel.textColor = styleSheet.textFaint
+        theme(tabControl)
+        theme(targetControl)
         table.reloadData()
+    }
+
+    private func theme(_ control: NSPopUpButton) {
+        control.contentTintColor = styleSheet.text
+        guard let title = control.selectedItem?.title else { return }
+        control.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: styleSheet.text, .font: control.font ?? PanelFont.row]
+        )
     }
 
     @objc private func tabChanged(_ sender: NSPopUpButton) {
@@ -277,6 +287,7 @@ final class DocumentLensView: NSView, PanelSurface {
     private func syncTargetControl() {
         guard let index = RenderTargetProfile.builtIns.firstIndex(of: renderTargetProfile) else { return }
         targetControl.selectItem(at: index)
+        theme(targetControl)
     }
 
     @objc private func rowClicked(_ sender: Any?) { activateSelection() }

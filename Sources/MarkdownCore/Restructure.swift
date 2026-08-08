@@ -480,6 +480,163 @@ public enum Restructure {
         }
         return result
     }
+
+    // MARK: Tasks
+
+    /// Adds `- [ ] text` after the last task of the section `headingIndex`
+    /// names — after that task's whole *block*, so an anchor with nested
+    /// children is never split from its family.  With no matching task (a
+    /// section without tasks, or a document without any) the new task starts
+    /// its own list at the end of the document, behind exactly one blank line
+    /// of separation — none when the file is empty or already ends blank.
+    ///
+    /// Either way the edit is a single zero-length insertion on a line
+    /// boundary; everything already in the file stays byte-identical.
+    public static func insertTask(
+        _ doc: ParsedDocument, text: String, headingIndex: Int?
+    ) -> [TextEdit] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if let anchor = doc.tasks.last(where: { $0.headingIndex == headingIndex }) {
+            let block = taskBlock(doc, at: doc.line(at: anchor.markRange.location))
+            // A block that ran to EOF without a trailing newline has no line
+            // start after it, so the separator goes in front of the new task
+            // instead of behind it.
+            let needsLeadingNewline = block.upperBound >= doc.length && !doc.text.hasSuffix("\n")
+            return [TextEdit(
+                range: NSRange(location: block.upperBound, length: 0),
+                replacement: needsLeadingNewline ? "\n- [ ] \(trimmed)\n" : "- [ ] \(trimmed)\n",
+                summary: "Add task"
+            )]
+        }
+
+        // No anchor: append at the end of the document, leaving exactly one
+        // blank line between the new list and whatever precedes it.
+        let replacement: String
+        if doc.length == 0 || doc.text.hasSuffix("\n\n") {
+            replacement = "- [ ] \(trimmed)\n"
+        } else if doc.text.hasSuffix("\n") {
+            replacement = "\n- [ ] \(trimmed)\n"
+        } else {
+            replacement = "\n\n- [ ] \(trimmed)\n"
+        }
+        return [TextEdit(
+            range: NSRange(location: doc.length, length: 0),
+            replacement: replacement,
+            summary: "Add task"
+        )]
+    }
+
+    /// Moves `taskIndex` among its siblings — same section, same indent level,
+    /// same parent — so it lands immediately before `targetIndex`, or after
+    /// the last sibling when `targetIndex` is nil.  Crossing a section or a
+    /// nesting level would be a re-parenting, not a reorder, and is refused.
+    /// Blank lines between two lists don't split siblinghood: the test runs
+    /// over the task array, not the source lines.
+    ///
+    /// The task travels with its block, so children ride along.  The result
+    /// is two edits in original coordinates — cut the block, paste its text
+    /// at the destination — which apply cleanly back to front because the
+    /// destination is a line start (or EOF) that never falls inside the cut.
+    ///
+    /// Newline discipline keeps the file's final-newline state intact: a
+    /// block that ends the file without a trailing `\n` borrows the newline
+    /// before it (the cut reaches one character back, the paste gains one),
+    /// and a paste aimed at an unterminated EOF brings its own leading `\n`.
+    public static func moveTask(
+        _ doc: ParsedDocument, taskIndex: Int, before targetIndex: Int?
+    ) -> [TextEdit] {
+        let tasks = doc.tasks
+        guard tasks.indices.contains(taskIndex) else { return [] }
+        if let targetIndex, targetIndex == taskIndex { return [] }
+
+        let source = tasks[taskIndex]
+        let sourceParent = taskParent(of: taskIndex, in: tasks)
+        func isSibling(_ index: Int) -> Bool {
+            tasks[index].headingIndex == source.headingIndex
+                && tasks[index].indentLevel == source.indentLevel
+                && taskParent(of: index, in: tasks) == sourceParent
+        }
+
+        let insertion: Int
+        if let targetIndex {
+            guard tasks.indices.contains(targetIndex), isSibling(targetIndex) else { return [] }
+            insertion = doc.lineStarts[doc.line(at: tasks[targetIndex].markRange.location) - 1]
+        } else {
+            // After the last sibling's block — unless the source already is
+            // that sibling, which is where the move would put it.
+            guard let last = tasks.indices.filter(isSibling).last, last != taskIndex else { return [] }
+            insertion = taskBlock(doc, at: doc.line(at: tasks[last].markRange.location)).upperBound
+        }
+
+        let block = taskBlock(doc, at: doc.line(at: source.markRange.location))
+        guard insertion != block.location else { return [] }  // already in position
+
+        var cut = block
+        var paste = doc.substring(block)
+        if paste.hasSuffix("\n") {
+            // Landing at an EOF with no trailing newline (only possible when
+            // moving to the end): the separator goes in front and the block
+            // leaves its own terminator where it was.
+            if insertion >= doc.length, !doc.text.hasSuffix("\n") {
+                paste = "\n" + String(paste.dropLast())
+            }
+        } else {
+            // The block ends the file without a newline: cut the separator
+            // before it too (when there is one) so no orphaned blank line is
+            // left behind, and restore the terminator on the pasted copy —
+            // its destination here is always a line start.
+            if block.location > 0 {
+                cut = NSRange(location: block.location - 1, length: block.length + 1)
+            }
+            paste += "\n"
+        }
+
+        return [
+            TextEdit(range: cut, replacement: "", summary: "Move task"),
+            TextEdit(
+                range: NSRange(location: insertion, length: 0),
+                replacement: paste,
+                summary: "Move task"
+            ),
+        ]
+    }
+
+    /// The block a task owns for insertion and moving: its own line plus every
+    /// following line that is non-blank and indented deeper than it — the
+    /// children that ride along.  A blank line or a shallower line ends the
+    /// block.  The range ends on a line start (or at EOF), so it spans whole
+    /// lines, trailing newline included, and cuts and pastes without any
+    /// whitespace arithmetic.
+    private static func taskBlock(_ doc: ParsedDocument, at line: Int) -> NSRange {
+        let start = doc.lineStarts[line - 1]
+        let indent = doc.substring(doc.range(ofLine: line)).leadingIndent.count
+        var next = line + 1
+        while next <= doc.lineStarts.count {
+            let source = doc.substring(doc.range(ofLine: next))
+            guard !source.isBlankLine, source.leadingIndent.count > indent else { break }
+            next += 1
+        }
+        let end = next <= doc.lineStarts.count ? doc.lineStarts[next - 1] : doc.length
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// A task's parent for sibling tests: the nearest preceding task in
+    /// document order that sits shallower in the same section.
+    private static func taskParent(of index: Int, in tasks: [TaskItem]) -> Int? {
+        let task = tasks[index]
+        var candidate = index - 1
+        while candidate >= 0 {
+            let preceding = tasks[candidate]
+            if preceding.headingIndex == task.headingIndex,
+               preceding.indentLevel < task.indentLevel {
+                return candidate
+            }
+            candidate -= 1
+        }
+        return nil
+    }
 }
 
 // MARK: - Block markers

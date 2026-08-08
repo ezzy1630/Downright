@@ -36,6 +36,7 @@ struct QuickOpenQuery: Equatable {
     private static let prefixes: [(marker: String, filter: QuickOpenFilter)] = [
         ("#tasks", .tasks),
         ("#task", .tasks),
+        ("task:", .tasks),
         ("asset:", .assets),
         ("file:", .files),
         ("link:", .links),

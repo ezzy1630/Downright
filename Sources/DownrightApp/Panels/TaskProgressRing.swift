@@ -56,6 +56,9 @@ final class TaskProgressRing: NSView {
     var isActive: Bool = false {
         didSet {
             guard isActive != oldValue else { return }
+            // Opening the panel hands it the numbers, so the ring stops
+            // repeating them — see `countText`.
+            updateCount(animated: window != nil)
             applyStyle(animated: true)
         }
     }
@@ -86,11 +89,23 @@ final class TaskProgressRing: NSView {
     )
 
     private let feedbackLayer = CALayer()
+    /// Everything the ring *is*, in one container.
+    ///
+    /// The press used to scale the whole view — plate, hit area and all — so
+    /// the gesture read as "a toolbar button was pushed" with the ring along
+    /// for the ride.  Giving the glyph its own layer lets the circle be the
+    /// thing that answers: it compresses, springs back, and throws the wave
+    /// that the panel then unfolds out of, while the plate underneath stays
+    /// still and keeps doing its one job (saying the pointer is here).
+    private let glyphLayer = CALayer()
     private let discLayer = CAShapeLayer()
     private let trackLayer = CAShapeLayer()
     private let arcLayer = CAShapeLayer()
     private let checkLayer = CAShapeLayer()
     private let countLayer = CATextLayer()
+    /// The sonar ping a successful press emits — the panel's arrival told in
+    /// the ring's own shape, rather than in a grey plate alone.
+    private let pingLayer = CAShapeLayer()
     private var animatedFraction: CGFloat = 0
     private var didCelebrateCompletion = false
     private var trackingArea: NSTrackingArea?
@@ -108,13 +123,21 @@ final class TaskProgressRing: NSView {
 
         feedbackLayer.opacity = 0
         layer?.insertSublayer(feedbackLayer, at: 0)
+        glyphLayer.actions = ["position": NSNull(), "bounds": NSNull()]
+        layer?.addSublayer(glyphLayer)
         for sub in [discLayer, trackLayer, arcLayer, checkLayer] {
             sub.fillColor = NSColor.clear.cgColor
-            layer?.addSublayer(sub)
+            glyphLayer.addSublayer(sub)
         }
+        pingLayer.fillColor = NSColor.clear.cgColor
+        pingLayer.opacity = 0
+        pingLayer.actions = ["position": NSNull(), "bounds": NSNull(), "path": NSNull()]
+        // Outside the glyph container: the wave has to keep travelling while
+        // the ring springs back, not inherit the spring.
+        layer?.addSublayer(pingLayer)
         countLayer.alignmentMode = .center
         countLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
-        layer?.addSublayer(countLayer)
+        glyphLayer.addSublayer(countLayer)
 
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -137,6 +160,7 @@ final class TaskProgressRing: NSView {
         CATransaction.setDisableActions(true)
         feedbackLayer.frame = bounds.insetBy(dx: 1, dy: 1)
         feedbackLayer.cornerRadius = Metrics.plateRadius
+        glyphLayer.frame = bounds
         placeLayers()
         CATransaction.commit()
     }
@@ -148,7 +172,12 @@ final class TaskProgressRing: NSView {
         let square = NSRect(x: centre.x - radius, y: centre.y - radius,
                             width: radius * 2, height: radius * 2)
 
-        for sub in [discLayer, trackLayer, arcLayer, checkLayer] { sub.frame = bounds }
+        for sub in [discLayer, trackLayer, arcLayer, checkLayer] { sub.frame = glyphLayer.bounds }
+
+        // The ping rides the track's circle exactly, so the wave leaves from
+        // the ring the reader pressed, not from some rect near it.
+        pingLayer.frame = bounds
+        pingLayer.lineWidth = Metrics.lineWidth
 
         // The lit disc stops at the inside of the track, so the panel-open
         // state fills the ring's core rather than washing over the ring itself.
@@ -161,6 +190,7 @@ final class TaskProgressRing: NSView {
         track.appendArc(withCenter: centre, radius: radius, startAngle: 0, endAngle: 360)
         trackLayer.path = track.cgPath
         trackLayer.lineWidth = Metrics.lineWidth
+        pingLayer.path = track.cgPath
 
         // Twelve o'clock, clockwise — the direction a reader reads a dial.
         let arc = NSBezierPath()
@@ -216,8 +246,30 @@ final class TaskProgressRing: NSView {
     /// What the reader acts on is what is left, not what is finished.  Three
     /// digits will not fit a 22pt ring, so a very long plan says "99+" and the
     /// tooltip carries the exact figure.
+    /// The numeral inside the ring — and the two states that deliberately have
+    /// none.
+    ///
+    /// An accent ring around a lone digit is macOS's unread-count idiom, and a
+    /// toolbar reader parses it as "one notification" long before "one task
+    /// left".  Two changes keep it saying what it means without giving up the
+    /// figure:
+    ///
+    ///   * **Below ten it draws no numeral.**  A one- or two-task remainder is
+    ///     legible from the arc — an almost-closed ring *is* "nearly done" —
+    ///     and it is exactly the count range a badge would be showing.  Past
+    ///     ten the arc stops resolving individual tasks and the number starts
+    ///     earning its place.
+    ///
+    ///   * **An open panel drops it entirely.**  The panel's own section bar
+    ///     and caption are already reporting the same numbers a few points
+    ///     away, and the same figure in two places is how a calm app stops
+    ///     being one.  The ring falls back to being the lit button that owns
+    ///     the panel.
+    ///
+    /// The count is never lost: `updateAccessibility` and the tooltip both
+    /// spell it out in words, in every state.
     private var countText: String {
-        guard progress.total > 0, !isComplete else { return "" }
+        guard progress.total > 0, !isComplete, !isActive, remaining >= 10 else { return "" }
         return remaining > 99 ? "99+" : "\(remaining)"
     }
 
@@ -339,21 +391,14 @@ final class TaskProgressRing: NSView {
         let pop = Motion.pop(from: 0.9, overshoot: 1.08, duration: Motion.deliberate)
         pop.beginTime = CACurrentMediaTime() + Motion.quick
         pop.fillMode = .backwards
-        layer?.add(pop, forKey: "completion-pop")
+        glyphLayer.add(pop, forKey: "completion-pop")
     }
 
     // MARK: - Interaction
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited])
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -376,10 +421,61 @@ final class TaskProgressRing: NSView {
 
     override func mouseUp(with event: NSEvent) {
         let inside = bounds.contains(convert(event.locationInWindow, from: nil))
-        setPressedFeedback(false)
         if inside {
+            releasePressedFeedbackForActivation()
+            playReleaseMoment()
             onActivate?()
+        } else {
+            setPressedFeedback(false)
         }
+    }
+
+    /// The moment the press hands off to the panel.
+    ///
+    /// This is the ring's half of one gesture: the circle springs back out of
+    /// its compression and throws a wave outward, and the inspector's own
+    /// arrival unfurls downward on the same clock (`InspectorHostView`
+    /// borrows `Motion.deliberate` for exactly this reason).  Read together
+    /// they say the panel came *out of the ring* rather than appearing beside
+    /// it.  The wave runs a shade wider and softer than a plain button's
+    /// acknowledgement, because it has further to carry.
+    ///
+    /// Reduce Motion keeps the state change and drops the moment entirely.
+    private func playReleaseMoment() {
+        guard !styleSheet.reduceMotion, window != nil else {
+            glyphLayer.transform = CATransform3DIdentity
+            return
+        }
+
+        let pop = Motion.pop(from: ToolbarChromePolicy.ringPressedScale, overshoot: 1.12)
+        glyphLayer.removeAnimation(forKey: "press-transform")
+        glyphLayer.add(pop, forKey: "press-transform")
+        glyphLayer.transform = CATransform3DIdentity
+
+        pingLayer.removeAnimation(forKey: "ping-grow")
+        pingLayer.removeAnimation(forKey: "ping-fade")
+        pingLayer.strokeColor = styleSheet.accent.cgColor
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak pingLayer] in
+            pingLayer?.opacity = 0
+            pingLayer?.transform = CATransform3DIdentity
+        }
+        CATransaction.setDisableActions(true)
+        let grow = CABasicAnimation(keyPath: "transform.scale")
+        grow.fromValue = 1
+        grow.toValue = 2.1
+        grow.duration = Motion.deliberate
+        grow.timingFunction = Motion.timing(.decelerate)
+        pingLayer.add(grow, forKey: "ping-grow")
+        pingLayer.transform = CATransform3DMakeScale(2.1, 2.1, 1)
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.5
+        fade.toValue = 0
+        fade.duration = Motion.deliberate
+        fade.timingFunction = Motion.timing(.easeOut)
+        pingLayer.add(fade, forKey: "ping-fade")
+        pingLayer.opacity = 0
+        CATransaction.commit()
     }
 
     // MARK: - Keyboard
@@ -406,6 +502,7 @@ final class TaskProgressRing: NSView {
     override func keyDown(with event: NSEvent) {
         switch KeyBinding.key(for: event) {
         case "space", "return":
+            playReleaseMoment()
             onActivate?()
         default:
             super.keyDown(with: event)
@@ -413,6 +510,7 @@ final class TaskProgressRing: NSView {
     }
 
     override func accessibilityPerformPress() -> Bool {
+        playReleaseMoment()
         onActivate?()
         return true
     }
@@ -428,14 +526,21 @@ final class TaskProgressRing: NSView {
         updatePressTransform(animated: true)
     }
 
+    /// Release inside skips the plain scale-back: the release moment's spring
+    /// owns the transform from here, so the two never fight over one key.
+    private func releasePressedFeedbackForActivation() {
+        guard isPressedForFeedback else { return }
+        isPressedForFeedback = false
+        refreshInteractionFeedback(animated: true)
+    }
+
     private func refreshInteractionFeedback(animated: Bool) {
-        let state: ToolbarChromePolicy.InteractionState = if isPressedForFeedback {
-            .pressed
-        } else if isPointerInside {
-            .hover
-        } else {
-            .idle
-        }
+        // A press does not darken the plate.  Two things moving at once —
+        // a deepening rectangle and a compressing circle — is what made the
+        // gesture read as "button" instead of "ring"; the plate holds its
+        // hover value and the glyph carries the whole press.
+        let state: ToolbarChromePolicy.InteractionState =
+            isPressedForFeedback || isPointerInside ? .hover : .idle
         let targetOpacity = ToolbarChromePolicy.feedbackOpacity(
             for: state,
             increaseContrast: styleSheet.increaseContrast
@@ -459,30 +564,41 @@ final class TaskProgressRing: NSView {
     }
 
     private func updatePressTransform(animated: Bool) {
-        let scale = isPressedForFeedback ? ToolbarChromePolicy.pressedScale : 1
+        let scale = isPressedForFeedback ? ToolbarChromePolicy.ringPressedScale : 1
         let transform = CATransform3DMakeScale(scale, scale, 1)
         guard animated, !styleSheet.reduceMotion else {
-            layer?.transform = transform
+            glyphLayer.transform = transform
             return
         }
         let animation = CABasicAnimation(keyPath: "transform")
-        animation.fromValue = layer?.presentation()?.transform ?? layer?.transform
+        animation.fromValue = glyphLayer.presentation()?.transform ?? glyphLayer.transform
         animation.toValue = transform
         animation.duration = isPressedForFeedback
             ? ToolbarChromePolicy.pressInDuration
             : ToolbarChromePolicy.pressOutDuration
         animation.timingFunction = ToolbarChromePolicy.timingFunction()
-        layer?.add(animation, forKey: "press-transform")
-        layer?.transform = transform
+        glyphLayer.add(animation, forKey: "press-transform")
+        glyphLayer.transform = transform
     }
 
+    /// The count in words, always — this is where the figure lives now that the
+    /// glyph only draws a numeral past ten (`countText`).  A tooltip that said
+    /// "3 of 7 tasks complete" while the ring showed nothing would leave the
+    /// remainder to arithmetic, so it names what is left as well.
     private func updateAccessibility() {
-        let label = progress.total > 0
-            ? "\(progress.done) of \(progress.total) tasks complete"
-            : "No tasks"
-        setAccessibilityLabel(label)
-        setAccessibilityValueDescription(label)
-        toolTip = progress.total > 0 ? "\(label) — Open Tasks" : "No tasks — Open Tasks"
+        guard progress.total > 0 else {
+            setAccessibilityLabel("No tasks")
+            setAccessibilityValueDescription("No tasks")
+            toolTip = "No tasks — Open Tasks"
+            return
+        }
+        let progressLabel = "\(progress.done) of \(progress.total) tasks complete"
+        let tail = isComplete
+            ? "all done"
+            : (remaining == 1 ? "1 left" : "\(remaining) left")
+        setAccessibilityLabel(progressLabel)
+        setAccessibilityValueDescription(progressLabel)
+        toolTip = "\(progressLabel), \(tail) — Open Tasks"
     }
 
     override func viewDidChangeEffectiveAppearance() {

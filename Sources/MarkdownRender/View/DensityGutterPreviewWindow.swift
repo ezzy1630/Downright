@@ -197,14 +197,7 @@ private final class PreviewContentView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect])
     }
 
     override func mouseEntered(with event: NSEvent) { onPointerPresence?(true) }
@@ -227,8 +220,8 @@ private final class PreviewContentView: NSView {
         guard !reduceMotion, let layer else { return }
         let transition = CATransition()
         transition.type = .fade
-        transition.duration = 0.06
-        transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        transition.duration = Motion.previewCrossfade
+        transition.timingFunction = Motion.timing(.easeOut)
         layer.add(transition, forKey: "preview-content-change")
     }
 

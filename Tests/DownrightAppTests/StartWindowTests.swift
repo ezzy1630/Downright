@@ -13,8 +13,10 @@ struct StartWindowTests {
         let window = try #require(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
 
-        #expect(window.minSize == NSSize(width: 680, height: 576))
-        #expect(window.maxSize == NSSize(width: 680, height: 576))
+        // Fixed size, and fixed to the layout's own constant — the assertion is
+        // "this window does not resize", not "this window is 576pt tall".
+        #expect(window.minSize == StartLayout.windowSize)
+        #expect(window.maxSize == StartLayout.windowSize)
         #expect(!window.styleMask.contains(.resizable))
         #expect(window.titleVisibility == .hidden)
         #expect(window.contentView?.accessibilityLabel() == "Downright start window")
@@ -28,7 +30,7 @@ struct StartWindowTests {
     }
 
     @Test
-    func primaryActionsShareACompactHorizontalAxis() throws {
+    func primaryActionsSizeToTheirOwnContent() throws {
         let controller = StartWindowController(recents: [])
         defer { controller.close() }
 
@@ -53,11 +55,63 @@ struct StartWindowTests {
 
         #expect(abs(openCenter.y - createCenter.y) < 0.5)
         #expect(createCenter.x > openCenter.x)
-        #expect(abs(open.frame.width - create.frame.width) < 0.5)
-        // Sized to content, not to a constant: a fixed 164pt clipped
-        // "New Document" mid-word.
-        #expect(open.frame.width >= open.intrinsicContentSize.width)
-        #expect(create.frame.width >= create.intrinsicContentSize.width)
+        // Each button hugs its own content.  A fixed constant clipped "New
+        // Document" mid-word (a fixed 164pt missed it); an equal-width pin
+        // stretched "Open File"'s label-to-shortcut gap into whitespace and
+        // left "New Document" with zero headroom.  Both regressions fail
+        // here: neither button may be stretched beyond its own intrinsic
+        // width, and neither may fall short of it.
+        #expect(abs(open.frame.width - open.intrinsicContentSize.width) < 1)
+        #expect(abs(create.frame.width - create.intrinsicContentSize.width) < 1)
+        // "New Document" is the longer label, so its button is wider; a
+        // re-introduced shared constant would flatten this ordering.
+        #expect(open.frame.width < create.frame.width)
+    }
+
+    @Test
+    func openFileShortcutSitsCloseToItsLabel() throws {
+        let controller = StartWindowController(recents: [])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        let content = try #require(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let open = try #require(
+            buttons(in: content).first { $0.accessibilityLabel() == "Open File" }
+        )
+        let labels = textFields(in: open)
+        let title = try #require(labels.first { $0.stringValue == "Open File" })
+        // Structural, not content-based: the only other text field in the
+        // button is the shortcut, whatever the user has bound it to.
+        let shortcut = try #require(labels.first { $0 !== title })
+
+        // The label and the shortcut share the button's shell as a superview,
+        // so a frame comparison in that space is the real rendered gap.
+        // Matching the two buttons' widths used to stretch this from the
+        // 12pt design constant to ~48pt of dead air.
+        let gap = shortcut.frame.minX - title.frame.maxX
+        #expect(gap >= 10)
+        #expect(gap <= 22)
+    }
+
+    @Test
+    func tourButtonSizesToItsOwnLabel() throws {
+        // The tour carries no shortcut, so its button must close up around its
+        // label — the same content-hugging intrinsic the two action buttons
+        // use, exercised through the no-shortcut path.
+        let controller = StartWindowController(recents: [], guide: .secondary)
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        let content = try #require(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let tour = try #require(
+            buttons(in: content).first { $0.accessibilityLabel() == "Take the Tour" }
+        )
+        #expect(abs(tour.frame.width - tour.intrinsicContentSize.width) < 1)
+        #expect(tour.frame.width > 0)
     }
 
     @Test
@@ -413,5 +467,70 @@ struct StartWindowTests {
         guard let view else { return [] }
         let button = (view as? NSButton).map { [$0] } ?? []
         return button + view.subviews.flatMap { buttons(in: $0) }
+    }
+
+    private func textFields(in view: NSView) -> [NSTextField] {
+        let direct = (view as? NSTextField).map { [$0] } ?? []
+        return direct + view.subviews.flatMap { textFields(in: $0) }
+    }
+}
+
+// MARK: - Recent row content scent
+
+/// The second line of a recent row is the app's argument in miniature: a folder
+/// of agent output is a column of interchangeable names until something says
+/// what each document is actually about.  These pin the cases where saying it
+/// would be noise instead.
+@Suite("Recent row subtitles")
+@MainActor
+struct RecentRowSubtitleTests {
+    private func recent(
+        path: String, name: String, heading: String
+    ) -> RecentDocument {
+        RecentDocument(
+            path: path, displayName: name, firstHeading: heading,
+            lastOpened: Date(timeIntervalSince1970: 1_000_000), wordCount: 100
+        )
+    }
+
+    @Test("The heading leads, with the folder behind it")
+    func headingAndFolder() {
+        let row = recent(path: "/w/watchtest/notes.md", name: "notes", heading: "Agent output")
+        #expect(RecentRowCopy.subtitle(for: row, title: "notes") == "Agent output  ·  watchtest")
+    }
+
+    /// `README` in `Downright/` whose first heading is "Downright" would read
+    /// "Downright · Downright".
+    @Test("A heading that matches the folder is said once")
+    func headingMatchingFolderIsNotRepeated() {
+        let row = recent(path: "/w/Downright/README.md", name: "README", heading: "Downright")
+        #expect(RecentRowCopy.subtitle(for: row, title: "README") == "Downright")
+    }
+
+    @Test("A heading that just restates the title gives way to the folder")
+    func headingEchoingTitleFallsBackToFolder() {
+        let row = recent(path: "/w/plans/Release Plan.md", name: "Release Plan", heading: "Release plan")
+        #expect(RecentRowCopy.subtitle(for: row, title: "Release Plan") == "plans")
+    }
+
+    @Test("No heading leaves the folder")
+    func noHeadingFallsBackToFolder() {
+        let row = recent(path: "/w/scratchpad/unicode.md", name: "unicode", heading: "")
+        #expect(RecentRowCopy.subtitle(for: row, title: "unicode") == "scratchpad")
+    }
+
+    @Test("Neither a heading nor a folder leaves the line empty rather than wrong")
+    func nothingToSay() {
+        let row = recent(path: "/notes.md", name: "notes", heading: "")
+        #expect(RecentRowCopy.subtitle(for: row, title: "notes") == "")
+    }
+
+    /// Case and punctuation must not make two spellings of one phrase look like
+    /// two different facts.
+    @Test("Echo detection folds case and punctuation")
+    func echoFolding() {
+        #expect(RecentRowCopy.echoes("Release Plan", of: "release-plan"))
+        #expect(RecentRowCopy.echoes("Setup", of: "Setup Guide"))
+        #expect(!RecentRowCopy.echoes("Agent output", of: "notes"))
     }
 }

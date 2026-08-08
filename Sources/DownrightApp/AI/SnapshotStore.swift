@@ -241,29 +241,6 @@ final class SnapshotStore {
         }
     }
 
-    /// How many versions of `url` a prune has dropped since the document last
-    /// acknowledged them.  Non-zero means the timeline is not the whole story.
-    func evictedVersionCount(for url: URL) -> Int {
-        let key = Self.documentKey(for: url)
-        pendingLock.lock()
-        defer { pendingLock.unlock() }
-        return evictedVersionsByDocument[key] ?? 0
-    }
-
-    func acknowledgeEvictions(for url: URL) {
-        let key = Self.documentKey(for: url)
-        pendingLock.lock()
-        defer { pendingLock.unlock() }
-        evictedVersionsByDocument.removeValue(forKey: key)
-    }
-
-    /// The most recent prune's outcome, for the preferences pane.
-    func lastPruneReport() -> PruneReport {
-        pendingLock.lock()
-        defer { pendingLock.unlock() }
-        return lastReport
-    }
-
     /// This cache only coalesces writes. Evicting an old entry is safe because
     /// the next write reloads its compact index from disk.
     private func storeState(_ state: DocumentState, forKey key: String) {

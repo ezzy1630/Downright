@@ -256,7 +256,22 @@ struct CommandPaletteModel {
             )
         }
 
-        return ordered(candidates, recents: recentCommands)
+        let ranked: [QuickOpenResult] = ordered(candidates, recents: recentCommands)
+        guard parsed.terms.isEmpty, parsed.filter == .all else { return ranked }
+        let recentRank = Dictionary(
+            uniqueKeysWithValues: recentCommands.enumerated().map {
+                ("command:\($0.element.rawValue)", $0.offset)
+            }
+        )
+        return ranked.sorted(by: { (lhs: QuickOpenResult, rhs: QuickOpenResult) -> Bool in
+            let leftRecent = recentRank[lhs.id] ?? Int.max
+            let rightRecent = recentRank[rhs.id] ?? Int.max
+            if leftRecent != rightRecent { return leftRecent < rightRecent }
+            let leftKind = QuickOpenProviderKind.allCases.firstIndex(of: lhs.kind) ?? Int.max
+            let rightKind = QuickOpenProviderKind.allCases.firstIndex(of: rhs.kind) ?? Int.max
+            if leftKind != rightKind { return leftKind < rightKind }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        })
     }
 
     var selectedResult: QuickOpenResult? {
@@ -300,9 +315,6 @@ struct CommandPaletteModel {
 private enum CommandPaletteSynonyms {
     static let values: [Command: [String]] = [
         .sourceMode: ["markdown", "raw", "editor", "edit source", "full source"],
-        .outlineQuickOpen: ["headings", "jump", "go to", "contents", "outline"],
-        .toggleSidebar: ["files", "documents", "siblings", "navigator"],
-        .outlinePanel: ["headings", "contents", "navigation"],
         .taskPanel: ["tasks", "todo", "checkbox", "checklist"],
         .toggleTaskAtCaret: ["check", "tick", "checkbox", "done"],
         .frontMatterEditor: ["metadata", "yaml", "toml", "properties"],

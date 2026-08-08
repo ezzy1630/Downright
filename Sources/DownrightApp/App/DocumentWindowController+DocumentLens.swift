@@ -70,7 +70,7 @@ extension DocumentWindowController: DocumentLensViewDelegate {
     func documentLens(_ view: DocumentLensView, didSelect range: NSRange, item: DocumentLensItem) {
         guard range.location >= 0, range.upperBound <= markdownDocument.storage.length else { return }
         containerTextView.setSourceSelectedRanges([range])
-        containerTextView.scroll(toOffset: range.location, position: .center, animated: true)
+        containerTextView.scroll(toOffset: range.location, position: .visible, animated: true)
         window?.makeFirstResponder(containerTextView)
     }
 

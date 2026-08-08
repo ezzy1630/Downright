@@ -43,8 +43,6 @@ extension DocumentWindowController {
                 return updated
             }
         }
-        outlinePanel?.currentHeadingIndex = current
-        navigationPanel?.currentHeadingIndex = current
     }
 
     // MARK: - Activity cue (§12)
@@ -67,7 +65,11 @@ extension DocumentWindowController {
         guard let url else { return }
         let present = {
             guard let image = NSImage(contentsOf: url) else { return }
-            LightboxWindow(image: image, caption: caption).present(over: window)
+            LightboxWindow(
+                image: image,
+                caption: caption,
+                reduceMotion: self.activeStyleSheet.reduceMotion
+            ).present(over: window)
         }
         if url.isFileURL {
             authorizeLocalEffect(.readLocalAsset, target: url, action: present)
@@ -243,15 +245,24 @@ enum CodeFileExtensions {
 //
 // The toolbar has three stable zones: document identity at the leading edge,
 // Document/Source at the optical centre, and a compact trailing cluster —
-// activity, task progress, overflow — that never nudges the centre rail.
+// activity, the panels a reader reaches for, task progress, overflow — that
+// never nudges the centre rail.
+//
+// Find and Outline are in that cluster rather than inside `···` on purpose.
+// The overflow was the only interactive control on the trailing edge, which
+// put every panel in the app one unlabelled glyph and one menu away in a
+// window with room for three more buttons.  `···` keeps what a reader reaches
+// for occasionally; the two panels they reach for constantly are out where
+// they can be seen and hit.
 
-extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
+extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbarItemValidation {
     private static let identityItem = NSToolbarItem.Identifier("document-identity")
     static let modeItem = NSToolbarItem.Identifier("presentation-mode")
     private static let overflowItem = NSToolbarItem.Identifier("overflow")
     private static let activityItem = NSToolbarItem.Identifier("activity")
     private static let tasksItem = NSToolbarItem.Identifier("tasks-progress")
     private static let updateItem = NSToolbarItem.Identifier("update-pill")
+    private static let findItem = NSToolbarItem.Identifier("find")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
@@ -260,6 +271,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             Self.modeItem,
             .flexibleSpace,
             Self.activityItem,
+            Self.findItem,
             Self.tasksItem,
             Self.updateItem,
             Self.overflowItem,
@@ -277,7 +289,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         switch identifier {
         case Self.identityItem:
             guard let window else { return nil }
-            window.titleVisibility = .hidden
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = ToolbarDocumentIdentityView(window: window)
             item.isBordered = false
@@ -297,6 +308,27 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.label = "Document / Source"
             item.toolTip = "Switch between rendered Document and Source Focus"
             item.visibilityPriority = .high
+            wireToolbarAction(
+                item,
+                title: "Toggle Document / Source",
+                action: #selector(toolbarToggleSourceFocus(_:))
+            )
+            return item
+
+        case Self.findItem:
+            let button = ToolbarActionButton(
+                symbol: "magnifyingglass", label: "Find",
+                help: "Find in this document",
+                target: self, action: #selector(toolbarShowFind(_:))
+            )
+            button.styleSheet = activeStyleSheet
+            toolbarFindButton = button
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = button
+            item.isBordered = false
+            item.label = "Find"
+            item.visibilityPriority = .high
+            wireToolbarAction(item, title: "Find", action: #selector(toolbarShowFind(_:)))
             return item
 
         case Self.overflowItem:
@@ -306,6 +338,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.label = "More"
             item.toolTip = "More document actions"
             item.visibilityPriority = .high
+            item.menuFormRepresentation = NSMenuItem(
+                title: "More", action: nil, keyEquivalent: ""
+            )
             return item
 
         case Self.activityItem:
@@ -314,6 +349,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.isBordered = false
             item.label = "Working"
             item.visibilityPriority = .low
+            item.toolTip = "Document activity"
             activityIndicator.onVisibilityChange = { [weak self] _ in
                 self?.window?.toolbar?.validateVisibleItems()
             }
@@ -329,6 +365,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             // must not be the first item the toolbar drops, and its own
             // tooltip is richer than a static one here.
             item.visibilityPriority = .high
+            wireToolbarAction(item, title: "Tasks", action: #selector(toolbarShowTasks(_:)))
             progressRing.onActivate = { [weak self] in
                 self?.toolbarShowTasks(nil)
             }
@@ -345,7 +382,12 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
             item.isBordered = false
             item.label = "Updates"
             item.toolTip = "Software updates"
-            item.visibilityPriority = .high
+            item.visibilityPriority = .low
+            wireToolbarAction(
+                item,
+                title: "Check for Updates…",
+                action: #selector(toolbarCheckForUpdates(_:))
+            )
             return item
 
         default:
@@ -353,9 +395,40 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         }
     }
 
+    private func wireToolbarAction(
+        _ item: NSToolbarItem,
+        title: String,
+        action: Selector
+    ) {
+        item.target = self
+        item.action = action
+        let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        menuItem.target = self
+        item.menuFormRepresentation = menuItem
+    }
+
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        switch item.itemIdentifier {
+        case Self.modeItem, Self.findItem, Self.tasksItem, Self.overflowItem:
+            return true
+        case Self.updateItem:
+            return Command.checkForUpdates.isEnabled(in: commandContext)
+        default:
+            return true
+        }
+    }
+
     private func toolbarModeChanged(_ selectedSegment: Int) {
         let showSource = selectedSegment == 1
         for pane in documentPanes {
+            pane.wantsLayer = true
+            if !activeStyleSheet.reduceMotion {
+                let transition = CATransition()
+                transition.type = .fade
+                transition.duration = Motion.quick
+                transition.timingFunction = Motion.timing(.decelerate)
+                pane.layer?.add(transition, forKey: "document-source-transition")
+            }
             if showSource {
                 pane.textView.focusEntireSource()
             } else {
@@ -373,13 +446,23 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
     }
 
     @objc private func toolbarShowTasks(_ sender: Any?) {
-        if !navigationPinned { closeNavigationOverlay() }
         toggleTaskPanel()
     }
 
+    @objc private func toolbarToggleSourceFocus(_ sender: Any?) {
+        toolbarModeChanged(primaryContainer.textView.sourceFocus == .none ? 1 : 0)
+    }
+
     @objc private func toolbarShowHistory(_ sender: Any?) {
-        if !navigationPinned { closeNavigationOverlay() }
         showHistoryInspector()
+    }
+
+    @objc private func toolbarShowFind(_ sender: Any?) {
+        perform(.find)
+    }
+
+    @objc private func toolbarCheckForUpdates(_ sender: Any?) {
+        perform(.checkForUpdates)
     }
 
     private func makeOverflowMenu() -> NSMenu {
@@ -450,9 +533,20 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
 
     func refreshToolbarSelectionState() {
         refreshSourceFocusToolbar()
+        refreshToolbarPanelButtons()
+    }
+
+    /// Keeps the promoted panel buttons lit in step with the panels they open,
+    /// the same way the task ring lights when its own panel is showing — a
+    /// control that opens a panel and then says nothing about it is how a
+    /// toolbar stops being trustworthy.
+    func refreshToolbarPanelButtons() {
+        toolbarFindButton?.styleSheet = activeStyleSheet
+        toolbarFindButton?.isOn = findBar != nil
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        MainMenu.refreshKeyEquivalents(in: menu)
         for item in menu.items {
             switch item.title {
             case "Tasks": item.state = (inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed) ? .on : .off
@@ -472,12 +566,13 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate {
         }
     }
 
-    private func commandState(_ command: Command) -> Bool {
+    func commandState(_ command: Command) -> Bool {
         switch command {
         case .focusMode: return isFocusModeEnabled
         case .splitView: return splitViewContainer != nil
         case .pinWindow: return isWindowPinned
         case .typewriterScrolling: return Preferences.shared.values.typewriterScrolling
+        case .statusBar: return Preferences.shared.values.showStatusBar
         case .sourceMode:
             return primaryContainer.textView.sourceFocus != .none
                 || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false)

@@ -160,6 +160,23 @@ public enum Metrics {
     /// structural zoom level 4 (§5.2), where the first sentence of each section
     /// is what survives.
     public static func firstSentenceRange(in doc: ParsedDocument, within range: NSRange) -> NSRange? {
+        firstSentenceRange(
+            in: doc, within: range,
+            text: doc.text as NSString,
+            tokenizer: NLTokenizer(unit: .sentence)
+        )
+    }
+
+    /// The same lookup with the two per-call costs hoisted out.  Structural zoom
+    /// asks this question once per heading, and both bridging `doc.text` and
+    /// building an `NLTokenizer` are expensive enough that paying them per call
+    /// made a level-4 plan quadratic in document size (§5.2).
+    static func firstSentenceRange(
+        in doc: ParsedDocument,
+        within range: NSRange,
+        text: NSString,
+        tokenizer: NLTokenizer
+    ) -> NSRange? {
         guard range.length > 0, range.upperBound <= doc.length else { return nil }
         // Only a leaf text block can contribute a sentence; a code block in the
         // way must not be mistaken for one.
@@ -171,8 +188,7 @@ public enum Metrics {
         )
         guard bounds.length > 0 else { return nil }
 
-        let source = (doc.text as NSString).substring(with: bounds)
-        let tokenizer = NLTokenizer(unit: .sentence)
+        let source = text.substring(with: bounds)
         tokenizer.string = source
         var result: NSRange?
         tokenizer.enumerateTokens(in: source.startIndex..<source.endIndex) { tokenRange, _ in

@@ -53,9 +53,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         titleLabel.font = PanelFont.header
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -294,6 +292,7 @@ extension AssetDoctorView: NSTableViewDataSource, NSTableViewDelegate {
 /// menu (pointer) and behind one quiet glyph that appears on hover, so every
 /// action still has a pointer path and a keyboard path (§11.3).
 private final class AssetDiagnosticRowView: NSView {
+    private var reduceMotion = false
     private let severityLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
     private let lineLabel = NSTextField(labelWithString: "")
@@ -365,6 +364,7 @@ private final class AssetDiagnosticRowView: NSView {
         onRelink: @escaping () -> Void,
         onRename: @escaping () -> Void
     ) {
+        reduceMotion = styleSheet.reduceMotion
         severityLabel.stringValue = diagnostic.severity == .error ? "!" : "•"
         severityLabel.textColor = switch diagnostic.severity {
         case .error: styleSheet.calloutColor(.danger)
@@ -416,24 +416,15 @@ private final class AssetDiagnosticRowView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect])
     }
 
     override func mouseEntered(with event: NSEvent) { setActionsVisible(true) }
     override func mouseExited(with event: NSEvent) { setActionsVisible(false) }
 
     private func setActionsVisible(_ visible: Bool) {
-        // This row view is not given a StyleSheet, so it cannot see a Reader
-        // Profile's motion override — the workspace flag is the best it has.
         PanelAnimation.run(
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            reduceMotion: reduceMotion,
             duration: Motion.quick
         ) { _ in
             self.actionsButton.animator().alphaValue = visible ? 1 : 0

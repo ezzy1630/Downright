@@ -359,26 +359,27 @@ spec.
 the drawing, the 14pt band-soup track, and `DensityGutterPreviewWindow`'s
 appearance.
 
-### 2.4 Sidebar — **Replace** (hybrid model)
+### 2.4 Sidebar — **Superseded** (the leading sidebar was dropped, not built)
 
-`NSSplitViewController` with three items:
+The plan here was a three-item `NSSplitViewController` whose leading item held
+an `NSOutlineView` with **Nearby** (siblings) and **Outline** (headings)
+sections, on the argument that the outline should keep living somewhere that
+can drag-to-reorder sections (`Restructure.moveSection`) where the rail (§2.3)
+cannot.
 
-**Leading — sidebar** (`.sidebar` behaviour, collapsible, min 200 / max 380,
-remembered width, `toggleSidebar` in the toolbar). An `NSOutlineView` with
-`.sourceList` style and two sections:
+That argument did not survive the build. The rail already expands into the
+document's outline on hover and the command palette already opens headings and
+files through its Quick Open providers, so a third list of the same two things
+— behind a toolbar button, two View items and a Navigate item that all ran the
+same code — was the document's structure told three times. The window is
+**document plus inspector**, with no leading item; `⌘⇧K` is the one way in.
+`NavigationPanelView`, `OutlinePanelView` and `SiblingSidebarView` are deleted,
+along with the `.outlinePanel` / `.toggleSidebar` / `.outlineQuickOpen`
+commands and the "Keep the sibling sidebar open" preference. Sibling files are
+reached from Quick Open and the Workspace inspector; section reordering stays a
+source edit.
 
-- **Nearby** — sibling markdown files from the existing `SiblingScanner`, with
-  modified-time and change indicators.
-- **Outline** — headings. This is where the outline *keeps* living, because its
-  unique value is drag-to-reorder-sections (`Restructure.moveSection`), which a
-  hover overlay cannot do. The rail (§2.3) covers read-only navigation; the
-  sidebar covers restructuring.
-
-Wire the two dead properties: **`OutlinePanelView.currentHeadingIndex` and
-`.foldedIndices` are never assigned anywhere in the app** — the "you are here"
-accent bar and the fold chevrons are written but permanently inert. Set
-`currentHeadingIndex` from `markdownTextViewDidScroll`, `foldedIndices` from
-`textView.foldedHeadingSlugs`.
+What did get built, of the two items that remain:
 
 **Centre — document.**
 
@@ -499,8 +500,8 @@ one-liners and should land before any redesign work starts.
 | 7 | Callout icon overlaps its own text | `CalloutFragment.swift:44` |
 | 8 | `scrollView.backgroundColor` not refreshed on theme change | `MarkdownContainerView.swift:66` |
 | 9 | `[[a\|b]]` renders `a\|b` instead of `b` | `Inlines.swift:279` |
-| 10 | `OutlinePanelView.currentHeadingIndex` never assigned | app-wide |
-| 11 | `OutlinePanelView.foldedIndices` never assigned | app-wide |
+| 10 | `OutlinePanelView.currentHeadingIndex` never assigned | Moot: `OutlinePanelView` deleted with §2.4 |
+| 11 | `OutlinePanelView.foldedIndices` never assigned | Moot: `OutlinePanelView` deleted with §2.4 |
 | 12 | Progress ring visible with zero tasks | `DocumentWindowController+Actions.swift:226` |
 | 13 | Panel width animation ignores Reduce Motion (raw `.animator()`) | `DocumentWindowController.swift:459` |
 | 14 | `toggleSplitView` teardown rebuilds the root view and toolbar | `DocumentWindowController.swift:624` |
@@ -531,8 +532,8 @@ This is the largest single visual jump for the effort. New golden-image tests in
 callouts, §1.7 inline, §1.8 front matter, §1.9 images/rules, §1.10 page.
 
 **Phase D — Chrome (≈2 weeks).** §2.1 toolbar, §2.4 `NSSplitViewController`
-sidebar and inspector, §2.2 floating breadcrumb, §2.5 find bar. Item 14 dies
-here with the old pane code.
+inspector (the leading sidebar was dropped instead — see §2.4), §2.2 floating
+breadcrumb, §2.5 find bar. Item 14 dies here with the old pane code.
 
 **Phase E — The rail (≈1 week).** §2.3, both states, plus keyboard equivalent
 and retiring `OutlineQuickOpenPanel`.

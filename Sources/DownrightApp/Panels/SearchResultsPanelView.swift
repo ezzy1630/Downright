@@ -62,9 +62,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         titleLabel.font = PanelFont.header
         titleLabel.translatesAutoresizingMaskIntoConstraints = false

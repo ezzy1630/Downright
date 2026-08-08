@@ -79,9 +79,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         titleLabel.font = PanelFont.header
         titleLabel.translatesAutoresizingMaskIntoConstraints = false

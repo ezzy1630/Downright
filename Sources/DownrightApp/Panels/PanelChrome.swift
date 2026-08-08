@@ -42,7 +42,6 @@ enum PanelMetrics {
 
     /// Thin enough to replace a scrollbar rather than become a sidebar (§8.6).
     static let gutterWidth: CGFloat = 14
-    static let headerHeight: CGFloat = 32
     static let barHeight: CGFloat = 32
     static let reviewBarHeight: CGFloat = 30
     static let inset: CGFloat = 10
@@ -83,12 +82,14 @@ protocol PanelSurface: NSView {
 /// before/after) borrows the theme's faces.  Colour always comes from the
 /// `StyleSheet`.
 enum PanelFont {
-    static let row = NSFont.systemFont(ofSize: 12.5)
-    static let rowEmphasised = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
-    static let secondary = NSFont.systemFont(ofSize: 11.5)
-    static let header = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    static let group = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-    static let title = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private static var adjustment: CGFloat { Preferences.shared.values.textSizeAdjustment }
+    private static func size(_ base: CGFloat) -> CGFloat { max(11, min(22, base + adjustment)) }
+    static var row: NSFont { .systemFont(ofSize: size(12.5)) }
+    static var rowEmphasised: NSFont { .systemFont(ofSize: size(12.5), weight: .semibold) }
+    static var secondary: NSFont { .systemFont(ofSize: size(11.5)) }
+    static var header: NSFont { .systemFont(ofSize: size(12), weight: .semibold) }
+    static var group: NSFont { .systemFont(ofSize: size(11.5), weight: .semibold) }
+    static var title: NSFont { .systemFont(ofSize: size(13), weight: .semibold) }
 }
 
 // MARK: - Motion
@@ -166,8 +167,29 @@ final class PanelBackdrop: NSView {
     /// panels that must read as a distinct card against the page rather than
     /// chrome that dissolves into it (§11.4).
     var usesSurfaceFill = false { didSet { applyStyle() } }
+    /// When true, the material blends with the window's own content so the
+    /// document ghosts through the chrome — the glassy read the inspector and
+    /// other docked panels want (§11.4).  When false the material samples the
+    /// desktop instead, which is what a transient popover wants.
+    var blendsWithinWindow = false {
+        didSet {
+            effect.blendingMode = blendsWithinWindow ? .withinWindow : .behindWindow
+            applyStyle()
+        }
+    }
+    /// Darkens or lightens the glass on top of the material so a panel stays
+    /// legible over whatever is behind it.  0 is the raw material.
+    var veilAlpha: CGFloat = 0 {
+        didSet {
+            veilLayer.opacity = Float(min(max(veilAlpha, 0), 1))
+            applyStyle()
+        }
+    }
 
     private let effect = NSVisualEffectView()
+    /// Drawn between the material and the content: a themed wash that keeps
+    /// text readable without flattening the glass into an opaque slab.
+    private let veilLayer = CALayer()
 
     init(
         styleSheet: StyleSheet,
@@ -176,13 +198,25 @@ final class PanelBackdrop: NSView {
     ) {
         self.styleSheet = styleSheet
         super.init(frame: .zero)
+        wantsLayer = true
         effect.material = material
         effect.blendingMode = blendingMode
         effect.state = .followsWindowActiveState
         effect.autoresizingMask = [.width, .height]
         effect.frame = bounds
         addSubview(effect)
+        veilLayer.actions = [
+            "position": NSNull(), "bounds": NSNull(), "opacity": NSNull(),
+            "backgroundColor": NSNull(),
+        ]
+        layer?.addSublayer(veilLayer)
+        veilLayer.opacity = Float(min(max(veilAlpha, 0), 1))
         applyStyle()
+    }
+
+    override func layout() {
+        super.layout()
+        veilLayer.frame = bounds
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -193,6 +227,10 @@ final class PanelBackdrop: NSView {
 
     private func applyStyle() {
         effect.isHidden = prefersOpaque || usesSurfaceFill
+        // The veil only exists to calm the glass; over an opaque fill there is
+        // nothing to ghost, so it would only muddy the colour.
+        veilLayer.isHidden = effect.isHidden
+        veilLayer.backgroundColor = styleSheet.background.cgColor
         needsDisplay = true
     }
 
@@ -217,6 +255,9 @@ final class PanelTableView: NSTableView {
     var onActivate: (() -> Void)?
     /// Handed the normalised key name; return true to swallow the event.
     var onKeyDown: ((String) -> Bool)?
+    /// Handed the clicked row (or -1 for the background); return the menu to
+    /// show, or nil to fall back to the view's own.
+    var onMenu: ((Int) -> NSMenu?)?
 
     override func keyDown(with event: NSEvent) {
         guard let key = KeyBinding.key(for: event) else {
@@ -229,6 +270,11 @@ final class PanelTableView: NSTableView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        return onMenu?(row)
     }
 }
 
@@ -293,14 +339,6 @@ enum PanelList {
 final class PanelGroupRowView: NSView {
     private let label = NSTextField(labelWithString: "")
     private var leading: NSLayoutConstraint!
-
-    /// A list whose rows start at a column of their own — the task panel's
-    /// checkbox rail — needs its group headers on that column too, or the
-    /// section name floats two points off the list it names.
-    var leadingInset: CGFloat {
-        get { leading.constant }
-        set { leading.constant = newValue }
-    }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -824,14 +862,10 @@ final class PanelSegmentedControl: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let existing = trackingArea { removeTrackingArea(existing) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
-            owner: self
+        refreshTrackingArea(
+            &trackingArea,
+            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited]
         )
-        addTrackingArea(area)
-        trackingArea = area
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -996,6 +1030,9 @@ final class PanelProgressBar: NSView {
         let width = bounds.width * fraction
         let minimum = fraction > 0 ? bounds.height : 0
         let target = NSRect(x: 0, y: 0, width: max(minimum, width), height: bounds.height)
+        // A 0-wide layer with a capsule corner radius still rasterises its two
+        // semicircles as an hourglass sliver — nothing done must draw nothing.
+        fillLayer.isHidden = target.width == 0
         guard animated, !styleSheet.reduceMotion, window != nil else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -1052,7 +1089,6 @@ final class PanelCheckbox: NSView {
         /// Panel type is 12.5pt against the document's 16pt, so the panel box
         /// is the document box at the same optical weight, not the same points.
         static let panelSide: CGFloat = 16
-        static let documentSide = RenderMetrics.taskBoxSide
         /// The pointer target around the drawn box.  A 16pt square is a
         /// precision task at the end of a mouse; the document gives the same
         /// control 28pt and the panel row is only 30pt tall, so the box claims
@@ -1231,21 +1267,28 @@ final class PanelCheckbox: NSView {
 
     // MARK: - Visual state
 
-    private var openBorderColor: NSColor {
-        // The same token the document strokes an unticked box with, so an open
-        // task weighs the same in both places.
-        let contrast = styleSheet.increaseContrast
-        if isHovering { return styleSheet.accent.panelAlpha(contrast ? 1 : 0.85, increaseContrast: false) }
-        return contrast ? styleSheet.textSecondary : styleSheet.textFaint
+    /// The box's outline: the document ornament's own ring colour at rest, warmed
+    /// toward the accent while the pointer is on an open box so the row answers
+    /// the hover somewhere other than its lift.
+    private var ringColor: NSColor {
+        guard !(isHovering && !isFilled) else {
+            let contrast = styleSheet.increaseContrast
+            return styleSheet.accent.panelAlpha(contrast ? 1 : 0.85, increaseContrast: false)
+        }
+        return styleSheet.taskRingColor(checked: isFilled)
     }
 
     private func applyVisual(animated: Bool) {
-        let accent = styleSheet.accent
         let side = min(bounds.width, bounds.height)
-        let targetBorder = isFilled ? accent : openBorderColor
+        // §8.5: this is the document's checkbox at panel scale, so its paint
+        // comes from the same place its geometry does.  It used to draw a solid
+        // accent slab with a knocked-out tick; when the document's ornament was
+        // restyled to a tinted field, a ring and an accent tick, the two states
+        // of one control stopped looking like each other.
+        let targetBorder = ringColor
         // Hover on an open box warms the border and lays down the faintest
-        // wash.  A filled box has no room for either, so both states share the
-        // one hover both can carry: the box lifts (see `updateTransform`).
+        // wash.  A filled box carries its own field, so hover shows there as the
+        // lift both states share (see `updateTransform`).
         let targetFillAlpha: Float = isFilled ? 1 : (isHovering ? 0.09 : 0)
         let checkEnd: CGFloat = state == .on ? 1 : 0
 
@@ -1255,9 +1298,9 @@ final class PanelCheckbox: NSView {
         // its stroke and the fill beneath it do, explicitly, below.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        dashLayer.strokeColor = styleSheet.onAccent.cgColor
-        checkLayer.strokeColor = styleSheet.onAccent.cgColor
-        fillLayer.backgroundColor = accent.cgColor
+        dashLayer.strokeColor = styleSheet.taskTickColor.cgColor
+        checkLayer.strokeColor = styleSheet.taskTickColor.cgColor
+        fillLayer.backgroundColor = styleSheet.taskFieldColor.cgColor
         CATransaction.commit()
 
         guard animated, !styleSheet.reduceMotion, window != nil else {
@@ -1682,13 +1725,25 @@ extension NSView {
         return nil
     }
 
-    func pinEdges(to other: NSView, inset: CGFloat = 0) {
-        translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            leadingAnchor.constraint(equalTo: other.leadingAnchor, constant: inset),
-            trailingAnchor.constraint(equalTo: other.trailingAnchor, constant: -inset),
-            topAnchor.constraint(equalTo: other.topAnchor, constant: inset),
-            bottomAnchor.constraint(equalTo: other.bottomAnchor, constant: -inset),
-        ])
+    /// Installs a panel's backdrop as its bottom-most subview, sized to follow
+    /// the panel.  Autoresizing rather than constraints: the backdrop predates
+    /// every other subview and must never participate in their layout pass.
+    func installBackdrop(_ backdrop: PanelBackdrop) {
+        backdrop.autoresizingMask = [.width, .height]
+        backdrop.frame = bounds
+        addSubview(backdrop)
+    }
+
+    /// Swaps `area` for a fresh one covering the current bounds.  `bounds` moves
+    /// on every resize and a stale area keeps reporting the old rect, so every
+    /// hovering view rebuilds one the same way — once, here.
+    func refreshTrackingArea(
+        _ area: inout NSTrackingArea?,
+        options: NSTrackingArea.Options
+    ) {
+        if let area { removeTrackingArea(area) }
+        let replacement = NSTrackingArea(rect: bounds, options: options, owner: self)
+        addTrackingArea(replacement)
+        area = replacement
     }
 }

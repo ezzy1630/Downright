@@ -7,6 +7,7 @@ private var speechSourceRangeKey: UInt8 = 0
 
 @MainActor
 extension DocumentWindowController: SpeechCoordinatorDelegate {
+    var isSpeakingDocument: Bool { speechCoordinator.isSpeaking }
     private var speechCoordinator: SpeechCoordinator {
         if let value = objc_getAssociatedObject(self, &speechCoordinatorKey) as? SpeechCoordinator {
             return value

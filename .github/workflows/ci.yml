@@ -9,13 +9,19 @@ permissions:
 
 jobs:
   swift:
-    runs-on: macos-14
+    runs-on: macos-15
     # check.sh with RUN_DRBENCH=1 builds debug + runs all suites + builds
     # drbench in release and enforces the §12 budgets; that is three full
     # build graphs, so leave generous headroom.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # The runner's default developer directory is not guaranteed to provide
+      # the Swift 6.0 tools this package's manifest declares, and when it does
+      # not, every step fails with a message that names neither the selected
+      # Xcode nor the alternatives.  Choose and verify the toolchain first.
+      - name: Select and verify the Swift toolchain
+        run: ./Scripts/select-toolchain.sh
       # The §12 performance budget is the product promise; RUN_DRBENCH makes
       # check.sh treat it as a gate (release numbers, exit non-zero on a miss).
       # The separate release `swift build` step is folded into this run.

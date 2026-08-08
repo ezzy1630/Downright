@@ -69,6 +69,20 @@ echo "==> Embedding down CLI"
 swift build -c release --scratch-path "$SWIFTPM_SCRATCH" --product down
 cp "$ROOT/$SWIFTPM_SCRATCH/release/down" "$APP/Contents/MacOS/down"
 
+echo "==> Flattening resource bundles"
+# Xcode emits SwiftPM resource bundles as deep bundles (Contents/Resources/…),
+# SwiftPM emits them flat, and flat is the layout everything ships with: the
+# resolvers probe raw paths (MathFontBundle.isAvailable) and verify-bundle.sh
+# asserts the flat files.  Lift Contents/Resources to the bundle root wherever
+# a nested bundle appears — host and .appex alike — so both pipelines ship one
+# layout.  Runs before signing: nothing signed yet may be mutated afterwards.
+while IFS= read -r bundle; do
+    deep="$bundle/Contents/Resources"
+    [ -d "$deep" ] || continue
+    ditto "$deep" "$bundle"
+    rm -rf "$bundle/Contents"
+done < <(find "$APP" -type d -name "*.bundle")
+
 # Sign nested Sparkle helpers/frameworks and the appex bundles individually,
 # then the app — never codesign --deep for the production path.
 if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then

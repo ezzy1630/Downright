@@ -249,7 +249,12 @@ private final class UpdatePanelFooter: NSView {
             let button = UpdatePanelButton(title: title, kind: kind) { action() }
             button.setAccessibilityLabel(title)
             buttons.append(button)
-            buttonsStack.addArrangedSubview(button)
+            if kind == .secondary,
+               buttonsStack.arrangedSubviews.contains(where: { ($0 as? UpdatePanelButton)?.isPrimary == true }) {
+                buttonsStack.insertArrangedSubview(button, at: 0)
+            } else {
+                buttonsStack.addArrangedSubview(button)
+            }
         }
 
         switch coordinator.phase {
@@ -412,7 +417,7 @@ private final class UpdateNotesView: NSView {
         super.init(frame: .zero)
 
         var metadata: UpdateMetadata?
-        var notesState = coordinator.releaseNotes
+        let notesState = coordinator.releaseNotes
         switch coordinator.phase {
         case .available(let candidate, _), .informational(let candidate):
             metadata = candidate
@@ -735,9 +740,10 @@ extension UpdatePanelContent {
 
 @MainActor
 final class UpdatePanelButton: NSButton {
-    enum Kind { case primary, secondary }
+    enum Kind: Equatable { case primary, secondary }
 
     private let kind: Kind
+    var isPrimary: Bool { kind == .primary }
     private var sheet: StyleSheet
     /// `target` is weak; without a strong reference the action object would
     /// deallocate the moment the button is created.

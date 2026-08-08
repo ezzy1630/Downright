@@ -77,9 +77,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         )
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
         titleLabel.font = PanelFont.header
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -161,12 +159,6 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     func setSearchTextForTesting(_ text: String) {
         searchField.stringValue = text
         searchChanged(searchField)
-    }
-
-    func selectRowForTesting(_ row: Int) {
-        guard row >= 0, row < rows.count else { return }
-        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        activateSelection()
     }
 
     private func syncTab() {

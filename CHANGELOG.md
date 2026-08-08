@@ -12,7 +12,110 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
-### Distribution & release engineering
+### Added
+
+- **First-run setup panel.** Downright now installs itself. On first launch it
+  offers to become the default Markdown app and to install the `down` command
+  line tool, and — with no decision to make — registers its Quick Look
+  extensions with Launch Services and `pluginkit` and resets Quick Look's
+  caches so existing `.md` files pick up real Finder icons. Everything here
+  previously lived only in `Scripts/install.sh`, which runs for people building
+  from source and for nobody else: the shipping path of download the DMG, drag
+  to Applications, double-click performed none of it.
+- The panel detects an app still running from a DMG or Downloads — Gatekeeper
+  runs those from a randomised read-only mount where no registration can stick
+  — and offers to move it into Applications and relaunch.
+- **Settings → General → System integration** repeats every setup step, names
+  the app currently holding the Markdown association, and opens the Quick Look
+  pane of System Settings for the one switch macOS will not let an app throw.
+- **Help → Take the Tour**, so the tour outlives the start window's button.
+- **Recent files say what they are about.** Each row carries a second line with
+  the document's first heading, so `notes.md` reads as "Agent output" and a
+  folder of identically-named agent output stops being a column of
+  interchangeable rows. The folder is shown behind it, or alone when there is
+  no heading; neither is repeated when the two would say the same thing.
+- **⌘1–⌘6 open the corresponding recent file**, with the shortcut spelled out
+  once in the list header and each row carrying its own ordinal.
+
+### Changed
+
+- The start window's headline adapts: returning users get "Pick up where you
+  left off" rather than "Open a Markdown file", which restated the button
+  directly beneath it and kept instructing people who had long since learned.
+- The six identical document glyphs in the recents list are gone. They said
+  only "these are files", which the names already said; the slot now carries
+  the ⌘-number that is the fastest way out of the window.
+- The recents header shows the shortcut range instead of a file count that
+  restated six visible rows.
+- The start window is 600pt tall rather than 576 to fit the two-line rows, and
+  the no-recents placeholder is now derived from the height a full list
+  occupies instead of a fixed 150pt that was already 100pt short of it.
+
+- The start window's **Take the Tour** button now retires: immediately once the
+  tour has been opened, and after three launches regardless. It was permanent,
+  which is a standing admission that the app needs explaining and a wasted slot
+  on the one screen where the user is trying to reach their work.
+- Only `.md`, `.markdown`, `.mdown`, and `.mkd` are claimed as defaults.
+  `.mdx`, `.qmd`, and `.rmd` belong to toolchains people have already chosen,
+  and are left to them; the bundle still declares them so Downright appears
+  under Open With.
+- Finder thumbnails are drawn as **pages rather than squares**, from a fixed
+  sRGB palette, with task progress shown as a bar. Below 72pt they draw ruled
+  lines instead of text that would only be a smudge at that size.
+
+### Fixed
+
+- Quick Look and the Markdown file association silently broke whenever the app
+  was **moved or renamed** — Launch Services and `pluginkit` both record an
+  absolute path. Downright records where it last registered and re-registers
+  when that changes.
+- Finder thumbnails only ever showed **one line of title and one line of body**
+  regardless of how much page was left. A paragraph style set to
+  `.byTruncatingTail` does not wrap; it lays the whole string on one line and
+  clips it.
+- Multi-line thumbnail text rendered in **reverse line order**, because
+  `NSLayoutManager` lays out top-down and the glyphs were drawn into an
+  unflipped context.
+
+## [1.0.0] - 2026-08-07
+
+The initial release of Downright: a local-first Markdown editor for macOS that
+treats the file on disk as the single source of truth.
+
+Nothing shipped before this, so the Changed, Removed, and Fixed entries below
+record work against the pre-release development builds rather than against a
+published version.
+
+### Added
+
+#### Application
+
+- Live editing with **byte-for-byte file fidelity** (§3.1): read → parse →
+  write round-trips a document exactly, including CRLF/CR line endings, BOM,
+  UTF-16/32, and mixed endings; nothing is normalised that cannot be faithfully
+  restored.
+- Structural zoom, document outline, reader profiles, and a density rail.
+- Inline rendering for math (LaTeX), mermaid diagrams, callouts, tables, task
+  lists, wikilinks, and file/path tokens with resolution.
+- Themes: built-in light/dark palettes plus VS Code / Shiki theme import, and a
+  custom theme store.
+- **No-mutation decoration engine**: keystroke → updated render at a budgeted
+  p95 of 8 ms on a 5k-line document (§12), measured by `drbench`.
+- Local AI assistance (optional, on-device) with sibling-document scanning,
+  change tracking, and an external-edit conflict bar.
+- Session restore with per-document state (mode, zoom, fold, scroll, sidebar),
+  native tabs, jump history, command palette, keybindings, and vim keys.
+- Quick Look preview and Finder thumbnails for Markdown documents.
+- `down` CLI for rendering and editing from the terminal, plus the reusable
+  `MarkdownCore` and `MarkdownRender` packages.
+- Front matter editor, table editor, document health checks, tidy pass, smart
+  paste, review sidecars, asset doctor, and diagnostics.
+- Plain-text fallback: files are opened and rendered; nothing is ever
+  evaluated (`.mdx`/`.qmd` executable chunks are rendered as text).
+- Regression probes locking the mermaid text orientation against the library's
+  known-good render path (`MermaidOrientationProbeTests`, `GeometryProbeTests`).
+
+#### Distribution and release engineering
 
 - **Sparkle 2.9.5 auto-update** with a fully custom UI: update pills in document
   titlebars and the start window, a nonmodal release-notes panel rendered through
@@ -37,8 +140,109 @@ every release; Sparkle orders updates by it.
 - **CI gates the §12 performance budget**: `ci.yml` runs `drbench` in release
   with budgets enforced (`RUN_DRBENCH=1`).
 
+### Changed
+
+- **The Tasks panel comes out of the ring that opens it.** The panel unfurls
+  downward from the top edge — scaled from its own top, so it grows *away* from
+  the toolbar control rather than out of its middle — and folds back up as the
+  pane gives its width to the document, instead of blinking out of existence.
+  The ring's press belongs to the circle now: the glyph has its own layer, so it
+  compresses and springs back while the plate underneath holds still, and the
+  release wave carries further on the same clock the panel unfurls on.
+- **The titlebar proxy is a real document proxy.** It wears the file's own icon
+  instead of a generic `doc.text` symbol, and dragging it hands the file to
+  Finder, Mail, or anything else under the pointer.
+- **The inspector header only carries a section switcher when there is
+  something to switch to.** A lone panel gets a slim title-plus-close row
+  instead of a one-segment tab strip; the Search/Tasks/History/Inspector
+  segments appear once a second surface actually opens. Hovering the task
+  panel's section bar no longer swaps the tally for the same sentence about a
+  section — the meter holds still; a click still scrolls. The Tasks toolbar
+  ring presses with its own shape now: the glyph dips, springs back with an
+  overshoot, and emits one quiet accent ping as the panel's content rises in.
+  (Superseded above: the press now lives on the glyph's own layer.)
+  The density rail's marks sit closer together (7–11pt pitch, from 8–13) with
+  the stack ceiling raised to match, so a tall window keeps the same cluster
+  share.
+
+- **The Tasks panel is rebuilt around the plan, not the checkboxes.** The old
+  header (percent figure, count caption, progress bar, All/Open filter) is
+  replaced by a section-map progress bar — one segment per heading, sized by
+  task count, filled by completion, clickable to jump to a section — with the
+  tally riding at the bar's trailing end. The list answers "what's next" by
+  ordering, not by a duplicate hero card: it is **open-first**, so the next
+  task is simply the first row, and finished work collapses into a per-section
+  "N completed" pile instead of a wall of struck-through rows. Completion
+  itself is a moment — haptic, drawn check, strike sweep, then the row slides
+  into the pile — followed by an **Undo pill**, because a tick that writes the
+  file immediately deserves an equally immediate way back. The panel is
+  two-way: **quick-add** rows (or ⌘N) insert `- [ ] …` into the right section
+  of the source, and **drag reorder** moves a task among its siblings with its
+  nested children riding along, both as plain undoable source edits
+  (`Restructure.insertTask` / `moveTask`). Section headers carry their
+  remaining count and fold; rows get a context menu (Jump to Source, Mark
+  Complete, Copy Task, **Copy Status Report** as ready-to-paste Markdown); and
+  Space / Return / ←→ work the whole list from the keyboard.
+
+### Removed
+
+- **The Contents / Outline navigator, and the leading sidebar it pinned into.**
+  The density rail already expands into the document's outline on hover, and the
+  command palette already opens headings and files through its Quick Open
+  providers — a third list of the same two things, reachable from a toolbar
+  button, two View items and a Navigate item that all ran the same code, was the
+  document's structure told three times. `⌘⇧K` is the one way in. The window is
+  now document-plus-inspector, and `NavigationPanelView`, `OutlinePanelView`,
+  `SiblingSidebarView`, the `.outlinePanel` / `.toggleSidebar` /
+  `.outlineQuickOpen` commands and the "Keep the sibling sidebar open"
+  preference are gone with it.
+
 ### Fixed
 
+- **Closing the find bar crashed the app.** The exit animation removed the pill
+  from its superview and *then* called `removeArrangedSubview(_:)`. The first
+  call already un-arranges the view, so the second raised out of
+  `-[NSStackView _removeView:animated:removeFromViewHierarchy:]` and aborted the
+  process — every single time ⌘F's bar was dismissed with motion enabled.
+  Retirement is now ordered and idempotent, so a repeated Escape during the
+  0.16 s fade is harmless too (regression-pinned).
+- **The page teleported out from under the caret while typing.** Any parse
+  commit that was not a local edit — a debounced second parse, an external
+  change, a theme or measure change — restored the reading position by
+  scrolling a source offset to `.top`, which parks that line at the container
+  inset no matter where the reader actually had it. Every commit therefore shoved
+  the page by the leftover fraction of a line plus the inset, and a queued
+  scroll-repair could apply an anchor from several edits earlier. Viewport
+  restores now keep the pixel gap between the viewport's top edge and the anchor
+  line, a scroll repair can never resurrect a stale anchor, and a frame shrink
+  pins the anchor across the clamp (regression-pinned).
+- **The caret could land in the empty air above a fenced block.** The fence
+  lines are kept in the storage on purpose, but in Document mode their glyphs
+  are suppressed — so a click in the block's top padding resolved to a character
+  part-way along an invisible ```` ```swift ````, leaving the caret blinking over
+  nothing and the next keystroke editing a fence the reader could not see. A
+  plain click on either chrome row now aims at the code.
+- **The window never remembered its size.** `setFrameAutosaveName` restores the
+  saved frame the moment it is assigned, and the default content size ran
+  unconditionally straight afterwards and threw it away — including for a window
+  left in full screen.
+- **A window could come back blank from the Dock or from full screen.** TextKit 2
+  lays out against a viewport it is told about, and those transitions change the
+  bounds without a scroll gesture. The document surface is now re-primed on
+  de-miniaturise, on both full-screen transitions, and on a backing-property
+  change.
+- **Opening the Tasks panel shrank the whole window.** The fit-to-content
+  "card" the panel floated in was sized by a required Auto Layout height
+  chain, and AppKit's constraint-driven window sizing
+  (`_changeWindowFrameFromConstraintsIfNecessary`) resized the window frame to
+  the card's height — the window collapsed to ~490pt and never grew back. The
+  inspector is now a docked full-height column like every other panel, and the
+  fit-to-content machinery is gone with the card.
+- The status bar rendered its format strings literally (`\(prefix)Ln
+  \(line), Col \(column)`) — two escaped interpolations left over from a
+  refactor now show real values again.
+- The History inspector's timestamp caption ran under the Restore button at
+  the inspector's minimum width; it now truncates inside the timeline's track.
 - **Math rendered only on the machine that built the app.** SwiftMath reached
   its fonts through SwiftPM's generated `Bundle.module`, whose two candidates
   are the bundle *root* (where codesign forbids resources) and an absolute path
@@ -56,38 +260,30 @@ every release; Sparkle orders updates by it.
 - FSEvents retransmissions of the same external write were reported repeatedly
   while an external write racing a save could be swallowed; both cases are now
   handled by the suppression window logic in `FileWatcher`.
-
-### Added
-
-- Regression probes locking the mermaid text orientation against the library's
-  known-good render path (`MermaidOrientationProbeTests`, `GeometryProbeTests`).
-
-## [1.0.0] - upcoming first release
-
-The initial release of Downright: a local-first Markdown editor for macOS that
-treats the file on disk as the single source of truth.
-
-### Added
-
-- Live editing with **byte-for-byte file fidelity** (§3.1): read → parse →
-  write round-trips a document exactly, including CRLF/CR line endings, BOM,
-  UTF-16/32, and mixed endings; nothing is normalised that cannot be faithfully
-  restored.
-- Structural zoom, document outline, reader profiles, and a density rail.
-- Inline rendering for math (LaTeX), mermaid diagrams, callouts, tables, task
-  lists, wikilinks, and file/path tokens with resolution.
-- Themes: built-in light/dark palettes plus VS Code / Shiki theme import, and a
-  custom theme store.
-- **No-mutation decoration engine**: keystroke → updated render at a budgeted
-  p95 of 8 ms on a 5k-line document (§12), measured by `drbench`.
-- Local AI assistance (optional, on-device) with sibling-document scanning,
-  change tracking, and an external-edit conflict bar.
-- Session restore with per-document state (mode, zoom, fold, scroll, sidebar),
-  native tabs, jump history, command palette, keybindings, and vim keys.
-- Quick Look preview and Finder thumbnails for Markdown documents.
-- `down` CLI for rendering and editing from the terminal, plus the reusable
-  `MarkdownCore` and `MarkdownRender` packages.
-- Front matter editor, table editor, document health checks, tidy pass, smart
-  paste, review sidecars, asset doctor, and diagnostics.
-- Plain-text fallback: files are opened and rendered; nothing is ever
-  evaluated (`.mdx`/`.qmd` executable chunks are rendered as text).
+- **Clicking the Tasks toolbar button crashed the app.** `TaskWorklist` trusted
+  each task's `headingIndex` as a live subscript into `headings`, but the panel
+  rebuilds on every keystroke and can pair a task array captured one parse
+  earlier than the headings it arrives with — the out-of-range subscript was an
+  `Index out of range` trap. An out-of-range heading now degrades to the
+  "Document" section instead of taking the app down (regression-pinned).
+- **An hourglass sliver haunted the task panel's section-map bar.** A segment
+  with nothing done gives its fill layer a zero-width frame, and Core
+  Animation still rasterises a capsule corner radius on an empty layer — the
+  two semicircles met as a tiny bowtie of accent colour in the gap between
+  segments. Empty fills are now hidden outright in both bar implementations.
+- **Clicking a link, footnote, task, or heading teleported the camera.** Every
+  in-document jump scrolled with `position: .center`, which recentres the page
+  even when the target is already on screen — yanking whatever you were reading
+  out from under the pointer. Navigation now uses `.visible`: a target already
+  in view doesn't move the page at all, and an off-screen target gets the
+  minimal scroll that brings it in. Back/Forward keep `.center` because they
+  restore a *recorded* reading position.
+- **Stray shading blocks beside and below code blocks.** TextKit 2 composites
+  each layout fragment as an independent, lazily-rendered surface, and the code
+  block's closing fence claimed a tinted surface taller than its own band (to
+  make room for its copy control) — a fill that reached past the block's edge
+  and wasn't always painted over when the neighbouring fragment didn't redraw in
+  the same pass. The band now paints exactly its own frame: header and footer
+  round only their *outer* corners, the edges they share with code lines are
+  square and butt flush, and the footer's copy control collapses to fit its thin
+  band instead of forcing the fill to overhang (geometry regression-pinned).

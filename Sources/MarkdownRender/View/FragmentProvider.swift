@@ -141,19 +141,71 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return max(0, last - first - 1)
     }
 
-    /// The `.drFragment` owning a paragraph.  Usually the attribute sits at the
-    /// paragraph's start, but a nested fenced block's paragraph begins at the
-    /// source indentation *before* the block's range, and the list item's own
-    /// ornament payload wraps the whole item — so the paragraph start carries
-    /// the *surrounding* payload, not the code block's.  Probe past the leading
-    /// whitespace for a code payload that owns this line; only when none is
-    /// found does the start-of-paragraph payload win.
+    /// The `.drFragment` owning a paragraph.
+    ///
+    /// The attribute usually sits at the paragraph's start, but the parser
+    /// leaves a block's *container indentation* out of its range: a nested
+    /// item's range begins at its own marker, not at the line start (e.g. 79 vs
+    /// the line start 77).  Every enclosing block — the outer list item, the
+    /// blockquote — does span those leading columns, so the character at the
+    /// paragraph's start carries the payload of the *outermost* block on the
+    /// line rather than the one that actually begins there.
+    ///
+    /// Reading only that character is what made every nested ornament vanish:
+    /// an indented item resolved to its parent's payload, and the fragment then
+    /// found `isFirstParagraphOfBlock == false` and drew nothing at all — no
+    /// bullet, no number, no checkbox, at any depth past the first.
+    ///
+    /// So resolve the *innermost* block that begins on this line: step over the
+    /// container prefix and take the payload found there when its own range
+    /// starts inside this paragraph.  A continuation paragraph (an item's
+    /// second paragraph, a fence body) has no block starting on it, keeps the
+    /// enclosing payload, and still renders as continuation.
     private func codePayload(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
-        if let payload = storage.attribute(.drFragment, at: source.location, effectiveRange: nil) as? FragmentPayload {
-            if isCode(payload.kind) { return payload }
-            return codePayloadAfterWhitespace(in: storage, paragraph: source) ?? payload
+        let start = storage.attribute(.drFragment, at: source.location, effectiveRange: nil) as? FragmentPayload
+        // Code keeps first refusal.  Its probe is deliberately more generous
+        // than the container prefix below — a fence may sit behind list and
+        // quote markers — and the fence/body role split downstream depends on
+        // the code payload winning whenever one is on the line.
+        if let start, isCode(start.kind) { return start }
+        if let code = codePayloadAfterWhitespace(in: storage, paragraph: source) { return code }
+        return innermostPayloadAfterIndent(in: storage, paragraph: source) ?? start
+    }
+
+    /// The payload of the innermost block *beginning* on this paragraph, found
+    /// by stepping over the container prefix the parser excluded from its range.
+    ///
+    /// The prefix is whitespace and blockquote markers only — never a list
+    /// marker or an ordered-list digit.  Those belong to the item whose payload
+    /// is being resolved, and skipping them would walk past the very block this
+    /// is meant to find and into whatever nests inside it.
+    private func innermostPayloadAfterIndent(
+        in storage: NSTextStorage, paragraph source: NSRange
+    ) -> FragmentPayload? {
+        let probe = containerPrefixEnd(in: storage, paragraph: source)
+        guard probe < source.upperBound, probe < storage.length,
+              let payload = storage.attribute(.drFragment, at: probe, effectiveRange: nil) as? FragmentPayload,
+              // "Begins on this line" is the whole test: it separates a nested
+              // item (its range starts at the marker we just stepped up to)
+              // from an enclosing block that merely covers these columns.
+              payload.sourceRange.location >= source.location,
+              payload.sourceRange.location < source.upperBound
+        else { return nil }
+        return payload
+    }
+
+    /// End of the leading *container* prefix: indentation and `>` markers.
+    private func containerPrefixEnd(in storage: NSTextStorage, paragraph source: NSRange) -> Int {
+        let end = min(source.upperBound, source.location + 256)
+        let text = storage.string as NSString
+        var probe = source.location
+        while probe < end {
+            switch text.character(at: probe) {
+            case 0x20, 0x09, 0x3E: probe += 1  // space, tab, `>`
+            default: return probe
+            }
         }
-        return codePayloadAfterWhitespace(in: storage, paragraph: source)
+        return probe
     }
 
     private func codePayloadAfterWhitespace(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {

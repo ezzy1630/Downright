@@ -105,9 +105,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
     }
 
     private func buildInterface() {
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         titleLabel.font = PanelFont.title
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -120,7 +118,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
 
         tableView.delegate = self
         tableView.dataSource = self
-        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.usesAlternatingRowBackgroundColors = false
         tableView.rowHeight = PanelMetrics.listRowHeight
         tableView.allowsColumnReordering = false
         tableView.allowsEmptySelection = true
@@ -130,7 +128,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.borderType = .bezelBorder
+        scrollView.borderType = .noBorder
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
@@ -542,4 +540,3 @@ private final class TableEditorCell: NSTextField {
         onAdvance?(!event.modifierFlags.contains(.shift))
     }
 }
-

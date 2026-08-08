@@ -30,14 +30,6 @@ extension DocumentWindowController: LocalAIPanelViewDelegate {
         }
     }
 
-    /// Tests and future local providers can replace the adapter.  The panel
-    /// stays unaware of the provider implementation.
-    func setLocalAIProvider(_ provider: LocalAIProvider) {
-        objc_setAssociatedObject(self, &localAIProviderKey, provider, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        objc_setAssociatedObject(self, &localAICoordinatorKey, LocalAILatestWinsController(provider: provider), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        localAIPanel?.availability = provider.availability
-    }
-
     func showLocalAIPanel() {
         if let localAIPanel {
             dismissTrailing(localAIPanel)

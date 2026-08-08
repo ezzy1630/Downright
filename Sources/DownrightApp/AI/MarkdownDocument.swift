@@ -322,19 +322,6 @@ final class MarkdownDocument: NSObject {
         changes.clear()
     }
 
-    /// Drops this document's local history (§8.3) and starts the review
-    /// baseline again from what is in the buffer now.  Backs a "Forget this
-    /// document's history" action: without resetting the baseline the next
-    /// write would be diffed against a version whose bytes we just deleted.
-    func forgetHistory() {
-        guard let url else { return }
-        SnapshotStore.shared.forget(url)
-        changes.reset()
-        advanceReviewBaseline(to: storage.string)
-        SnapshotStore.shared.record(storage.string, for: url, kind: .baseline)
-        persistState()
-    }
-
     /// Adopts text with no backing file — used by `Compare` windows and by the
     /// version timeline's preview pane.
     func adopt(text: String, displayURL: URL?) {

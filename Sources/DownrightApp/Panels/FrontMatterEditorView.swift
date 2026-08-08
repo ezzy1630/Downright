@@ -65,9 +65,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         buildHeader()
         buildFields()
@@ -414,7 +412,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
             valueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
             kindPopup.widthAnchor.constraint(equalToConstant: 74),
             dirtyDot.widthAnchor.constraint(equalToConstant: 8),
-            removeButton.widthAnchor.constraint(equalToConstant: 22),
+            removeButton.widthAnchor.constraint(equalToConstant: 28),
             errorLabel.leadingAnchor.constraint(equalTo: controls.leadingAnchor),
             errorLabel.trailingAnchor.constraint(equalTo: controls.trailingAnchor),
             errorLabel.topAnchor.constraint(equalTo: controls.bottomAnchor, constant: 2),

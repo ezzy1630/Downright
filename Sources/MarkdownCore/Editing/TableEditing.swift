@@ -10,10 +10,6 @@ public enum TableEditOperation: Sendable {
     case deleteColumn(index: Int)
     case moveColumn(from: Int, to: Int)
 
-    public static func editCell(row: Int, column: Int, text: String) -> Self {
-        .setCell(row: row, column: column, text: text)
-    }
-
     public static func align(column: Int, to alignment: TableAlignment) -> Self {
         .setAlignment(column: column, alignment: alignment)
     }
@@ -424,5 +420,3 @@ private extension Array {
         return self[index]
     }
 }
-
-public typealias TableEditor = TableEditing

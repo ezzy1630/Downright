@@ -25,12 +25,6 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
         }
     }
 
-    /// Replace the persistence seam before opening the panel.  Production uses
-    /// the local JSON store; tests can use an in-memory store.
-    func setReviewSidecarStore(_ store: ReviewSidecarStore) {
-        objc_setAssociatedObject(self, &reviewStoreAssociationKey, store, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-    }
-
     func showReviewPanel() {
         if let reviewPanel {
             dismissTrailing(reviewPanel)
@@ -83,7 +77,7 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
         guard let range = resolution.range,
               range.upperBound <= markdownDocument.storage.length else { return }
         containerTextView.setSourceSelectedRanges([range])
-        containerTextView.scroll(toOffset: range.location, position: .center, animated: true)
+        containerTextView.scroll(toOffset: range.location, position: .visible, animated: true)
         window?.makeFirstResponder(containerTextView)
     }
 
@@ -149,11 +143,6 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
                 replacement: replacement?.stringValue
             )
         }
-    }
-
-    func reviewPanelDidRequestClose(_ panel: ReviewPanelView) {
-        dismissTrailing(panel)
-        if reviewPanel === panel { reviewPanel = nil }
     }
 
     private func updateReview(_ id: UUID, state: ReviewState) {

@@ -41,9 +41,7 @@ final class HistoryInspectorView: NSView {
         openButton = PanelButton.text("Open comparison…", action: ButtonAction({}))
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         timeline.delegate = self
         timeline.translatesAutoresizingMaskIntoConstraints = false

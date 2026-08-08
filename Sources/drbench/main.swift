@@ -15,11 +15,6 @@ import MarkdownRender
 
 // MARK: - Harness
 
-struct Budget {
-    var name: String
-    var milliseconds: Double
-}
-
 /// Set when a measured p95 misses its budget.  Release runs exit non-zero so a
 /// CI gate can treat the budget as a promise, not a wish (§12).
 var budgetViolated = false

@@ -39,6 +39,6 @@ struct SpeechAccessibilityTests {
         #expect(density.accessibilityRole() == .scrollBar)
         #expect(density.accessibilityCustomActions()?.map(\.name) == ["Show document outline"])
         #expect(view.accessibilityRole() == .textArea)
-        #expect(view.accessibilityCustomActions()?.map(\.name) == ["Copy code block"])
+        #expect(view.accessibilityCustomActions()?.map(\.name) == ["Open link at caret", "Copy code block"])
     }
 }

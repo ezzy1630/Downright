@@ -31,17 +31,12 @@ final class DocumentWindowController: NSWindowController {
     let activityIndicator = ActivityIndicatorView()
 
     // Transient panels (§11.4)
-    var outlinePanel: OutlinePanelView?
     var taskPanel: TaskPanelView?
-    var siblingSidebar: SiblingSidebarView?
-    var navigationPanel: NavigationPanelView?
-    var navigationWindow: NavigationPanelWindow?
-    var navigationClickMonitor: Any?
-    var navigationDeactivationObserver: NSObjectProtocol?
-    var navigationSidebar: NSStackView?
     var findBar: FindBarView?
     var conflictBar: ConflictBarView?
     var changeSummaryBar: ChangeSummaryBarView?
+    /// Held so the bar can be moved when the breadcrumb's lane changes height.
+    var changeSummaryTopConstraint: NSLayoutConstraint?
     var searchResults: SearchResultsPanelView?
     var searchInspector: SearchInspectorView?
     var historyInspector: HistoryInspectorView?
@@ -54,11 +49,9 @@ final class DocumentWindowController: NSWindowController {
 
     // Layout containers
     private var rootView: NSView!
-    private var leadingPane: NSView!
     private var trailingPane: NSView!
     var barStack: NSStackView!
     private var windowSplitController: NSSplitViewController!
-    var sidebarItem: NSSplitViewItem!
     var inspectorItem: NSSplitViewItem!
 
     // State
@@ -73,18 +66,21 @@ final class DocumentWindowController: NSWindowController {
     private var themeObservation: ThemeObservation?
     let progressRing = TaskProgressRing()
     private var isPinned = false
-    var navigationPinned = false
-    private var focusRestoreSidebar = false
     private var focusRestoreInspector = false
     private var focusModeApplied = false
     private var discardChangesOnClose = false
     private var focusDimmingViews: [FocusDimmingView] = []
     private var isSynchronizingPanes = false
+    private var hasAppliedInitialInspectorWidth = false
     private var pendingInitialRestoreOffset: Int?
     private var deferredInitialRestoreOffset: Int?
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
+    /// The two panel buttons promoted out of the `···` overflow.  Weak, because
+    /// the toolbar item owns its view; the controller only needs them to keep
+    /// their lit state in step with the panels they open.
+    weak var toolbarFindButton: ToolbarActionButton?
     /// One update pill per window; created lazily by the toolbar and owned by
     /// the toolbar item's view.  It observes the coordinator itself, so it
     /// needs no wiring from the controller.  Internal (not private) because
@@ -131,17 +127,25 @@ final class DocumentWindowController: NSWindowController {
             backing: .buffered, defer: false
         )
         window.titlebarAppearsTransparent = false
-        window.titleVisibility = .visible
         window.tabbingMode = .preferred
         // Session restoration is owned by DocumentStateStore. AppKit window
         // archives can resurrect obsolete toolbar item views across releases.
         window.isRestorable = false
-        window.setFrameAutosaveName("DownrightDocumentWindow")
         window.minSize = NSSize(width: 520, height: 400)
+        // `setFrameAutosaveName` restores the saved frame the moment it is
+        // assigned, and it reports whether it found one.  The default content
+        // size below used to run unconditionally straight afterwards, which
+        // threw that frame away on every launch: resize the window, quit,
+        // reopen, and it was 1020×728 again — and a window that had been left
+        // in full screen came back at the default size too.
+        let restoredFrame = window.setFrameAutosaveName("DownrightDocumentWindow")
         self.init(window: window)
         window.delegate = self
         buildInterface()
-        window.setContentSize(NSSize(width: 1020, height: 728))
+        if !restoredFrame {
+            window.setContentSize(NSSize(width: 1020, height: 728))
+            window.center()
+        }
         wireDocument()
         observeTheme()
     }
@@ -158,7 +162,6 @@ final class DocumentWindowController: NSWindowController {
             documentURL: url,
             extraDirectories: Preferences.shared.values.siblingScanDirectories
         )
-        scanner?.onChange = { [weak self] in self?.refreshSiblings() }
         pathResolver = PathResolver(documentURL: url)
 
         window?.title = url.lastPathComponent
@@ -184,10 +187,6 @@ final class DocumentWindowController: NSWindowController {
         )
 
         scheduleDerivedUIRefresh(immediate: true)
-        if markdownDocument.state.sidebarVisible || Preferences.shared.values.siblingSidebarVisible {
-            openNavigationOverlay(focusSearch: false)
-            pinNavigationPanel()
-        }
         if markdownDocument.state.splitViewEnabled { toggleSplitView() }
         applyFocusMode(Preferences.shared.values.focusMode, animated: false)
 
@@ -295,7 +294,6 @@ final class DocumentWindowController: NSWindowController {
     func dumpLayoutIfRequested() {
         guard ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] != nil else { return }
         if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_PANELS"] != nil {
-            if siblingSidebar == nil { toggleSiblingSidebar() }
             if taskPanel == nil { toggleTaskPanel() }
         }
         window?.layoutIfNeeded()
@@ -304,7 +302,6 @@ final class DocumentWindowController: NSWindowController {
             "window       \(window?.frame ?? .zero)",
             "contentView  \(window?.contentView?.frame ?? .zero)",
             "rootView     \(rootView.frame)",
-            "leadingPane  \(leadingPane.frame)",
             "trailingPane \(trailingPane.frame)",
             "barStack     \(barStack.frame)  arranged=\(barStack.arrangedSubviews.count)",
             "container    \(primaryContainer.frame)",
@@ -416,7 +413,6 @@ final class DocumentWindowController: NSWindowController {
         progressRing.styleSheet = activeStyleSheet
 
         rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
-        leadingPane = NSView()
         trailingPane = NSView()
         barStack = NSStackView()
         barStack.orientation = .vertical
@@ -425,6 +421,7 @@ final class DocumentWindowController: NSWindowController {
         barStack.alignment = .centerX
 
         statusBarView = DocumentStatusBarView(styleSheet: activeStyleSheet)
+        statusBarView.isVisible = Preferences.shared.values.showStatusBar
 
         for view in [primaryContainer, barStack, statusBarView] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -434,30 +431,25 @@ final class DocumentWindowController: NSWindowController {
         // centred find bar does not feel nailed to the toolbar.
         barStack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
 
-        let sidebarController = NSViewController()
-        sidebarController.view = leadingPane
         let documentController = NSViewController()
         documentController.view = rootView
         let inspectorController = NSViewController()
         inspectorController.view = trailingPane
 
+        // Document + inspector only.  The leading sidebar item went with the
+        // Contents panel: the density rail expands into the document's outline
+        // and the command palette opens headings and files, so a third
+        // navigator was the same list a third time (§8.6).
         let split = NSSplitViewController()
-        let sidebar = NSSplitViewItem(sidebarWithViewController: sidebarController)
-        sidebar.minimumThickness = 200
-        sidebar.maximumThickness = 380
-        sidebar.canCollapse = true
-        sidebar.isCollapsed = true
         let document = NSSplitViewItem(viewController: documentController)
         let inspector = NSSplitViewItem(inspectorWithViewController: inspectorController)
         inspector.minimumThickness = InspectorWidth.minimum
         inspector.maximumThickness = InspectorWidth.maximum
         inspector.canCollapse = true
         inspector.isCollapsed = true
-        split.addSplitViewItem(sidebar)
         split.addSplitViewItem(document)
         split.addSplitViewItem(inspector)
         windowSplitController = split
-        sidebarItem = sidebar
         inspectorItem = inspector
         window?.contentViewController = split
 
@@ -493,6 +485,12 @@ final class DocumentWindowController: NSWindowController {
         toolbar.isVisible = true
         window?.toolbar = toolbar
         window?.toolbarStyle = .unified
+        // The identity item *is* the title, so AppKit must not draw a second
+        // one behind it.  This used to be set from inside the item factory,
+        // which meant the window's title visibility depended on when the
+        // toolbar happened to build its views — and a toolbar rebuild after a
+        // full-screen transition could leave the two fighting.
+        window?.titleVisibility = .hidden
     }
 
     private func wireDocument() {
@@ -548,6 +546,7 @@ final class DocumentWindowController: NSWindowController {
     private func observeTheme() {
         themeObservation = ThemeStore.shared.observe { [weak self] theme in
             guard let self, let window = self.window else { return }
+            self.applyWindowAppearance(for: theme)
             self.activeStyleSheet = Self.makeStyleSheet(theme: theme, appearance: window.effectiveAppearance)
             self.applyStyleSheet()
         }
@@ -555,17 +554,48 @@ final class DocumentWindowController: NSWindowController {
             self, selector: #selector(preferencesDidChange),
             name: Preferences.didChange, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(accessibilityDisplayOptionsDidChange),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
+        )
+    }
+
+    private func applyWindowAppearance(for theme: Theme) {
+        switch theme.appearance {
+        case .light: window?.appearance = NSAppearance(named: .aqua)
+        case .dark: window?.appearance = NSAppearance(named: .darkAqua)
+        case .auto: window?.appearance = nil
+        }
+    }
+
+    @objc private func accessibilityDisplayOptionsDidChange() {
+        guard let window else { return }
+        activeStyleSheet = Self.makeStyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: window.effectiveAppearance
+        )
+        applyStyleSheet()
     }
 
     @objc private func preferencesDidChange() {
+        applyWindowAppearance(for: ThemeStore.shared.current)
         activeStyleSheet = Self.makeStyleSheet(
             theme: ThemeStore.shared.current,
             appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance
         )
         applyStyleSheet()
         applyFocusMode(Preferences.shared.values.focusMode, animated: true)
-        applySiblingVisibilityPreference()
+        applyStatusBarPreference()
         rebuildSiblingScannerIfFoldersChanged()
+    }
+
+    /// The status bar is opt-in (DESIGN.md's "Avoid" list names a permanent
+    /// one), so its visibility follows the preference rather than the window's
+    /// existence.  Hidden it also gives back its height, because
+    /// `intrinsicContentSize` reports zero — the document simply extends to the
+    /// window edge instead of leaving a blank strip.
+    func applyStatusBarPreference() {
+        statusBarView.isVisible = Preferences.shared.values.showStatusBar
     }
 
     /// A rename is an identity change, not content to reconcile: the bytes are
@@ -580,8 +610,6 @@ final class DocumentWindowController: NSWindowController {
             documentURL: newURL,
             extraDirectories: Preferences.shared.values.siblingScanDirectories
         )
-        scanner?.onChange = { [weak self] in self?.refreshSiblings() }
-        refreshSiblings()
         dismissConflictBar()
         showChangeSummary("Renamed to \(newURL.lastPathComponent)")
     }
@@ -593,8 +621,6 @@ final class DocumentWindowController: NSWindowController {
         let folders = Preferences.shared.values.siblingScanDirectories
         guard let url = markdownDocument.url, scanner?.extraDirectories != folders else { return }
         scanner = SiblingScanner(documentURL: url, extraDirectories: folders)
-        scanner?.onChange = { [weak self] in self?.refreshSiblings() }
-        refreshSiblings()
     }
 
     func applyStyleSheet() {
@@ -604,10 +630,7 @@ final class DocumentWindowController: NSWindowController {
         densityGutterView.styleSheet = activeStyleSheet
         statusBarView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
-        outlinePanel?.styleSheet = activeStyleSheet
-        navigationPanel?.styleSheet = activeStyleSheet
         taskPanel?.styleSheet = activeStyleSheet
-        siblingSidebar?.styleSheet = activeStyleSheet
         findBar?.styleSheet = activeStyleSheet
         searchInspector?.styleSheet = activeStyleSheet
         historyInspector?.styleSheet = activeStyleSheet
@@ -685,7 +708,6 @@ final class DocumentWindowController: NSWindowController {
         source.zoomLevel = level
         synchronizePanes(from: source)
         markdownDocument.state.zoomLevel = level
-        outlinePanel?.zoomLevel = level
     }
 
     func setSharedFolds(_ folded: Set<String>, from source: MarkdownTextView? = nil) {
@@ -758,22 +780,6 @@ final class DocumentWindowController: NSWindowController {
         let parsed = markdownDocument.parsed
         let source = containerTextView
         let metrics = sectionMetrics(for: parsed)
-        let foldedIndices = Set(parsed.headings.indices.filter {
-            source.foldedHeadingSlugs.contains(parsed.headings[$0].slug)
-        })
-        if let outlinePanel {
-            outlinePanel.headings = parsed.headings
-            outlinePanel.sectionMetrics = metrics
-            outlinePanel.foldedIndices = foldedIndices
-            outlinePanel.reload()
-        }
-        if let navigationPanel {
-            navigationPanel.headings = parsed.headings
-            navigationPanel.sectionMetrics = metrics
-            navigationPanel.foldedIndices = foldedIndices
-            navigationPanel.reload()
-        }
-
         if let taskPanel {
             taskPanel.tasks = parsed.tasks
             taskPanel.headings = parsed.headings
@@ -834,9 +840,10 @@ final class DocumentWindowController: NSWindowController {
         _ = metrics ?? sectionMetrics(for: parsed)
         let wordCount = cachedWordCount
         let readMinutes = max(1, (wordCount + 199) / 200)
+        // The gutter's hover summary is the *only* place these two live: the
+        // status bar used to repeat them permanently, which is what a calm
+        // document surface is meant not to do.
         densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
-        statusBarView.wordCount = wordCount
-        statusBarView.readMinutes = readMinutes
         statusBarView.hasFileURL = markdownDocument.url != nil
         let changes = markdownDocument.changes.marks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
@@ -897,14 +904,6 @@ final class DocumentWindowController: NSWindowController {
         refreshDensityBands()
     }
 
-    func refreshSiblings() {
-        guard let scanner else { return }
-        siblingSidebar?.siblings = scanner.siblings
-        siblingSidebar?.reload()
-        navigationPanel?.siblings = scanner.siblings
-        navigationPanel?.reload()
-    }
-
     // MARK: - External changes (§8.1)
 
     private func handleExternalEvent(_ event: MarkdownDocument.ExternalEvent) {
@@ -914,7 +913,7 @@ final class DocumentWindowController: NSWindowController {
             pathResolver?.invalidate()
             scheduleFindRefresh()
             guard !hunks.isEmpty else { return }
-            showChangeSummary("\(hunks.count) new change\(hunks.count == 1 ? "" : "s")")
+            showChangeSummary()
 
         case .conflict(let conflict):
             pendingConflict = conflict
@@ -929,13 +928,32 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func presentUnreadChanges() {
-        let count = markdownDocument.changes.unreadCount
-        guard count > 0 else { return }
-        showChangeSummary("\(count) new change\(count == 1 ? "" : "s")")
+        guard markdownDocument.changes.unreadCount > 0 else { return }
+        showChangeSummary()
         refreshChangeDecorations()
     }
 
-    func showChangeSummary(_ message: String) {
+    /// Shows the change summary.  With no message the bar describes the write
+    /// Where the floating change bar sits, measured from the top of the
+    /// document container.
+    ///
+    /// The bar is chrome the *window* floats over the document, while the
+    /// breadcrumb is chrome the *container* reserves a lane for.  Pinned to the
+    /// window's own top the two occupied the same band, and on any window below
+    /// roughly 1000pt the bar simply sat on top of the trail — 227pt of overlap
+    /// at 640pt wide.  Clearing the container's reserved lane is what keeps them
+    /// two pieces of chrome instead of one collision.
+    private var changeSummaryTopInset: CGFloat { primaryContainer.topLaneHeight + 8 }
+
+    /// The lane changes height when the breadcrumb is hidden — Focus mode — so
+    /// the bar's offset is a constant that gets refreshed, not one set once.
+    func refreshChangeSummaryTopInset() {
+        changeSummaryTopConstraint?.constant = changeSummaryTopInset
+    }
+
+    /// itself from the tracker's marks; a message is for the events the marks
+    /// cannot name, such as a rename.
+    func showChangeSummary(_ message: String? = nil) {
         if changeSummaryBar == nil {
             let bar = ChangeSummaryBarView()
             bar.delegate = self
@@ -943,12 +961,24 @@ final class DocumentWindowController: NSWindowController {
             changeSummaryBar = bar
             bar.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(bar)
+            let top = bar.topAnchor.constraint(
+                equalTo: primaryContainer.topAnchor,
+                constant: changeSummaryTopInset
+            )
+            changeSummaryTopConstraint = top
             NSLayoutConstraint.activate([
-                bar.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
+                top,
                 bar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -12),
             ])
         }
-        changeSummaryBar?.configure(message: message, changeCount: markdownDocument.changes.unreadCount)
+        refreshChangeSummaryTopInset()
+        changeSummaryBar?.configure(
+            message: message,
+            summary: ChangeSummaryBarView.Summary(
+                marks: markdownDocument.changes.unreadMarks,
+                documentLength: markdownDocument.text.utf16.count
+            )
+        )
         rootView.needsLayout = true
     }
 
@@ -985,16 +1015,6 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: - Panels
 
-    func toggleOutlinePanel() {
-        if navigationPinned {
-            closePinnedNavigation()
-        } else if navigationPanel != nil || navigationWindow != nil {
-            closeNavigationOverlay()
-        } else {
-            openNavigationOverlay(focusSearch: false)
-        }
-    }
-
     func toggleTaskPanel() {
         // The task list is a *docked* inspector (§8.5): opening it narrows the
         // document column and the text reflows, so no content is ever left
@@ -1020,209 +1040,55 @@ final class DocumentWindowController: NSWindowController {
     private func closeTaskPanel() {
         guard let panel = taskPanel else { return }
         progressRing.isActive = false
-        inspectorHost?.removeContent(panel, section: .tasks)
-        if inspectorHost?.hasContent != true { closeInspector() }
-        else { refreshToolbarSelectionState() }
-    }
-
-    func toggleSiblingSidebar() {
-        if navigationPinned {
-            closePinnedNavigation()
-        } else if navigationPanel != nil || navigationWindow != nil {
-            closeNavigationOverlay()
-        } else {
-            openNavigationOverlay(focusSearch: false)
-        }
-    }
-
-    private func dismissSiblingSidebar() {
-        navigationSidebar?.removeFromSuperview()
-        navigationSidebar = nil
-        siblingSidebar?.removeFromSuperview()
-        siblingSidebar = nil
-        outlinePanel = nil
-        sidebarItem.isCollapsed = true
-    }
-
-    func openNavigationOverlay(focusSearch: Bool) {
-        guard let window else { return }
-        if navigationPinned {
-            if focusSearch { navigationPanel?.focusSearch() }
+        // The ring settles first, so the glyph is already un-lit while the
+        // panel folds back toward it.
+        let takesThePaneWithIt = inspectorHost?.contentCount == 1
+        guard takesThePaneWithIt, let host = inspectorHost,
+              !inspectorItem.isCollapsed, !activeStyleSheet.reduceMotion else {
+            inspectorHost?.removeContent(panel, section: .tasks)
+            if inspectorHost?.hasContent != true { collapseInspectorPane(animated: false) }
+            refreshToolbarSelectionState()
             return
         }
-        if navigationWindow != nil {
-            if focusSearch {
-                navigationWindow?.makeKey()
-                navigationPanel?.focusSearch()
-            }
-            return
-        }
-        let panel = NavigationPanelView(styleSheet: activeStyleSheet)
-        panel.delegate = self
-        panel.onLayoutNeedsUpdate = { [weak self] in
-            self?.repositionNavigationOverlay(animated: true)
-        }
-        panel.headings = markdownDocument.parsed.headings
-        panel.sectionMetrics = Metrics.sectionMetrics(markdownDocument.parsed)
-        panel.siblings = scanner?.siblings ?? []
-        panel.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
-            primaryContainer.textView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
-        })
-        panel.currentHeadingIndex = markdownDocument.parsed.headings.lastIndex {
-            $0.range.location <= containerTextView.topVisibleOffset
-        }
-        panel.reload()
-        navigationPanel = panel
-        let child = NavigationPanelWindow(
-            contentRect: .zero,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        child.contentView = panel
-        child.isOpaque = false
-        child.backgroundColor = .clear
-        child.hasShadow = true
-        child.hidesOnDeactivate = false
-        child.onEscape = { [weak self] in self?.closeNavigationOverlay() }
-        navigationWindow = child
-        let targetFrame = navigationOverlayFrame(in: window)
-        let startFrame = activeStyleSheet.reduceMotion ? targetFrame : targetFrame.offsetBy(dx: -6, dy: 0)
-        child.setFrame(startFrame, display: false)
-        child.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
-        window.addChildWindow(child, ordered: .above)
-        child.orderFront(nil)
-        DispatchQueue.main.async { [weak panel] in
-            panel?.reload()
-        }
-        startNavigationDismissalObservers(parent: window, panel: child)
-        PanelAnimation.run(reduceMotion: activeStyleSheet.reduceMotion, duration: 0.16) { _ in
-            child.alphaValue = 1
-            child.setFrame(targetFrame, display: true)
-        }
-        markdownDocument.state.sidebarVisible = false
-        if focusSearch {
-            child.makeKey()
-            panel.focusSearch()
-        }
-        refreshToolbarSelectionState()
-    }
-
-    func closeNavigationOverlay() {
-        guard let child = navigationWindow else { return }
-        stopNavigationDismissalObservers()
-        let finish = { [weak self, weak child] in
-            guard let self, let child else { return }
-            child.parent?.removeChildWindow(child)
-            child.orderOut(nil)
-            if self.navigationWindow === child { self.navigationWindow = nil; self.navigationPanel = nil }
+        // The pane starts giving its width back immediately; the list is only
+        // torn out once it has finished folding, so the panel is never seen to
+        // blink out of a pane that is still open.
+        collapseInspectorPane(animated: true)
+        host.playDeparture { [weak self, weak panel] in
+            guard let self, let panel else { return }
+            self.inspectorHost?.removeContent(panel, section: .tasks)
             self.refreshToolbarSelectionState()
         }
-        guard !activeStyleSheet.reduceMotion else { finish(); return }
-        let endFrame = child.frame.offsetBy(dx: -6, dy: 0)
-        PanelAnimation.run(
-            reduceMotion: false,
-            duration: 0.16,
-            { _ in
-                child.alphaValue = 0
-                child.setFrame(endFrame, display: true)
-            },
-            completion: finish
-        )
-    }
-
-    func pinNavigationPanel() {
-        guard let panel = navigationPanel else { return }
-        stopNavigationDismissalObservers()
-        if let child = navigationWindow {
-            child.parent?.removeChildWindow(child)
-            child.orderOut(nil)
-            child.contentView = nil
-            navigationWindow = nil
-        }
-        dismissSiblingSidebar()
-        panel.setPinned(true)
-        install(panel, in: leadingPane)
-        navigationPanel = panel
-        sidebarItem.isCollapsed = false
-        navigationPinned = true
-        markdownDocument.state.sidebarVisible = true
         refreshToolbarSelectionState()
     }
 
-    func closePinnedNavigation() {
-        guard navigationPinned else { return }
-        navigationPanel?.removeFromSuperview()
-        navigationPanel = nil
-        navigationPinned = false
-        sidebarItem.isCollapsed = true
-        markdownDocument.state.sidebarVisible = false
-        refreshToolbarSelectionState()
-    }
 
-    private func navigationOverlayFrame(in window: NSWindow) -> NSRect {
-        let local = window.contentView?.convert(window.contentView?.bounds ?? .zero, to: nil) ?? .zero
-        let screenFrame = window.convertToScreen(local)
-        let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? screenFrame
-        return NavigationPanelGeometry.frame(
-            contentScreenFrame: screenFrame,
-            visibleScreenFrame: visible,
-            preferredHeight: navigationPanel?.preferredHeight
-        )
-    }
-
-    private func repositionNavigationOverlay(animated: Bool = false) {
-        guard let window, let child = navigationWindow, navigationPanel != nil else { return }
-        let frame = navigationOverlayFrame(in: window)
-        guard frame != child.frame else { return }
-        if animated && !activeStyleSheet.reduceMotion {
-            PanelAnimation.run(reduceMotion: false, duration: Motion.quick) { _ in
-                child.animator().setFrame(frame, display: true)
-            }
-        } else {
-            child.setFrame(frame, display: true)
-        }
-    }
-
-    private func startNavigationDismissalObservers(parent: NSWindow, panel: NSPanel) {
-        stopNavigationDismissalObservers()
-        navigationClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
-            [weak self, weak parent, weak panel] event in
-            guard let self, let parent, let panel else { return event }
-            guard event.window === parent, let contentView = parent.contentView else { return event }
-            let point = contentView.convert(event.locationInWindow, from: nil)
-            if contentView.bounds.contains(point), event.window !== panel { self.closeNavigationOverlay() }
-            return event
-        }
-        navigationDeactivationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
-            object: NSApp,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.closeNavigationOverlay() }
-        }
-    }
-
-    private func stopNavigationDismissalObservers() {
-        if let monitor = navigationClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            navigationClickMonitor = nil
-        }
-        if let observer = navigationDeactivationObserver {
-            NotificationCenter.default.removeObserver(observer)
-            navigationDeactivationObserver = nil
-        }
-    }
-
-    /// The band the inspector pane is allowed to occupy.  Several panels ask
-    /// for more than the old 260pt floor, so the floor is the widest of them
-    /// and the ceiling leaves room for the table editor's working surface.
+    /// The band the inspector pane is allowed to occupy.  The floor keeps a
+    /// task row's text column usable; the ceiling leaves room for the table
+    /// editor's working surface.
     enum InspectorWidth {
-        static let minimum: CGFloat = 320
+        static let minimum: CGFloat = 300
         static let maximum: CGFloat = 520
+        /// Most of the window a trailing panel may take when it opens.  The
+        /// panel is an accessory to the document, and at 300pt in a 620pt
+        /// window it was half the app — a four-row task list with most of its
+        /// height empty, sitting beside a document column squeezed under its
+        /// own minimum.  The reader can still drag past this; it only decides
+        /// where the panel *arrives*.
+        static let maximumWindowFraction: CGFloat = 0.4
 
         static func clamp(_ width: CGFloat) -> CGFloat {
             min(maximum, max(minimum, width))
+        }
+
+        /// The opening width in a window of `availableWidth`, or nil when the
+        /// window has no room to give — better to leave the divider where it is
+        /// than to shove the document off its own measure.
+        static func opening(_ preferred: CGFloat, availableWidth: CGFloat) -> CGFloat? {
+            guard availableWidth > 0 else { return nil }
+            let ceiling = availableWidth * maximumWindowFraction
+            guard ceiling >= minimum else { return nil }
+            return min(clamp(preferred), ceiling)
         }
     }
 
@@ -1263,8 +1129,18 @@ final class DocumentWindowController: NSWindowController {
             inspectorHost = created
             host = created
         }
+        // Uncollapse before the content goes in: the panel's arrival
+        // animation needs a window to play in, and a collapsed pane has none.
+        // The pane widens on the same clock the panel unfurls on, so the two
+        // halves of "the panel came out of the toolbar" land together.
+        if inspectorItem.isCollapsed {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = activeStyleSheet.reduceMotion ? 0 : Motion.standard
+                context.timingFunction = Motion.timing(.decelerate)
+                inspectorItem.animator().isCollapsed = false
+            }
+        }
         host.setContent(view, section: section)
-        inspectorItem.isCollapsed = false
         applyPreferredInspectorWidth(for: view)
         refreshToolbarSelectionState()
     }
@@ -1274,32 +1150,80 @@ final class DocumentWindowController: NSWindowController {
     /// arrived at whatever width the previous one left behind.  The divider
     /// stays draggable afterwards: this sets a position, not a constraint.
     private func applyPreferredInspectorWidth(for view: NSView) {
+        guard !hasAppliedInitialInspectorWidth else { return }
         guard let surface = view as? PanelSurface else { return }
         let splitView = windowSplitController.splitView
         let dividerIndex = splitView.arrangedSubviews.count - 2
-        let width = InspectorWidth.clamp(surface.preferredWidth)
+        guard let width = InspectorWidth.opening(
+            surface.preferredWidth, availableWidth: splitView.bounds.width
+        ) else { return }
         guard dividerIndex >= 0, splitView.bounds.width > width + splitView.dividerThickness else { return }
         splitView.setPosition(splitView.bounds.width - width, ofDividerAt: dividerIndex)
+        hasAppliedInitialInspectorWidth = true
     }
 
+    /// Closing is the arrival run backwards: the panel folds up toward the
+    /// toolbar control that opened it, and only then does the pane give its
+    /// width back to the document.  Collapsing first would make the panel
+    /// vanish and the text jump in the same frame, which is the snap this
+    /// replaces.
     func closeInspector() {
-        inspectorItem.isCollapsed = true
+        guard !inspectorItem.isCollapsed else {
+            refreshToolbarSelectionState()
+            return
+        }
+        // Fold and collapse run together, not one after the other.  Sequenced
+        // they would total half a second, and — more to the point — the pane's
+        // width is the larger of the two movements, so the fold has to happen
+        // *inside* it to read as one gesture rather than as two.
+        inspectorHost?.playDeparture {}
+        collapseInspectorPane(animated: true)
         refreshToolbarSelectionState()
+    }
+
+    private func collapseInspectorPane(animated: Bool) {
+        guard !inspectorItem.isCollapsed else { return }
+        guard animated, !activeStyleSheet.reduceMotion else {
+            inspectorItem.isCollapsed = true
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.standard
+            context.timingFunction = Motion.timing(.decelerate)
+            inspectorItem.animator().isCollapsed = true
+        }
     }
 
     /// Keeps auxiliary windows (timeline, compare, lightbox) alive for as long
     /// as this document window is.
     func retainTimeline(_ controller: NSWindowController) {
         auxiliaryWindows.append(controller)
+        // Selector form, so the observation can unregister itself.  The block
+        // form dropped the controller but left its own registration installed
+        // for the lifetime of the app — one more every time a timeline, compare,
+        // or lightbox window was opened and closed.
         NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
-        ) { [weak self, weak controller] _ in
-            MainActor.assumeIsolated {
-                self?.auxiliaryWindows.removeAll { $0 === controller }
-            }
-        }
+            self,
+            selector: #selector(auxiliaryWindowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: controller.window
+        )
     }
 
+    @objc private func auxiliaryWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        NotificationCenter.default.removeObserver(
+            self, name: NSWindow.willCloseNotification, object: window
+        )
+        auxiliaryWindows.removeAll { $0.window === window }
+    }
+
+    /// The host fills the pane, top to bottom.  The inspector used to offer a
+    /// fit-to-content card mode for short panels: a required height constraint
+    /// on the card reached the window's constraint-driven sizing
+    /// (`_changeWindowFrameFromConstraintsIfNecessary`) and *resized the whole
+    /// window* to the card's height when the panel opened.  Docked columns
+    /// only — a panel never sizes the window.
     private func install(_ view: NSView, in pane: NSView) {
         for existing in pane.subviews { existing.removeFromSuperview() }
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -1311,6 +1235,7 @@ final class DocumentWindowController: NSWindowController {
             view.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
         ])
     }
+
 
     // MARK: - Find (§9.4)
 
@@ -1421,16 +1346,32 @@ final class DocumentWindowController: NSWindowController {
         // gone; Reduce Motion skips straight to removal.
         guard let leaving, leaving.superview != nil else { return }
         if activeStyleSheet.reduceMotion {
-            leaving.removeFromSuperview()
-            barStack.removeArrangedSubview(leaving)
+            retire(leaving)
         } else {
             Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
                 leaving.animator().alphaValue = 0
             } completion: { [weak self] in
-                leaving.removeFromSuperview()
-                self?.barStack.removeArrangedSubview(leaving)
+                self?.retire(leaving)
             }
         }
+    }
+
+    /// Drops the find pill out of the bar stack.
+    ///
+    /// Order and idempotence both matter.  `removeArrangedSubview(_:)` raises
+    /// when the view is not currently arranged, and `removeFromSuperview()`
+    /// already un-arranges it — so the old sequence (remove, then un-arrange)
+    /// threw `NSInternalInconsistencyException` from inside
+    /// `-[NSStackView _removeView:animated:removeFromViewHierarchy:]` and
+    /// aborted the process every time the bar closed with animation enabled.
+    /// Closing twice inside one fade must also be harmless, because Escape
+    /// repeats faster than the 0.16 s exit.
+    private func retire(_ bar: FindBarView) {
+        if barStack.arrangedSubviews.contains(bar) {
+            barStack.removeArrangedSubview(bar)
+        }
+        bar.removeFromSuperview()
+        bar.alphaValue = 1
     }
 
     var currentFindQuery: FindQuery { findSession.query }
@@ -1580,22 +1521,6 @@ final class DocumentWindowController: NSWindowController {
         synchronizePanes(from: source)
     }
 
-    // MARK: - Preference-driven presentation
-
-    func applySiblingVisibilityPreference() {
-        guard markdownDocument.url != nil else { return }
-        // Focus mode owns the chrome while active. Apply this preference after
-        // focus mode exits so it cannot reopen a hidden sidebar mid-session.
-        guard !isFocusModeEnabled else { return }
-        let shouldShow = Preferences.shared.values.siblingSidebarVisible
-        if shouldShow, !navigationPinned {
-            if navigationWindow == nil { openNavigationOverlay(focusSearch: false) }
-            pinNavigationPanel()
-        } else if !shouldShow, navigationPinned {
-            closePinnedNavigation()
-        }
-    }
-
     private func installFocusDimmingView(in container: MarkdownContainerView) {
         guard !focusDimmingViews.contains(where: { $0.superview === container }) else { return }
         let overlay = FocusDimmingView()
@@ -1684,11 +1609,7 @@ final class DocumentWindowController: NSWindowController {
         stopSpeaking()
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
-        stopNavigationDismissalObservers()
-        closeNavigationOverlay()
         removeFocusDimmingViews(animated: false)
-        navigationPanel?.removeFromSuperview()
-        navigationPanel = nil
         let selection = primaryContainer.textView.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
         markdownDocument.state.selectionLength = selection.length
@@ -1713,17 +1634,15 @@ final class DocumentWindowController: NSWindowController {
     func applyFocusMode(_ enabled: Bool, animated: Bool) {
         if enabled {
             if !focusModeApplied {
-                focusRestoreSidebar = !sidebarItem.isCollapsed
                 focusRestoreInspector = !inspectorItem.isCollapsed
                 focusModeApplied = true
             }
-            closeNavigationOverlay()
             closeTaskPanel()
-            sidebarItem.isCollapsed = true
             inspectorItem.isCollapsed = true
             window?.toolbar?.isVisible = false
             densityGutterView.isHidden = true
             breadcrumbView.isHidden = true
+            refreshChangeSummaryTopInset()
             documentPanes.forEach { installFocusDimmingView(in: $0) }
             updateFocusDimmingViews()
         } else {
@@ -1731,13 +1650,14 @@ final class DocumentWindowController: NSWindowController {
                 window?.toolbar?.isVisible = true
                 densityGutterView.isHidden = false
                 breadcrumbView.isHidden = false
+                refreshChangeSummaryTopInset()
                 return
             }
             removeFocusDimmingViews(animated: animated)
             window?.toolbar?.isVisible = true
             densityGutterView.isHidden = false
             breadcrumbView.isHidden = false
-            sidebarItem.isCollapsed = !focusRestoreSidebar
+            refreshChangeSummaryTopInset()
             inspectorItem.isCollapsed = !focusRestoreInspector
             focusModeApplied = false
         }
@@ -1762,21 +1682,51 @@ extension DocumentWindowController: NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
-        repositionNavigationOverlay()
         updateFocusDimmingViews()
     }
 
-    func windowDidMove(_ notification: Notification) {
-        repositionNavigationOverlay()
-    }
-
-    func windowDidChangeScreen(_ notification: Notification) {
-        repositionNavigationOverlay()
-    }
-
     func windowDidEnterFullScreen(_ notification: Notification) {
-        guard !isFocusModeEnabled else { return }
-        window?.toolbar?.isVisible = true
+        if !isFocusModeEnabled { window?.toolbar?.isVisible = true }
+        resettleDocumentSurface()
+    }
+
+    /// Leaving full screen restores the chrome the transition owns, and — like
+    /// entering — resettles the document.  Without this the toolbar could come
+    /// back hidden after a focus-mode round trip inside full screen.
+    func windowDidExitFullScreen(_ notification: Notification) {
+        if !isFocusModeEnabled { window?.toolbar?.isVisible = true }
+        resettleDocumentSurface()
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        resettleDocumentSurface()
+    }
+
+    func windowDidChangeBackingProperties(_ notification: Notification) {
+        resettleDocumentSurface()
+    }
+
+    /// Re-primes the document after a transition that changed the window's
+    /// size or surface out from under TextKit.
+    ///
+    /// TextKit 2 lays out lazily against a viewport it is told about.  A
+    /// full-screen transition or a de-miniaturise hands the view a new bounds
+    /// without a scroll gesture, so the viewport controller can be left
+    /// holding fragments for geometry that no longer exists — which is how a
+    /// window comes back from the Dock, or out of full screen, showing a blank
+    /// or half-drawn page while the breadcrumb still names the right heading.
+    /// A native scroll fixes it, which is precisely the tell that the layout
+    /// pass, not the offset, is what went stale.
+    private func resettleDocumentSurface() {
+        rootView.layoutSubtreeIfNeeded()
+        for pane in documentPanes {
+            pane.layoutSubtreeIfNeeded()
+            pane.textView.resizeToFitContent()
+            pane.textView.prepareForDisplay()
+            pane.textView.needsDisplay = true
+            pane.scrollView.contentView.needsDisplay = true
+        }
+        updateBreadcrumbAndGutter()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

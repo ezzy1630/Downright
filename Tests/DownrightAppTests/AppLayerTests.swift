@@ -271,7 +271,6 @@ struct AppLayerTests {
         values.restoreSession = false
         values.externalEditor = .vscode
         values.resolvePathTokens = false
-        values.siblingSidebarVisible = true
         values.siblingScanDirectories = ["custom"]
         values.historyMaximumDays = 90
         values.historyMaximumMegabytes = 900
@@ -374,6 +373,42 @@ struct AppLayerTests {
         )
     }
 
+    /// An editor deep link carries the path inside a URL, so a directory named
+    /// `Design #2` or `100%` has to survive the trip.  Unencoded, `#` and `?`
+    /// truncate the path at a fragment or query boundary and the editor opens
+    /// the wrong file; `%` and spaces can fail the parse outright, which drops
+    /// the caller back to `NSWorkspace.open` and loses the line number.
+    @Test func editorDeepLinksPercentEncodeAwkwardPaths() throws {
+        for editor in [ExternalEditor.vscode, .cursor, .zed] {
+            let scheme = editor == .vscode ? "vscode" : (editor == .cursor ? "cursor" : "zed")
+
+            let plain = try #require(
+                editor.url(for: URL(fileURLWithPath: "/src/auth/session.ts"), line: 42)
+            )
+            #expect(plain.absoluteString == "\(scheme)://file/src/auth/session.ts:42")
+
+            for awkward in ["/notes/Design #2/plan.md", "/notes/why?/plan.md",
+                            "/notes/100%/plan.md", "/notes/My Notes/plan.md"] {
+                let url = try #require(
+                    editor.url(for: URL(fileURLWithPath: awkward), line: 7),
+                    "\(awkward) produced no URL, so the caller loses the line number"
+                )
+                #expect(url.fragment == nil, "\(awkward) leaked a fragment")
+                #expect(url.query == nil, "\(awkward) leaked a query")
+                #expect(url.path == "\(awkward):7", "\(awkward) did not round-trip")
+                #expect(url.absoluteString.hasSuffix(":7"), "\(awkward) lost its line suffix")
+            }
+        }
+
+        // Editors without a line-carrying scheme stay on the fallback path.
+        #expect(ExternalEditor.xcode.url(for: URL(fileURLWithPath: "/a.md"), line: 1) == nil)
+        #expect(ExternalEditor.systemDefault.url(for: URL(fileURLWithPath: "/a.md"), line: 1) == nil)
+
+        // No line number means no suffix to misparse.
+        let noLine = try #require(ExternalEditor.zed.url(for: URL(fileURLWithPath: "/a b.md"), line: nil))
+        #expect(noLine.absoluteString == "zed://file/a%20b.md")
+    }
+
     // MARK: - Key bindings (§7.2)
 
     @Test func keyBindingRoundTripsThroughItsStringForm() throws {
@@ -407,17 +442,14 @@ struct AppLayerTests {
 
     @Test func defaultBindingsMatchTheSpecTable() {
         let store = KeybindingStore.shared
-        #expect(store.primaryBinding(for: .toggleReadLive) == nil)
         #expect(store.primaryBinding(for: .sourceMode) == KeyBinding("e", [.command, .shift]))
         #expect(store.primaryBinding(for: .useSelectionForFind) == KeyBinding("e", .command))
-        #expect(store.primaryBinding(for: .copyAsMarkdown) == KeyBinding("c", [.command, .shift]))
+        #expect(store.primaryBinding(for: .copyAsMarkdown) == KeyBinding("c", [.command, .option, .shift]))
         // ⌘0 is Actual Size on macOS, ⌘⇧V is Paste and Match Style, and ⌥↑/⌥↓
         // are moveParagraphBackward:/Forward: while a caret is in the document,
         // so these three moved off the chords the system already owns.
-        #expect(store.primaryBinding(for: .toggleSidebar) == KeyBinding("0", [.command, .option]))
-        #expect(store.primaryBinding(for: .outlineQuickOpen) == KeyBinding("o", [.command, .shift]))
         #expect(store.primaryBinding(for: .versionTimeline) == KeyBinding("v", [.command, .option]))
-        #expect(store.primaryBinding(for: .nextChange) == KeyBinding("down", [.command, .control]))
+        #expect(store.primaryBinding(for: .nextChange) == KeyBinding("down", [.option, .shift]))
         #expect(store.primaryBinding(for: .splitView) == KeyBinding("backslash", .command))
     }
 

@@ -66,6 +66,37 @@ import Testing
         if case .paragraph = block!.content {} else { Issue.record("expected the paragraph inside the item") }
     }
 
+    /// `block(at:)` binary searches its children, which is only sound while
+    /// siblings stay in source order and never overlap.  This walks a corpus
+    /// that historically broke markdown tooling and checks both the invariant
+    /// and the answer at *every* offset against a plain linear scan — including
+    /// the block boundaries, where `touches` is inclusive and two siblings both
+    /// answer, and the leftmost must win.
+    @Test func blockLookupMatchesALinearScanAtEveryOffset() {
+        func linear(_ block: MDBlock, _ offset: Int) -> MDBlock? {
+            guard block.range.touches(offset: offset) else { return nil }
+            for child in block.children {
+                if let hit = linear(child, offset) { return hit }
+            }
+            return block
+        }
+        func checkOrdering(_ block: MDBlock) {
+            for (earlier, later) in zip(block.children, block.children.dropFirst()) {
+                #expect(earlier.range.location <= later.range.location)
+                #expect(earlier.range.upperBound <= later.range.location)
+            }
+            block.children.forEach(checkOrdering)
+        }
+
+        for entry in Corpus.all {
+            let doc = MarkdownParser.parse(entry.text)
+            checkOrdering(doc.root)
+            for offset in 0...doc.length {
+                #expect(doc.root.block(at: offset) === linear(doc.root, offset))
+            }
+        }
+    }
+
     @Test func subtreeHashesAreAssignedEverywhere() {
         let doc = MarkdownParser.parse(Corpus.kitchenSink)
         doc.root.walk { #expect($0.subtreeHash != 0) }

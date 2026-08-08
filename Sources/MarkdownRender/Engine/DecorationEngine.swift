@@ -107,6 +107,21 @@ public final class DecorationEngine {
 
     // MARK: - Decorate
 
+    /// The ranges `decorate` will actually rewrite, which are wider than the
+    /// dirty set: each range grows to whole blocks.
+    ///
+    /// Published because decoration *wipes* the attributes it is about to
+    /// rewrite, and one of them — `drHidden` — is not the engine's to know: what
+    /// is hidden is the view's decision, taken per caret.  The view therefore has
+    /// to lay its mirror back over exactly this much, and computing the bounds a
+    /// second time from the same rule is how the two come to disagree.
+    public func decoratedBounds(for dirty: DirtySet, in document: ParsedDocument, length: Int) -> [NSRange] {
+        let full = NSRange(location: 0, length: length)
+        guard full.length > 0 else { return [] }
+        guard !dirty.isWholesale else { return [full] }
+        return RangeSet.normalized(dirty.ranges.compactMap { clip(blockBounds(of: $0, in: document), to: full) })
+    }
+
     /// Applies attributes for the given source ranges.  `dirty.isWholesale`
     /// means redecorate everything.
     @discardableResult
@@ -114,6 +129,12 @@ public final class DecorationEngine {
         let started = CFAbsoluteTimeGetCurrent()
         let full = NSRange(location: 0, length: storage.length)
         guard full.length > 0 else { return DecorationResult(elapsed: CFAbsoluteTimeGetCurrent() - started) }
+
+        // Settle the document's direction before any paragraph style is built.
+        // The factory drops its cache only when the answer actually changes, so
+        // for the overwhelmingly common case — an edit that leaves the opening
+        // sentence alone — this costs one bounded scan and nothing else.
+        styles.baseWritingDirection = WritingDirection.of(document.text)
 
         let targets: [NSRange]
         if dirty.isWholesale {
@@ -412,11 +433,25 @@ public final class DecorationEngine {
                 walk(block.children[childIndex], context: childContext, state: &state)
             }
             if checkbox?.isChecked == true {
-                apply([
+                let completed: [NSAttributedString.Key: Any] = [
                     .foregroundColor: styleSheet.textSecondary,
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
                     .strikethroughColor: styleSheet.textFaint,
-                ], to: block.contentRange, state: &state)
+                ]
+                // A completed task strikes out *its own* text and stops.
+                // `contentRange` spans the item's whole subtree, so styling it
+                // wholesale also crossed out every nested item — including ones
+                // still open, which states the opposite of their real state.
+                // Sub-items own their completion, so they are left to style
+                // themselves; the item's other blocks (a second paragraph, a
+                // code sample it owns) are struck with it.
+                if block.children.isEmpty {
+                    apply(completed, to: block.contentRange, state: &state)
+                } else {
+                    for child in block.children where !child.content.isList {
+                        apply(completed, to: child.range, state: &state)
+                    }
+                }
             }
             return
 
@@ -561,16 +596,50 @@ public final class DecorationEngine {
         attributes: [NSAttributedString.Key: Any],
         state: inout DecorateState
     ) {
-        if case .heading = block.content,
-           state.document.headings.first?.range.location == block.range.location,
-           let original = attributes[.paragraphStyle] as? NSParagraphStyle,
-           let paragraph = original.mutableCopy() as? NSMutableParagraphStyle {
-            paragraph.paragraphSpacingBefore = 0
-            apply([.paragraphStyle: paragraph.copy() as? NSParagraphStyle ?? original],
-                  to: block.range, state: &state)
-        }
+        guard case .heading = block.content,
+              let original = attributes[.paragraphStyle] as? NSParagraphStyle else { return }
+        let isFirst = state.document.headings.first?.range.location == block.range.location
+        // Space before a heading exists to separate it from the prose it follows.
+        // A heading that follows another heading has no prose to be separated
+        // from, and the full gap there reads as a missing section rather than as
+        // hierarchy — an H2 immediately followed by its H3 looked exactly as far
+        // apart as an H2 and the paragraph above it.
+        let follows = followsAnotherHeading(block, in: state)
+        guard isFirst || follows,
+              let paragraph = original.mutableCopy() as? NSMutableParagraphStyle else { return }
+        paragraph.paragraphSpacingBefore = isFirst
+            ? 0
+            : (original.paragraphSpacingBefore * 0.4).rounded()
+        apply([.paragraphStyle: paragraph.copy() as? NSParagraphStyle ?? original],
+              to: block.range, state: &state)
     }
 
+    /// True when the nearest block above this heading is itself a heading.
+    private func followsAnotherHeading(_ block: MDBlock, in state: DecorateState) -> Bool {
+        let headings = state.document.headings
+        guard let index = headings.firstIndex(where: { $0.range.location == block.range.location }),
+              index > 0 else { return false }
+        let previous = headings[index - 1]
+        // Nothing but whitespace between the two means they are adjacent even
+        // though the parser reports them as separate blocks.
+        let between = NSRange(
+            location: previous.range.upperBound,
+            length: max(0, block.range.location - previous.range.upperBound)
+        )
+        guard between.length > 0, between.upperBound <= state.document.length else { return true }
+        return state.document.substring(between).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Air belongs to the *logical* paragraph, not to the source lines it
+    /// happens to be typed across: its opening keeps the space before it, its
+    /// close keeps the space after it, and the joins in between get neither.
+    ///
+    /// This used to end by zeroing both on the whole block, which deleted the
+    /// space *after* every hard-wrapped paragraph in the document.  Since blank
+    /// source lines collapse to a hairline (`collapseSeparators`) on the
+    /// understanding that `paragraphSpacing` supplies the air, two consecutive
+    /// hard-wrapped paragraphs then met with one point between them and read as
+    /// a single block of text.
     private func applyHardWrapContinuationSpacing(
         _ block: MDBlock,
         attributes: [NSAttributedString.Key: Any],
@@ -578,24 +647,54 @@ public final class DecorationEngine {
     ) {
         guard case .paragraph = block.content,
               state.document.substring(block.contentRange).contains("\n"),
-              let original = attributes[.paragraphStyle] as? NSParagraphStyle,
-              let paragraph = original.mutableCopy() as? NSMutableParagraphStyle
+              let original = attributes[.paragraphStyle] as? NSParagraphStyle
         else { return }
-        paragraph.paragraphSpacingBefore = 0
-        paragraph.paragraphSpacing = 0
-        let continuationStyle = paragraph.copy() as? NSParagraphStyle ?? original
-        let text = state.storage.string as NSString
-        var cursor = block.range.location
-        var first = true
-        while cursor < block.range.upperBound {
-            let range = text.paragraphRange(for: NSRange(location: cursor, length: 0))
-                .intersection(block.range) ?? NSRange(location: cursor, length: 0)
-            if range.length == 0 { break }
-            if !first { apply([.paragraphStyle: continuationStyle], to: range, state: &state) }
-            first = false
-            cursor = range.upperBound
+        let lines = physicalParagraphs(of: block, in: state)
+        guard lines.count > 1 else { return }
+        for (index, line) in lines.enumerated() {
+            guard let paragraph = original.mutableCopy() as? NSMutableParagraphStyle else { continue }
+            if index > 0 { paragraph.paragraphSpacingBefore = 0 }
+            if index < lines.count - 1 { paragraph.paragraphSpacing = 0 }
+            apply([.paragraphStyle: paragraph.copy() as? NSParagraphStyle ?? original],
+                  to: line, state: &state)
         }
-        apply([.paragraphStyle: continuationStyle], to: block.range, state: &state)
+    }
+
+    /// Hangs every code row's wraps off that row's own indentation.
+    ///
+    /// The column never scrolls horizontally, so a long statement has to wrap
+    /// somewhere; where it resumes is what decides whether the result still
+    /// reads as code.  One `headIndent` for the whole block resumed a wrapped
+    /// row at the block's left edge — to the *left* of the statement it belongs
+    /// to, so a continuation impersonated a new line of source.
+    private func applyCodeRowIndents(
+        _ block: MDBlock, context: BlockContext, state: inout DecorateState
+    ) {
+        let base = styles.paragraphStyle(for: block, context: context)
+        let text = state.storage.string as NSString
+        for line in physicalParagraphs(of: block, in: state) {
+            let columns = BlockStyleFactory.indentColumns(of: text.substring(with: line) as NSString)
+            guard columns > 0 else { continue }
+            apply([.paragraphStyle: styles.codeRowStyle(base: base, indentColumns: columns)],
+                  to: line, state: &state)
+        }
+    }
+
+    /// The physical paragraphs a block is typed across, terminators included —
+    /// the last one's terminator is the paragraph's own, and it is what carries
+    /// the trailing air.
+    private func physicalParagraphs(of block: MDBlock, in state: DecorateState) -> [NSRange] {
+        let text = state.storage.string as NSString
+        guard block.range.length > 0, block.range.upperBound <= text.length else { return [] }
+        var lines: [NSRange] = []
+        var cursor = block.range.location
+        while cursor < block.range.upperBound {
+            let line = text.paragraphRange(for: NSRange(location: cursor, length: 0))
+            guard line.length > 0 else { break }
+            lines.append(line)
+            cursor = max(line.upperBound, cursor + 1)
+        }
+        return lines
     }
 
     /// Block markers are attributed but never revealed inline (§6.1a); the
@@ -706,6 +805,7 @@ public final class DecorationEngine {
         // hover still strengthens it (§7.1).
         apply([
             .drLink: destination,
+            .link: destination,
             .foregroundColor: styleSheet.link,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
             .underlineColor: styleSheet.link.withAlphaComponent(
@@ -755,6 +855,7 @@ public final class DecorationEngine {
         if let trailing = block.trailingMarkerRange {
             apply(styles.markerAttributes(dimmed: true), to: trailing, state: &state)
         }
+        applyCodeRowIndents(block, context: context, state: &state)
         guard contentRange.length > 0, contentRange.upperBound <= state.storage.length else { return }
 
         let code = state.document.substring(contentRange)
@@ -947,18 +1048,29 @@ public final class DecorationEngine {
         for child in block.children { collectGutterMarkers(child, context: childContext, into: &out) }
     }
 
+    /// What a block writes into the left rail — and, just as important, what it
+    /// does *not*.
+    ///
+    /// The rail exists so block syntax never sits inline (§6.1a).  It is not a
+    /// second rendering of syntax the page already shows: a list item draws a
+    /// real bullet, ordinal, or checkbox in its hanging column, so repeating
+    /// `-`, `1.`, `- [ ]` in the rail put the same marker on screen twice.  A
+    /// heading keeps its `##` because nothing else states the level as a
+    /// number, and a quote keeps its `>` because the rule alone is very quiet.
+    ///
+    /// Whatever is returned has to *fit* `RenderMetrics.gutterWidth`.  The
+    /// spelled-out `> [!WARNING]` did not: at the rail's font it measured half
+    /// again as wide as the rail and the view clipped it mid-token, so callouts
+    /// read `> [!WAR` down the margin.  A callout's kind is already carried by
+    /// its icon and its title, so the rail only has to say "quote".
     static func gutterText(for block: MDBlock, context: BlockContext) -> String? {
         switch block.content {
         case .heading(let level):
             return String(repeating: "#", count: max(1, min(level, 6)))
-        case .blockQuote:
+        case .blockQuote, .callout:
             return ">"
-        case .callout(let kind, _):
-            return "> [!\(kind.rawValue.uppercased())]"
-        case .listItem(let ordinal, let checkbox):
-            if let checkbox { return checkbox.isChecked ? "- [x]" : "- [ ]" }
-            if let ordinal { return "\(ordinal)." }
-            return "-"
+        case .listItem:
+            return nil
         case .codeBlock(_, let isFenced, _):
             return isFenced ? "```" : nil
         case .mermaid:

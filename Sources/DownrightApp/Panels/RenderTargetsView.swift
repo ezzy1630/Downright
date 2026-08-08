@@ -92,9 +92,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         titleLabel.font = PanelFont.header
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -216,6 +214,16 @@ final class RenderTargetsView: NSView, PanelSurface {
     private func syncTargetControl() {
         guard let index = profiles.firstIndex(of: selectedProfile) else { return }
         targetControl.selectItem(at: index)
+        themeTargetControl()
+    }
+
+    private func themeTargetControl() {
+        targetControl.contentTintColor = styleSheet.text
+        guard let title = targetControl.selectedItem?.title else { return }
+        targetControl.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: styleSheet.text, .font: targetControl.font ?? PanelFont.row]
+        )
     }
 
     @objc private func targetChanged(_ sender: NSPopUpButton) {
@@ -372,6 +380,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         previewLabel.textColor = styleSheet.textFaint
         preview.backgroundColor = styleSheet.background
         preview.textColor = styleSheet.text
+        themeTargetControl()
         table.reloadData()
         updateEmptyState()
     }

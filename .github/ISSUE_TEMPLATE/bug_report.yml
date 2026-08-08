@@ -1,0 +1,55 @@
+name: Bug report
+description: Something renders, saves, or behaves wrongly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read `Docs/STATUS.md` first — it lists what is deliberately approximate
+        and where this build departs from the design. A known gap is not a bug.
+
+        If a file was corrupted or a round trip was not byte-identical, say so
+        in the title. That class of bug jumps the queue.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: markdown
+    attributes:
+      label: Smallest Markdown that reproduces it
+      description: >
+        Trim it down. A five-line document that fails is worth more than the
+        3,000-word one it came from. Leave blank if the bug is not
+        document-specific.
+      render: markdown
+
+  - type: input
+    id: version
+    attributes:
+      label: Downright version
+      description: About Downright, or the commit if you built it yourself.
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: "15.3, M2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash log or console output
+      description: >
+        Crashes land in Console.app under Crash Reports. Paste the first frames
+        of the crashing thread — the whole report is rarely needed.
+      render: text

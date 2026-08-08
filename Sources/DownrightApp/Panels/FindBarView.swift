@@ -122,9 +122,7 @@ final class FindBarView: NSView {
 
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         buildFindRow()
         buildReplaceRow()

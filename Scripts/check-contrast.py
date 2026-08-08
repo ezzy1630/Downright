@@ -19,6 +19,18 @@ PALETTE_PAIRS = [
     ("textFaint", "background", 3.0, "textFaint"),
     ("link", "background", 4.5, "link"),
     ("accent", "background", 3.0, "accent"),
+    ("marker", "background", 4.5, "marker"),
+    ("railTick", "background", 3.0, "railTick"),
+    ("pathMissing", "background", 4.5, "pathMissing"),
+    ("searchHit", "background", 3.0, "searchHit"),
+    ("searchHitCurrent", "background", 3.0, "searchHitCurrent"),
+    ("calloutNote", "background", 3.0, "calloutNote"),
+    ("calloutWarning", "background", 3.0, "calloutWarning"),
+    ("calloutSuccess", "background", 3.0, "calloutSuccess"),
+    ("calloutDanger", "background", 3.0, "calloutDanger"),
+    ("changeAdded", "background", 3.0, "changeAdded"),
+    ("changeRemoved", "background", 3.0, "changeRemoved"),
+    ("changeModified", "background", 3.0, "changeModified"),
 ]
 
 CODE_PAIRS = [
@@ -126,6 +138,20 @@ def check_theme(name, data, results):
         ratio = contrast(fg, bg)
         ok = ratio >= threshold
         rows.append((label, color_label(fg_raw), f"{ratio:.2f}", f"{threshold:.1f}", "PASS" if ok else "FAIL"))
+
+    # Search/speech highlights choose black or white text at render time.
+    for key in ("searchHit", "searchHitCurrent"):
+        raw = palette.get(key)
+        parsed = parse_hex(raw)
+        if parsed is None:
+            rows.append(("textOn" + key[0].upper() + key[1:], color_label(raw), "-", "4.5", "N/A"))
+            continue
+        rgb = parsed[:3]
+        ratio = max(contrast((0, 0, 0), rgb), contrast((1, 1, 1), rgb))
+        rows.append((
+            "textOn" + key[0].upper() + key[1:], color_label(raw),
+            f"{ratio:.2f}", "4.5", "PASS" if ratio >= 4.5 else "FAIL"
+        ))
 
     for key, threshold in CODE_PAIRS:
         fg_raw = code.get(key)

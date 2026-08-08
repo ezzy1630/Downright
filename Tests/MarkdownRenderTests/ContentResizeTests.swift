@@ -128,6 +128,53 @@ struct ContentResizeTests {
         #expect(abs(clip.bounds.origin.x - originAfterKeystroke.x) < 0.5)
     }
 
+    /// The other half of the same promise, on the path a local edit does *not*
+    /// take: an external change, a debounced second parse, a theme swap.  Those
+    /// restore the reading position from a source anchor, and the restore used
+    /// to scroll that anchor to `.top` — parking its line at the container
+    /// inset regardless of where the reader had it.  Every commit therefore
+    /// shoved the page by the leftover fraction of a line plus the inset, which
+    /// is what "the camera teleports while I type" looks like from the outside.
+    ///
+    /// A mid-line viewport is the case that catches it: land the clip somewhere
+    /// that is deliberately *not* a line boundary and require it to stay there.
+    @Test("a reparse that is not a local edit leaves the viewport exactly where it was")
+    func nonLocalReparseKeepsThePixelViewport() async throws {
+        let paragraph = "A paragraph with enough words to form a stable line of document text."
+        let text = (0..<80).map { "## Section \($0)\n\n\(paragraph)" }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 703))
+        container.scrollView.reflectScrolledClipView(clip)
+
+        // What the reader can see is where the anchor line sits *on screen*,
+        // not what the clip origin reads.  Resolving lazy layout legitimately
+        // moves a line in document coordinates; the promise is that the clip
+        // follows it so the glyphs under the reader's eye do not move.
+        let anchor = container.textView.topVisibleOffset
+        func screenY() throws -> CGFloat {
+            try #require(container.textView.rect(forOffset: anchor)).minY - clip.bounds.origin.y
+        }
+        let before = try screenY()
+
+        // No `performSourceEdit` first, so `shouldFollowCaretAfterLocalEdit` is
+        // false and the commit goes down the anchor-restoring branch.
+        container.textView.update(
+            document: MarkdownParser.parse(text),
+            dirty: DirtySet(ranges: [NSRange(location: 40, length: 1)], isWholesale: false)
+        )
+        #expect(abs(try screenY() - before) < 0.5, "the commit moved the page")
+
+        try await Task.sleep(for: .milliseconds(160))
+        #expect(abs(try screenY() - before) < 0.5, "the deferred resize moved the page")
+    }
+
     /// A stale over-tall frame (from an earlier estimate or a shrunk document)
     /// must not shrink while the viewport is pinned to the bottom, or the clip
     /// clamps and the whole page drops.  Once the user scrolls away from the

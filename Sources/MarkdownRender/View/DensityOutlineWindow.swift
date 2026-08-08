@@ -238,14 +238,7 @@ private final class DensityOutlineRow: NSTableCellView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect])
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -296,14 +289,7 @@ private final class OutlineBackdrop: NSVisualEffectView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect])
     }
 
     override func mouseEntered(with event: NSEvent) { onPointerPresence?(true) }

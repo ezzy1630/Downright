@@ -4,6 +4,7 @@ import MarkdownCore
 /// The visual table editor is transient. It writes through MarkdownDocument,
 /// then refreshes both surfaces from the new parsed snapshot.
 extension DocumentWindowController: TableEditorDelegate {
+    var caretIsInTable: Bool { tableIndex(at: caretOffset()) != nil }
     func presentTableEditor() {
         guard let window else { return }
         markdownDocument.ensureParsedCurrent()

@@ -186,10 +186,6 @@ extension NSString {
     }
 }
 
-extension Character {
-    var isMarkdownWhitespace: Bool { self == " " || self == "\t" }
-}
-
 extension String {
     /// Leading run of spaces and tabs.
     var leadingIndent: String {

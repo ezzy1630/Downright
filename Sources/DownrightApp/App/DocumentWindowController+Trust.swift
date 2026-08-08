@@ -103,10 +103,6 @@ extension DocumentWindowController: TrustPromptViewDelegate {
         trustStore.revoke(scope: scope, path: path)
     }
 
-    func revokeAllTrust() {
-        trustStore.revokeAll()
-    }
-
     func trustPrompt(_ view: TrustPromptView, didChoose decision: TrustPromptDecision, request: TrustRequest) {
         switch decision {
         case .allowOnce:

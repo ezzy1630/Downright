@@ -58,7 +58,19 @@ struct LocalAITests {
         controller.submit(LocalAIRequest(task: .summarize, source: "second")) { result in
             if case .success(let value) = result { values.append(value.text) }
         }
-        try await Task.sleep(for: .milliseconds(80))
+        // Wait for the result rather than for a stopwatch.  A fixed 80ms sleep
+        // against a 30ms provider passes alone and loses the race about half
+        // the time inside the full parallel suite, which made this the one
+        // test nobody could trust.  Polling asserts the same thing — that only
+        // the newest request ever delivers — without betting on scheduler
+        // latency; the deadline is generous because it only bounds a failure.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while values.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        // A short grace period after the winner lands: if the superseded
+        // request were also going to deliver, this is when it would.
+        try await Task.sleep(for: .milliseconds(60))
         #expect(values == ["second"])
     }
 }

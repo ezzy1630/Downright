@@ -36,6 +36,8 @@ targets:
         product: MarkdownCore
       - package: Downright
         product: MarkdownRender
+      - package: Downright
+        product: drdownright
       - package: Sparkle
         product: Sparkle
       - target: DownrightQL
@@ -56,6 +58,9 @@ targets:
           set -euo pipefail
           DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
           mkdir -p "$DEST"
+          LOCK="${DEST}/.downright-resource-embed-lock"
+          until mkdir "$LOCK" 2>/dev/null; do sleep 0.1; done
+          trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
           for bundle in Downright_MarkdownRender.bundle SwiftMath_SwiftMath.bundle; do
               SRC="${BUILT_PRODUCTS_DIR}/${bundle}"
               if [ ! -d "$SRC" ]; then

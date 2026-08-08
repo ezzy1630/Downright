@@ -53,9 +53,7 @@ final class TrustPromptView: NSView, PanelSurface {
         self.styleSheet = styleSheet
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         titleLabel.maximumNumberOfLines = 3
@@ -85,6 +83,7 @@ final class TrustPromptView: NSView, PanelSurface {
         configure(allowFileButton, action: #selector(allowFile(_:)), label: "Always allow this action for this file")
         configure(allowFolderButton, action: #selector(allowFolder(_:)), label: "Always allow this action for this folder")
         configure(revokeButton, action: #selector(revoke(_:)), label: "Revoke matching trust")
+        revokeButton.hasDestructiveAction = true
 
         let buttons = NSStackView(views: [
             denyButton, allowOnceButton, allowFileButton, allowFolderButton, revokeButton,

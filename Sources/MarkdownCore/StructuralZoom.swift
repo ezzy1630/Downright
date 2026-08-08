@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 // MARK: - Structural zoom (§5.2)
 //
@@ -38,6 +39,11 @@ public enum StructuralZoom {
     /// block, table, math block, mermaid diagram and task list in full.
     private static func skeletonExtras(_ doc: ParsedDocument, map: SourceMap) -> [NSRange] {
         var keep: [NSRange] = []
+        // Bridged and built once, then reused for every section below: this
+        // loop runs once per heading, and a 500-heading document paid both
+        // costs 500 times over.
+        let text = doc.text as NSString
+        let tokenizer = NLTokenizer(unit: .sentence)
 
         doc.root.walkPruning { block in
             switch block.content {
@@ -64,7 +70,7 @@ public enum StructuralZoom {
             let start = heading.range.upperBound
             guard end > start else { continue }
             let body = NSRange(location: start, length: end - start)
-            if let sentence = Metrics.firstSentenceRange(in: doc, within: body) {
+            if let sentence = Metrics.firstSentenceRange(in: doc, within: body, text: text, tokenizer: tokenizer) {
                 keep.append(lines(of: sentence, in: map))
             }
         }
@@ -72,12 +78,12 @@ public enum StructuralZoom {
         // A document that opens without a heading still deserves its lede.
         if let first = doc.headings.first, first.range.location > 0 {
             let lede = NSRange(location: 0, length: first.range.location)
-            if let sentence = Metrics.firstSentenceRange(in: doc, within: lede) {
+            if let sentence = Metrics.firstSentenceRange(in: doc, within: lede, text: text, tokenizer: tokenizer) {
                 keep.append(lines(of: sentence, in: map))
             }
         } else if doc.headings.isEmpty {
             let all = NSRange(location: 0, length: doc.length)
-            if let sentence = Metrics.firstSentenceRange(in: doc, within: all) {
+            if let sentence = Metrics.firstSentenceRange(in: doc, within: all, text: text, tokenizer: tokenizer) {
                 keep.append(lines(of: sentence, in: map))
             }
         }

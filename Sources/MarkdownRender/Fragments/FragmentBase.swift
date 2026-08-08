@@ -182,10 +182,21 @@ public class DownrightFragment: NSTextLayoutFragment {
     /// Fixed height, overriding the glyph run's own.  `nil` keeps it.
     var overrideHeight: CGFloat? { nil }
 
-    /// Width of the text column, used by objects that fill the measure.
+    /// Width of the whole text column — the reading measure *plus* the trailing
+    /// bleed lane.  Only a full-bleed block (code, diagram, table, display
+    /// math) may use all of it.
     var contentWidth: CGFloat {
         if let width = context?.contentWidth, width > 1 { return width }
         return max(1, super.layoutFragmentFrame.width)
+    }
+
+    /// Width of the reading column alone.  An object that belongs beside prose
+    /// — a callout's band, an image, a rule, the front-matter card — sizes
+    /// itself from this, or it ends a bleed lane wider than the paragraph above
+    /// it (§11.1).  Both columns start at the same left edge, so this doubles
+    /// as the prose column's right edge in container coordinates.
+    var proseContentWidth: CGFloat {
+        max(1, contentWidth - RenderMetrics.codeBleed)
     }
 
     public override var layoutFragmentFrame: CGRect {
@@ -234,13 +245,6 @@ public class DownrightFragment: NSTextLayoutFragment {
         return storage.attributedSubstring(from: range).string
     }
 
-    func attributedSource(_ range: NSRange) -> NSAttributedString {
-        guard let storage = context?.storage, range.upperBound <= storage.length, range.length > 0 else {
-            return NSAttributedString()
-        }
-        return storage.attributedSubstring(from: range)
-    }
-
     /// Paragraph style the engine put on this block, the authority on the
     /// block's indentation.
     var paragraphStyle: NSParagraphStyle? {
@@ -265,14 +269,6 @@ public class DownrightFragment: NSTextLayoutFragment {
         guard let context else { return elementSourceRange.location <= payload.sourceRange.location }
         return context.paragraphIndex.index(containing: elementSourceRange.location)
             == context.paragraphIndex.index(containing: payload.sourceRange.location)
-    }
-
-    var isLastParagraphOfBlock: Bool {
-        guard let context else { return elementSourceRange.upperBound >= payload.sourceRange.upperBound }
-        let elementLast = max(elementSourceRange.location, elementSourceRange.upperBound - 1)
-        let blockLast = max(payload.sourceRange.location, payload.sourceRange.upperBound - 1)
-        return context.paragraphIndex.index(containing: elementLast)
-            == context.paragraphIndex.index(containing: blockLast)
     }
 }
 
@@ -495,6 +491,18 @@ func drawNSImage(_ image: NSImage, in target: CGRect, in cg: CGContext, cornerRa
     cg.restoreGState()
 }
 
+/// Which corners of a rect to round.  Local `OptionSet` rather than AppKit's
+/// `RectCorner` so the fragment layer doesn't depend on the `NSRectCorner`
+/// optionality dance.
+struct RectCorners: OptionSet {
+    let rawValue: Int
+    static let topLeft = RectCorners(rawValue: 1 << 0)
+    static let topRight = RectCorners(rawValue: 1 << 1)
+    static let bottomLeft = RectCorners(rawValue: 1 << 2)
+    static let bottomRight = RectCorners(rawValue: 1 << 3)
+    static let all: RectCorners = [.topLeft, .topRight, .bottomLeft, .bottomRight]
+}
+
 extension CGContext {
     /// Named to avoid overloading `CGContext.fill(_:)`, whose default-argument
     /// overload resolution would otherwise recurse.
@@ -509,13 +517,41 @@ extension CGContext {
         }
     }
 
-    func strokeLine(from: CGPoint, to: CGPoint, color: NSColor, width: CGFloat) {
-        setStrokeColor(color.cgColor)
-        setLineWidth(width)
-        beginPath()
-        move(to: from)
-        addLine(to: to)
-        strokePath()
+    /// Fills with only some corners rounded.  The code band is built from a
+    /// header, body lines, and a footer that must butt *flush* against each
+    /// other — rounding every corner of each piece and overlapping them left a
+    /// double-painted seam.  Rounding only the outer corners (top of the header,
+    /// bottom of the footer) and leaving the shared edges square keeps the whole
+    /// band a single flat tint with no overlap.
+    func fillRect(_ rect: CGRect, color: NSColor, radius: CGFloat, corners: RectCorners) {
+        guard rect.width > 0, rect.height > 0 else { return }
+        guard radius > 0, !corners.isEmpty else { fillRect(rect, color: color); return }
+        setFillColor(color.cgColor)
+        let r = min(radius, min(rect.width, rect.height) / 2)
+        let path = CGMutablePath()
+        // Flipped-friendly: build in the rect's own space corner by corner.
+        let tl = corners.contains(.topLeft) ? r : 0
+        let tr = corners.contains(.topRight) ? r : 0
+        let br = corners.contains(.bottomRight) ? r : 0
+        let bl = corners.contains(.bottomLeft) ? r : 0
+        let minX = rect.minX, maxX = rect.maxX, minY = rect.minY, maxY = rect.maxY
+        // Start just after the top-left corner, walk clockwise.
+        path.move(to: CGPoint(x: minX + tl, y: minY))
+        path.addLine(to: CGPoint(x: maxX - tr, y: minY))
+        if tr > 0 { path.addArc(center: CGPoint(x: maxX - tr, y: minY + tr), radius: tr,
+                                startAngle: -.pi / 2, endAngle: 0, clockwise: false) }
+        path.addLine(to: CGPoint(x: maxX, y: maxY - br))
+        if br > 0 { path.addArc(center: CGPoint(x: maxX - br, y: maxY - br), radius: br,
+                                startAngle: 0, endAngle: .pi / 2, clockwise: false) }
+        path.addLine(to: CGPoint(x: minX + bl, y: maxY))
+        if bl > 0 { path.addArc(center: CGPoint(x: minX + bl, y: maxY - bl), radius: bl,
+                                startAngle: .pi / 2, endAngle: .pi, clockwise: false) }
+        path.addLine(to: CGPoint(x: minX, y: minY + tl))
+        if tl > 0 { path.addArc(center: CGPoint(x: minX + tl, y: minY + tl), radius: tl,
+                                startAngle: .pi, endAngle: .pi * 1.5, clockwise: false) }
+        path.closeSubpath()
+        addPath(path)
+        fillPath()
     }
 
     /// Draws an attributed string with the current context, without disturbing

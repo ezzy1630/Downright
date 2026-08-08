@@ -204,7 +204,10 @@ final class DocumentStateStore {
                 displayName: url.deletingPathExtension().lastPathComponent,
                 firstHeading: document.headings.first?.title ?? "",
                 lastOpened: Date(),
-                wordCount: Metrics.metrics(for: document.text).words
+                // The caller already parsed this text; `Metrics.metrics(for:)`
+                // would reparse it and then tokenize every sentence to compute
+                // two figures this row throws away.
+                wordCount: Metrics.documentWordCount(document)
             ),
             at: 0
         )

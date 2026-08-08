@@ -165,14 +165,7 @@ final class UpdateStatusPill: NSButton {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect])
     }
 
     override func mouseEntered(with event: NSEvent) { interaction = .hover }

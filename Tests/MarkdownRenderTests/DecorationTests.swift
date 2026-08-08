@@ -752,12 +752,20 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
 
     #expect(texts.contains("#"))
     #expect(texts.contains("##"))
-    #expect(texts.contains("- [ ]"))
-    #expect(texts.contains("- [x]"))
-    #expect(texts.contains("-"))
     #expect(texts.contains(">"))
-    #expect(texts.contains("> [!WARNING]"))
     #expect(texts.contains("```"))
+
+    // A list item draws a real bullet, ordinal, or checkbox in its hanging
+    // column, so repeating the source marker in the rail put the same mark on
+    // screen twice.  The rail carries only what the page does not show.
+    #expect(!texts.contains("- [ ]"))
+    #expect(!texts.contains("- [x]"))
+    #expect(!texts.contains("-"))
+
+    // A callout's kind is already carried by its icon and its title.  Spelling
+    // it out did not fit the rail and was clipped mid-token — see
+    // `everyGutterMarkerFitsTheRail`.
+    #expect(!texts.contains("> [!WARNING]"))
 
     // Ascending by offset, so the rail can draw in one pass.
     #expect(markers.map(\.offset) == markers.map(\.offset).sorted())
@@ -769,10 +777,55 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     #expect(markers.allSatisfy { $0.offset >= 0 && $0.offset <= length })
 }
 
-@Test func orderedListItemsGetANumberedGutterMarker() {
+/// An ordered item's number is drawn by `ListOrnamentFragment` in the hanging
+/// column, so the rail stays out of it rather than printing `1.` beside a `1.`
+/// the reader can already see.
+@Test func orderedListItemsDoNotDuplicateTheirNumberInTheRail() {
     let document = MarkdownParser.parse("1. one\n2. two\n")
     let texts = engine(.live).gutterMarkers(document: document).map(\.text)
-    #expect(texts.contains { $0.hasSuffix(".") || $0 == "-" })
+    #expect(texts.isEmpty, "ordered items wrote \(texts) into the rail")
+}
+
+/// The rail is `RenderMetrics.gutterWidth` wide and `GutterRailView` clips to
+/// its bounds, so a marker wider than the rail is not "slightly cramped" — it
+/// is silently cut mid-token.  `> [!WARNING]` measured half again as wide as
+/// the rail and rendered as `> [!WAR` down the margin.
+///
+/// Measured at the rail's own font (`GutterRailView` uses 0.62 × body, floored
+/// at 9pt) and against the rail's own 8pt trailing pad.
+@Test func everyGutterMarkerFitsTheRail() {
+    let text = """
+    # H1
+    ###### H6
+
+    > quoted
+
+    > [!WARNING]
+    > careful
+
+    > [!IMPORTANT]
+    > really
+
+    ```swift
+    let x = 1
+    ```
+
+    $$
+    x = 1
+    $$
+
+    ---
+    """
+    let document = MarkdownParser.parse(text)
+    let sheet = MarkdownTextView.fallbackStyleSheet()
+    let font = sheet.monoFont(size: max(9, sheet.bodyFont().pointSize * 0.62))
+    let available = RenderMetrics.gutterWidth - 8
+
+    for marker in engine(.live).gutterMarkers(document: document) {
+        let width = NSAttributedString(string: marker.text, attributes: [.font: font]).size().width
+        #expect(width <= available,
+                "'\(marker.text)' needs \(width)pt but the rail offers \(available)pt — it will be clipped")
+    }
 }
 
 @Test func listOrnamentsAndAlignedWrapsPreserveMarkdownStructure() {

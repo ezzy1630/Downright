@@ -30,14 +30,9 @@ protocol UpdateEngine: AnyObject {
     var updateCheckInterval: TimeInterval { get set }
     var lastUpdateCheckDate: Date? { get }
 
-    /// Asks Sparkle to re-schedule its check cycle (settings changed).
-    func resetUpdateCycle()
-
     // Delegate callbacks the coordinator needs to surface.
     /// A background (automatic) download finished.  Argument is the display version.
     var onBackgroundDownloadCompleted: ((String) -> Void)? { get set }
-    /// An update cycle (check) finished, with an error if any.
-    var onUpdateCycleFinished: ((Error?) -> Void)? { get set }
 }
 
 // MARK: - Production
@@ -51,7 +46,6 @@ final class SparkleUpdateEngine: UpdateEngine {
     private(set) var isRunning = false
 
     var onBackgroundDownloadCompleted: ((String) -> Void)?
-    var onUpdateCycleFinished: ((Error?) -> Void)?
 
     init?(userDriver: DownrightUpdateDriver) {
         self.driver = userDriver
@@ -108,10 +102,6 @@ final class SparkleUpdateEngine: UpdateEngine {
     }
 
     var lastUpdateCheckDate: Date? { updater.lastUpdateCheckDate }
-
-    func resetUpdateCycle() {
-        updater.resetUpdateCycleAfterShortDelay()
-    }
 }
 
 enum UpdateStartError: Error {
@@ -129,7 +119,6 @@ final class FakeUpdateEngine: UpdateEngine {
     var startThrows = false
 
     var onBackgroundDownloadCompleted: ((String) -> Void)?
-    var onUpdateCycleFinished: ((Error?) -> Void)?
 
     var _canCheckForUpdates = true
     var canCheckForUpdates: Bool { _canCheckForUpdates }
@@ -142,7 +131,6 @@ final class FakeUpdateEngine: UpdateEngine {
 
     private(set) var backgroundCheckCount = 0
     private(set) var foregroundCheckCount = 0
-    private(set) var resetCount = 0
 
     func start() throws {
         if startThrows { throw UpdateStartError.updaterRefusedToStart }
@@ -159,17 +147,9 @@ final class FakeUpdateEngine: UpdateEngine {
         backgroundCheckCount += 1
     }
 
-    func resetUpdateCycle() {
-        resetCount += 1
-    }
-
     // Test scripting helpers.
 
     func completeBackgroundDownload(displayVersion: String) {
         onBackgroundDownloadCompleted?(displayVersion)
-    }
-
-    func finishCycle(error: Error?) {
-        onUpdateCycleFinished?(error)
     }
 }

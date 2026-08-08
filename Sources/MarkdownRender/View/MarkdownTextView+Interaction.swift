@@ -5,6 +5,56 @@ import MarkdownCore
 // here is reachable without touching the keyboard.  Read mode has no insertion
 // caret and *all* of this still works.
 extension MarkdownTextView {
+    public func activateLinkAtCaret() -> Bool {
+        guard let hit = linkAtCaret() else { return false }
+        markdownDelegate?.markdownTextView(
+            self,
+            didActivateLink: hit.destination,
+            at: hit.range,
+            modifiers: []
+        )
+        return true
+    }
+
+    public func moveToLink(forward: Bool) -> Bool {
+        guard let storage = textStorage, storage.length > 0 else { return false }
+        var links: [NSRange] = []
+        storage.enumerateAttribute(
+            .drLink,
+            in: NSRange(location: 0, length: storage.length)
+        ) { value, range, _ in
+            if value is String { links.append(range) }
+        }
+        guard !links.isEmpty else { return false }
+        let caret = sourceSelectedRange.location
+        let target: NSRange
+        if forward {
+            target = links.first { $0.location > caret } ?? links[0]
+        } else {
+            target = links.last { $0.location < caret } ?? links[links.count - 1]
+        }
+        setSourceSelectedRanges([NSRange(location: target.location, length: 0)])
+        scroll(toOffset: target.location, position: .visible, animated: true)
+        return true
+    }
+
+    private func linkAtCaret() -> (destination: String, range: NSRange)? {
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        let caret = min(sourceSelectedRange.location, storage.length - 1)
+        for offset in [caret, max(0, caret - 1)] {
+            var range = NSRange()
+            if let destination = storage.attribute(
+                .drLink,
+                at: offset,
+                longestEffectiveRange: &range,
+                in: NSRange(location: 0, length: storage.length)
+            ) as? String {
+                return (destination, range)
+            }
+        }
+        return nil
+    }
+
 
     private struct CheckboxHit {
         var markOffset: Int
@@ -304,7 +354,10 @@ extension MarkdownTextView {
            let footnote = parsedDocument.footnotes[identifier],
            clickActivates(hit.range, modifiers: modifiers) {
             markdownDelegate?.markdownTextView(self, didNavigateTo: footnote.range.location)
-            scroll(toOffset: footnote.range.location, position: .center, animated: true)
+            // `.visible`, not `.center`: centring drags the page even when the
+            // definition is already on screen, which is the "click teleports the
+            // camera" jolt.  Reveal only when the target is actually off screen.
+            scroll(toOffset: footnote.range.location, position: .visible, animated: true)
             return
         }
         if let payload = fragmentPayload(at: point)?.payload, payload.kind == .image,
@@ -316,6 +369,17 @@ extension MarkdownTextView {
                 didActivateImage: payload.detail,
                 at: payload.sourceRange
             )
+            return
+        }
+
+        // A plain click in a fence's padding aims at the code, not at the
+        // invisible fence.  Shift-, option- and multi-clicks are deliberate
+        // selection gestures and go to `super` untouched.
+        if event.clickCount == 1, modifiers.isEmpty,
+           let redirect = redirectedCodeFenceCaret(at: point) {
+            window?.makeFirstResponder(self)
+            setSourceSelectedRanges([NSRange(location: redirect, length: 0)])
+            handleSelectionChanged(allowTypewriterScrolling: false)
             return
         }
 
@@ -387,6 +451,45 @@ extension MarkdownTextView {
         clearSourceFocus()
     }
 
+    /// Where a click on a fenced block's chrome rows should really put the caret.
+    ///
+    /// The fence lines are kept in the storage on purpose (§11.3) — they are
+    /// what the band's padding is made of, and keeping them means ⌘C still
+    /// yields a complete fenced block.  But in Document mode their glyphs are
+    /// suppressed, and AppKit happily resolves a click in that padding to a
+    /// character position part-way along an invisible ```` ```swift ````.  The
+    /// caret then blinks in empty space above the code with nothing under it,
+    /// and the next keystroke edits a fence the reader cannot see.
+    ///
+    /// Aim at the code instead: the top row lands on the first code line, the
+    /// bottom row on the end of the last one.  Source mode and a revealed
+    /// source-focus scope both show the fences, so there the click is honest
+    /// and stands.
+    private func redirectedCodeFenceCaret(at point: NSPoint) -> Int? {
+        guard mode != .source, let storage = textStorage, storage.length > 0 else { return nil }
+        guard let hit = fragmentPayload(at: point), hit.payload.kind == .codeBlock else { return nil }
+        let block = NSIntersectionRange(
+            hit.payload.sourceRange, NSRange(location: 0, length: storage.length)
+        )
+        guard block.length > 0 else { return nil }
+        if let focus = sourceFocus.range, NSIntersectionRange(focus, block).length > 0 { return nil }
+
+        let text = storage.string as NSString
+        let opening = text.lineRange(for: NSRange(location: block.location, length: 0))
+        let closing = text.lineRange(for: NSRange(location: block.upperBound - 1, length: 0))
+        // A block whose fences share a line has no code row to redirect to.
+        guard opening.location != closing.location else { return nil }
+
+        let offset = sourceOffset(at: point)
+        if offset < opening.upperBound {
+            return min(opening.upperBound, block.upperBound)
+        }
+        if offset >= closing.location {
+            return max(block.location, closing.location - 1)
+        }
+        return nil
+    }
+
     /// Copy button and collapsed-chip expansion, both hit-tested against the
     /// same geometry the fragment draws with.
     private func handleCodeBlockChrome(at point: NSPoint) -> Bool {
@@ -411,15 +514,20 @@ extension MarkdownTextView {
         guard let storage = textStorage, storage.length > 0 else { return false }
         var styleLocation = payload.sourceRange.location
         styleLocation = min(max(0, styleLocation), storage.length - 1)
+        // `firstLineHeadIndent`, matching `CodeBlockFragment.bandRect`: a
+        // wrapped code row hangs by a continuation indent, and `headIndent`
+        // would pull this reconstructed band — and the copy target inside it —
+        // two columns left of the one on screen.
         let indent = max(
             0,
             ((storage.attribute(.paragraphStyle, at: styleLocation, effectiveRange: nil)
-                as? NSParagraphStyle)?.headIndent ?? RenderMetrics.codeInsetX) - RenderMetrics.codeInsetX
+                as? NSParagraphStyle)?.firstLineHeadIndent ?? RenderMetrics.codeInsetX)
+                - RenderMetrics.codeInsetX
         )
         let band = CGRect(
             x: indent,
             y: chrome.minY,
-            width: max(1, styleSheet.measureWidth - indent),
+            width: max(1, columnWidth - indent),
             height: chrome.height
         )
         let copy = CodeBlockFragment.copyButtonRect(in: band, style: styleSheet, language: payload.detail)

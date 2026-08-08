@@ -205,19 +205,28 @@ final class VersionTimelineView: NSView {
     }
 
     private func drawCaption(_ text: String, at centerX: CGFloat, color: NSColor) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
         let attributes: [NSAttributedString.Key: Any] = [
             .font: PanelFont.secondary,
             .foregroundColor: color,
+            .paragraphStyle: paragraph,
         ]
         let size = (text as NSString).size(withAttributes: attributes)
         let track = trackRect
-        // A caption wider than the track used to invert this clamp and push
-        // itself off the leading edge — likely at the inspector's minimum
-        // width.  Clamping the upper bound to the lower one keeps it on screen.
+        // The caption may not run under the Restore button: it lives inside
+        // the track's span, centred on the knob where it fits, truncated
+        // where it does not — the inspector's minimum width is exactly the
+        // case that used to let it bleed across the button.
+        let available = max(40, track.width)
         let lower = track.minX
-        let upper = max(lower, track.maxX - size.width)
+        let upper = max(lower, track.maxX - min(size.width, available))
         let x = min(max(lower, centerX - size.width / 2), upper)
-        (text as NSString).draw(at: NSPoint(x: x, y: track.maxY + 12), withAttributes: attributes)
+        (text as NSString).draw(
+            with: NSRect(x: x, y: track.maxY + 12, width: min(size.width, available), height: 18),
+            options: [.usesLineFragmentOrigin],
+            attributes: attributes
+        )
     }
 
     // MARK: - Scrubbing
@@ -252,14 +261,7 @@ final class VersionTimelineView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect])
     }
 
     override func mouseMoved(with event: NSEvent) {

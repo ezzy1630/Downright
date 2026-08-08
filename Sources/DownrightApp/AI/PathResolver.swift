@@ -136,18 +136,29 @@ enum ExternalEditor: String, CaseIterable, Codable {
     }
 
     /// Editors that can be handed a line number via their URL scheme.
-    private func url(for file: URL, line: Int?) -> URL? {
-        let path = file.path
+    ///
+    /// The path has to be percent-encoded before it goes into the string.  A
+    /// literal `#` or `?` in a directory name is a fragment or query delimiter
+    /// to the URL parser, so the path silently truncates there and the editor
+    /// opens the wrong file — or none.  A literal `%` or space can fail the
+    /// parse outright, and `open(_:line:)` then falls back to
+    /// `NSWorkspace.open(file)`, which loses the line number.  Assigning
+    /// `URLComponents.path` encodes exactly the characters a path may not
+    /// contain and leaves `/` and `:` alone, so the trailing `:42` the editors
+    /// parse survives.
+    func url(for file: URL, line: Int?) -> URL? {
+        let scheme: String
         switch self {
-        case .vscode:
-            return URL(string: "vscode://file\(path)\(line.map { ":\($0)" } ?? "")")
-        case .cursor:
-            return URL(string: "cursor://file\(path)\(line.map { ":\($0)" } ?? "")")
-        case .zed:
-            return URL(string: "zed://file\(path)\(line.map { ":\($0)" } ?? "")")
-        default:
-            return nil
+        case .vscode: scheme = "vscode"
+        case .cursor: scheme = "cursor"
+        case .zed: scheme = "zed"
+        default: return nil
         }
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = "file"
+        components.path = file.path + (line.map { ":\($0)" } ?? "")
+        return components.url
     }
 
     func open(_ file: URL, line: Int?) {
@@ -186,7 +197,13 @@ enum ExternalEditor: String, CaseIterable, Codable {
     }
 
     private func openInTerminalEditor(_ file: URL, line: Int?) {
-        let editor = ProcessInfo.processInfo.environment["EDITOR"] ?? "vi"
+        // `$EDITOR` lands in the middle of a `do script` line, so it is a shell
+        // vector the moment it contains a metacharacter.  Only a bare path
+        // token of letters, digits, `/`, `.`, `-`, `_`, and `+` is accepted;
+        // anything else — spaces, `;`, `$(`, quotes, `~`, `$` — falls back to
+        // `vi`.  Quoting a richer value here would only defer the injection
+        // question to the shell, so we refuse instead.
+        let editor = ProcessInfo.processInfo.environment["EDITOR"].flatMap(sanitizedEditor) ?? "vi"
         let lineArg = line.map { "+\($0) " } ?? ""
         let command = "\(editor) \(lineArg)\(shellQuoted(file.path))"
         let script = """
@@ -197,6 +214,20 @@ enum ExternalEditor: String, CaseIterable, Codable {
         """
         var error: NSDictionary?
         NSAppleScript(source: script)?.executeAndReturnError(&error)
+    }
+
+    /// The characters a trusted `$EDITOR` token may contain.  A path like
+    /// `/usr/bin/vi` or a bare `code` passes; `"/Applications/… with spaces"`,
+    /// `sh -c '…'`, and every other shell construct is rejected.
+    private static let editorPathCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._+-"
+    )
+
+    private func sanitizedEditor(_ raw: String) -> String? {
+        guard !raw.isEmpty,
+              raw.unicodeScalars.allSatisfy({ Self.editorPathCharacters.contains($0) })
+        else { return nil }
+        return raw
     }
 
     private func shellQuoted(_ path: String) -> String {

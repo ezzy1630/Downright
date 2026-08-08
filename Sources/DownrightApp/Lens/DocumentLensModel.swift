@@ -156,7 +156,10 @@ struct DocumentLensModel: Sendable {
     private static func structure(_ document: ParsedDocument) -> DocumentLensSection {
         var items: [DocumentLensItem] = []
         var blockOrdinal = 0
+        var representedRanges = Set<String>()
         for block in document.root.flattened() where block.contentRange.length > 0 {
+            let rangeKey = "\(block.range.location):\(block.range.length)"
+            guard representedRanges.insert(rangeKey).inserted else { continue }
             switch block.content {
             case .heading(let level):
                 let title = document.substring(block.contentRange).trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,4 +1,5 @@
 import AppKit
+import MarkdownRender
 
 /// One policy for toolbar motion and emphasis. Keeping these decisions pure
 /// prevents individual controls from drifting into different timings or tones.
@@ -14,15 +15,22 @@ enum ToolbarChromePolicy {
         let segment: Int
     }
 
-    static let hoverDuration: CFTimeInterval = 0.10
-    static let pressInDuration: CFTimeInterval = 0.07
-    static let pressOutDuration: CFTimeInterval = 0.11
-    static let selectionDuration: CFTimeInterval = 0.15
-    static let emphasisDuration: CFTimeInterval = 0.11
+    // Timing is `Motion`'s to decide, not this file's.  These names stay
+    // because the controls read better for them, but they are views onto the
+    // one vocabulary rather than a second set of numbers that can drift.
+    static let hoverDuration: CFTimeInterval = Motion.hover
+    static let pressInDuration: CFTimeInterval = Motion.pressIn
+    static let pressOutDuration: CFTimeInterval = Motion.pressOut
+    static let selectionDuration: CFTimeInterval = Motion.selection
+    static let emphasisDuration: CFTimeInterval = Motion.emphasis
     static let pressedScale: CGFloat = 0.985
+    /// The task ring's press dips further than a plate button's: the glyph
+    /// itself compresses, so the travel has to read at 22pt — a 1.5% dip
+    /// would be invisible on a ring that small.
+    static let ringPressedScale: CGFloat = 0.86
 
     static func timingFunction() -> CAMediaTimingFunction {
-        CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+        Motion.timing(.snap)
     }
 
     static func feedbackOpacity(
@@ -94,10 +102,9 @@ final class ToolbarDocumentIdentityView: NSView {
     private var titleObservation: NSKeyValueObservation?
     private var subtitleObservation: NSKeyValueObservation?
     private var editedObservation: NSKeyValueObservation?
+    private var urlObservation: NSKeyValueObservation?
     private var activationObservers: [NSObjectProtocol] = []
 
-    var displayedTitle: String { titleLabel.stringValue }
-    var displayedContext: String { contextLabel.stringValue }
     var isEdited: Bool = false {
         didSet {
             guard isEdited != oldValue else { return }
@@ -196,6 +203,9 @@ final class ToolbarDocumentIdentityView: NSView {
         editedObservation = window.observe(\.isDocumentEdited, options: [.initial, .new]) { [weak self] window, _ in
             MainActor.assumeIsolated { self?.isEdited = window.isDocumentEdited }
         }
+        urlObservation = window.observe(\.representedURL, options: [.initial, .new]) { [weak self] window, _ in
+            MainActor.assumeIsolated { self?.updateProxyIcon(for: window.representedURL) }
+        }
         activationObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
             NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshEmphasis() }
@@ -214,6 +224,7 @@ final class ToolbarDocumentIdentityView: NSView {
         titleObservation?.invalidate()
         subtitleObservation?.invalidate()
         editedObservation?.invalidate()
+        urlObservation?.invalidate()
         for observer in activationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -228,6 +239,49 @@ final class ToolbarDocumentIdentityView: NSView {
             return proxyButton
         }
         return self
+    }
+
+    /// The proxy wears the document's own icon, the way the titlebar proxy in
+    /// every other macOS document window does.  A generic `doc.text` symbol is
+    /// the single clearest tell that a titlebar was hand-built: it says the
+    /// same thing for a Markdown file, a folder, and an alias.
+    private func updateProxyIcon(for url: URL?) {
+        guard let url, FileManager.default.fileExists(atPath: url.path) else {
+            proxyButton.image = NSImage(
+                systemSymbolName: "doc.text", accessibilityDescription: "Document path"
+            )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+            proxyButton.contentTintColor = hostWindow?.isKeyWindow == true
+                ? .secondaryLabelColor
+                : .tertiaryLabelColor
+            return
+        }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: Metrics.proxySize, height: Metrics.proxySize)
+        proxyButton.image = icon
+        // A file icon is already coloured; tinting it would flatten it to a
+        // silhouette.
+        proxyButton.contentTintColor = nil
+    }
+
+    /// Dragging the proxy hands the file to whatever is under the pointer —
+    /// Finder, Mail, a terminal.  It is the other half of what makes a proxy a
+    /// proxy rather than a button with a picture on it.
+    override func mouseDragged(with event: NSEvent) {
+        let start = convert(event.locationInWindow, from: nil)
+        guard proxyButton.frame.insetBy(dx: -2, dy: -2).contains(start),
+              let url = hostWindow?.representedURL,
+              FileManager.default.fileExists(atPath: url.path) else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 32, height: 32)
+        item.setDraggingFrame(
+            NSRect(x: start.x - 16, y: start.y - 16, width: 32, height: 32),
+            contents: icon
+        )
+        beginDraggingSession(with: [item], event: event, source: self)
     }
 
     @objc private func showPathMenu(_ sender: Any?) {
@@ -303,9 +357,16 @@ final class ToolbarDocumentIdentityView: NSView {
         titleLabel.textColor = hostWindow?.isKeyWindow == true ? .labelColor : .secondaryLabelColor
         contextLabel.textColor = .tertiaryLabelColor
         dirtyDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        proxyButton.contentTintColor = hostWindow?.isKeyWindow == true
-            ? .secondaryLabelColor
-            : .tertiaryLabelColor
+        updateProxyIcon(for: hostWindow?.representedURL)
+    }
+}
+
+extension ToolbarDocumentIdentityView: NSDraggingSource {
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        context == .outsideApplication ? [.copy, .link] : .copy
     }
 }
 
@@ -885,5 +946,73 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
         setPressedFeedback(true)
         defer { setPressedFeedback(false) }
         popupMenu.popUp(positioning: nil, at: NSPoint(x: bounds.maxX, y: bounds.minY), in: self)
+    }
+}
+
+/// A plain symbol button for the toolbar's trailing cluster.
+///
+/// The toolbar used to carry exactly one interactive control on the right — the
+/// `···` overflow — with Outline, Find, and everything else folded inside it.
+/// That is a lot of the app to hide behind an unlabelled glyph in a window that
+/// has room for three more buttons, and it made the two panels a reader reaches
+/// for constantly cost a menu each time.
+///
+/// It shares `ToolbarInteractiveButton`'s hover plate and press feedback with
+/// `ToolbarMenuButton`, and its 30pt square is the same geometry, so the
+/// cluster reads as one row of controls rather than as a row of near-misses.
+final class ToolbarActionButton: ToolbarInteractiveButton {
+    private enum Metrics {
+        static let side: CGFloat = 30
+        static let cornerRadius: CGFloat = 7
+    }
+
+    /// Lit the way the task ring lights when its panel is open, so "this panel
+    /// is showing" is said the same way by every control that owns one.
+    var isOn: Bool = false {
+        didSet {
+            guard isOn != oldValue else { return }
+            refreshInteractionFeedback(animated: window != nil)
+            needsDisplay = true
+        }
+    }
+
+    var styleSheet: StyleSheet = .current {
+        didSet { applyTint() }
+    }
+
+    init(symbol: String, label: String, help: String, target: AnyObject?, action: Selector) {
+        super.init(frame: .zero)
+        feedbackInsetX = 1
+        feedbackInsetY = 1
+        feedbackCornerRadius = Metrics.cornerRadius
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyDown
+        bezelStyle = .accessoryBarAction
+        controlSize = .regular
+        isBordered = false
+        self.target = target
+        self.action = action
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(label)
+        setAccessibilityHelp(help)
+        toolTip = help
+        applyTint()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Metrics.side, height: Metrics.side)
+    }
+
+    private func applyTint() {
+        contentTintColor = isOn ? styleSheet.accent : nil
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyTint()
     }
 }

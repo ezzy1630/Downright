@@ -31,9 +31,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
         buildInterface()
         applyStyle()
         updateStatus()
@@ -81,9 +79,9 @@ final class LocalAIPanelView: NSView, PanelSurface {
             previewLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             previewLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 10),
-            apply.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            cancel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             apply.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 12),
-            cancel.leadingAnchor.constraint(equalTo: apply.trailingAnchor, constant: 6),
+            apply.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
             cancel.centerYAnchor.constraint(equalTo: apply.centerYAnchor),
         ])
         setAccessibilityRole(.group)

@@ -122,17 +122,31 @@ public final class MarkdownContainerView: NSView {
         dirtyRect.intersection(bounds).fill()
     }
 
-    public override func layout() {
-        super.layout()
-        let accessoryFitting = topAccessory.map { accessory -> CGFloat in
+    /// Height of the accessory's own lane above the scrolling content.
+    ///
+    /// Public because it is not only this view's business: chrome the *window*
+    /// floats over the document — the change and conflict bars — has to clear
+    /// the same lane the breadcrumb reserves, and computing that from a second
+    /// copy of this formula is how the two drift apart.  Zero when the accessory
+    /// overlays the content, or when there is no accessory to reserve for.
+    public var topLaneHeight: CGFloat {
+        guard !topAccessoryOverlaysContent else { return 0 }
+        let height = topAccessoryHeight
+        return height > 0 ? height + 8 : 0
+    }
+
+    private var topAccessoryHeight: CGFloat {
+        topAccessory.map { accessory in
             guard !accessory.isHidden else { return 0 }
             let height = accessory.fittingSize.height
             return height > 0 ? height : 24
         } ?? 0
-        let topHeight = accessoryFitting
-        let topLaneHeight = topAccessoryOverlaysContent
-            ? 0
-            : (topHeight > 0 ? topHeight + 8 : 0)
+    }
+
+    public override func layout() {
+        super.layout()
+        let topHeight = topAccessoryHeight
+        let topLaneHeight = self.topLaneHeight
         let isFloatingDensityMap = leadingAccessory is DensityGutterView
         let leadingWidth = isFloatingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
@@ -164,28 +178,48 @@ public final class MarkdownContainerView: NSView {
         )
         let responsiveCharacters: CGFloat
         if bounds.width < 900 {
-            responsiveCharacters = 68
+            responsiveCharacters = 66
         } else if bounds.width > 1200 {
             responsiveCharacters = 72
         } else {
             responsiveCharacters = renderedTarget
         }
-        let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
+        let preferredMeasure = textView.mode == .source || textView.sourceFocus != .none
+            ? max(RenderMetrics.minimumProseWidth, contentWidth - 64 - RenderMetrics.codeBleed)
+            : textView.styleSheet.averageCharacterWidth * responsiveCharacters
         // Keep the column out from under the overlay thumb when the measure is
         // capped by a narrow window; a wide window's centring margin already
         // clears it (§7).
         let overlayThumbWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
-        let measure = min(preferredMeasure,
-                          max(240, contentWidth - RenderMetrics.revealSlack * 2 - overlayThumbWidth))
-        textView.applyResponsiveMeasure(measure)
+        // The container is the reading measure plus a trailing bleed lane that
+        // fenced blocks, diagrams, tables, and display math may use while prose
+        // is held back off it (§11.1).  The lane extends into the right margin,
+        // which a centred column leaves empty anyway; the marker rail sits in
+        // the left one, which is why the lane is trailing-only.
+        let bleed = RenderMetrics.codeBleed
+        let available = max(
+            RenderMetrics.minimumProseWidth + bleed,
+            contentWidth - RenderMetrics.revealSlack - overlayThumbWidth
+        )
+        let column = min(preferredMeasure + bleed, available)
+        let measure = column - bleed
+        textView.applyResponsiveMeasure(column)
         // Centre the column in the *whole* surface, not just in the scroll
         // view: the leading lane (document map) would otherwise push the text
         // off centre by half its own width, which reads as the column being
         // pressed against the map wall while the trailing margin stays empty.
-        let opticalLeft = max(0, (bounds.width - measure) / 2 - leadingWidth)
+        //
+        // Centred on the reading measure plus *half* the bleed lane.  Centring on
+        // the bare measure left every fenced block, table and diagram growing
+        // into the right margin alone, so a page with any of them read visibly
+        // right-heavy; centring on the whole container instead pushed the prose —
+        // which is most of the page — half a lane left of centre.  Splitting the
+        // lane balances the two: prose sits a touch left of dead centre, full
+        // bleed blocks overhang it evenly on both sides.
+        let opticalLeft = max(0, (bounds.width - measure - bleed / 2) / 2 - leadingWidth)
         let textLeft = max(gutterWidth + RenderMetrics.revealSlack, opticalLeft)
         let columnOrigin = textLeft - RenderMetrics.revealSlack
-        textView.minSize = NSSize(width: measure + RenderMetrics.revealSlack * 2, height: 0)
+        textView.minSize = NSSize(width: column + RenderMetrics.revealSlack * 2, height: 0)
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: columnOrigin, bottom: 0, right: 0)
 
         let textOrigin = scrollView.frame.minX + textLeft

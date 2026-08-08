@@ -88,9 +88,4 @@ final class TrustStore {
         lock.unlock()
         persistence.save(snapshot)
     }
-
-    func revokeAll() {
-        lock.lock(); values.removeAll(); lock.unlock()
-        persistence.save([])
-    }
 }

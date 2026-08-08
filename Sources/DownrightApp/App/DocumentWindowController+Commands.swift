@@ -9,7 +9,10 @@ extension DocumentWindowController: NSMenuItemValidation {
     /// Menu state comes from the command table's preconditions, never from a
     /// second switch that can drift out of step with it.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        MainMenu.validate(menuItem, in: commandContext)
+        if let command = MainMenu.command(for: menuItem) {
+            menuItem.state = commandState(command) ? .on : .off
+        }
+        return MainMenu.validate(menuItem, in: commandContext)
     }
 }
 
@@ -25,7 +28,13 @@ extension DocumentWindowController: CommandResponder {
             hasDocument: true,
             documentHasFile: markdownDocument.url != nil,
             hasSelection: containerTextView.sourceSelectedRange.length > 0,
-            canCheckForUpdates: UpdateCoordinator.shared.canCheckForUpdates
+            canCheckForUpdates: UpdateCoordinator.shared.canCheckForUpdates,
+            hasUnsavedChanges: markdownDocument.isDirty,
+            hasFindQuery: !findSession.query.isEmpty,
+            canGoBack: jumpHistory.canGoBack,
+            canGoForward: jumpHistory.canGoForward,
+            isSpeaking: isSpeakingDocument,
+            caretIsInTable: caretIsInTable
         )
     }
 
@@ -66,7 +75,7 @@ extension DocumentWindowController: CommandResponder {
         // safe because `indentSelection` reports failure when the caret is not
         // in a list item, and the text view then inserts the literal tab.
         if scope != .read,
-           event.modifierFlags.intersection([.option, .control]).isEmpty,
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
            KeyBinding.key(for: event) != "tab" {
             return false
         }
@@ -94,8 +103,6 @@ extension DocumentWindowController: CommandResponder {
         switch command {
 
         // MARK: Modes
-        case .toggleReadLive:
-            containerTextView.clearSourceFocus()
         case .sourceMode:
             if containerTextView.sourceFocus == .none {
                 containerTextView.focusEntireSource()
@@ -110,12 +117,11 @@ extension DocumentWindowController: CommandResponder {
             toggleFocusMode()
         case .typewriterScrolling:
             Preferences.shared.update { $0.typewriterScrolling.toggle() }
+        case .statusBar:
+            Preferences.shared.update { $0.showStatusBar.toggle() }
 
         // MARK: Panels
-        case .outlinePanel: toggleOutlinePanel()
         case .taskPanel: toggleTaskPanel()
-        case .toggleSidebar: toggleSiblingSidebar()
-        case .outlineQuickOpen: showOutlineQuickOpen()
         case .versionTimeline: showVersionTimeline()
         case .frontMatterEditor: showFrontMatterEditor()
         case .tableEditor: presentTableEditor()
@@ -135,10 +141,14 @@ extension DocumentWindowController: CommandResponder {
         case .previousHeading: jumpHeading(forward: false)
         case .nextChange: jumpChange(forward: true)
         case .previousChange: jumpChange(forward: false)
+        case .followLinkAtCaret: return textView.activateLinkAtCaret()
+        case .nextLink: return textView.moveToLink(forward: true)
+        case .previousLink: return textView.moveToLink(forward: false)
         case .documentStart: jump(to: 0, label: "Top")
         case .documentEnd: jump(to: markdownDocument.parsed.length, label: "End")
         case .goBack: goBack()
         case .goForward: goForward()
+        case .goToLine: goToLine()
         // Scrolling is geometry the text view owns, but the Navigate menu items
         // arrive here, so route them rather than dropping them on the floor.
         case .scrollDown: textView.scrollLineDown(nil)
@@ -227,7 +237,7 @@ extension DocumentWindowController: CommandResponder {
 
         // MARK: Application-level
         case .newDocument, .open, .preferences, .showKeybindings, .reloadTheme,
-             .toggleVimKeys, .compareFiles, .checkForUpdates:
+             .compareFiles, .checkForUpdates, .toggleLightDark:
             return (NSApp.delegate as? AppDelegate)?.handleApplicationCommand(command) ?? false
         }
         return true
@@ -267,10 +277,6 @@ extension DocumentWindowController: CommandResponder {
         // vanished at the exact moment the reader landed on it.  Departure and
         // dwell are handled by `noteVisibleChangeMarks`.
         jump(to: mark.range.location, label: "Change")
-    }
-
-    private func showOutlineQuickOpen() {
-        openNavigationOverlay(focusSearch: true)
     }
 
     private func showVersionTimeline() {
@@ -417,6 +423,38 @@ extension DocumentWindowController: CommandResponder {
             $0.contentRange.touches(offset: offset) || $0.markRange.touches(offset: offset)
         }) else { return }
         markdownDocument.toggleTask(atMarkOffset: task.markRange.location)
+    }
+
+    /// Shows a small dialog to jump to a line number.  The line number is
+    /// one-based, matching what a reader sees in a text editor status bar.
+    private func goToLine() {
+        let text = markdownDocument.text as NSString
+        let totalLines = max(1, text.length == 0 ? 1 :
+            (text.substring(from: max(0, text.length - 1)) == "\n"
+                ? text.components(separatedBy: "\n").count - 1
+                : text.components(separatedBy: "\n").count))
+        let alert = NSAlert()
+        alert.messageText = "Go to Line"
+        alert.informativeText = "Enter a line number (1–\(totalLines)):"
+        alert.alertStyle = .informational
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        input.placeholderString = "Line number"
+        input.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        alert.accessoryView = input
+        alert.addButton(withTitle: "Go")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = input
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let lineNumber = Int(input.stringValue.trimmingCharacters(in: .whitespaces)),
+              lineNumber > 0 else { return }
+        let targetLine = min(lineNumber - 1, totalLines - 1)
+        let lines = text.components(separatedBy: "\n")
+        var offset = 0
+        for i in 0..<min(targetLine, lines.count) {
+            offset += lines[i].utf16.count + 1  // +1 for the newline
+        }
+        offset = min(offset, text.length)
+        jump(to: offset, label: "Line \(lineNumber)")
     }
 
     private func useSelectionForFind() {

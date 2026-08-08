@@ -39,9 +39,6 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private let revertButton = NSButton(title: "Revert", target: nil, action: nil)
     private let doneButton = NSButton(title: "Done", target: nil, action: nil)
     private var controls: [NSPopUpButton] = []
-    private var controlAction: ButtonAction?
-    private var saveAction: ButtonAction?
-    private var deleteAction: ButtonAction?
     private var isReloading = false
 
     convenience init() { self.init(store: JSONReaderProfileStore(url: AppPaths.supportDirectory.appendingPathComponent("reader-profiles.json"))) }
@@ -53,6 +50,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         self.selectedProfile = ReaderProfile.builtIns[0]
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
+        deleteButton.hasDestructiveAction = true
         buildInterface()
         reloadProfileList()
         applyStyle()
@@ -84,9 +82,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     }
 
     private func buildInterface() {
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         for (field, font) in [(titleLabel, PanelFont.title), (detailLabel, PanelFont.secondary)] {
             field.font = font

@@ -127,11 +127,6 @@ public enum DocumentHealth {
     }
 }
 
-public typealias DocumentHealthEngine = DocumentHealth
-public typealias HealthDiagnostic = DocumentHealthDiagnostic
-public typealias HealthSeverity = DocumentHealthSeverity
-public typealias HealthCategory = DocumentHealthCategory
-
 private struct HealthPass {
     let document: ParsedDocument
     let options: DocumentHealthOptions

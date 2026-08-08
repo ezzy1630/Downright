@@ -33,7 +33,6 @@ final class Preferences {
 
         var externalEditor: ExternalEditor = .systemDefault
         var resolvePathTokens: Bool = true
-        var siblingSidebarVisible: Bool = false
         /// Extra directories to scan for siblings, relative to the document (§8.7).
         var siblingScanDirectories: [String] = ["docs", "plans", ".claude", "notes", "specs"]
 
@@ -42,10 +41,36 @@ final class Preferences {
         var watchFiles: Bool = true
 
         var vimKeys: Bool = false
+        /// Off by default: autosave writes the document to disk on every change
+        /// and during idle, which can interfere with agents also writing the
+        /// same file.  Turn it on only when working alone.
+        var autosaveEnabled: Bool = false
         /// §14's recommendation: reveal markers at the primary caret only.
         var revealMarkersAtAllCursors: Bool = false
+        /// Defaults **off**.  DESIGN.md's "Avoid" list names a permanent status
+        /// bar outright, and the two things such a bar would report are already
+        /// answered elsewhere: word count and read time live in the density
+        /// gutter's hover summary, and an unsaved document is marked in the
+        /// window's own close button.  It stays available for anyone who wants
+        /// a live line-and-column readout while editing, which nothing else in
+        /// the app provides.
+        var showStatusBar: Bool = false
         /// Beyond this size Read mode switches to windowed rendering (§15 Q4).
         var largeFileThresholdMegabytes: Int = 5
+
+        /// How many times the app has been launched, counting this one.  The
+        /// start window uses it to retire first-run affordances on a schedule
+        /// rather than leaving them up forever.
+        var launchCount: Int = 0
+        /// Set the first time the tour is opened, from anywhere.
+        var hasTakenTour: Bool = false
+        /// Set once the first-run setup panel has been answered, either way.
+        /// "Not now" is an answer: the panel does not come back uninvited.
+        var hasAnsweredSetup: Bool = false
+        /// Where the bundle was when LaunchServices and `pluginkit` were last
+        /// told about it.  Both record an absolute path, so a moved or renamed
+        /// app silently loses its Quick Look extensions until it re-registers.
+        var lastRegisteredBundlePath: String = ""
 
         init() {}
 
@@ -69,14 +94,19 @@ final class Preferences {
             restoreSession = get(.restoreSession, true)
             externalEditor = get(.externalEditor, ExternalEditor.systemDefault)
             resolvePathTokens = get(.resolvePathTokens, true)
-            siblingSidebarVisible = get(.siblingSidebarVisible, false)
             siblingScanDirectories = get(.siblingScanDirectories, ["docs", "plans", ".claude", "notes", "specs"])
             historyMaximumDays = get(.historyMaximumDays, 30)
             historyMaximumMegabytes = get(.historyMaximumMegabytes, 500)
             watchFiles = get(.watchFiles, true)
             vimKeys = get(.vimKeys, false)
+            autosaveEnabled = get(.autosaveEnabled, false)
             revealMarkersAtAllCursors = get(.revealMarkersAtAllCursors, false)
+            showStatusBar = get(.showStatusBar, false)
             largeFileThresholdMegabytes = get(.largeFileThresholdMegabytes, 5)
+            launchCount = get(.launchCount, 0)
+            hasTakenTour = get(.hasTakenTour, false)
+            hasAnsweredSetup = get(.hasAnsweredSetup, false)
+            lastRegisteredBundlePath = get(.lastRegisteredBundlePath, "")
         }
     }
 
@@ -143,7 +173,6 @@ final class Preferences {
         }
         SnapshotStore.shared.maximumAge = TimeInterval(values.historyMaximumDays) * 86_400
         SnapshotStore.shared.maximumBytes = values.historyMaximumMegabytes * 1024 * 1024
-        KeybindingStore.shared.vimKeysEnabled = values.vimKeys
     }
 
     /// Reads the settings file, preserving a file that exists but cannot be
@@ -181,7 +210,6 @@ final class Preferences {
         values = copy
         SnapshotStore.shared.maximumAge = TimeInterval(copy.historyMaximumDays) * 86_400
         SnapshotStore.shared.maximumBytes = copy.historyMaximumMegabytes * 1024 * 1024
-        KeybindingStore.shared.vimKeysEnabled = copy.vimKeys
     }
 
     private func persist() {

@@ -49,26 +49,34 @@ final class CodeBlockFragment: DownrightFragment {
         }
     }
 
+    /// The chrome rows claim their band *plus* `codeBlockGap` of page
+    /// background on the block's outer edge, which `bandRect` then leaves
+    /// unpainted.  Two adjacent fences therefore have real page between them
+    /// instead of butting tint against tint.
     override var overrideHeight: CGFloat? {
         switch role {
-        case .openChrome: return RenderMetrics.codeHeaderHeight
-        case .closeChrome: return RenderMetrics.codeInsetY
+        case .openChrome: return RenderMetrics.codeHeaderHeight + RenderMetrics.codeBlockGap
+        case .closeChrome: return RenderMetrics.codeInsetY + RenderMetrics.codeBlockGap
         case .collapsedChip: return RenderMetrics.chipHeight
         case .body: return nil
         }
     }
 
-    /// The closing chrome's copy control is taller than the band it sits in, so
-    /// the fragment has to claim the surface it draws into or TextKit clips it.
-    public override var renderingSurfaceBounds: CGRect {
-        let base = super.renderingSurfaceBounds
-        guard role == .closeChrome else { return base }
-        let overhang = Self.copyControlOverhang
-        return base.union(CGRect(x: base.minX, y: -overhang,
-                                 width: base.width,
-                                 height: layoutFragmentFrame.height + overhang * 2))
+    /// Untinted page background this fragment reserves, and where it sits.
+    private var outerGap: (top: CGFloat, bottom: CGFloat) {
+        switch role {
+        case .openChrome: return (RenderMetrics.codeBlockGap, 0)
+        case .closeChrome: return (0, RenderMetrics.codeBlockGap)
+        case .body, .collapsedChip: return (0, 0)
+        }
     }
 
+    /// The band paints exactly its own frame.  TextKit 2 composites each layout
+    /// fragment as an independent, lazily-rendered surface, so a fragment that
+    /// paints *outside* its frame (a taller claimed surface) leaves a tinted
+    /// rectangle behind when the neighbour it overlaps does not redraw in the
+    /// same pass — the stray shading blocks that appear beside and below code.
+    /// Keeping every fill inside the frame is what makes the band seam-tight.
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard let style = styleSheet else { return }
         let band = bandRect(at: point)
@@ -77,18 +85,20 @@ final class CodeBlockFragment: DownrightFragment {
         case .collapsedChip:
             drawCollapsedChip(band, style: style, in: cg)
         case .openChrome:
-            // Overdraws downward by the corner radius so the seam with the
-            // first code line has no notch; the body fills the same colour.
-            var extended = band
-            extended.size.height += RenderMetrics.codeCornerRadius
-            cg.fillRect(extended, color: style.codeBackground, radius: RenderMetrics.codeCornerRadius)
+            // The top edge carries the rounded corners; the bottom is square so
+            // it butts flush against the first code line with no overlap.
+            cg.fillRect(band, color: style.codeBackground,
+                        radius: RenderMetrics.codeCornerRadius,
+                        corners: [.topLeft, .topRight])
             drawRule(band, style: style, in: cg)
             drawChip(band, style: style, in: cg)
         case .closeChrome:
-            var extended = band
-            extended.origin.y -= RenderMetrics.codeCornerRadius
-            extended.size.height += RenderMetrics.codeCornerRadius
-            cg.fillRect(extended, color: style.codeBackground, radius: RenderMetrics.codeCornerRadius)
+            // Mirror image: square top against the last code line, rounded
+            // bottom edge.  The copy control is allowed to be taller than this
+            // thin band, but the *fill* never leaves the frame.
+            cg.fillRect(band, color: style.codeBackground,
+                        radius: RenderMetrics.codeCornerRadius,
+                        corners: [.bottomLeft, .bottomRight])
             drawRule(band, style: style, in: cg)
             // A long block scrolls its opening chrome off the top, taking the
             // only copy control with it.  The closing fence carries a second
@@ -161,7 +171,11 @@ final class CodeBlockFragment: DownrightFragment {
     /// The tinted band, inset to the block's own indentation so a code block
     /// inside a list stays inside the list.
     func bandRect(at point: CGPoint) -> CGRect {
-        let indent = max(0, (paragraphStyle?.headIndent ?? 0) - RenderMetrics.codeInsetX)
+        // `firstLineHeadIndent`, not `headIndent`: wrapped code rows hang by a
+        // continuation indent, and measuring the band from that would pull its
+        // right edge in by two columns on any block containing a long line.
+        let indent = max(0, (paragraphStyle?.firstLineHeadIndent ?? 0) - RenderMetrics.codeInsetX)
+        let gap = outerGap
         let frame = layoutFragmentFrame
         // TextKit bakes the paragraph head indent into the fragment origin, so
         // `point.x` already sits `codeInsetX` right of the column edge — adding
@@ -170,8 +184,10 @@ final class CodeBlockFragment: DownrightFragment {
         // with the column; the `contentWidth - indent` width keeps the right
         // edge on the measure.
         let textEdge = point.x + (textLineFragments.first?.typographicBounds.minX ?? 0)
-        return CGRect(x: textEdge - RenderMetrics.codeInsetX, y: point.y,
-                      width: max(1, contentWidth - indent), height: frame.height)
+        return CGRect(x: textEdge - RenderMetrics.codeInsetX,
+                      y: point.y + gap.top,
+                      width: max(1, contentWidth - indent),
+                      height: max(1, frame.height - gap.top - gap.bottom))
     }
 
     // MARK: Hit-test geometry, shared with the view (§7.1)
@@ -195,15 +211,11 @@ final class CodeBlockFragment: DownrightFragment {
     /// The old 24x17 was a decoration you had to hunt for.
     static let copyControlSide: CGFloat = 28
 
-    /// How far the closing chrome's control overhangs its own 14pt band.  The
-    /// band is padding, not a header row, so the control is centred on it and
-    /// claims the surface above and below rather than shrinking to fit.
-    static var copyControlOverhang: CGFloat {
-        max(0, (copyControlSide - RenderMetrics.codeInsetY) / 2).rounded(.up)
-    }
-
     static func copyButtonRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
-        let side = copyControlSide
+        // Clamp to the band: the header's 36pt row keeps the full 28pt target,
+        // but the 14pt closing fence collapses the button to fit so the control
+        // (like the fill around it) never paints outside the fragment's frame.
+        let side = min(copyControlSide, max(0, band.height))
         let chip = language.isEmpty
             ? band.maxX - RenderMetrics.codeInsetX
             : chipRect(in: band, style: style, language: language).minX

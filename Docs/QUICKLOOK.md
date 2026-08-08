@@ -10,23 +10,39 @@ WebView (spec §3.3).
 ## Enabling it — read this first
 
 **This is the number one support question for every app in this category**, so
-it is documented up front rather than in a FAQ:
+it is documented up front rather than in a FAQ.
 
-Build and install with `Scripts/bundle-xcode-app.sh` followed by
-`Scripts/install.sh`. The installer registers and enables both embedded
-extensions and resets Quick Look's cache. If you copy the app manually,
-follow these steps:
+**The answer for a normal install is: nothing.** Launch Downright once. The
+first-run setup panel registers the bundle with Launch Services, hands both
+extensions to `pluginkit`, enables them, and resets Quick Look's caches — the
+last of those being what makes `.md` files you already have drop their generic
+icons. This used to live only in `Scripts/install.sh`, which meant the shipping
+path (download the DMG, drag to Applications, double-click) ran none of it and
+the one user who mattered most got nothing.
 
-1. **Launch Downright once.** A freshly copied `.app` that has never been
-   opened may not contribute its extensions to the system.
-2. If previews don't appear, enable the extension manually:
-   **System Settings → General → Login Items & Extensions → Quick Look**, then
-   tick **Downright**.
-3. If a preview is still stale, reset the Quick Look daemon:
+`Scripts/install.sh` still does the same work for a source install, so building
+from the repository does not depend on launching the app first.
+
+Three things can still go wrong, and the app handles each:
+
+- **Running from the DMG or Downloads.** Gatekeeper runs the app out of a
+  randomised read-only mount, and extensions registered from there never stick.
+  The setup panel leads with moving the app into Applications and relaunching.
+- **The app moved after setup.** Launch Services and `pluginkit` both record an
+  absolute path. Downright stores where it last registered and re-registers
+  when that changes, so a rename or a move repairs itself on next launch.
+- **macOS declines to enable the extension.** Only the user can switch it on:
+  **System Settings → General → Login Items & Extensions → Quick Look**, then
+  tick **Downright**. The setup panel detects this and offers a button that
+  opens that exact pane.
+
+To reset by hand:
 
 ```bash
 qlmanage -r && qlmanage -r cache && killall Finder
 ```
+
+Settings → General → System integration repeats every step at any time.
 
 ## What the preview does
 
@@ -56,8 +72,8 @@ app's.
 ## Thumbnails
 
 `DownrightThumb` gives `.md` files real Finder icons showing the document's
-**first heading**, its opening line, and — when the document is a plan — its
-task completion count.
+**first heading**, its opening line, and — when the document is a plan — a
+progress bar for its task completion.
 
 On a folder full of agent output this is transformative: twelve files called
 `plan.md`, `output.md`, and `summary.md` become twelve distinguishable
@@ -65,6 +81,28 @@ documents.
 
 The thumbnail reads only the first 64KB of the file and parses with
 `ParseOptions.structureOnly`, so it never touches math, mermaid, or images.
+
+Three rules the drawing code exists to obey, each of which was broken once:
+
+- **It is a page, not a square.** `QLFileThumbnailRequest.maximumSize` is a
+  bounding box. Handing it back as the context size produces a square icon
+  sitting among every other app's portrait documents, which reads as a mistake
+  before it reads as a file. The reply is sized to 8.5:11 inside the box.
+- **The palette is fixed sRGB, never `labelColor` or `textBackgroundColor`.** A
+  thumbnail is drawn once by a background process with no appearance context
+  and then cached by the system for months, so a dynamic colour bakes in
+  whatever that process happened to resolve to and can strand a light icon in a
+  dark Finder. Document icons are artwork; Pages and TextEdit are white pages
+  in both appearances too.
+- **Text wraps.** `NSMutableParagraphStyle.lineBreakMode = .byTruncatingTail`
+  does not wrap — it lays the whole string on one line and clips it. Wrapping
+  belongs on the paragraph style and truncation on the `NSTextContainer`.
+  Relatedly, `NSLayoutManager` lays out top-down, so glyphs drawn into an
+  unflipped context come out in reverse line order; the text is drawn through
+  a flipped context of its own.
+
+Below 72pt the icon stops drawing real text — at Finder's list and column sizes
+it is a grey smudge — and draws proportioned rules that read as a page instead.
 
 ## Registered file types
 

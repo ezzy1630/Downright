@@ -53,6 +53,7 @@ final class PreferencesWindowController: NSWindowController {
     private let tabs: NSTabViewController
     private var panes: [(pane: SettingsPane, controller: NSViewController)] = []
     private let searchField = NSSearchField()
+    private var tabSelectionObserver: NSKeyValueObservation?
 
     convenience init() {
         let tabs = NSTabViewController()
@@ -61,6 +62,15 @@ final class PreferencesWindowController: NSWindowController {
         window.title = "Downright Settings"
         window.styleMask.insert(.resizable)
         window.setContentSize(NSSize(width: 760, height: 620))
+        // Resizable, but not to the point of self-harm.  The forms lay out at a
+        // fixed leading inset with wrapping help text under each control, so a
+        // narrow window clips labels rather than reflowing them, and a short one
+        // hides the keys pane's table behind its own footer.  This floor is the
+        // narrowest width at which the longest setting label still fits on one
+        // line, and the shortest height that leaves the keys table more rows
+        // than chrome.
+        window.contentMinSize = NSSize(width: 620, height: 420)
+        window.setFrameAutosaveName("DownrightSettingsWindow")
         self.init(window: window, tabs: tabs)
     }
 
@@ -69,20 +79,69 @@ final class PreferencesWindowController: NSWindowController {
         super.init(window: window)
 
         for pane in SettingsPane.allCases {
-            let controller: NSViewController = pane == .keys
-                ? KeybindingsPane()
-                : PreferencesPane(pane: pane, rows: PreferencesForms.rows(for: pane))
+            let controller = PreferencesWindowController.controller(for: pane)
+            if pane == .keys { _ = controller.view }
+            controller.title = pane.title
             panes.append((pane, controller))
-            tabs.addTabViewItem(NSTabViewItem(viewController: controller))
+            let item = NSTabViewItem(viewController: controller)
+            // `NSTabViewItem(viewController:)` copies the controller's `title`
+            // once, when it is built, and never reads it again — a pane that
+            // names itself later (the keys pane did, in `loadView()`, which does
+            // not run until the tab is first selected) shows up in the toolbar
+            // as "DownrightApp.KeybindingsPane".  `SettingsPane` already owns
+            // the titles, so the label is taken from there rather than left to
+            // the order in which two objects happen to be constructed.
+            item.label = pane.title
+            item.identifier = pane.rawValue
+            item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
+            tabs.addTabViewItem(item)
+            // AppKit may re-read the controller title while adopting the item.
+            item.label = pane.title
+        }
+        let saved = UserDefaults.standard.integer(forKey: "settings.selectedPane")
+        tabs.selectedTabViewItemIndex = SettingsPane.allCases.indices.contains(saved) ? saved : 0
+        tabSelectionObserver = tabs.observe(\.selectedTabViewItemIndex, options: [.new]) {
+            [weak self] _, _ in
+            MainActor.assumeIsolated { self?.selectedPaneDidChange() }
         }
         installSearchField(in: window)
+        resizeWindow(for: SettingsPane.allCases[tabs.selectedTabViewItemIndex], animated: false)
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
+    /// The controller behind a pane.  One place builds them, so a pane cannot
+    /// be assembled one way here and another way in a test.
+    static func controller(for pane: SettingsPane) -> NSViewController {
+        pane == .keys
+            ? KeybindingsPane()
+            : PreferencesPane(pane: pane, rows: PreferencesForms.rows(for: pane))
+    }
+
+    /// The names the tab toolbar shows, for the regression test that keeps a
+    /// pane from advertising its class name.
+    var tabLabelsForTesting: [String] { tabs.tabViewItems.map(\.label) }
+
     func select(_ pane: SettingsPane) {
         guard let index = panes.firstIndex(where: { $0.pane == pane }) else { return }
         tabs.selectedTabViewItemIndex = index
+    }
+
+    private func selectedPaneDidChange() {
+        let index = tabs.selectedTabViewItemIndex
+        guard SettingsPane.allCases.indices.contains(index) else { return }
+        UserDefaults.standard.set(index, forKey: "settings.selectedPane")
+        resizeWindow(for: SettingsPane.allCases[index], animated: true)
+    }
+
+    private func resizeWindow(for pane: SettingsPane, animated: Bool) {
+        let height: CGFloat = switch pane {
+        case .appearance, .updates: 460
+        case .history: 500
+        case .general, .editor, .typography: 620
+        case .keys: 680
+        }
+        window?.setContentSize(NSSize(width: 760, height: height))
     }
 
     // MARK: - Search
@@ -144,6 +203,7 @@ enum PreferenceRow {
     case button(String, () -> Void)
     case section(String)
     case note(String)
+    case themePreview
 
     /// What a popup should show.
     ///
@@ -179,6 +239,8 @@ enum PreferenceRow {
             return title
         case .note(let text):
             return text
+        case .themePreview:
+            return "theme preview colors typography sample"
         }
     }
 }
@@ -220,6 +282,70 @@ enum PreferenceRowFilter {
     }
 }
 
+private final class FlippedStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
+
+@MainActor
+private final class ThemePreviewView: NSView {
+    private let heading = NSTextField(labelWithString: "A clear document")
+    private let body = NSTextField(labelWithString: "Readable prose, a link, and `inline code`.")
+    private let accent = NSTextField(labelWithString: "downright.md")
+    private var observer: NSObjectProtocol?
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1
+        for label in [heading, body, accent] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+        }
+        NSLayoutConstraint.activate([
+            heading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            heading.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            body.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            body.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 10),
+            accent.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            accent.topAnchor.constraint(equalTo: body.bottomAnchor, constant: 8),
+        ])
+        observer = NotificationCenter.default.addObserver(
+            forName: Preferences.didChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        refresh()
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Theme preview")
+        setAccessibilityElement(true)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    deinit { observer.map(NotificationCenter.default.removeObserver) }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 520, height: 112) }
+
+    private func refresh() {
+        let name = Preferences.shared.values.themeName
+        guard let theme = ThemeStore.shared.themes.first(where: { $0.name == name }) else { return }
+        let appearance = NSAppearance(named: theme.appearance == .dark ? .darkAqua : .aqua)
+            ?? NSApp.effectiveAppearance
+        let sheet = StyleSheet(theme: theme, appearance: appearance)
+        layer?.backgroundColor = sheet.background.cgColor
+        layer?.borderColor = sheet.rule.cgColor
+        heading.font = sheet.headingFont(level: 2)
+        heading.textColor = sheet.headingColor(level: 2)
+        body.font = sheet.bodyFont()
+        body.textColor = sheet.text
+        accent.font = sheet.monoFont()
+        accent.textColor = sheet.link
+    }
+}
+
 @MainActor
 final class PreferencesPane: NSViewController, PreferenceSearchable {
     private let pane: SettingsPane
@@ -227,13 +353,19 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
     /// was built, a history folder that has grown, an updater that has checked
     /// since — all of it is stale the moment it is captured.
     private let makeRows: () -> [PreferenceRow]
-    private let stack = NSStackView()
+    private let stack = FlippedStackView()
     private let emptyLabel = NSTextField(labelWithString: "No settings match your search.")
 
     var searchQuery: String = "" {
         didSet {
             guard searchQuery != oldValue else { return }
-            if isViewLoaded { rebuild() }
+            guard isViewLoaded else { return }
+            rebuild()
+            // A filtered pane is a different list.  The clip view clamps itself
+            // when the rows no longer fill the window, but a query that still
+            // overflows keeps the offset the previous list had — and lands the
+            // user below every match it just found for them.
+            scrollToTop()
         }
     }
 
@@ -264,12 +396,14 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
+        scroll.contentView.drawsBackground = false
         scroll.documentView = stack
         stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            stack.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
         ])
         view = scroll
         rebuild()
@@ -300,6 +434,17 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             return
         }
         for row in rows { stack.addArrangedSubview(control(for: row)) }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        stack.addArrangedSubview(spacer)
+        spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: 1).isActive = true
+    }
+
+    private func scrollToTop() {
+        guard let scroll = view as? NSScrollView else { return }
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     private var tabBarItem: NSTabViewItem? {
@@ -320,6 +465,15 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             label.textColor = .tertiaryLabelColor
             label.preferredMaxLayoutWidth = 520
             return label
+
+        case .themePreview:
+            let preview = ThemePreviewView()
+            preview.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                preview.widthAnchor.constraint(equalToConstant: 520),
+                preview.heightAnchor.constraint(equalToConstant: 112),
+            ])
+            return preview
 
         case .toggle(let title, let help, let get, let set):
             let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
@@ -364,9 +518,11 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             objc_setAssociatedObject(stepper, &PreferencesPane.handlerKey, stepperHandler, .OBJC_ASSOCIATION_RETAIN)
             objc_setAssociatedObject(field, &PreferencesPane.handlerKey, fieldHandler, .OBJC_ASSOCIATION_RETAIN)
 
-            let row = NSStackView(views: [NSTextField(labelWithString: title), field, stepper])
-            row.orientation = .horizontal
-            row.spacing = 8
+            var controls: [NSView] = [field, stepper]
+            if let unit = Self.unit(for: title) {
+                controls.append(NSTextField(labelWithString: unit))
+            }
+            let row = formRow(title: title, controls: controls)
             return labelled(row, help: help)
 
         case .choice(let title, let help, let options, let get, let set):
@@ -388,9 +544,8 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             popup.action = #selector(ActionHandler.run)
             objc_setAssociatedObject(popup, &PreferencesPane.handlerKey, handler, .OBJC_ASSOCIATION_RETAIN)
 
-            let row = NSStackView(views: [NSTextField(labelWithString: title), popup])
-            row.orientation = .horizontal
-            row.spacing = 8
+            popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+            let row = formRow(title: title, controls: [popup])
             return labelled(row, help: help)
 
         case .text(let title, let help, let get, let set):
@@ -401,9 +556,7 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             field.action = #selector(ActionHandler.run)
             objc_setAssociatedObject(field, &PreferencesPane.handlerKey, handler, .OBJC_ASSOCIATION_RETAIN)
 
-            let row = NSStackView(views: [NSTextField(labelWithString: title), field])
-            row.orientation = .horizontal
-            row.spacing = 8
+            let row = formRow(title: title, controls: [field])
             return labelled(row, help: help)
 
         case .button(let title, let action):
@@ -413,6 +566,28 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             button.action = #selector(ActionHandler.run)
             objc_setAssociatedObject(button, &PreferencesPane.handlerKey, handler, .OBJC_ASSOCIATION_RETAIN)
             return button
+        }
+    }
+
+    private func formRow(title: String, controls: [NSView]) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.alignment = .right
+        label.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        let row = NSStackView(views: [label] + controls)
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 8
+        return row
+    }
+
+    private static func unit(for title: String) -> String? {
+        switch title {
+        case "Size", "Text size adjustment": return "pt"
+        case "Line height", "Math scale": return "×"
+        case "Measure (characters)": return "characters"
+        case "Large-file threshold", "Maximum size": return "MB"
+        case "Keep versions for": return "days"
+        default: return nil
         }
     }
 
@@ -519,11 +694,157 @@ enum PreferencesForms {
                               .filter { !$0.isEmpty }
                       }
                   }),
-            .toggle("Keep the sibling sidebar open",
-                    help: "Pin the document's related files beside the editor.",
-                    get: { Preferences.shared.values.siblingSidebarVisible },
-                    set: { value in Preferences.shared.update { $0.siblingSidebarVisible = value } }),
+        ] + systemIntegration()
+    }
+
+    /// The first-run setup panel's steps, kept reachable for good.
+    ///
+    /// The panel is shown once and answering "Not now" is meant to stick, so
+    /// this is where someone goes when they change their mind, when Quick Look
+    /// stops working after a macOS update, or when they moved the app and the
+    /// registration went stale.  Rows are rebuilt every time the pane appears,
+    /// so what they say is what is true right now.
+    @MainActor
+    static func systemIntegration() -> [PreferenceRow] {
+        var rows: [PreferenceRow] = [.section("System integration")]
+
+        if SystemIntegration.isDefaultMarkdownHandler {
+            rows.append(.note("Markdown files open in Downright."))
+        } else {
+            rows.append(.note(defaultHandlerDescription()))
+            rows.append(.button("Open Markdown Files with Downright") {
+                Task { @MainActor in
+                    let failure = await SystemIntegration.makeDefaultMarkdownHandler()
+                    if SystemIntegration.isDefaultMarkdownHandler {
+                        report("Markdown files now open in Downright.", detail: nil)
+                    } else {
+                        report(
+                            "Couldn’t change the default app.",
+                            detail: failure?.localizedDescription
+                                ?? "Finder’s Get Info → Open With → Change All can set it directly."
+                        )
+                    }
+                }
+            })
+        }
+
+        if SystemIntegration.commandLineToolIsBundled {
+            rows.append(.button(
+                SystemIntegration.isCommandLineToolInstalled
+                    ? "Reinstall the down Command Line Tool"
+                    : "Install the down Command Line Tool"
+            ) {
+                do {
+                    let result = try SystemIntegration.installCommandLineTool()
+                    guard !result.linked.isEmpty else {
+                        report(
+                            "Nothing was installed.",
+                            detail: "Something else already owns \(result.skipped.joined(separator: " and ")) in \(result.directory.path)."
+                        )
+                        return
+                    }
+                    report(
+                        "Installed \(result.linked.joined(separator: " and ")) in \(result.directory.path).",
+                        detail: result.isOnPath
+                            ? nil
+                            : "That folder isn’t on your PATH — add it to your shell profile to use the command."
+                    )
+                } catch {
+                    report("Couldn’t install the command line tool.", detail: error.localizedDescription)
+                }
+            })
+        }
+
+        if SystemIntegration.quickLookExtensionsAreBundled {
+            rows.append(.button("Re-register Quick Look Previews and Icons") {
+                SystemIntegration.registerWithSystem(resetThumbnailCache: true) { enabled in
+                    report(
+                        enabled
+                            ? "Quick Look previews and Finder icons are on."
+                            : "Quick Look needs one switch from you.",
+                        detail: enabled
+                            ? "Press space on a Markdown file to try it."
+                            : "System Settings → General → Login Items & Extensions → Quick Look, then tick Downright."
+                    )
+                }
+            })
+            rows.append(.button("Open Quick Look Settings") {
+                SystemIntegration.openQuickLookSettings()
+            })
+        } else {
+            // A SwiftPM dev build genuinely cannot carry an `.appex`; saying so
+            // beats offering a button that can only ever fail.
+            rows.append(.note("Quick Look previews are available in the installed release of Downright."))
+        }
+
+        rows.append(contentsOf: agentIntegration())
+
+        return rows
+    }
+
+    /// Coding agents rewriting Markdown under the reader is the case this app
+    /// exists for, so the hook that makes them hand the file over belongs beside
+    /// the other system registrations.
+    ///
+    /// Like every row above it, this reads live state rather than a stored
+    /// preference: the truth is in the agent's own settings file, which the user
+    /// may edit by hand or replace entirely.
+    @MainActor
+    static func agentIntegration() -> [PreferenceRow] {
+        // The hook invokes `down` by absolute path, so without the CLI there is
+        // nothing to install and a button would only ever fail.
+        guard AgentIntegration.executablePath != nil else {
+            return [.note("Install the down command line tool above to let coding agents open Markdown here.")]
+        }
+
+        guard AgentIntegration.isInstalled else {
+            return [
+                .note("Let coding agents open Markdown in Downright as they write it."),
+                .button("Open Agent Edits in Downright") {
+                    do {
+                        try AgentIntegration.install()
+                        report(
+                            "Agent edits now open in Downright.",
+                            detail: "Added to \(AgentIntegration.settingsURL.path)."
+                        )
+                    } catch {
+                        report("Couldn’t update the agent settings.", detail: error.localizedDescription)
+                    }
+                },
+            ]
+        }
+
+        return [
+            .note("Coding agents open Markdown in Downright as they write it."),
+            .button("Stop Opening Agent Edits") {
+                do {
+                    try AgentIntegration.uninstall()
+                    report("Agent edits no longer open in Downright.", detail: nil)
+                } catch {
+                    report("Couldn’t update the agent settings.", detail: error.localizedDescription)
+                }
+            },
         ]
+    }
+
+    /// Names the app that currently owns Markdown, so the row explains what it
+    /// would be changing rather than only what it would be setting.
+    @MainActor
+    private static func defaultHandlerDescription() -> String {
+        guard let type = SystemIntegration.claimedTypes.first,
+              let handler = NSWorkspace.shared.urlForApplication(toOpen: type)
+        else { return "No app is set to open Markdown files." }
+        let name = FileManager.default.displayName(atPath: handler.path)
+        return "Markdown files currently open in \(name)."
+    }
+
+    @MainActor
+    private static func report(_ message: String, detail: String?) {
+        let alert = NSAlert()
+        alert.messageText = message
+        if let detail { alert.informativeText = detail }
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     @MainActor
@@ -573,9 +894,18 @@ enum PreferencesForms {
                      set: { value in Preferences.shared.update { $0.typography.measureCharacters = CGFloat(value) } }),
 
             .section("Code"),
-            .text("Monospace family", help: nil,
-                  get: { Preferences.shared.values.typography.monoFamily },
-                  set: { value in Preferences.shared.update { $0.typography.monoFamily = value } }),
+            .choice("Monospace family", help: nil,
+                    options: NSFontManager.shared.availableFontFamilies.sorted(),
+                    get: {
+                        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+                        let current = Preferences.shared.values.typography.monoFamily
+                        return fonts.firstIndex(of: current).map { .index($0) } ?? .missing(current)
+                    },
+                    set: { index in
+                        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+                        guard fonts.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.typography.monoFamily = fonts[index] }
+                    }),
             .toggle("Ligatures", help: nil,
                     get: { Preferences.shared.values.typography.monoLigatures },
                     set: { value in Preferences.shared.update { $0.typography.monoLigatures = value } }),
@@ -625,6 +955,7 @@ enum PreferencesForms {
                     help: "Switch between the light and dark themes as macOS does. Turn this off to keep the light theme in both.",
                     get: { Preferences.shared.values.followsSystemAppearance },
                     set: { value in Preferences.shared.update { $0.followsSystemAppearance = value } }),
+            .themePreview,
             .note("Themes live in the Downright folder in Application Support. Import Theme and Reload Themes are on the View menu."),
         ]
     }
@@ -632,6 +963,11 @@ enum PreferencesForms {
     @MainActor
     static func editor() -> [PreferenceRow] {
         [
+            .section("Saving"),
+            .toggle("Autosave while editing",
+                    help: "Writes changes to disk as you type. Turn this off when an agent or external tool is also writing the same file — the default is off for that reason.",
+                    get: { Preferences.shared.values.autosaveEnabled },
+                    set: { value in Preferences.shared.update { $0.autosaveEnabled = value } }),
             .section("Typing"),
             .toggle("Typewriter scrolling", help: nil,
                     get: { Preferences.shared.values.typewriterScrolling },
@@ -748,6 +1084,17 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
 
     var searchMatchCount: Int { KeybindingsPane.filtered(allCommands, query: searchQuery).count }
 
+    /// The pane names itself here rather than in `loadView()`.  Its view is not
+    /// loaded until the tab is first selected, and by then everything that reads
+    /// a controller's title — the tab item's label above all — has already read
+    /// it and settled on the class name.
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        title = SettingsPane.keys.title
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
     /// Commands whose menu, name, or current shortcut matches every word typed.
     static func filtered(_ commands: [Command], query: String) -> [Command] {
         let words = query.lowercased().split(separator: " ").map(String.init)
@@ -761,7 +1108,6 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
     }
 
     override func loadView() {
-        title = SettingsPane.keys.title
         // A query typed before this pane was ever shown must survive the view
         // finally loading.
         commands = KeybindingsPane.filtered(allCommands, query: searchQuery)
@@ -797,10 +1143,8 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
         resetRowButton.target = self
         resetRowButton.action = #selector(resetSelected)
         let resetAll = NSButton(title: "Reset All…", target: self, action: #selector(resetAll))
-        let vim = NSButton(checkboxWithTitle: "Vim-style navigation keys", target: self, action: #selector(toggleVim))
-        vim.state = Preferences.shared.values.vimKeys ? .on : .off
-
-        let footer = NSStackView(views: [vim, NSView(), recordButton, resetRowButton, resetAll])
+        resetAll.hasDestructiveAction = true
+        let footer = NSStackView(views: [NSView(), recordButton, resetRowButton, resetAll])
         footer.orientation = .horizontal
         footer.spacing = 8
 
@@ -813,6 +1157,7 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
         NSLayoutConstraint.activate([
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 340),
+            scroll.heightAnchor.constraint(equalTo: stack.heightAnchor, constant: -86),
         ])
         view = stack
         refreshButtons()

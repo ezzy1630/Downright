@@ -90,18 +90,35 @@ final class CalloutFragment: DownrightFragment {
 
     /// The tinted band and its rule, anchored on the callout's own indentation.
     ///
-    /// Fragment drawing happens in text-container coordinates, so an absolute
-    /// x is meaningful and `point.x` is *not* a shared origin: TextKit puts the
-    /// paragraph's head indent into the fragment frame, and a grouped
-    /// (reflowed) element reports a different one from the marker row's plain
-    /// paragraph. Measuring the band from `point.x` is what made the two ends
-    /// of the same callout disagree by exactly one icon column.
-    private func bandRect(at point: CGPoint, reservedInset: CGFloat) -> CGRect {
+    /// Two coordinate facts have to hold at once, and getting either wrong puts
+    /// the rule straight through the prose:
+    ///
+    ///   * **`point` is the origin, not the column.** At draw time TextKit
+    ///     hands every fragment `point == .zero` with the context already
+    ///     translated to the fragment's own origin — and that origin carries
+    ///     the paragraph's head indent, which for a callout *is* the icon
+    ///     column. An absolute `x: 0` therefore painted the band exactly on
+    ///     the glyph edge, so body text sat flush against the coloured rule
+    ///     while the header, which adds `reservedInset` on top, was the only
+    ///     part correctly inset. Everything here is relative to `point`, the
+    ///     same way `CodeBlockFragment` does it.
+    ///
+    ///   * **The band belongs to the block, not to the row.** A nested list or
+    ///     quote inside the callout reports a deeper head indent than the
+    ///     block's own, and following it would step the band right for those
+    ///     rows. Correcting by `blockHeadIndent - rowHeadIndent` pins every
+    ///     slice to the same edge whatever its row indents to.
+    func bandRect(at point: CGPoint, reservedInset: CGFloat) -> CGRect {
         let indent = max(0, (blockHeadIndent ?? reservedInset) - reservedInset)
+        let rowIndent = paragraphStyle?.headIndent ?? blockHeadIndent ?? reservedInset
+        let blockIndent = blockHeadIndent ?? reservedInset
+        // A callout stands beside prose, so its band stops at the reading
+        // column's right edge rather than running out into the bleed lane that
+        // only fenced blocks may use.
         return CGRect(
-            x: indent,
+            x: point.x + (blockIndent - rowIndent) - reservedInset,
             y: point.y,
-            width: max(1, contentWidth - indent),
+            width: max(1, proseContentWidth - indent),
             height: layoutFragmentFrame.height
         )
     }

@@ -223,7 +223,25 @@ final class ThemeTests {
         for theme in bundled() {
             let sheet = StyleSheet(theme: theme, appearance: aqua)
             #expect(sheet.baselineGrid > 0)
-            expectClose(sheet.baselineGrid, sheet.baselineGrid.rounded(), within: 0.0001, "\(theme.name): whole-point grid")
+            // Half units, not whole.  A whole-point grid forces the line height
+            // to a multiple of four, so a 16pt body could be led 24pt or 28pt
+            // and nothing between — 1.50, which is tight for a serif running to
+            // 70 characters, or 1.75, which stripes the page.  Half units put
+            // 26pt in reach and still guarantee what the whole-point rule was
+            // protecting: `grid * 4` is always an even whole point, asserted
+            // below, so no line fragment ever lands on a fractional height.
+            expectClose(
+                sheet.baselineGrid * 2, (sheet.baselineGrid * 2).rounded(), within: 0.0001,
+                "\(theme.name): half-point grid"
+            )
+            expectClose(
+                sheet.lineHeight, sheet.lineHeight.rounded(), within: 0.0001,
+                "\(theme.name): whole-point line height"
+            )
+            expectClose(
+                sheet.lineHeight.truncatingRemainder(dividingBy: 2), 0, within: 0.0001,
+                "\(theme.name): even line height"
+            )
             expectClose(
                 sheet.lineHeight.truncatingRemainder(dividingBy: sheet.baselineGrid), 0, within: 0.001,
                 "\(theme.name): line height on the grid"

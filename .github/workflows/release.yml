@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     environment: release
     timeout-minutes: 90
     permissions:
@@ -68,6 +68,17 @@ jobs:
           #    commit count (build-number.sh); release builds must be > any
           #    previous release.  The value is checked again after building.
           Scripts/sync-versions.sh
+
+      # Same reason as CI: pick a toolchain that satisfies the manifest and
+      # fail loudly here if the image no longer ships one.  Every later step
+      # (swift, xcodebuild, xcrun) inherits the exported DEVELOPER_DIR.
+      - name: Select and verify the Swift toolchain
+        run: ./Scripts/select-toolchain.sh
+
+      # xcodegen is not part of the GitHub macOS image; the archive step below
+      # depends on it, so install it before anything long-running has run.
+      - name: Install xcodegen
+        run: brew install xcodegen
 
       - name: Resolve pinned dependencies
         run: swift package resolve
@@ -341,8 +352,6 @@ jobs:
             artifacts/dSYMs
             artifacts/*.delta
           body_path: artifacts/RELEASE-NOTES.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify public asset URL
         run: |

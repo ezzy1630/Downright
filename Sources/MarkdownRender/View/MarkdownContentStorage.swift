@@ -161,12 +161,20 @@ final class MarkdownContentStorage: NSTextContentStorage {
         if let cached = elementCache[index] { return cached }
 
         let sourceRange = sourceRanges[index]
-        let attributed = Self.anchoringLeadingStyle(
+        let anchored = Self.anchoringLeadingStyle(
             displayMap.displayString(forSourceRange: sourceRange, in: storage)
                 ?? storage.attributedSubstring(from: sourceRange),
             toSourceOffset: sourceRange.location,
             in: storage
         )
+        let attributed = paragraphStyle(for: sourceRange, in: storage).map { style in
+            let styled = NSMutableAttributedString(attributedString: anchored)
+            styled.addAttribute(
+                .paragraphStyle, value: style,
+                range: NSRange(location: 0, length: styled.length)
+            )
+            return styled as NSAttributedString
+        } ?? anchored
         guard let start = location(documentRange.location, offsetBy: sourceRange.location),
               let end = location(documentRange.location, offsetBy: sourceRange.upperBound),
               let elementRange = NSTextRange(location: start, end: end) else {
@@ -223,6 +231,57 @@ final class MarkdownContentStorage: NSTextContentStorage {
         return styled
     }
 
+    /// The one paragraph style a grouped element should lay out with, or `nil`
+    /// when the element is an ordinary paragraph and the storage already says it.
+    ///
+    /// A grouped element is *one* paragraph spanning several source lines, and
+    /// TextKit takes indent, leading and spacing from a single place — so two
+    /// things have to be corrected, both of which showed up as the element
+    /// laying out in some *other* block's geometry:
+    ///
+    ///   * **Indent comes from the element's first content, not its first
+    ///     character.** A nested item's group opens on the container
+    ///     indentation, and those columns belong to the range of the *parent*
+    ///     item, so the style found there is the parent's — the child then sat
+    ///     at its parent's indent instead of one level in. A callout body opens
+    ///     on the terminator of its `> [!KIND]` line, with the same effect.
+    ///
+    ///   * **Trailing air comes from the last line.** The space after a
+    ///     paragraph lives on the physical line that closes it, which is not the
+    ///     line TextKit reads, so a reflowed paragraph lost the gap after it.
+    private func paragraphStyle(for sourceRange: NSRange, in storage: NSTextStorage) -> NSParagraphStyle? {
+        guard sourceRange.length > 0, sourceRange.upperBound <= storage.length else { return nil }
+        let text = storage.string as NSString
+        let firstLine = text.paragraphRange(for: NSRange(location: sourceRange.location, length: 0))
+        let isGrouped = firstLine.upperBound < sourceRange.upperBound
+        let contentOffset = firstContentOffset(in: sourceRange)
+
+        guard isGrouped || contentOffset > sourceRange.location else { return nil }
+        let base = storage.attribute(.paragraphStyle, at: contentOffset, effectiveRange: nil) as? NSParagraphStyle
+        guard let base else { return nil }
+        guard isGrouped else { return base }
+
+        let trailing = storage.attribute(.paragraphStyle, at: sourceRange.upperBound - 1, effectiveRange: nil)
+            as? NSParagraphStyle
+        guard let trailing, trailing.paragraphSpacing != base.paragraphSpacing,
+              let unified = base.mutableCopy() as? NSMutableParagraphStyle else { return base }
+        unified.paragraphSpacing = trailing.paragraphSpacing
+        return unified.copy() as? NSParagraphStyle ?? base
+    }
+
+    /// First offset in the element that is not covered by a display
+    /// substitution — the first character that contributes glyphs of its own.
+    private func firstContentOffset(in sourceRange: NSRange) -> Int {
+        var offset = sourceRange.location
+        // Ascending and non-overlapping, so one pass resolves a run of adjacent
+        // substitutions (a container indent followed by a marker).
+        for substitution in displayMap.substitutions(in: sourceRange)
+        where substitution.sourceRange.location <= offset && substitution.sourceRange.upperBound > offset {
+            offset = substitution.sourceRange.upperBound
+        }
+        return min(offset, max(sourceRange.location, sourceRange.upperBound - 1))
+    }
+
     private static func separatorRange(
         for sourceRange: NSRange,
         text: NSString,
@@ -260,7 +319,11 @@ final class MarkdownContentStorage: NSTextContentStorage {
         reflowRanges: [NSRange],
         length: Int
     ) -> [NSRange] {
-        let groups = RangeSet.normalized(reflowRanges).filter {
+        // `disjoint`, not `normalized`: two reflow groups that merely touch are
+        // two paragraphs, and fusing them makes them one element — so a nested
+        // item whose group starts exactly where its parent's ends was wrapped
+        // into the parent's paragraph and laid out at the parent's indent.
+        let groups = RangeSet.disjoint(reflowRanges).filter {
             $0.location >= 0 && $0.upperBound <= length
         }
         var result: [NSRange] = []

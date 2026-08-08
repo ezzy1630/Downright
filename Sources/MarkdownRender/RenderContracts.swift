@@ -201,22 +201,35 @@ extension NSAttributedString.Key {
 
 public enum FragmentKind: String, Sendable {
     case codeBlock, collapsedCodeBlock, table, inlineMath, blockMath, mermaid, image, thematicBreak, frontMatter, callout, listOrnament
+
+    /// True when the fragment draws its own content instead of letting TextKit
+    /// draw the element's glyphs.
+    ///
+    /// Anything painted *behind* text — a search hit, a changed word — has
+    /// nothing to sit behind in one of these, because the characters it would
+    /// have tinted are not on screen.  The tint then lands on the fragment's
+    /// empty glyph box and comes out as a floating rectangle of colour with no
+    /// text in it, which is exactly what those stray shaded squares were.
+    public var replacesGlyphs: Bool {
+        switch self {
+        case .table, .collapsedCodeBlock, .blockMath, .mermaid, .image, .thematicBreak, .frontMatter:
+            return true
+        // Code keeps its glyphs (that is the point of it), and a callout, a list
+        // ornament and inline math are chrome drawn *around* real text.
+        case .codeBlock, .callout, .listOrnament, .inlineMath:
+            return false
+        }
+    }
 }
 
 /// Payload attached to a range that draws as an object rather than as glyphs.
-/// A class so it can ride along as an attribute value without copying, and so
-/// expensive rendered output (a mermaid image, a typeset formula) is cached on
-/// it across relayouts.
+/// A class so it can ride along as an attribute value without copying.
 public final class FragmentPayload: NSObject {
     public let kind: FragmentKind
     public let sourceRange: NSRange
     public let blockIdentity: BlockIdentity
     /// Fence language, mermaid diagram type, image path, LaTeX source …
     public let detail: String
-    /// Lazily produced rendering, invalidated when the theme changes.
-    public var cachedImage: NSImage?
-    public var cachedThemeToken: Int = 0
-    public var cachedSize: CGSize = .zero
     /// Table geometry, populated by the table fragment.
     public var tableData: TableData?
     public var isCollapsed: Bool = false
@@ -327,6 +340,14 @@ public struct TypographyConfig: Codable, Sendable, Equatable {
     /// markdown viewers get wrong.
     public var measureCharacters: CGFloat
     public var monoFamily: String
+    /// Code size as a fraction of the body size.
+    ///
+    /// The default is the value that matches SF Mono's x-height to New York's,
+    /// the same correction `mathScale` exists to make for formulas: at 0.92 the
+    /// mono face's x-height was 7.78pt against the body's 7.53, so code read
+    /// visibly *larger* than the prose around it while fitting fewer columns
+    /// per line.  A monospace face should sit a shade under its prose
+    /// companion, not over it.
     public var monoSizeAdjust: CGFloat
     public var monoLigatures: Bool
     /// Hanging punctuation and optical margin alignment (§11.1).
@@ -335,9 +356,15 @@ public struct TypographyConfig: Codable, Sendable, Equatable {
     /// the reason most apps render formulas visibly too large (§11.3).
     public var mathScale: CGFloat
 
+    /// `lineHeightMultiple` is 1.6, which the half-unit baseline grid resolves to
+    /// 26pt at a 16pt body.  1.55 resolved to 24pt — 1.50 in practice, which is
+    /// tight for a serif running to 70 characters: the eye loses the line it is
+    /// returning to.  The next value a whole-unit grid could reach was 28pt,
+    /// loose enough to stripe the page, which is why the grid gained half units
+    /// before this number moved.
     public static let `default` = TypographyConfig(
-        preset: .reading, bodySize: 16, scaleRatio: 1.25, lineHeightMultiple: 1.55,
-        measureCharacters: 70, monoFamily: "SF Mono", monoSizeAdjust: 0.92,
+        preset: .reading, bodySize: 16, scaleRatio: 1.25, lineHeightMultiple: 1.6,
+        measureCharacters: 70, monoFamily: "SF Mono", monoSizeAdjust: 0.88,
         monoLigatures: false, opticalMargins: true, mathScale: 1.0
     )
 }

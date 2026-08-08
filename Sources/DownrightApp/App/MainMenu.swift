@@ -11,6 +11,12 @@ import MarkdownRender
 /// Every menu — including Application, Window, and Help — is built from
 /// `groups(in:)`, so a command declared for a menu cannot silently fail to
 /// appear.  `CommandTableTests` asserts exactly that.
+/// Main-actor by nature, and now by declaration: every member here builds or
+/// inspects `NSMenu`/`NSMenuItem`, and two of them reach main-actor singletons
+/// (`UpdateCheckMenuItem.shared`, `HelpLinkTarget.shared`).  Without the
+/// annotation those reads are a Swift 6 error waiting to happen; with it, the
+/// isolation matches what the code has always required.
+@MainActor
 enum MainMenu {
     static func build() -> NSMenu {
         // Touching the shared instance starts the observation that revalidates
@@ -67,6 +73,9 @@ enum MainMenu {
             return item
         }
 
+        /// Explicitly isolated: a nested type does not inherit the enclosing
+        /// one's actor, and this reaches `HelpLinkTarget.shared`.
+        @MainActor
         static func link(_ title: String, _ url: String) -> StandardItem {
             StandardItem(
                 title: title,
@@ -90,7 +99,7 @@ enum MainMenu {
                 // Follows About per the updater spec.  Validation now comes
                 // from the command's precondition, not a bespoke target.
                 .commands([.checkForUpdates]),
-                .commands([.preferences, .showKeybindings, .toggleVimKeys]),
+                .commands([.preferences, .showKeybindings, .toggleLightDark]),
                 .services,
                 .standard([
                     StandardItem(title: "Hide Downright", selector: #selector(NSApplication.hide(_:)), keyEquivalent: "h"),
@@ -221,22 +230,32 @@ enum MainMenu {
 
         case .view:
             return [
-                .commands([.sourceMode, .toggleReadLive]),
+                .standard([
+                    StandardItem(title: "Show/Hide Toolbar", selector: #selector(NSWindow.toggleToolbarShown(_:))),
+                    StandardItem(title: "Customize Toolbar…", selector: #selector(NSWindow.runToolbarCustomizationPalette(_:))),
+                    StandardItem(
+                        title: "Enter Full Screen",
+                        selector: #selector(NSWindow.toggleFullScreen(_:)),
+                        keyEquivalent: "f", modifiers: [.control, .command]
+                    ),
+                ]),
+                .commands([.sourceMode]),
                 .commands([.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5, .zoomIn, .zoomOut]),
                 .commands([.increaseTextSize, .decreaseTextSize, .resetTextSize]),
-                .commands([.outlinePanel, .taskPanel, .toggleSidebar]),
+                .commands([.taskPanel]),
                 .commands([.commandPalette, .documentLens, .readerProfiles]),
                 .commands([.documentHealth, .renderTargets, .visualDebugger, .reviewPanel]),
                 .commands([.workspace, .localAI]),
-                .commands([.focusMode, .typewriterScrolling]),
+                .commands([.focusMode, .typewriterScrolling, .statusBar]),
                 .dynamicSubmenu(title: "Theme", delegate: ThemeMenuDelegate.shared),
                 .commands([.reloadTheme]),
             ]
 
         case .navigate:
             return [
-                .commands([.outlineQuickOpen]),
                 .commands([.previousHeading, .nextHeading]),
+                .commands([.previousLink, .nextLink, .followLinkAtCaret]),
+                .commands([.goToLine]),
                 .commands([.previousChange, .nextChange]),
                 .commands([.goBack, .goForward]),
                 .commands([.scrollUp, .scrollDown, .pageUp, .pageDown]),
@@ -257,12 +276,6 @@ enum MainMenu {
                 .standard([
                     StandardItem(title: "Minimize", selector: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"),
                     StandardItem(title: "Zoom", selector: #selector(NSWindow.performZoom(_:))),
-                    // ⌃⌘F is the system chord; Focus Mode no longer takes it.
-                    StandardItem(
-                        title: "Enter Full Screen",
-                        selector: #selector(NSWindow.toggleFullScreen(_:)),
-                        keyEquivalent: "f", modifiers: [.control, .command]
-                    ),
                 ]),
                 .commands([.splitView, .pinWindow]),
                 .standard([
@@ -288,7 +301,19 @@ enum MainMenu {
             // they are written the way a user would ask for them.
             return [
                 .standard([
-                    .link("Downright Help", "https://github.com/ezzy1630/Downright#readme"),
+                    // The start window retires its tour button after a few
+                    // launches; this is where it goes to stay reachable.
+                    StandardItem(
+                        title: "Take the Tour",
+                        selector: #selector(AppDelegate.takeTour(_:))
+                    ),
+                    StandardItem(
+                        title: "Downright Help",
+                        selector: #selector(HelpLinkTarget.openLink(_:)),
+                        keyEquivalent: "?",
+                        target: HelpLinkTarget.shared,
+                        representedObject: "https://github.com/ezzy1630/Downright#readme"
+                    ),
                     .link("Markdown Reference", "https://commonmark.org/help/"),
                 ]),
                 .standard([

@@ -6,63 +6,80 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct PanelAccessibilityTests {
-    @Test
-    func outlineSearchIncludesMatchesInsideFoldedSections() {
-        let view = OutlinePanelView()
-        view.headings = MarkdownParser.parse("# Project\n\n## Notes\n\n### Deep work\n").headings
-        view.foldedIndices = [0]
-        view.filterText = "Deep"
-
-        #expect(view.filterMatchCountForTesting == 1)
-        #expect(view.visibleRowCountForTesting == 3)
+    private func makeTask(
+        _ text: String, checked: Bool, at location: Int, headingIndex: Int? = nil, indent: Int = 0
+    ) -> TaskItem {
+        TaskItem(
+            isChecked: checked,
+            markRange: NSRange(location: location + 3, length: 1),
+            contentRange: NSRange(location: location, length: 12),
+            text: text,
+            headingIndex: headingIndex,
+            indentLevel: indent
+        )
     }
 
     @Test
-    func taskFilterExplainsEmptyResult() {
+    func taskPanelSummarisesAFinishedPlan() {
         let view = TaskPanelView()
-        view.tasks = [TaskItem(
-            isChecked: true,
-            markRange: NSRange(location: 3, length: 1),
-            contentRange: NSRange(location: 0, length: 12),
-            text: "Done",
-            headingIndex: nil,
-            indentLevel: 0
-        )]
-        view.showsIncompleteOnly = true
+        view.tasks = [makeTask("Done", checked: true, at: 0)]
 
-        #expect((view.accessibilityValue() as? String) == "No incomplete tasks")
+        #expect((view.accessibilityValue() as? String) == "1 task done")
+        #expect(view.statusLineForTesting == "1 task done")
+        #expect(view.captionForTesting == "1 task done")
+        // A section with nothing left lists its finished work instead of
+        // piling it.  The pile keeps completed tasks from becoming a wall of
+        // check marks *above the work that remains*; with no work remaining
+        // there is no wall to hold back, and hiding the section's only
+        // contents left the panel looking empty beside a document showing all
+        // of them.
+        #expect(view.visibleTaskCountForTesting == 1)
+        #expect(view.pileRowCountForTesting == 0, "a finished section should not pile")
     }
 
+    /// The pile still does its job where it earns it: a section that has both
+    /// finished and unfinished work leads with what is left.
     @Test
-    func taskPanelFiltersCompletedWorkWithoutLosingProgress() {
+    func taskPanelPilesCompletedWorkWhileWorkRemains() {
         let view = TaskPanelView()
         view.tasks = [
-            TaskItem(
-                isChecked: true,
-                markRange: NSRange(location: 3, length: 1),
-                contentRange: NSRange(location: 0, length: 12),
-                text: "Done",
-                headingIndex: nil,
-                indentLevel: 0
-            ),
-            TaskItem(
-                isChecked: false,
-                markRange: NSRange(location: 16, length: 1),
-                contentRange: NSRange(location: 13, length: 12),
-                text: "Open",
-                headingIndex: nil,
-                indentLevel: 0
-            ),
+            makeTask("Done", checked: true, at: 0),
+            makeTask("Open", checked: false, at: 13),
+        ]
+
+        #expect(view.pileRowCountForTesting == 1, "a mixed section should pile its done work")
+        #expect(view.visibleTaskCountForTesting == 1, "only the open task lists")
+
+        view.setCompletedPileExpandedForTesting(true, section: 0)
+        #expect(view.visibleTaskCountForTesting == 2)
+    }
+
+    @Test
+    func taskPanelListsOpenWorkFirstWithoutLosingProgress() {
+        let view = TaskPanelView()
+        view.tasks = [
+            makeTask("Done", checked: true, at: 0),
+            makeTask("Open", checked: false, at: 13),
         ]
 
         #expect(view.progress == (done: 1, total: 2))
-        #expect(view.visibleTaskCountForTesting == 2)
-        #expect(view.preferredWidth == 336)
-
-        view.showsIncompleteOnly = true
-
+        #expect(view.preferredWidth == 300)
+        #expect(view.statusLineForTesting == "1 of 2 done · next: Open")
+        #expect(view.captionForTesting == "1 of 2 done")
+        // Open work lists; the finished task waits in the collapsed pile.
         #expect(view.visibleTaskCountForTesting == 1)
+
+        view.setCompletedPileExpandedForTesting(true, section: 0)
+        #expect(view.visibleTaskCountForTesting == 2)
         #expect(view.progress == (done: 1, total: 2))
+    }
+
+    @Test
+    func taskPanelEmptyStatePointsAtQuickAdd() {
+        let view = TaskPanelView()
+        #expect((view.accessibilityValue() as? String) == "No tasks")
+        #expect(view.visibleTaskCountForTesting == 0)
+        #expect(view.captionForTesting == "")
     }
 
     @Test

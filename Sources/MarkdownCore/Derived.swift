@@ -288,19 +288,12 @@ struct DerivedStructures {
         for (index, block) in blocks.enumerated() {
             guard case .heading(let level) = block.content else { continue }
             let lineStart = map.text.lineStart(before: block.range.location)
-            let ownEnd = index + 1 < blocks.count
-                ? map.text.lineStart(before: blocks[index + 1].range.location)
-                : map.length
 
             let title = PlainText.of(block, in: map.text).trimmingCharacters(in: .whitespacesAndNewlines)
             let base = Slug.make(title)
             let count = slugs[base, default: 0]
             slugs[base] = count + 1
 
-            let ownRange = NSRange(
-                location: block.range.upperBound,
-                length: max(0, ownEnd - block.range.upperBound)
-            )
             nodes.append(HeadingNode(
                 level: level,
                 title: title,

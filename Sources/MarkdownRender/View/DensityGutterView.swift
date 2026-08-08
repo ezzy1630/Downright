@@ -151,17 +151,18 @@ public final class DensityGutterView: NSView {
     //
     /// Closest two marks may sit.  Below this the stack stops reading as
     /// separate ticks and becomes a bar, so it caps the capacity instead.
-    static let minPitch: CGFloat = 8
+    static let minPitch: CGFloat = 7
     /// Furthest two marks may sit.  The stack is one condensed object: beyond
     /// this pitch the marks scatter into a list instead of reading as a cluster.
-    static let maxPitch: CGFloat = 13
+    static let maxPitch: CGFloat = 11
     /// Share of the track the cluster may span.  The stack is a prompt index,
     /// so it must never grow to full height and become a second scrollbar.
     static let maxSpanFraction: CGFloat = 0.5
     /// Upper bound on marks however tall the window is — past this the rail is
     /// asking to be read rather than scanned, and the hover outline is the
-    /// place for detail.
-    static let stackCapacityCeiling: Int = 16
+    /// place for detail.  Rises as the pitch tightens, so a full stack still
+    /// spans the same share of a tall window.
+    static let stackCapacityCeiling: Int = 18
     /// Below this the document has no shape worth indexing, so the rail draws
     /// the quiet spine instead of a stack pretending to be one.
     static let minimumStackMarks: Int = 3
@@ -180,8 +181,6 @@ public final class DensityGutterView: NSView {
     /// Current-mark glow (same hue, very low opacity).
     static let currentGlowRadius: CGFloat = 10
     static let currentGlowOpacity: Float = 0.12
-
-    public static let minimumHostWidth: CGFloat = 360
 
     private let preview: DensityGutterPreviewWindow
     private let outline: DensityOutlineWindow
@@ -983,11 +982,22 @@ public final class DensityGutterView: NSView {
         wash.add(pos, forKey: "wash-position")
     }
 
-    /// The resting hairline behind a suppressed stack.  Only drawn when there
-    /// is a document but no index worth showing.
+    /// The resting hairline the marks sit on.
+    ///
+    /// It used to appear *only* when there was no stack, which left the common
+    /// case — a document with sections — showing a short cluster of ticks
+    /// floating in an otherwise empty lane, level with nothing and attached to
+    /// nothing.  Read cold it looked like a rendering artefact rather than a
+    /// scroll affordance, which is what §5.1 asks this lane to be.
+    ///
+    /// Drawing the track always gives the cluster somewhere to be: the rail
+    /// spans the viewport, the marks are the dense part of it, and the reader
+    /// can see at a glance both that the lane is a control and roughly where
+    /// in it they are.  At `spineAlpha` it is a whisper — it anchors the stack
+    /// without competing with it.
     private func updateSpine(hasStack: Bool) {
         guard let spine = spineLayer else { return }
-        guard !hasStack, !bands.isEmpty else {
+        guard !bands.isEmpty else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             spine.isHidden = true
@@ -996,7 +1006,9 @@ public final class DensityGutterView: NSView {
         }
 
         let track = Self.trackRange(height: bounds.height, trackInset: trackInset)
-        let width: CGFloat = 1.5 * railBreathe
+        // Thinner under a stack: there the track is context for the marks, not
+        // the thing being read.
+        let width: CGFloat = (hasStack ? 1 : 1.5) * railBreathe
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         spine.frame = CGRect(
@@ -1027,14 +1039,10 @@ public final class DensityGutterView: NSView {
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
-            owner: self
+        refreshTrackingArea(
+            &trackingArea,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect]
         )
-        addTrackingArea(area)
-        trackingArea = area
     }
 
     /// The rail has exactly one coordinate system: the marks.

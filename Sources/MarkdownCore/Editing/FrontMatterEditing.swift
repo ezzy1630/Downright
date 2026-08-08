@@ -68,8 +68,6 @@ public struct FrontMatterEditResult: Sendable {
         self.proposal = proposal
         self.fallback = fallback
     }
-
-    public var isSourceFallback: Bool { proposal == nil }
 }
 
 public enum FrontMatterEditing {
@@ -299,5 +297,3 @@ public enum FrontMatterEditing {
         return nil
     }
 }
-
-public typealias FrontMatterEditor = FrontMatterEditing

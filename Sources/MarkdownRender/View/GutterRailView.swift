@@ -20,6 +20,13 @@ public final class GutterRailView: NSView {
     private var changeBars: [(kind: ChangeKind, range: NSRange)] = []
     private var lineStarts: [Int] = [0]
 
+    /// Gap between the rail's right edge — which is the text column's left edge
+    /// — and the shared right edge everything in the rail hangs from.  Named
+    /// because the block markers and the source-mode line numbers both use it:
+    /// two literals drifted apart is a rail whose alignment moves when the mode
+    /// does.
+    private static let markerInset: CGFloat = 8
+
     public override var isFlipped: Bool { true }
 
     public init(textView: MarkdownTextView) {
@@ -119,15 +126,27 @@ public final class GutterRailView: NSView {
             let isActive = activeBlock.map { $0.range.contains(offset: marker.offset) } ?? false
             let color = isActive ? style.marker.blended(withFraction: 0.5, of: style.text) ?? style.marker
                                  : style.marker
-            let attributed = NSAttributedString(string: marker.text, attributes: [
-                .font: font,
-                .foregroundColor: color,
-            ])
-            let size = attributed.size()
-            // Right-aligned against the text column so deeper nesting reads as
-            // a staircase rather than as ragged noise.
-            let x = max(2, bounds.width - 8 - size.width)
-            attributed.draw(at: NSPoint(x: x, y: rect.minY + max(0, (style.lineHeight - size.height) / 2)))
+            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            var attributed = NSAttributedString(string: marker.text, attributes: attributes)
+            var size = attributed.size()
+            // A level that cannot fit the rail is *condensed*, never moved.
+            // `######` measures 36pt at a 16pt body and 54pt at a 24pt one, so
+            // the clamp this replaces pushed H4–H6 rightwards out of the shared
+            // edge — each deeper level ending a little closer to the text column
+            // than the last, which is the staircase down the left margin — and
+            // then let `clipsToBounds` cut the final `#` off.
+            let room = bounds.width - Self.markerInset - 2
+            if room > 0, size.width > room {
+                attributes[.font] = NSFont(descriptor: font.fontDescriptor,
+                                           size: font.pointSize * room / size.width) ?? font
+                attributed = NSAttributedString(string: marker.text, attributes: attributes)
+                size = attributed.size()
+            }
+            // Right-aligned: every level shares one right edge `markerInset`
+            // from the text column, so the rail reads as a column of levels
+            // rather than as ragged noise.
+            attributed.draw(at: NSPoint(x: bounds.width - Self.markerInset - size.width,
+                                        y: rect.minY + max(0, (style.lineHeight - size.height) / 2)))
         }
 
     }
@@ -156,7 +175,11 @@ public final class GutterRailView: NSView {
                 upper = middle
             }
         }
-        let start = lower
+        // One entry back, because a marker sits at its block's *start* while the
+        // bound above is the offset the viewport's top edge lands on — inside
+        // that same block.  Searching from it dropped the topmost marker on
+        // screen every time, which at the top of a file is the document's `#`.
+        let start = max(0, lower - 1)
 
         upper = markers.count
         while lower < upper {
@@ -178,9 +201,16 @@ public final class GutterRailView: NSView {
         // Keep the same small draw-ahead band used by the row intersection
         // below, while resolving the viewport in source coordinates once.
         let sourceVisible = visible.insetBy(dx: 0, dy: -40)
-        let x = textView.textContainerOrigin.x
-        let start = textView.sourceOffset(at: NSPoint(x: x, y: sourceVisible.minY))
-        let end = textView.sourceOffset(at: NSPoint(x: x, y: sourceVisible.maxY))
+        let origin = textView.textContainerOrigin
+        // A hit test above the container's vertical inset resolves to the *end*
+        // of the document, not to the first line.  The draw-ahead band starts
+        // 40pt above the viewport, so at the top of a file both probes landed in
+        // that empty strip, the slice below began past every marker, and the
+        // rail drew nothing at all until the reader scrolled 76pt.  Sample
+        // inside the laid-out text — the clamp `topVisibleOffset` already makes.
+        let top = max(sourceVisible.minY, origin.y) + 1
+        let start = textView.sourceOffset(at: NSPoint(x: origin.x, y: top))
+        let end = textView.sourceOffset(at: NSPoint(x: origin.x, y: max(top, sourceVisible.maxY)))
         guard (0...storage.length).contains(start),
               (0...storage.length).contains(end) else { return nil }
         let lower = min(start, end)
@@ -206,7 +236,7 @@ public final class GutterRailView: NSView {
             ])
             let size = label.size()
             label.draw(at: NSPoint(
-                x: max(2, bounds.width - 8 - size.width),
+                x: max(2, bounds.width - Self.markerInset - size.width),
                 y: rect.minY + max(0, (style.lineHeight - size.height) / 2)
             ))
         }

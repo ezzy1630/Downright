@@ -151,7 +151,7 @@ struct WindowChromeTests {
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             "document-identity", flexibleSpace,
             "presentation-mode", flexibleSpace,
-            "activity", "tasks-progress", "update-pill", "overflow",
+            "activity", "find", "tasks-progress", "update-pill", "overflow",
         ])
 
         let identity = try #require(
@@ -179,7 +179,21 @@ struct WindowChromeTests {
         controller.refreshSourceFocusToolbar()
         #expect(mode.selectedSegment == 0)
 
-        #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "find" })
+        // Find is a toolbar item, not an overflow entry.  The overflow used
+        // to be the only interactive control on the trailing edge, which put
+        // every panel in the app behind one unlabelled glyph and a menu — in a
+        // window with room for more buttons.  It shares `ToolbarActionButton`'s
+        // 30pt geometry with the overflow so the cluster reads as one row.
+        for identifier in ["find"] {
+            let button = try #require(
+                toolbar.items.first { $0.itemIdentifier.rawValue == identifier }?.view
+                    as? ToolbarActionButton,
+                "\(identifier) is not a toolbar button"
+            )
+            #expect(button.intrinsicContentSize.width == 30)
+            #expect(button.intrinsicContentSize.height == 30)
+            #expect(!button.isOn, "\(identifier) should rest unlit with its panel closed")
+        }
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "contents" })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
         let overflow = try #require(
@@ -283,21 +297,6 @@ struct WindowChromeTests {
     }
 
     @Test
-    func transientContentsDismissalObserversEndWhenPinned() {
-        let controller = DocumentWindowController()
-        defer { controller.close() }
-
-        controller.openNavigationOverlay(focusSearch: false)
-        #expect(controller.navigationClickMonitor != nil)
-        #expect(controller.navigationDeactivationObserver != nil)
-
-        controller.pinNavigationPanel()
-        #expect(controller.navigationClickMonitor == nil)
-        #expect(controller.navigationDeactivationObserver == nil)
-        #expect(controller.navigationPinned)
-    }
-
-    @Test
     func searchInspectorKeepsFindAndReplaceInOneSurface() {
         let inspector = SearchInspectorView()
         #expect(!inspector.showsReplace)
@@ -319,6 +318,37 @@ struct WindowChromeTests {
         #expect(controller.findBar == nil)
     }
 
+    /// The find bar's exit used to call `removeFromSuperview()` and *then*
+    /// `removeArrangedSubview(_:)`.  The first call already un-arranges the
+    /// view, so the second raised out of `-[NSStackView _removeView:…]` and
+    /// aborted the process — closing the find bar crashed the app every time
+    /// the fade completed.  Closing repeatedly has to be harmless too, because
+    /// Escape repeats faster than the 0.16 s exit.
+    @Test
+    func closingTheFindBarRetiresItFromTheStackWithoutRaising() {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+
+        controller.showFindBar(replace: false)
+        let bar = controller.findBar
+        #expect(bar != nil)
+        #expect(controller.barStack.arrangedSubviews.contains { $0 === bar })
+
+        controller.dismissFindBar()
+        controller.dismissFindBar()
+        #expect(controller.findBar == nil)
+
+        // Reduce Motion retires the pill synchronously; with motion on, the
+        // fade owns the removal and only the state has to have settled.
+        if controller.activeStyleSheet.reduceMotion {
+            #expect(!controller.barStack.arrangedSubviews.contains { $0 === bar })
+        }
+
+        controller.showFindBar(replace: false)
+        #expect(controller.findBar != nil)
+        controller.dismissFindBar()
+    }
+
     @Test
     func findOptionsLiveInOneCompactMenu() {
         let bar = FindBarView()
@@ -327,5 +357,48 @@ struct WindowChromeTests {
             "Regular Expression", "Match Case", "Whole Word", "In Selection",
         ])
         #expect(menu.items.last?.isEnabled == false)
+    }
+
+    /// DESIGN.md's "Avoid" list names a permanent status bar outright, so the
+    /// bar ships hidden and costs no height until View ▸ Status Bar asks for
+    /// it.  It shipped visible and unconditional, with no toggle anywhere.
+    @Test
+    func statusBarIsOffByDefaultAndCostsNoHeightWhenHidden() {
+        #expect(Preferences.Values().showStatusBar == false)
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        _ = controller.window
+
+        #expect(controller.statusBarView.isVisible == Preferences.shared.values.showStatusBar)
+
+        controller.statusBarView.isVisible = false
+        #expect(controller.statusBarView.isHidden)
+        #expect(controller.statusBarView.intrinsicContentSize.height == 0)
+
+        controller.statusBarView.isVisible = true
+        #expect(!controller.statusBarView.isHidden)
+        #expect(controller.statusBarView.intrinsicContentSize.height > 0)
+    }
+
+    /// A trailing panel is an accessory to the document.  At its 300pt minimum
+    /// in a 620pt window it was half the app, so the opening width is capped
+    /// against the window as well as clamped to the panel's own range.  The
+    /// divider stays draggable past it either way.
+    @Test
+    func inspectorNeverOpensWiderThanItsShareOfTheWindow() {
+        typealias Width = DocumentWindowController.InspectorWidth
+
+        // Roomy window: the panel gets exactly what it asked for.
+        #expect(Width.opening(300, availableWidth: 1400) == 300)
+        #expect(Width.opening(300, availableWidth: 800) == 300)
+        // Tight window: capped at its share rather than taking half the app.
+        #expect(Width.opening(520, availableWidth: 800) == 320)
+        #expect(Width.opening(520, availableWidth: 1000) == 400)
+        // No room to give: leave the divider alone entirely.
+        #expect(Width.opening(300, availableWidth: 620) == nil)
+        #expect(Width.opening(300, availableWidth: 0) == nil)
+        // Still clamped to the panel's own range in a very wide window.
+        #expect(Width.opening(900, availableWidth: 4000) == Width.maximum)
     }
 }

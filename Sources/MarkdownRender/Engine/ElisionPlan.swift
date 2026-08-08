@@ -50,11 +50,6 @@ public struct ElisionPlan: Sendable {
 
     public func isElided(_ offset: Int) -> Bool { RangeSet.covers(elidedRanges, offset) }
 
-    /// True when any part of `range` is elided.
-    public func intersectsElision(_ range: NSRange) -> Bool {
-        !RangeSet.intersecting(elidedRanges, range).isEmpty
-    }
-
     // MARK: - Construction
 
     public static func make(

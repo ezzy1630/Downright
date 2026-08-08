@@ -258,10 +258,7 @@ struct CommandTableTests {
     /// The reverse index keeps the first claim and drops the rest silently, so
     /// a collision inside one scope is a shortcut that quietly stops working.
     @Test func defaultBindingsDoNotCollideWithinAScope() {
-        var resolved = KeybindingDefaults.table
-        for (command, extras) in KeybindingDefaults.readModeExtras {
-            resolved[command, default: []].append(contentsOf: extras)
-        }
+        let resolved = KeybindingDefaults.table
         for scope in CommandScope.allCases {
             var claimed: [KeyBinding: Command] = [:]
             for command in Command.allCases where command.scopes.contains(scope) {
@@ -291,9 +288,8 @@ struct CommandTableTests {
         for (binding, owner) in reserved {
             #expect(!all.contains(binding), "\(binding.displayString) belongs to \(owner)")
         }
-        // ⌘0 is Actual Size on macOS; the sidebar moved off it.
+        // ⌘0 is Actual Size on macOS.
         #expect(KeybindingDefaults.table[.resetTextSize] == [KeyBinding("0", .command)])
-        #expect(KeybindingDefaults.table[.toggleSidebar] == [KeyBinding("0", [.command, .option])])
     }
 
     /// Every command the user is likely to reach for daily has a keyboard path
@@ -341,11 +337,11 @@ struct CommandTableTests {
     /// ranking that actually ran.
     @Test func quickResultsCarryTheirScoreAndStaySorted() {
         var model = paletteModel()
-        model.updateQuery("outline")
+        model.updateQuery("timeline")
         let scores = model.quickResults.map(\.score)
         #expect(scores.first ?? 0 > 0)
         #expect(scores == scores.sorted(by: >))
-        #expect(Set(commands(in: model)) == [.outlinePanel, .outlineQuickOpen])
+        #expect(Set(commands(in: model)) == [.versionTimeline])
     }
 
     /// Recency was computed in one code path and dropped in the one that ran.
@@ -353,13 +349,13 @@ struct CommandTableTests {
         // Same matched prefix, so the two entries score identically and only
         // the tie-break can separate them.
         let entries = [
-            CommandPaletteEntry(command: .outlinePanel, title: "Outline A", synonyms: [], binding: nil, scopes: [.live]),
+            CommandPaletteEntry(command: .documentLens, title: "Outline A", synonyms: [], binding: nil, scopes: [.live]),
             CommandPaletteEntry(command: .taskPanel, title: "Outline B", synonyms: [], binding: nil, scopes: [.live]),
         ]
         var model = CommandPaletteModel(entries: entries)
         model.updateQuery("outline")
         #expect(model.quickResults.map(\.score).allSatisfy { $0 == model.quickResults[0].score })
-        #expect(commands(in: model).first == .outlinePanel)
+        #expect(commands(in: model).first == .documentLens)
 
         model.record(.taskPanel)
         #expect(commands(in: model).first == .taskPanel)

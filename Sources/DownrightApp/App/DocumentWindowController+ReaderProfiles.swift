@@ -69,8 +69,7 @@ extension DocumentWindowController: ReaderProfilePickerDelegate {
         activeStyleSheet = sheet
         applyStyleSheet()
 
-        window?.toolbar?.displayMode = profile.chromeDensity == .compact
-            ? .iconOnly : .iconAndLabel
+        window?.toolbar?.displayMode = .iconOnly
         window?.toolbar?.sizeMode = profile.chromeDensity == .compact
             ? .small : .regular
         breadcrumbView.isHidden = profile.chromeDensity == .compact

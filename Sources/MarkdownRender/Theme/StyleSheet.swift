@@ -112,7 +112,7 @@ public struct StyleSheet {
         }
         mono = StyleSheet.monoFont(
             family: typography.monoFamily,
-            size: typography.bodySize * typography.monoSizeAdjust,
+            size: StyleSheet.monoPointSize(typography: typography),
             ligatures: typography.monoLigatures
         )
         emphasis = [
@@ -122,9 +122,16 @@ public struct StyleSheet {
             StyleSheet.applying(bold: true, italic: true, to: bodyFont),
         ]
 
-        // Metrics
+        // Metrics.
+        //
+        // The grid is quantised in half units so the line height can land on an
+        // even point.  Rounding it to whole units meant a 16pt body could only
+        // ever be led 24pt or 28pt — 1.50 or 1.75 — and 1.50 is tight for a
+        // serif running to 70 characters, while 1.75 is loose enough to break
+        // the page into stripes.  Half units put 26pt (1.625) in reach, which is
+        // the value the measure actually wants.
         let idealLineHeight = typography.bodySize * typography.lineHeightMultiple
-        let grid = max(2, (idealLineHeight / 4).rounded())
+        let grid = max(2, (idealLineHeight / 2).rounded() / 2)
         baselineGrid = grid
         lineHeight = grid * 4
         let advance = StyleSheet.averageCharacterWidth(of: bodyFont)
@@ -297,6 +304,24 @@ public struct StyleSheet {
         return clamped * typography.mathScale
     }
 
+    /// Code sized to sit level with the prose beside it whatever face resolves.
+    ///
+    /// `monoSizeAdjust`'s default was measured against SF Mono (see its doc
+    /// comment), so it only means what it was calibrated to mean for that face.
+    /// Menlo, Fira Code and JetBrains Mono disagree with SF Mono by several
+    /// percent at the same point size, and the fixed fraction then reads correct
+    /// against one and visibly large or small against the next.  Normalising the
+    /// resolved face onto SF Mono's x-height keeps the setting's meaning and is a
+    /// no-op when the configured face *is* SF Mono — today's calibration stands.
+    private static func monoPointSize(typography: TypographyConfig) -> CGFloat {
+        let requested = typography.bodySize * typography.monoSizeAdjust
+        let resolved = monoFont(family: typography.monoFamily, size: requested, ligatures: true)
+        let reference = monoFont(family: "SF Mono", size: requested, ligatures: true)
+        guard resolved.xHeight > 0, reference.xHeight > 0 else { return requested }
+        let corrected = requested * (reference.xHeight / resolved.xHeight)
+        return min(max(corrected, requested * 0.92), requested * 1.08)
+    }
+
     // MARK: - Colours
 
     public func headingColor(level: Int) -> NSColor { headingColors[StyleSheet.clampLevel(level) - 1] }
@@ -355,6 +380,70 @@ public struct StyleSheet {
             abs(StyleSheet.relativeLuminance(color) - StyleSheet.relativeLuminance(accent))
         }
         return distance(background) >= distance(text) ? background : text
+    }
+
+    // MARK: - Task checkbox (§8.5, §11.4)
+    //
+    // The document's ornament and the Tasks panel's control are one checkbox,
+    // and they already share their geometry through `RenderMetrics`.  Their
+    // *paint* lives here for the same reason: it carries contrast decisions that
+    // must not be made twice, and when only the document's was restyled the two
+    // disagreed on what "done" looks like.
+    //
+    // Both states are the same object — one ring at one weight, plus a tinted
+    // field and a tick when the task is done.  A checked box used to be a solid
+    // accent slab with a knocked-out tick, which made the loudest mark on the
+    // page the one thing the reader has already finished with, said "done" twice
+    // over the label's own strikethrough, and spent the accent that links and
+    // the caret need on a page's worth of completed rows.
+
+    /// Wash behind a completed box.
+    public var taskFieldColor: NSColor {
+        accent.panelAlpha(taskFieldAlpha, increaseContrast: increaseContrast)
+    }
+
+    private var taskFieldAlpha: CGFloat { 0.14 }
+
+    /// The box's outline.  Open, the ring is the whole affordance, so it comes
+    /// from secondary text rather than from `rule`: a theme's rule colour is a
+    /// hairline meant to disappear (warm dark's is two steps off the page), and a
+    /// checkbox nobody can see is a checkbox nobody clicks.
+    public func taskRingColor(checked: Bool) -> NSColor {
+        checked
+            ? accent.panelAlpha(0.55, increaseContrast: increaseContrast)
+            : textSecondary.panelAlpha(0.70, increaseContrast: increaseContrast)
+    }
+
+    /// The tick: the accent, pulled toward the text colour when the accent
+    /// cannot carry a stroke against the page.
+    ///
+    /// The tick used to sit on an accent slab and be knocked out in `onAccent`,
+    /// so only the slab's contrast mattered.  It now sits on the page itself, and
+    /// a theme's accent is not guaranteed to stand off it: the System theme
+    /// adopts whatever accent the user picked, and macOS Yellow against a white
+    /// page is under 2:1 — a ticked box would read as an empty one, which is
+    /// worse than loud.  Only a theme that cannot clear the bar pays for it.
+    ///
+    /// Measured against the field the tick lands on, not against the bare page.
+    /// The field is the accent at 14% over the background, so it sits *toward*
+    /// the accent and takes contrast the page comparison cannot see: the System
+    /// theme, which adopts whatever accent the user picked, measured 4:1 on the
+    /// page and 2.99:1 on its own field — passing the check while failing on
+    /// screen.  The bar stays at 4:1 rather than the 3:1 a non-text mark owes,
+    /// because what reaches the screen is 0.9 of this colour, not all of it.
+    /// It is 0.9 rather than a hint because the tick is the only thing that
+    /// *states* the task is done.
+    public var taskTickColor: NSColor {
+        let field = ColorResolver.blend(background, accent, taskFieldAlpha)
+        let ratio = StyleSheet.contrastRatio(accent, field)
+        let base = ratio < 4 ? ColorResolver.blend(accent, text, 0.5) : accent
+        return base.panelAlpha(0.90, increaseContrast: increaseContrast)
+    }
+
+    static func contrastRatio(_ a: NSColor, _ b: NSColor) -> CGFloat {
+        let first = relativeLuminance(a)
+        let second = relativeLuminance(b)
+        return (max(first, second) + 0.05) / (min(first, second) + 0.05)
     }
 
     /// WCAG relative luminance, on the sRGB components the resolver already

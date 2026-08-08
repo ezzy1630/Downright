@@ -104,6 +104,16 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         updateFocusDimmingViews()
         window?.toolbar?.validateVisibleItems()
         refreshVisualDebuggerIfVisible()
+        // Push cursor position to the status bar.
+        let text = markdownDocument.text as NSString
+        let offset = selection.location
+        let line = max(1, text.substring(to: min(offset, text.length)).components(separatedBy: "\n").count)
+        let lineStart = text.rangeOfCharacter(
+            from: .newlines, options: .backwards,
+            range: NSRange(location: 0, length: min(offset, text.length))
+        ).location
+        let column = max(1, offset - (lineStart == NSNotFound ? 0 : lineStart))
+        statusBarView.cursorPosition = (line: line, column: column)
     }
 
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {
@@ -271,7 +281,6 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             menu.addItem(editMarkdownItem(view: view, range: blockRange))
             menu.addItem(.separator())
             add(.tidyDocument, to: menu)
-            add(.outlineQuickOpen, to: menu)
         }
         return menu.items.isEmpty ? nil : menu
     }
@@ -316,32 +325,6 @@ final class BlockActionTarget: NSObject {
 
 // MARK: - Panels
 
-extension DocumentWindowController: OutlinePanelDelegate {
-    func outlinePanel(_ panel: OutlinePanelView, didSelectHeadingAt index: Int) {
-        guard index < markdownDocument.parsed.headings.count else { return }
-        let heading = markdownDocument.parsed.headings[index]
-        jump(to: heading.range.location, label: heading.title)
-    }
-
-    func outlinePanel(_ panel: OutlinePanelView, didMoveHeadingAt index: Int, before targetIndex: Int) {
-        // Moves the heading and everything beneath it (§7.1).
-        markdownDocument.ensureParsedCurrent()
-        let edits = Restructure.moveSection(markdownDocument.parsed, headingIndex: index, before: targetIndex)
-        markdownDocument.apply(edits, actionName: "Move Section")
-    }
-
-    func outlinePanel(_ panel: OutlinePanelView, didToggleFoldAt index: Int) {
-        markdownDocument.ensureParsedCurrent()
-        guard index < markdownDocument.parsed.headings.count else { return }
-        let slug = markdownDocument.parsed.headings[index].slug
-        var folds = containerTextView.foldedHeadingSlugs
-        if folds.contains(slug) { folds.remove(slug) }
-        else { folds.insert(slug) }
-        setSharedFolds(folds)
-    }
-
-}
-
 extension DocumentWindowController: TaskPanelDelegate {
     func taskPanel(_ panel: TaskPanelView, didToggleTaskAt markOffset: Int) {
         markdownDocument.ensureParsedCurrent()
@@ -353,69 +336,29 @@ extension DocumentWindowController: TaskPanelDelegate {
     func taskPanel(_ panel: TaskPanelView, didSelectTaskAt contentOffset: Int) {
         jump(to: contentOffset, label: "Task")
     }
-}
 
-extension DocumentWindowController: SiblingSidebarDelegate {
-    func siblingSidebar(_ sidebar: SiblingSidebarView, didSelect url: URL, inNewWindow: Bool) {
-        if inNewWindow {
-            (NSApp.delegate as? AppDelegate)?.open(url, disposition: .window)
-        } else {
-            openInPlace(url)
-        }
-    }
-}
-
-extension DocumentWindowController: NavigationPanelViewDelegate {
-    func navigationPanelDidRequestClose(_ panel: NavigationPanelView) {
-        if navigationPinned {
-            closePinnedNavigation()
-            return
-        }
-        closeNavigationOverlay()
-    }
-
-    func navigationPanelDidRequestPin(_ panel: NavigationPanelView) {
-        pinNavigationPanel()
-    }
-
-    func navigationPanel(_ panel: NavigationPanelView, didSelectHeadingAt index: Int) {
-        guard index < markdownDocument.parsed.headings.count else { return }
-        let heading = markdownDocument.parsed.headings[index]
-        jump(to: heading.range.location, label: heading.title)
-        closeNavigationOverlayIfTransient()
-    }
-
-    func navigationPanel(_ panel: NavigationPanelView, didMoveHeadingAt index: Int, before targetIndex: Int) {
+    func taskPanel(_ panel: TaskPanelView, didRequestNewTask text: String, headingIndex: Int?) {
         markdownDocument.ensureParsedCurrent()
-        let edits = Restructure.moveSection(markdownDocument.parsed, headingIndex: index, before: targetIndex)
-        markdownDocument.apply(edits, actionName: "Move Section")
+        let edits = Restructure.insertTask(markdownDocument.parsed, text: text, headingIndex: headingIndex)
+        commitTaskEdits(edits, actionName: "Add Task")
     }
 
-    func navigationPanel(_ panel: NavigationPanelView, didToggleFoldAt index: Int) {
+    func taskPanel(_ panel: TaskPanelView, didMoveTask taskIndex: Int, before targetIndex: Int?) {
         markdownDocument.ensureParsedCurrent()
-        guard index < markdownDocument.parsed.headings.count else { return }
-        let slug = markdownDocument.parsed.headings[index].slug
-        var folds = containerTextView.foldedHeadingSlugs
-        if folds.contains(slug) { folds.remove(slug) }
-        else { folds.insert(slug) }
-        setSharedFolds(folds)
-        panel.foldedIndices = Set(markdownDocument.parsed.headings.indices.filter {
-            containerTextView.foldedHeadingSlugs.contains(markdownDocument.parsed.headings[$0].slug)
-        })
+        let edits = Restructure.moveTask(markdownDocument.parsed, taskIndex: taskIndex, before: targetIndex)
+        commitTaskEdits(edits, actionName: "Move Task")
     }
 
-    func navigationPanel(_ panel: NavigationPanelView, didSelectFile url: URL, inNewWindow: Bool) {
-        if inNewWindow {
-            (NSApp.delegate as? AppDelegate)?.open(url)
-        } else {
-            openInPlace(url)
-        }
-        closeNavigationOverlayIfTransient()
-    }
-
-    private func closeNavigationOverlayIfTransient() {
-        guard !navigationPinned else { return }
-        closeNavigationOverlay()
+    /// Task edits behave like checkbox toggles (§7.1): the document writes
+    /// through immediately, the viewport does not jump, and the parse — which
+    /// repopulates the panel — lands in the same turn.
+    private func commitTaskEdits(_ edits: [TextEdit], actionName: String) {
+        guard !edits.isEmpty else { return }
+        primaryContainer.textView.preserveViewportOnNextDocumentUpdate()
+        splitContainer?.textView.preserveViewportOnNextDocumentUpdate()
+        markdownDocument.apply(edits, actionName: actionName)
+        markdownDocument.reparseNow()
+        if markdownDocument.url != nil { _ = markdownDocument.saveIfNeeded() }
     }
 }
 
@@ -514,6 +457,14 @@ extension DocumentWindowController: ConflictBarDelegate {
 extension DocumentWindowController: ChangeSummaryBarDelegate {
     func changeSummaryBar(_ bar: ChangeSummaryBarView, didRequestJump forward: Bool) {
         perform(forward ? .nextChange : .previousChange)
+    }
+
+    /// Arriving is not reviewing — the same rule `jumpChange` follows.  The mark
+    /// stays unvisited so its highlight is still there when the reader lands on
+    /// it; dwell and departure are what clear it.
+    func changeSummaryBar(_ bar: ChangeSummaryBarView, didSelectChangeWith id: UUID) {
+        guard let mark = markdownDocument.changes.marks.first(where: { $0.id == id }) else { return }
+        jump(to: mark.range.location, label: "Change")
     }
 
     func changeSummaryBarDidRequestMarkReviewed(_ bar: ChangeSummaryBarView) {

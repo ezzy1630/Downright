@@ -165,56 +165,6 @@ struct WorkspaceTests {
         #expect(view.accessibilityLabel() == "Workspace")
     }
 
-    @Test
-    func navigatorIsTransientWidthAndSearchesBothSections() throws {
-        let navigator = NavigationPanelView()
-        #expect(navigator.preferredWidth >= 300 && navigator.preferredWidth <= 320)
-        #expect(navigator.accessibilityLabel() == "Contents and Files")
-
-        navigator.headings = MarkdownParser.parse("# Intro\n\n## Details\n").headings
-        navigator.filterText = "details"
-        #expect(navigator.headings.count == 2, "source headings stay intact while the Contents view filters")
-        #expect(navigator.visibleHeadingCountForTesting == 2)
-
-        let file = SiblingScanner.Sibling(
-            url: URL(fileURLWithPath: "/workspace/notes.md"),
-            displayName: "notes.md", modified: Date(), byteCount: 0, hasUnseenChanges: false, group: nil, isCurrent: false
-        )
-        navigator.siblings = [file]
-        navigator.filterText = "missing"
-        #expect(navigator.siblings.count == 1, "source files stay intact while the Files view filters")
-        #expect(navigator.visibleFileCountForTesting == 0)
-        #expect(navigator.visibleSectionCountForTesting == 0)
-        #expect(navigator.emptyStateVisibleForTesting)
-
-        navigator.filterText = ""
-        #expect(navigator.visibleSectionCountForTesting == 2)
-        #expect(!navigator.emptyStateVisibleForTesting)
-        #expect(navigator.preferredHeight < NavigationPanelGeometry.maximumHeight)
-    }
-
-    @Test
-    func navigatorGeometryStaysInsetAndOnScreen() {
-        let content = NSRect(x: 980, y: 120, width: 500, height: 700)
-        let visible = NSRect(x: 1000, y: 100, width: 420, height: 760)
-        let frame = NavigationPanelGeometry.frame(
-            contentScreenFrame: content,
-            visibleScreenFrame: visible
-        )
-        #expect(frame.width == 312)
-        #expect(frame.height <= 560)
-        #expect(frame.minX >= visible.minX + 12)
-        #expect(frame.maxX <= visible.maxX - 12)
-        #expect(frame.minY >= visible.minY + 12)
-        #expect(frame.maxY <= visible.maxY - 12)
-
-        let compactFrame = NavigationPanelGeometry.frame(
-            contentScreenFrame: content,
-            visibleScreenFrame: visible,
-            preferredHeight: 240
-        )
-        #expect(compactFrame.height == 240)
-    }
 }
 
 private extension String {

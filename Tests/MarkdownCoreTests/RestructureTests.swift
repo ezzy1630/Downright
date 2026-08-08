@@ -236,6 +236,149 @@ import Testing
         #expect(Restructure.toggleTask(doc, atMarkOffset: 3) == nil)
     }
 
+    // MARK: Tasks — insert
+
+    @Test func insertTaskGoesAfterTheLastTaskOfTheSection() {
+        let text = "# A\n\n- [ ] one\n- [ ] two\n\n# B\n\n- [ ] three\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.insertTask(doc, text: "new", headingIndex: 0))
+        #expect(out == "# A\n\n- [ ] one\n- [ ] two\n- [ ] new\n\n# B\n\n- [ ] three\n")
+    }
+
+    @Test func insertTaskLandsAfterTheWholeChildBlock() {
+        // The anchor is the last matching task, and its block extends over
+        // nested children, so the new line never splits a family.
+        let text = "# S\n\n- [ ] a\n- [ ] b\n  - [ ] b1\n  - [ ] b2\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.insertTask(doc, text: "new", headingIndex: 0))
+        #expect(out == "# S\n\n- [ ] a\n- [ ] b\n  - [ ] b1\n  - [ ] b2\n- [ ] new\n")
+
+        // Non-task children indented under the anchor ride along too.
+        let continuation = "# S\n\n- [ ] a\n  - plain child\n\n# T\n\n- [ ] t\n"
+        let out2 = apply(
+            continuation,
+            Restructure.insertTask(MarkdownParser.parse(continuation), text: "new", headingIndex: 0)
+        )
+        #expect(out2 == "# S\n\n- [ ] a\n  - plain child\n- [ ] new\n\n# T\n\n- [ ] t\n")
+    }
+
+    @Test func insertTaskIntoHeadinglessDocument() {
+        let text = "- [ ] one\n- [ ] two\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.insertTask(doc, text: "new", headingIndex: nil))
+        #expect(out == "- [ ] one\n- [ ] two\n- [ ] new\n")
+    }
+
+    @Test func insertTaskIntoEmptyDocument() {
+        let doc = MarkdownParser.parse("")
+        #expect(apply("", Restructure.insertTask(doc, text: "new", headingIndex: nil)) == "- [ ] new\n")
+    }
+
+    @Test func insertTaskIntoDocumentWithoutTrailingNewline() {
+        let text = "- [ ] one"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.insertTask(doc, text: "new", headingIndex: nil))
+        #expect(out == "- [ ] one\n- [ ] new\n")
+    }
+
+    @Test func insertTaskWithoutAMatchingSectionAppendsWithSeparation() {
+        let text = "# A\n\n- [ ] x\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(apply(text, Restructure.insertTask(doc, text: "new", headingIndex: 1))
+            == "# A\n\n- [ ] x\n\n- [ ] new\n")
+
+        // Already blank at EOF: no extra separation.
+        let blank = "# A\n\n- [ ] x\n\n"
+        #expect(apply(blank, Restructure.insertTask(MarkdownParser.parse(blank), text: "new", headingIndex: 1))
+            == "# A\n\n- [ ] x\n\n- [ ] new\n")
+
+        // No trailing newline at all: the separator has to create the blank line.
+        let prose = "Just prose."
+        #expect(apply(prose, Restructure.insertTask(MarkdownParser.parse(prose), text: "new", headingIndex: nil))
+            == "Just prose.\n\n- [ ] new\n")
+    }
+
+    @Test func insertTaskRejectsWhitespaceOnlyText() {
+        let doc = MarkdownParser.parse("- [ ] one\n")
+        #expect(Restructure.insertTask(doc, text: "  \n\t ", headingIndex: nil).isEmpty)
+    }
+
+    // MARK: Tasks — move
+
+    @Test func moveTaskDownOneSibling() {
+        let text = "- [ ] a\n- [ ] b\n- [ ] c\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 0, before: 2))
+            == "- [ ] b\n- [ ] a\n- [ ] c\n")
+    }
+
+    @Test func moveTaskToTheEnd() {
+        let text = "- [ ] a\n- [ ] b\n- [ ] c\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 0, before: nil))
+            == "- [ ] b\n- [ ] c\n- [ ] a\n")
+    }
+
+    @Test func moveTaskUp() {
+        let text = "- [ ] a\n- [ ] b\n- [ ] c\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 2, before: 0))
+            == "- [ ] c\n- [ ] a\n- [ ] b\n")
+    }
+
+    @Test func moveTaskCarriesItsChildren() {
+        let text = "- [ ] a\n  - [ ] a1\n- [ ] b\n"
+        let doc = MarkdownParser.parse(text)
+        // Lifting b over a leaves a's child attached to a.
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 2, before: 0))
+            == "- [ ] b\n- [ ] a\n  - [ ] a1\n")
+        // Moving a to the end carries a1 along with it.
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 0, before: nil))
+            == "- [ ] b\n- [ ] a\n  - [ ] a1\n")
+    }
+
+    @Test func moveTaskTreatsBlankLineSplitListsAsOneSiblingGroup() {
+        let text = "- [ ] a\n\n- [ ] b\n"
+        let doc = MarkdownParser.parse(text)
+        // The blank line is the join's, not either task's — it stays put.
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 1, before: 0))
+            == "- [ ] b\n- [ ] a\n\n")
+    }
+
+    @Test func moveTaskRefusesAnotherSection() {
+        let text = "# A\n\n- [ ] a\n\n# B\n\n- [ ] b\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(Restructure.moveTask(doc, taskIndex: 1, before: 0).isEmpty)
+        #expect(Restructure.moveTask(doc, taskIndex: 0, before: 1).isEmpty)
+    }
+
+    @Test func moveTaskRefusesAnotherIndentLevel() {
+        let text = "- [ ] a\n  - [ ] a1\n- [ ] b\n"
+        let doc = MarkdownParser.parse(text)
+        // Child before its parent, and parent before its child: re-parenting,
+        // not reordering.
+        #expect(Restructure.moveTask(doc, taskIndex: 1, before: 0).isEmpty)
+        #expect(Restructure.moveTask(doc, taskIndex: 0, before: 1).isEmpty)
+    }
+
+    @Test func moveTaskAlreadyInPositionIsANoOp() {
+        let text = "- [ ] a\n- [ ] b\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(Restructure.moveTask(doc, taskIndex: 0, before: 0).isEmpty)
+        #expect(Restructure.moveTask(doc, taskIndex: 1, before: nil).isEmpty)
+    }
+
+    @Test func moveTaskPreservesAMissingFinalNewline() {
+        let text = "- [ ] a\n- [ ] b"
+        let doc = MarkdownParser.parse(text)
+        // Last to first: the cut borrows the newline before the block.
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 1, before: 0))
+            == "- [ ] b\n- [ ] a")
+        // First to last: the paste brings its own leading separator.
+        #expect(apply(text, Restructure.moveTask(doc, taskIndex: 0, before: nil))
+            == "- [ ] b\n- [ ] a")
+    }
+
     // MARK: Tables (§6.3)
 
     private let table = "| a | bb |\n| --- | --- |\n| 1 | 2 |\n| 333 | 4 |\n"

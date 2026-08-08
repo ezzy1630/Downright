@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  # ci.yml and release.yml pin actions by major tag, which drifts silently.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  # Package.swift / Package.resolved.  Sparkle is deliberately pinned to an
+  # exact version in project.yml as well, so a bump here needs that file
+  # changed in the same PR — Scripts/sync-versions.sh does not check it.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps

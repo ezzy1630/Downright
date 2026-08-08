@@ -20,11 +20,6 @@ extension DocumentWindowController: FrontMatterEditorDelegate {
         installTrailing(editor, title: Command.frontMatterEditor.panelTitle)
     }
 
-    func dismissFrontMatterEditor() {
-        if let frontMatterEditor { dismissTrailing(frontMatterEditor) }
-        frontMatterEditor = nil
-    }
-
     func frontMatterEditor(
         _ editor: FrontMatterEditorView,
         didRequest operation: FrontMatterEditOperation

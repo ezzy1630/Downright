@@ -58,6 +58,7 @@ let package = Package(
     products: [
         .library(name: "MarkdownCore", targets: ["MarkdownCore"]),
         .library(name: "MarkdownRender", targets: ["MarkdownRender"]),
+        .library(name: "drdownright", targets: ["drdownright"]),
         .executable(name: "Downright", targets: ["DownrightApp"]),
         .executable(name: "down", targets: ["down"]),
         .executable(name: "drbench", targets: ["drbench"]),
@@ -103,6 +104,10 @@ let package = Package(
             dependencies: [
                 "MarkdownCore",
                 "MarkdownRender",
+                // The app and `down` share one definition of the agent hook, so
+                // the Settings toggle and the CLI can never disagree about what
+                // is installed.
+                "drdownright",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]

@@ -24,22 +24,22 @@ applies dirty decoration.
 ## Current local benchmark
 
 Measured with the release executable from `Sources/drbench/main.swift` on
-2026-08-02. Corpus: 120,825 characters and 4,885 lines of generated agent-like
+2026-08-06. Corpus: 120,825 characters and 4,885 lines of generated agent-like
 Markdown. The host machine is not recorded here, so use these numbers as a
 baseline, not a cross-machine claim.
 
 | Measurement | p50 | p95 | Result |
 |---|---:|---:|---|
-| cmark parse | 13.290 ms | 14.566 ms | Informational |
-| Full MarkdownParser.parse | 45.209 ms | 46.562 ms | Runs outside typing path |
-| AST dirty set, one-character edit | 0.035 ms | 0.037 ms | Runs outside typing path |
-| Text diff, external rewrite | 3.981 ms | 4.077 ms | Informational |
-| Incremental decoration | 0.092 ms | 0.118 ms | Under 8 ms budget |
-| Wholesale decoration | 100.768 ms | 165.210 ms | Informational |
-| Source edit and paragraph map | 0.134 ms | 0.149 ms | Under 8 ms budget |
-| End-to-end semantic convergence | 46.349 ms | 46.726 ms | Under 100 ms budget |
-| Parse 100 KB | 16.268 ms | 16.413 ms | Under 250 ms parse gate |
-| Syntax highlight, 10 KB Swift | 0.093 ms | 0.095 ms | Informational |
+| cmark parse | 12.827 ms | 13.309 ms | Informational |
+| Full MarkdownParser.parse | 29.463 ms | 30.372 ms | Runs outside typing path |
+| AST dirty set, one-character edit | 0.030 ms | 0.031 ms | Runs outside typing path |
+| Text diff, external rewrite | 2.099 ms | 2.164 ms | Informational |
+| Incremental decoration | 0.097 ms | 0.104 ms | Under 8 ms budget |
+| Wholesale decoration | 103.722 ms | 171.493 ms | Informational |
+| Source edit and paragraph map | 0.146 ms | 0.153 ms | Under 8 ms budget |
+| End-to-end semantic convergence | 30.583 ms | 31.445 ms | Under 100 ms budget |
+| Parse 100 KB | 12.078 ms | 12.395 ms | Under 250 ms parse gate |
+| Syntax highlight, 10 KB Swift | 0.093 ms | 0.094 ms | Informational |
 
 The synchronous typing work and incremental decoration now fit the 8 ms
 budget. The benchmark does not yet measure TextKit layout, scroll-frame

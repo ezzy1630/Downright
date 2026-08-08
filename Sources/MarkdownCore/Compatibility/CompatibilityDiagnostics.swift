@@ -74,12 +74,6 @@ public struct CompatibilityReport: Codable, Hashable, Sendable {
         self.diagnostics = diagnostics
     }
 
-    public var isCompatible: Bool { diagnostics.isEmpty }
-    public var target: RenderTargetProfile { profile }
-    public var unsupportedCapabilities: [MarkdownCapability] {
-        var seen = Set<MarkdownCapability>()
-        return diagnostics.compactMap { seen.insert($0.capability).inserted ? $0.capability : nil }
-    }
 }
 
 /// Side-by-side compatibility result. The source side is retained as a
@@ -324,42 +318,6 @@ public enum MarkdownCompatibility {
         let body = ns.substring(with: NSRange(location: start + 1, length: end - start - 2))
         guard body.contains("#") || body.contains(".") || body.contains("=") else { return nil }
         return NSRange(location: heading.range.location + start, length: end - start)
-    }
-}
-
-/// Compatibility analyzer spelling retained as a discoverable facade.
-public enum CompatibilityAnalyzer {
-    public static func diagnose(_ document: ParsedDocument, for profile: RenderTargetProfile) -> CompatibilityReport {
-        MarkdownCompatibility.diagnose(document, for: profile)
-    }
-
-    public static func compare(
-        _ document: ParsedDocument,
-        from source: RenderTargetProfile,
-        to target: RenderTargetProfile
-    ) -> RenderTargetComparison {
-        MarkdownCompatibility.compare(document, from: source, to: target)
-    }
-}
-
-public typealias RenderTarget = RenderTargetProfile
-public typealias RenderTargetCapabilities = MarkdownCapabilities
-public typealias RenderTargetDiagnostic = CompatibilityDiagnostic
-public typealias RenderTargetComparisonResult = RenderTargetComparison
-
-/// Short facade for callers that think in terms of a target rather than a
-/// document-wide compatibility namespace.
-public enum RenderTargetCompatibility {
-    public static func analyze(_ document: ParsedDocument, target: RenderTargetProfile) -> CompatibilityReport {
-        MarkdownCompatibility.diagnose(document, for: target)
-    }
-
-    public static func compare(
-        _ document: ParsedDocument,
-        source: RenderTargetProfile,
-        target: RenderTargetProfile
-    ) -> RenderTargetComparison {
-        MarkdownCompatibility.compare(document, from: source, to: target)
     }
 }
 

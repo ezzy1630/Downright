@@ -41,6 +41,18 @@ extension DocumentWindowController: CommandPaletteViewDelegate {
         let palette = CommandPaletteView(
             styleSheet: activeStyleSheet,
             recentStore: UserDefaultsCommandPaletteRecentStore(),
+            model: CommandPaletteModel(
+                commands: Command.allCases.filter { $0.isEnabled(in: commandContext) },
+                recentCommands: UserDefaultsCommandPaletteRecentStore().recentCommands(),
+                providers: [
+                    CurrentDocumentQuickOpenProvider(document: markdownDocument.parsed),
+                    RecentFilesQuickOpenProvider(
+                        files: DocumentStateStore.shared.recents(limit: 30).map {
+                            URL(fileURLWithPath: $0.path)
+                        }
+                    ),
+                ] + quickOpenProviders
+            ),
             providers: [
                 CurrentDocumentQuickOpenProvider(document: markdownDocument.parsed),
                 RecentFilesQuickOpenProvider(
@@ -58,6 +70,9 @@ extension DocumentWindowController: CommandPaletteViewDelegate {
         )
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.hidesOnDeactivate = false
@@ -101,7 +116,7 @@ extension DocumentWindowController: CommandPaletteViewDelegate {
         case .select(let range):
             guard range.upperBound <= markdownDocument.storage.length else { return }
             containerTextView.setSourceSelectedRanges([range])
-            containerTextView.scroll(toOffset: range.location, position: .center, animated: true)
+            containerTextView.scroll(toOffset: range.location, position: .visible, animated: true)
             window?.makeFirstResponder(containerTextView)
         case .open(let url):
             (NSApp.delegate as? AppDelegate)?.open(url, mode: mode)
@@ -110,7 +125,7 @@ extension DocumentWindowController: CommandPaletteViewDelegate {
             guard range.upperBound <= markdownDocument.storage.length else { return }
             containerTextView.setSourceSelectedRanges([range])
             containerTextView.scroll(
-                toOffset: range.location, position: .center, animated: false
+                toOffset: range.location, position: .visible, animated: false
             )
             window?.makeFirstResponder(containerTextView)
         }

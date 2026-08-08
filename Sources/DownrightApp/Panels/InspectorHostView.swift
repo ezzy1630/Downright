@@ -15,21 +15,13 @@ enum InspectorSection: Int, CaseIterable, Equatable {
         case .context: "Inspector"
         }
     }
-
-    var symbolName: String {
-        switch self {
-        case .search: "magnifyingglass"
-        case .tasks: "checkmark.circle"
-        case .history: "clock.arrow.circlepath"
-        case .context: "sidebar.right"
-        }
-    }
 }
 
 /// Owns the one trailing inspector surface. The toolbar chooses the section;
 /// this view owns only its header, close affordance, and content lifecycle.
 @MainActor
 final class InspectorHostView: NSView {
+    private var animationGeneration = 0
     var onClose: (() -> Void)?
 
     /// The header is chrome like any other panel's, so it follows the theme
@@ -37,24 +29,36 @@ final class InspectorHostView: NSView {
     /// left alone it tracks the current theme and appearance on its own.
     var styleSheet: StyleSheet = .current {
         didSet {
+            backdrop.styleSheet = styleSheet
             sectionControl.styleSheet = styleSheet
             applyStyle()
         }
     }
 
+    /// One glass column runs under the switcher and the panel alike, so the
+    /// header never reads as a matte lid on a vibrant surface (§11.4).
+    private let backdrop = PanelBackdrop(styleSheet: .current)
     private let titleLabel = NSTextField(labelWithString: "")
     private let closeButton: NSButton
     private let sectionControl: PanelSegmentedControl
     private let content = NSView()
     /// One rule between the host's chrome and whatever panel is inside it, so
-    /// every panel reads as a card under a switcher rather than as a list that
-    /// starts wherever its own header happens to end.
+    /// the header reads as the panel's own cap rather than as part of the list
+    /// that happens to start below it.
     private let rule = NSView()
-    /// Collapses when the panel's name is already the name of its section —
-    /// which is every section except one a command renamed.  A header that
-    /// says "Tasks" directly above a switcher whose selected segment says
-    /// "Tasks" is 26pt spent on saying it twice (§11.4).
+    /// The header is one row whose contents follow how much the host holds.
+    /// A single surface gets a slim title-plus-close row — a one-item tab
+    /// strip would be chrome saying nothing.  Two or more surfaces trade the
+    /// title for the switcher, which then *is* the title (and carries the
+    /// close button), unless a command renamed the surface and the name row
+    /// still earns its line.
     private var titleHeight: NSLayoutConstraint!
+    private var switcherHeight: NSLayoutConstraint!
+    /// The close button rides whichever row is on screen.
+    private var closeOnTitleRow: NSLayoutConstraint!
+    private var closeOnSwitcherRow: NSLayoutConstraint!
+    private var ruleBelowTitle: NSLayoutConstraint!
+    private var ruleBelowSwitcher: NSLayoutConstraint!
     private var closeAction: ButtonAction?
     private var views: [InspectorSection: NSView] = [:]
     /// Overrides for the header text, so the surface a command opened is named
@@ -96,11 +100,21 @@ final class InspectorHostView: NSView {
         }
         sectionControl.translatesAutoresizingMaskIntoConstraints = false
 
-        // Content first, chrome after: sibling views paint in subview order, so
-        // the header has to be *above* the panel it labels.  With the header
-        // added first, the content view's opaque backdrop painted straight over
-        // it and the inspector opened with 80pt of dead space where its title,
-        // its close button, and its section switcher should have been.
+        // Backdrop first, then content, then chrome: sibling views paint in
+        // subview order, so the header has to be *above* the panel it labels.
+        // With the header added first, the content view's backdrop painted
+        // straight over it and the inspector opened with 80pt of dead space
+        // where its title, its close button, and its section switcher should
+        // have been.  The shared backdrop underneath both is what lets the
+        // header and the panel read as one continuous glass column.  It blends
+        // with the window so the page ghosts through the whole column, and a
+        // themed veil keeps the chrome legible over a busy document (§11.4).
+        backdrop.blendsWithinWindow = true
+        // A whisper of veil: the column should read as the window's own glass,
+        // not as a slab laid over it.
+        backdrop.veilAlpha = 0.12
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(backdrop)
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         addSubview(titleLabel)
@@ -108,31 +122,44 @@ final class InspectorHostView: NSView {
         addSubview(closeButton)
         addSubview(rule)
 
-        // The switcher and the close button share one row.  Close has to be on
-        // the row that never collapses, or hiding a redundant title would take
-        // the only way out of the inspector with it.
+        // The close button rides whichever header row is on screen, and the
+        // rule sits under whichever is lower — both pairs swap in
+        // `updateHeaderChrome()` as sections come and go.
         titleHeight = titleLabel.heightAnchor.constraint(equalToConstant: 0)
+        switcherHeight = sectionControl.heightAnchor.constraint(
+            equalToConstant: PanelSegmentedControl.controlHeight
+        )
+        closeOnTitleRow = closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor)
+        closeOnSwitcherRow = closeButton.centerYAnchor.constraint(equalTo: sectionControl.centerYAnchor)
+        ruleBelowTitle = rule.topAnchor.constraint(
+            equalTo: titleLabel.bottomAnchor, constant: Metrics.titleBottomGap
+        )
+        ruleBelowSwitcher = rule.topAnchor.constraint(
+            equalTo: sectionControl.bottomAnchor, constant: Metrics.topPadding
+        )
         NSLayoutConstraint.activate([
+            backdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset
+                lessThanOrEqualTo: closeButton.leadingAnchor, constant: -6
             ),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: Metrics.topPadding),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: Metrics.titleTopPadding),
             titleHeight,
 
             sectionControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             sectionControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor),
-            sectionControl.heightAnchor.constraint(equalToConstant: PanelSegmentedControl.controlHeight),
+            switcherHeight,
 
-            closeButton.leadingAnchor.constraint(equalTo: sectionControl.trailingAnchor, constant: 6),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            closeButton.centerYAnchor.constraint(equalTo: sectionControl.centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
 
             rule.leadingAnchor.constraint(equalTo: leadingAnchor),
             rule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rule.topAnchor.constraint(equalTo: sectionControl.bottomAnchor, constant: Metrics.topPadding),
             rule.heightAnchor.constraint(equalToConstant: PanelMetrics.hairline),
 
             content.topAnchor.constraint(equalTo: rule.bottomAnchor),
@@ -149,10 +176,13 @@ final class InspectorHostView: NSView {
     required init?(coder: NSCoder) { nil }
 
     private enum Metrics {
-        /// Air above the switcher and between it and the rule.  The header is
-        /// 26 + 20 tall with the title collapsed, against the 80 it took when
-        /// it carried a title row of its own.
+        /// Air above the switcher and between it and the rule.
         static let topPadding: CGFloat = 10
+        /// Air above the slim title row — two points more than the switcher's,
+        /// so the header's first line never feels nailed to the toolbar rule.
+        static let titleTopPadding: CGFloat = 12
+        /// Air between the slim title row and the rule under it.
+        static let titleBottomGap: CGFloat = 8
         /// Title row: one line of `PanelFont.header` plus the gap under it.
         static let titleRowHeight: CGFloat = 24
     }
@@ -162,11 +192,6 @@ final class InspectorHostView: NSView {
         closeButton.contentTintColor = styleSheet.textSecondary
         rule.layer?.backgroundColor = styleSheet.rule
             .panelAlpha(styleSheet.increaseContrast ? 0.9 : 0.55, increaseContrast: false).cgColor
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        styleSheet = .current
     }
 
     /// Esc closes the inspector, whatever is inside it.  Doing it here rather
@@ -184,47 +209,168 @@ final class InspectorHostView: NSView {
         views[section] = view
         sectionControl.setEnabled(true, forSegment: section.rawValue)
         installIfNeeded(view)
-        select(section)
+        select(section, announceArrival: true)
     }
 
     func select(_ section: InspectorSection) {
+        select(section, announceArrival: false)
+    }
+
+    private func select(_ section: InspectorSection, announceArrival: Bool) {
         guard views[section] != nil else { return }
+        let previous = selectedSection
         selectedSection = section
-        showTitle(sectionTitles[section] ?? section.title, for: section)
+        updateHeaderChrome()
         sectionControl.setSelectedIndex(section.rawValue)
         for (candidate, view) in views { view.isHidden = candidate != section }
+        if announceArrival, previous != section, let view = views[section] {
+            playArrival(on: view)
+        }
         setAccessibilityValue("\(section.title) section")
     }
+
+    /// The panel unfurls downward out of the control that summoned it.
+    ///
+    /// The toolbar button sits directly above this pane's top edge, so the
+    /// honest reading of "open Tasks" is that the list comes *down* from the
+    /// ring — not that a rectangle fades in somewhere to the right.  Three
+    /// things say that in one gesture: the surface starts a little above its
+    /// resting place and descends, it starts slightly compressed toward its
+    /// top edge and settles to full height, and it fades up.  Anchoring the
+    /// scale at the top means the panel grows away from the ring rather than
+    /// out of its own middle.
+    ///
+    /// The duration is `deliberate`, the same clock the ring's release wave
+    /// runs on, because the two are halves of one movement (§11.4).
+    private func playArrival(on view: NSView) {
+        animateUnfurl(on: view, arriving: true, completion: nil)
+    }
+
+    /// The reverse: the panel folds back up toward the ring before the pane
+    /// itself collapses, so closing is a retreat rather than a disappearance.
+    ///
+    /// This one runs on the content container rather than on a single panel,
+    /// because a close can arrive with the surfaces already torn down — the
+    /// container is the one thing that is always there to fold.  The
+    /// completion runs even when Reduce Motion skips the animation, so callers
+    /// can always sequence the collapse behind it.
+    func playDeparture(completion: @escaping () -> Void) {
+        animateUnfurl(on: content, arriving: false, completion: completion)
+    }
+
+    private func animateUnfurl(on view: NSView, arriving: Bool, completion: (() -> Void)?) {
+        animationGeneration &+= 1
+        let generation = animationGeneration
+        guard !styleSheet.reduceMotion, window != nil else {
+            completion?()
+            return
+        }
+        view.wantsLayer = true
+        guard let layer = view.layer else {
+            completion?()
+            return
+        }
+        for candidate in [content, view] {
+            candidate.layer?.removeAnimation(forKey: "inspector-unfurl")
+            candidate.layer?.removeAnimation(forKey: "inspector-fade")
+        }
+
+        let settled = CATransform3DIdentity
+        var folded = CATransform3DMakeScale(1, 0.94, 1)
+        folded = CATransform3DTranslate(folded, 0, 10, 0)
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self, weak layer] in
+            guard let self, self.animationGeneration == generation else { return }
+            layer?.removeAnimation(forKey: "inspector-unfurl")
+            layer?.removeAnimation(forKey: "inspector-fade")
+            completion?()
+        }
+
+        let unfurl = CABasicAnimation(keyPath: "transform")
+        unfurl.fromValue = arriving ? folded : settled
+        unfurl.toValue = arriving ? settled : folded
+        unfurl.duration = Motion.deliberate
+        unfurl.timingFunction = Motion.timing(.decelerate)
+        layer.add(unfurl, forKey: "inspector-unfurl")
+
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = arriving ? 0 : 1
+        fade.toValue = arriving ? 1 : 0
+        // Leaving is shorter than arriving: a panel should get out of the way
+        // as fast as it can while still being seen to go.
+        fade.duration = arriving ? Motion.standard : Motion.quick
+        fade.timingFunction = Motion.timing(.decelerate)
+        layer.add(fade, forKey: "inspector-fade")
+
+        CATransaction.commit()
+    }
+
+    /// How many surfaces the host is holding — a caller closing one needs to
+    /// know whether the pane goes with it or another panel takes over.
+    var contentCount: Int { views.count }
 
     /// A panel may name itself — the header should say "Review", not the
     /// generic "Inspector", when the Review command opened it (§7.2).
     func setTitle(_ title: String, for section: InspectorSection) {
         sectionTitles[section] = title
         guard selectedSection == section else { return }
-        showTitle(title, for: section)
+        updateHeaderChrome()
     }
 
-    /// The title row exists to say something the switcher cannot, so it appears
-    /// only when it *is* saying something else.
-    private func showTitle(_ title: String, for section: InspectorSection) {
+    /// One header, three shapes:
+    ///
+    /// * one surface — a slim title-plus-close row.  A one-segment switcher
+    ///   would be a tab strip with nothing to switch to.
+    /// * several surfaces — the switcher carries the close button, and the
+    ///   title row collapses, because a header saying "Tasks" above a segment
+    ///   saying "Tasks" is the same line twice.
+    /// * several surfaces and a command-named one ("Review") — the title row
+    ///   stays, because it says something the switcher cannot.
+    private func updateHeaderChrome() {
+        guard let section = selectedSection else {
+            titleLabel.stringValue = ""
+            titleLabel.isHidden = true
+            titleHeight.constant = 0
+            sectionControl.isHidden = true
+            switcherHeight.constant = 0
+            closeButton.isHidden = true
+            closeOnTitleRow.isActive = false
+            closeOnSwitcherRow.isActive = false
+            ruleBelowTitle.isActive = false
+            ruleBelowSwitcher.isActive = false
+            return
+        }
+        let switcherVisible = views.count > 1
+        let title = sectionTitles[section] ?? section.title
+        let titleVisible = !switcherVisible || title != section.title
+
         titleLabel.stringValue = title
         titleLabel.setAccessibilityLabel("\(title) inspector")
-        let redundant = title == section.title
-        titleLabel.isHidden = redundant
-        titleHeight.constant = redundant ? 0 : Metrics.titleRowHeight
+        titleLabel.isHidden = !titleVisible
+        titleHeight.constant = titleVisible ? Metrics.titleRowHeight : 0
+        sectionControl.isHidden = !switcherVisible
+        switcherHeight.constant = switcherVisible ? PanelSegmentedControl.controlHeight : 0
+        closeButton.isHidden = false
+
+        // Close rides the switcher row when it is on screen, the title row
+        // otherwise; the rule sits under whichever row is lower.  A dead
+        // anchor would centre the button on a collapsed row.
+        closeOnSwitcherRow.isActive = switcherVisible
+        closeOnTitleRow.isActive = titleVisible && !switcherVisible
+        ruleBelowSwitcher.isActive = switcherVisible
+        ruleBelowTitle.isActive = titleVisible && !switcherVisible
     }
 
     func removeContent(section: InspectorSection) {
         views.removeValue(forKey: section)?.removeFromSuperview()
         sectionTitles.removeValue(forKey: section)
         sectionControl.setEnabled(false, forSegment: section.rawValue)
-        guard selectedSection == section else { return }
+        guard selectedSection == section else { updateHeaderChrome(); return }
         selectedSection = views.keys.sorted { $0.rawValue < $1.rawValue }.first
         if let selectedSection { select(selectedSection) }
         else {
-            titleLabel.stringValue = ""
-            titleLabel.isHidden = true
-            titleHeight.constant = 0
+            updateHeaderChrome()
             setAccessibilityValue("No inspector section")
         }
     }
@@ -232,6 +378,11 @@ final class InspectorHostView: NSView {
     func removeContent(_ view: NSView, section: InspectorSection) {
         guard views[section] === view else { return }
         removeContent(section: section)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        styleSheet = .current
     }
 
     private func installIfNeeded(_ view: NSView) {

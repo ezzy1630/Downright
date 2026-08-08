@@ -24,18 +24,32 @@ native render path.
 
 ## Current status
 
-Downright is an active source build, not a packaged release. The repository
-builds the app, CLI, `MarkdownCore` and `MarkdownRender` libraries, test
-targets, and release benchmark. The SwiftPM bundle is ad hoc and does not
-include Quick Look `.appex` bundles; the XcodeGen path builds those extensions.
-Developer ID signing, notarisation, and Sparkle updates remain release work.
+Downright is an active source build. The repository builds the app, the
+`down` CLI, the `MarkdownCore` and `MarkdownRender` libraries, test targets,
+and the release benchmark. Distribution is end-to-end: a signed + notarized
+release pipeline (`.github/workflows/release.yml`), Sparkle 2.9.5 auto-update
+with a custom update pill and release-notes window, scripted
+sign-and-notarize / make-dmg / verify-bundle paths, one canonical version
+source in `Config/version.env`, and privacy manifests. Dev bundles build with
+ad-hoc signing; the Quick Look `.appex` extensions are embedded through
+`Scripts/bundle-quicklook.sh`, which keeps every target on the same
+Command-Line-Tools-only path as the app — Xcode is not required to build any of
+it. `project.yml` generates an Xcode project through `xcodegen` for machines
+that have both; that path is an alternative, and the generated
+`Downright.xcodeproj` is not committed.
 
-Recent work on `main` has focused on the parts that matter during agent-heavy
-use: a file-first start window and stable document/tab workflow; viewport,
-paragraph, and hard-wrap stability while typing; unread external-change review
-with bounded diff and resource work; an interactive Quick Look preview; and a
-task worklist with progress, filtering, grouped headings, direct navigation,
-and immediate checkbox writes.
+Recent work on `main` fixed a launch hang — opening any document could spin
+forever — and drove a full UI/UX audit: invisible zero-width characters no
+longer leak into the pasteboard, callout / table / list rendering was
+corrected, and eight shortcut conflicts with macOS were removed. On the
+interactive path, keystroke p95 on a 5,034-line document dropped from
+17.34 to 6.13 ms (the `layoutDisplayMap` bridge was 88% of it) and hover cost
+fell from 2.86 to 0.67 ms per mouse-move. Earlier passes this cycle brought a
+file-first start window and stable document/tab workflow; viewport, paragraph,
+and hard-wrap stability while typing; unread external-change review with
+bounded diff and resource work; an interactive Quick Look preview; and a task
+worklist with progress, filtering, grouped headings, direct navigation, and
+immediate checkbox writes.
 
 ---
 
@@ -44,15 +58,15 @@ and immediate checkbox writes.
 | | |
 |---|---|
 | **Rendered diff** | The file is watched. When an agent rewrites it, the view updates *in place* — scroll position held by heading anchor, changed words highlighted inside the rendered prose, unread changes marked until you review them, and `[` / `]` to jump between changes. If your buffer is dirty, nothing is clobbered: a non-modal bar offers Review / Keep mine / Take theirs. |
-| **Structural zoom** | `1`–`5` change the document's *resolution in place*. Level 4 is the one that matters for agent output: every heading, the first sentence of each section, and every code block, table, and task list — none of the connective padding. |
-| **Local time travel** | Every external write is snapshotted to a content-addressed store. `⌘⇧V` scrubs through a month of an agent's rewrites, rendered, with changes highlighted between steps. Agents don't commit; git doesn't help you here. |
+| **Structural zoom** | `⌃⌘1`–`⌃⌘5` (or bare `1`–`5` when no caret is in the document) change the document's *resolution in place*. Level 4 is the one that matters for agent output: every heading, the first sentence of each section, and every code block, table, and task list — none of the connective padding. |
+| **Local time travel** | Every external write is snapshotted to a content-addressed store. `⌥⌘V` scrubs through a month of an agent's rewrites, rendered, with changes highlighted between steps. Agents don't commit; git doesn't help you here. |
 | **Live path resolution** | `src/auth/session.ts:42` resolves against the document's directory and the git root. Present files are clickable and open at the right line in your editor. **Missing files get a dotted red underline** — so you can see at a glance which files an agent claims to have touched that aren't there. |
 | **Density gutter** | Replaces the scrollbar with the shape of the whole document: headings by level, code, tables, math, tasks, search hits, and changed regions. |
-| **Task worklist** | `⌘T` opens a floating worklist with completion progress, All / Open filtering, and every checkbox grouped by heading. Select a row to jump to it; toggle its checkbox to write to the file immediately. |
-| **Sibling sidebar** | Agents write six files into a folder, not one. `⌘0` shows the others, newest first, with dots for changed-since-you-last-looked. No index, no vault, no "open folder" ceremony. |
+| **Task worklist** | `⌥⌘3` opens every checkbox in the document, grouped by heading and ordered open-first, under a section-map bar that fills by completion and jumps on click. Select a row to go to it; tick it to write the file immediately, with an Undo pill because a write that fast deserves an equally fast way back. Quick-add and drag-reorder go back into the source as plain undoable edits. |
+| **Sibling awareness** | Agents write six files into a folder, not one. The containing directory — plus one level into `docs/`, `plans/`, `.claude/` and friends — is scanned on open and kept to hand: newest first, with a dot on anything that changed since you last looked. Reach them from the command palette's Quick Open or the Workspace inspector; `⌘⇧F` searches across them. One shallow directory listing. No index, no vault, no "open folder" ceremony. |
 | **Adaptive document surface** | Read rendered Markdown and edit it in place without switching modes. Selection stays rendered; a caret reveals local syntax; scoped and full Source Focus expose exact Markdown on demand. |
 | **Reading chrome that stays out of the way** | The current heading trail owns a slim lane above the page instead of floating over prose. Block and list markers use one aligned ornament column; wrapped list text keeps one content edge. |
-| **Document inspectors** | Outline, tasks, search, history, workspace, health, render-target checks, assets, and document-lens views keep review work beside the document instead of in modal dialogs. |
+| **Document inspectors** | Tasks, search, history, workspace, health, render-target checks, assets, and document-lens views keep review work beside the document instead of in modal dialogs. There is no separate outline navigator: the density gutter expands into the document's structure on hover, and the command palette opens headings and files. |
 | **Native system surfaces** | Quick Look previews, Finder thumbnails, the `down` / `md` CLI, macOS Services, App Intents, and Spotlight indexing for opened documents keep Markdown available from the places you already work. |
 
 And the things it deliberately **is not**: no vault, no sync, no collaboration,
@@ -175,17 +189,17 @@ Look releases prior render graphs and falls back to plain text when it crosses
 its memory ceiling. Workspace indexing streams files through a small worker
 pool with 10 MB per-file and 100 MB total-byte limits.
 
-Latest local release benchmark (`drbench`, measured 2026-08-02):
+Latest local release benchmark (`drbench`, measured 2026-08-06):
 
 | Metric | p95 | Budget |
 |---|---:|---:|
-| Typing response | 0.149 ms | 8 ms |
-| Incremental decoration | 0.118 ms | 8 ms |
-| Semantic convergence | 46.726 ms | 100 ms |
-| 100 KB cold parse | 16.413 ms | 250 ms |
+| Typing response | 0.153 ms | 8 ms |
+| Incremental decoration | 0.104 ms | 8 ms |
+| Semantic convergence | 31.445 ms | 100 ms |
+| 100 KB cold parse | 12.395 ms | 250 ms |
 
 Run the complete validation suite with `Scripts/check.sh`. At the current
-commit it covers 510 tests in 56 suites, builds every product, runs the debug
+commit it covers 716 tests in 71 suites, builds every product, runs the debug
 benchmark, and fails if the test runner executes nothing. See
 [Docs/PERFORMANCE.md](Docs/PERFORMANCE.md) for the full baseline and its
 measurement limits.
@@ -224,17 +238,20 @@ Keys, which is generated from the same command table as the menus.
 
 | | | | |
 |---|---|---|---|
-| `⌘E` | Use selection for Find | `⌥↓` / `⌥↑` | Next / previous change |
-| `⌘⇧E` | Toggle full Source Focus | `⌘⇧O` | Jump to heading |
-| `⌘0` | Sibling sidebar | `[` / `]` | Previous / next change |
-| `⌘⌥1` | Outline panel | `1`–`5` | Structural zoom in the outline |
-| `⌘T` | Task worklist | `⌘F` | Find |
-| `⌘⇧V` | Version timeline | `⌘G` / `⌘⇧G` | Next / previous match |
-| `⌘\` | Split view | `⌘⇧F` | Search sibling files |
-| `⌘C` / `⌘⇧C` | Copy visible text / Markdown | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |
+| `⌘E` | Use selection for Find | `⌥⇧↓` / `⌥⇧↑` | Next / previous change |
+| `⌘⇧E` | Toggle full Source Focus | `⌃⌥⌘N` / `⌃⌥⌘P` | Next / previous heading |
+| `⌘⇧K` | Command palette | `⌃⌥⌘1`–`⌃⌥⌘5` | Structural zoom |
+| `⌥⌘2` | Document lens | `⌘F` | Find |
+| `⌥⌘3` | Task worklist | `⌘G` / `⌘⇧G` | Next / previous match |
+| `⌥⌘V` | Version timeline | `⌘⇧F` | Search sibling files |
+| `⌘\` | Split view | `⌘⌥←` / `⌘⌥→` | Promote / demote heading |
+| `⌘C` / `⌥⇧⌘C` | Copy visible text / Markdown | `⌘[` / `⌘]` | Back / forward |
 
-The vim-style `j`/`k`/`g`/`G` layer is off by default; turn it on in
-Settings → Keys.
+Nothing here shadows a macOS convention: `⌘0` stays Actual Size, `⌘⇧V` stays
+Paste and Match Style, and `⌘T` / `⌘⇧T` stay free for the tab chords.
+
+Navigation uses modifier-safe shortcuts in every document state. Arrow keys,
+Space, Page Up/Down, and letter keys remain available to AppKit and text input.
 
 ## Quick Look
 
@@ -246,11 +263,17 @@ section and reading metrics, scrubs on click or drag, and opens the outline on
 dwell. Arrow keys scroll; `n` / `p` jump between headings; text is selectable
 and copyable.
 
-The default SwiftPM app bundle does not include the required `.appex` bundles.
-With Xcode and `xcodegen` installed, run `Scripts/bundle-xcode-app.sh` to
-generate the Xcode project, build the host app, and embed the preview and
-thumbnail extensions. `Scripts/install.sh` registers and enables the embedded
-extensions and resets Quick Look's cache. See
+Nothing has to be run by hand to turn this on. On its first launch Downright
+registers itself with Launch Services, hands both extensions to `pluginkit`,
+and resets Quick Look's caches so `.md` files you already have pick up their
+new icons. Settings → General → System integration repeats any of it later,
+which is also where to go if a macOS update knocks the extensions loose.
+
+The `.appex` bundles are embedded with `Scripts/bundle-quicklook.sh`, which
+builds them on the same Command-Line-Tools-only path as the rest of the app —
+no Xcode required. (With Xcode and `xcodegen` installed, `Scripts/bundle-xcode-app.sh`
+still works as an alternative.) `Scripts/install.sh` does the same registration
+for a source install without launching the app. See
 [Docs/QUICKLOOK.md](Docs/QUICKLOOK.md) for details.
 
 ## Privacy and AI
@@ -274,7 +297,7 @@ share one palette.
 ## Status and known gaps
 
 See [Docs/STATUS.md](Docs/STATUS.md) for what is implemented, what is
-approximate, and where this build deviates from the spec.
+approximate, and how this build deviates from the original design.
 
 ## Licence
 
@@ -287,8 +310,8 @@ three-line patch so the math fonts resolve inside a shipped app bundle;
 [`Vendor/SwiftMath/PATCHES.md`](Vendor/SwiftMath/PATCHES.md) records what and
 why.
 
-The spec left this open, weighing MIT's pull for contributors against copyleft's
-protection of `MarkdownRender` from a paid App Store fork. MIT wins here: the
-renderer's value compounds through adoption, a fork has to keep pace with the
-original, and a licence that discourages contribution costs more than the fork
-it prevents.
+The licence choice left this open, weighing MIT's pull for contributors against
+copyleft's protection of `MarkdownRender` from a paid App Store fork. MIT wins
+here: the renderer's value compounds through adoption, a fork has to keep pace
+with the original, and a licence that discourages contribution costs more than
+the fork it prevents.

@@ -37,9 +37,7 @@ final class SearchInspectorView: NSView {
         findBar = FindBarView(styleSheet: styleSheet, presentation: .inspector)
         super.init(frame: .zero)
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         findBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(findBar)

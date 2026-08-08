@@ -24,7 +24,10 @@ final class ThematicBreakFragment: DownrightFragment {
         let bodySize = style.bodyFont().pointSize
         let diameter = max(2, (bodySize * 0.18).rounded())
         let gap = RenderMetrics.snap(bodySize * 1.9, grid: max(1, style.baselineGrid))
-        let centre = point.x + contentWidth / 2
+        // Centred on the *reading* column, not the full one: a rule that
+        // centred itself over the bleed lane sat visibly right of the prose it
+        // divides.
+        let centre = point.x + proseContentWidth / 2
         let y = point.y + height / 2 - diameter / 2
         cg.setFillColor(style.textFaint.cgColor)
         for offset in [-gap, 0, gap] as [CGFloat] {

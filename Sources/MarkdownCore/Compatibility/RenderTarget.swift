@@ -88,12 +88,6 @@ public enum BuiltInRenderTarget: String, Codable, CaseIterable, Sendable {
     case hugo
     case quarto
 
-    // Lowercase aliases keep call sites natural for initialisms while the
-    // canonical cases preserve the product names in generated documentation.
-    public static let commonmark = Self.commonMark
-    public static let github = Self.gitHub
-    public static let multimarkdown = Self.multiMarkdown
-
     public var displayName: String {
         switch self {
         case .downright: return "Downright"
@@ -174,10 +168,6 @@ public struct RenderTargetProfile: Codable, Hashable, Sendable, Identifiable {
     public static let hugo = BuiltInRenderTarget.hugo.profile
     public static let quarto = BuiltInRenderTarget.quarto.profile
 
-    public static let commonmark = commonMark
-    public static let github = gitHub
-    public static let multimarkdown = multiMarkdown
-
     public static func custom(name: String, capabilities: MarkdownCapabilities) -> Self {
         Self(name: name, capabilities: capabilities)
     }
@@ -186,5 +176,3 @@ public struct RenderTargetProfile: Codable, Hashable, Sendable, Identifiable {
         BuiltInRenderTarget.allCases.map(\.profile)
     }
 }
-
-public typealias CustomRenderTargetProfile = RenderTargetProfile

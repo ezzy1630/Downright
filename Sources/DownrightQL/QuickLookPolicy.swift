@@ -22,8 +22,4 @@ public enum QuickLookPolicy {
     public static func presentation(forByteCount byteCount: Int) -> Presentation {
         byteCount > largeFileThresholdBytes ? .prefix(blockCount: prefixBlockCount) : .full
     }
-
-    public static func shouldFallBack(residentBytes: Int) -> Bool {
-        residentBytes > memoryCeilingBytes
-    }
 }

@@ -72,9 +72,7 @@ final class TidySheetView: NSView {
         self.backdrop = PanelBackdrop(styleSheet: styleSheet, material: .windowBackground)
         super.init(frame: NSRect(x: 0, y: 0, width: 620, height: 460))
 
-        backdrop.autoresizingMask = [.width, .height]
-        backdrop.frame = bounds
-        addSubview(backdrop)
+        installBackdrop(backdrop)
 
         buildHeader()
         buildFooter()

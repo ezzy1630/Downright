@@ -30,7 +30,7 @@ final class CommandPaletteView: NSView, PanelSurface {
     /// The prefixes exist and nothing said so.  A filter you cannot discover
     /// is a filter nobody uses (§7.2).
     private let prefixLabel = NSTextField(
-        labelWithString: ">  commands    @  symbols    #  headings    #task    file:    link:    asset:"
+        labelWithString: "> commands   @ symbols   # headings   task: tasks   file:   link:   asset:"
     )
     private let emptyState = PanelEmptyStateView()
     private var model: CommandPaletteModel
@@ -90,6 +90,8 @@ final class CommandPaletteView: NSView, PanelSurface {
         searchField.sendsSearchStringImmediately = true
         searchField.controlSize = .large
         searchField.font = NSFont.systemFont(ofSize: 16)
+        searchField.isBezeled = false
+        searchField.focusRingType = .none
         searchField.delegate = self
         searchField.setAccessibilityLabel("Search commands and document items")
         searchField.setAccessibilityHelp("Type a command, heading, task, link, asset, or file")

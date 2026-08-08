@@ -16,11 +16,10 @@ enum KeybindingDefaults {
         // Global (§7.2)
         .sourceMode:          [KeyBinding("e", [.command, .shift])],
         .useSelectionForFind: [KeyBinding("e", .command)],
-        .outlineQuickOpen:    [KeyBinding("o", [.command, .shift])],
         .versionTimeline:     [KeyBinding("v", [.command, .option])],
         .commandPalette:      [KeyBinding("k", [.command, .shift])],
-        .nextChange:          [KeyBinding("down", [.command, .control])],
-        .previousChange:      [KeyBinding("up", [.command, .control])],
+        .nextChange:          [KeyBinding("down", [.option, .shift])],
+        .previousChange:      [KeyBinding("up", [.option, .shift])],
         .find:                [KeyBinding("f", .command)],
         .findNext:            [KeyBinding("g", .command)],
         .findPrevious:        [KeyBinding("g", [.command, .shift])],
@@ -31,33 +30,37 @@ enum KeybindingDefaults {
         .moveBlockUp:         [KeyBinding("up", [.command, .option])],
         .moveBlockDown:       [KeyBinding("down", [.command, .option])],
         .splitView:           [KeyBinding("backslash", .command)],
-        .copyAsMarkdown:      [KeyBinding("c", [.command, .shift])],
+        .copyAsMarkdown:      [KeyBinding("c", [.command, .option, .shift])],
         .copySection:         [KeyBinding("c", [.command, .option])],
         .printDocument:       [KeyBinding("p", .command)],
         .exportHTML:          [KeyBinding("e", [.command, .control])],
 
         // Panels share one ⌥⌘-number family, the way a navigator normally does.
-        .outlinePanel:        [KeyBinding("1", [.command, .option])],
         .documentLens:        [KeyBinding("2", [.command, .option])],
         .taskPanel:           [KeyBinding("3", [.command, .option])],
-        .toggleSidebar:       [KeyBinding("0", [.command, .option])],
 
         // Structural zoom shares one ⌃⌘ family, reachable while editing (§5.2).
-        .zoomLevel1:          [KeyBinding("1", [.command, .control])],
-        .zoomLevel2:          [KeyBinding("2", [.command, .control])],
-        .zoomLevel3:          [KeyBinding("3", [.command, .control])],
-        .zoomLevel4:          [KeyBinding("4", [.command, .control])],
-        .zoomLevel5:          [KeyBinding("5", [.command, .control])],
-        .zoomIn:              [KeyBinding("=", [.command, .control])],
-        .zoomOut:             [KeyBinding("-", [.command, .control])],
-        .nextHeading:         [KeyBinding("n", [.command, .control])],
-        .previousHeading:     [KeyBinding("p", [.command, .control])],
+        .zoomLevel1:          [KeyBinding("1", [.command, .control, .option])],
+        .zoomLevel2:          [KeyBinding("2", [.command, .control, .option])],
+        .zoomLevel3:          [KeyBinding("3", [.command, .control, .option])],
+        .zoomLevel4:          [KeyBinding("4", [.command, .control, .option])],
+        .zoomLevel5:          [KeyBinding("5", [.command, .control, .option])],
+        .zoomIn:              [KeyBinding("=", [.command, .control, .option])],
+        .zoomOut:             [KeyBinding("-", [.command, .control, .option])],
+        .nextHeading:         [KeyBinding("n", [.command, .control, .option])],
+        .previousHeading:     [KeyBinding("p", [.command, .control, .option])],
+        .followLinkAtCaret:   [KeyBinding("return", .command)],
+        .nextLink:            [KeyBinding("]", [.command, .option])],
+        .previousLink:        [KeyBinding("[", [.command, .option])],
 
-        // Read mode single keys (§7.2)
-        .pageDown:            [KeyBinding("space")],
-        .pageUp:              [KeyBinding("space", .shift)],
-        .scrollDown:          [KeyBinding("down")],
-        .scrollUp:            [KeyBinding("up")],
+        // Navigation chords survive an editable text view. AppKit still owns
+        // the unmodified arrows, Space and Page Up/Down.
+        .pageDown:            [KeyBinding("space", .option)],
+        .pageUp:              [KeyBinding("space", [.option, .shift])],
+        .scrollDown:          [KeyBinding("down", [.control, .option])],
+        .scrollUp:            [KeyBinding("up", [.control, .option])],
+        .documentStart:       [KeyBinding("up", .command)],
+        .documentEnd:         [KeyBinding("down", .command)],
 
         // Files and editing
         .newDocument:         [KeyBinding("n", .command)],
@@ -67,7 +70,7 @@ enum KeybindingDefaults {
         .close:               [KeyBinding("w", .command)],
         .toggleBold:          [KeyBinding("b", .command)],
         .toggleItalic:        [KeyBinding("i", .command)],
-        .insertLink:          [KeyBinding("k", .command)],
+        .insertLink:          [KeyBinding("k", [.command, .option])],
         // Ticking a box is a headline action, so it gets a one-modifier chord.
         .toggleTaskAtCaret:   [KeyBinding("l", .command)],
         // Tab in a list item; the text view decides whether the caret is in one
@@ -85,34 +88,9 @@ enum KeybindingDefaults {
         .compareFiles:        [KeyBinding("d", [.command, .shift])],
         .tidyDocument:        [KeyBinding("t", [.command, .control])],
         .focusMode:           [KeyBinding("return", [.command, .shift])],
+        .goToLine:            [KeyBinding("j", .command)],
     ]
 
-    /// `[` / `]` change navigation and `g` / `G` document ends collide with
-    /// `⌘[`-style history in Read mode only, so they live in the read layer.
-    /// The bare heading and zoom keys are here for the same reason: their ⌃⌘
-    /// equivalents above are what works while a caret is in the document.
-    static let readModeExtras: [Command: [KeyBinding]] = [
-        .previousChange: [KeyBinding("[")],
-        .nextChange:     [KeyBinding("]")],
-        .outlineQuickOpen: [KeyBinding("o")],
-        .taskPanel:      [KeyBinding("t")],
-        .find:           [KeyBinding("f")],
-        .nextHeading:    [KeyBinding("n")],
-        .previousHeading: [KeyBinding("p")],
-        .zoomLevel1:     [KeyBinding("1")],
-        .zoomLevel2:     [KeyBinding("2")],
-        .zoomLevel3:     [KeyBinding("3")],
-        .zoomLevel4:     [KeyBinding("4")],
-        .zoomLevel5:     [KeyBinding("5")],
-    ]
-
-    /// Off by default behind a toggle (§7.2).
-    static let vimLayer: [Command: [KeyBinding]] = [
-        .scrollDown:    [KeyBinding("j")],
-        .scrollUp:      [KeyBinding("k")],
-        .documentStart: [KeyBinding("g")],
-        .documentEnd:   [KeyBinding("g", .shift)],
-    ]
 }
 
 /// The outcome of reading the keybindings file.  "Absent" and "corrupt" are
@@ -257,14 +235,6 @@ final class KeybindingStore {
 
     private func rebuild() {
         var resolved = KeybindingDefaults.table
-        for (command, extras) in KeybindingDefaults.readModeExtras {
-            resolved[command, default: []].append(contentsOf: extras)
-        }
-        if vimKeysEnabled {
-            for (command, extras) in KeybindingDefaults.vimLayer {
-                resolved[command, default: []].append(contentsOf: extras)
-            }
-        }
         for (command, override) in overrides {
             resolved[command] = override
         }

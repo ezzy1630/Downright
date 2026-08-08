@@ -16,6 +16,14 @@ SCRATCH="${SCRATCH:-.build-main}"
 # path makes SwiftPM rebuild the world on every switch.  Keep them apart.
 TEST_SCRATCH="${TEST_SCRATCH:-.build-test}"
 
+# Logs are named after the scratch path, not fixed under /tmp.  Two runs with
+# different SCRATCH values are a deliberately supported thing (CI uses its own,
+# and running a second check while one is in flight is normal), but with fixed
+# names they silently overwrote each other's logs — so a failure reported the
+# *other* run's errors, or none at all.
+LOG_TAG="$(printf '%s' "$SCRATCH" | tr -c 'A-Za-z0-9._-' '-')"
+LOG_DIR="${TMPDIR:-/tmp}"
+
 CLT_FRAMEWORKS="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 TEST_FLAGS=()
 SELECTED_DEVELOPER="$(xcode-select -p 2>/dev/null || true)"
@@ -25,15 +33,15 @@ if [[ "$SELECTED_DEVELOPER" == /Library/Developer/CommandLineTools* ]] \
 fi
 
 echo "==> Build"
-if ! swift build --scratch-path "$SCRATCH" > /tmp/downright-build.log 2>&1; then
+if ! swift build --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.log" 2>&1; then
     echo "    FAILED"
-    grep "error:" /tmp/downright-build.log | sort -u | head -40
+    grep "error:" "$LOG_DIR/downright-build-$LOG_TAG.log" | sort -u | head -40
     exit 1
 fi
 echo "    ok"
 
 echo "==> Tests"
-TEST_LOG=/tmp/downright-test.log
+TEST_LOG="$LOG_DIR/downright-test-$LOG_TAG.log"
 if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
     swift test --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}" > "$TEST_LOG" 2>&1
 else
@@ -62,8 +70,16 @@ done
 echo "    ok"
 
 echo
+echo "==> Theme contrast"
+python3 "$ROOT/Scripts/check-contrast.py"
+
+echo
 echo "==> Sanity: the runner must actually have run something"
-COUNT=$(awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { print count + 0 }' "$TEST_LOG")
+# macOS ships BSD awk, which only matches multibyte characters (✔ ✘) under a
+# UTF-8 locale — with the default C locale the bracket expression never
+# matches and every correctly-run suite counts as "nothing ran".  Pin the
+# locale so the gate measures tests, not bytes.
+COUNT=$(LC_ALL=en_US.UTF-8 awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { print count + 0 }' "$TEST_LOG")
 # A missing or unreadable log leaves COUNT empty, and an empty COUNT must read
 # as "nothing ran", never as "the arithmetic test was malformed, carry on".
 case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
@@ -81,7 +97,7 @@ fi
 
 echo
 echo "==> Bench (debug, informational — exercises drbench and catches crashes)"
-BENCH_LOG=/tmp/downright-bench.log
+BENCH_LOG="$LOG_DIR/downright-bench-$LOG_TAG.log"
 if ! swift run --scratch-path "$SCRATCH" drbench > "$BENCH_LOG" 2>&1; then
     echo "    FAILED"
     tail -30 "$BENCH_LOG"
@@ -95,7 +111,7 @@ echo "    ok"
 # product promise, so the default run above only checks that the tool runs.
 if [ "${RUN_DRBENCH:-0}" = "1" ]; then
     echo "==> Bench (release, budgets enforced)"
-    BENCH_RELEASE_LOG=/tmp/downright-bench-release.log
+    BENCH_RELEASE_LOG="$LOG_DIR/downright-bench-release-$LOG_TAG.log"
     if ! swift run -c release --scratch-path .build-bench drbench > "$BENCH_RELEASE_LOG" 2>&1; then
         echo "    FAILED — a performance budget was violated (or the build failed)"
         grep -aE "✗|❌|error:" "$BENCH_RELEASE_LOG" | sort -u | head -40

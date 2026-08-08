@@ -74,6 +74,47 @@ func locateApp() -> URL? {
     return String(decoding: data, as: UTF8.self).split(separator: "\n").first.map { URL(fileURLWithPath: String($0)) }
 }
 
+/// Launches Downright for a set of files, returning the `open` exit status.
+///
+/// Shared by `open`, `notify`, and `watch` so the three agree on how the app is
+/// located and what "background" means.
+@discardableResult
+func launch(_ paths: [String], options: MarkdownCLI.OpenOptions) -> Int32 {
+    guard !paths.isEmpty, let app = locateApp() else { return 69 }
+    var openArguments = ["-a", app.path]
+    if options.newWindow { openArguments.append("-n") }
+    if options.background { openArguments.append("-g") }
+    if options.wait { openArguments.append("-W") }
+    openArguments.append(contentsOf: paths)
+    if options.edit { openArguments.append(contentsOf: ["--args", "--mode", "live"]) }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    process.arguments = openArguments
+    do { try process.run(); process.waitUntilExit(); return process.terminationStatus }
+    catch { return 70 }
+}
+
+/// The command an installed hook should run.
+///
+/// A hook does not inherit an interactive shell's `PATH`, so `down` alone can
+/// resolve in a terminal and then fail silently inside the agent.  Prefer the
+/// stable install locations, and fall back to this process's own absolute path.
+func resolvedExecutable() -> String {
+    let installed = ["/usr/local/bin/down", "/opt/homebrew/bin/down"]
+    if let path = installed.first(where: { FileManager.default.fileExists(atPath: $0) }) { return path }
+    let argv0 = CommandLine.arguments.first ?? "down"
+    if argv0.hasPrefix("/") { return argv0 }
+    let resolved = URL(fileURLWithPath: argv0, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+    return FileManager.default.fileExists(atPath: resolved.path) ? resolved.standardizedFileURL.path : "down"
+}
+
+func loadSettings(at url: URL) -> [String: Any] {
+    guard let data = try? Data(contentsOf: url),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return [:] }
+    return object
+}
+
 let action: MarkdownCLI.Action
 do { action = try MarkdownCLI.parse(arguments) }
 catch let error as MarkdownCLI.ParseError { writeError(error.description, status: 64) }
@@ -167,18 +208,84 @@ case .open(let options, let paths):
     for path in paths where !FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).path) {
         writeError("\(path): no such file", status: 66)
     }
-    guard let app = locateApp() else {
+    guard locateApp() != nil else {
         writeError("could not find Downright.app; install it in /Applications or run Scripts/bundle-app.sh", status: 69)
     }
-    var openArguments = ["-a", app.path]
-    if options.newWindow { openArguments.append("-n") }
-    if options.background { openArguments.append("-g") }
-    if options.wait { openArguments.append("-W") }
-    openArguments.append(contentsOf: paths)
-    if options.edit { openArguments.append(contentsOf: ["--args", "--mode", "live"]) }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = openArguments
-    do { try process.run(); process.waitUntilExit(); exit(process.terminationStatus) }
-    catch { writeError("failed to launch: \(error.localizedDescription)", status: 70) }
+    exit(launch(paths, options: options))
+
+case .notify(let options):
+    // A hook runs inside the agent's turn.  Every failure path here exits 0:
+    // an unreadable payload, a missing app, or a path that is not Markdown are
+    // all "nothing to review", and none of them justify failing somebody's edit.
+    let data = isatty(FileHandle.standardInput.fileDescriptor) == 0
+        ? FileHandle.standardInput.readDataToEndOfFile()
+        : Data()
+    let targets = AgentBridge.openableTargets(in: AgentBridge.hookPayloadPaths(data))
+    guard !targets.isEmpty else { exit(0) }
+    if options.dryRun {
+        for target in targets { print(target) }
+        exit(0)
+    }
+    var openOptions = MarkdownCLI.OpenOptions()
+    openOptions.background = !options.focus
+    launch(targets, options: openOptions)
+    exit(0)
+
+case .watch(let options, let paths):
+    let roots = (paths.isEmpty ? [FileManager.default.currentDirectoryPath] : paths)
+        .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL }
+    for root in roots where !FileManager.default.fileExists(atPath: root.deletingLastPathComponent().path) {
+        writeError("\(root.path): no such file or folder", status: 66)
+    }
+    guard locateApp() != nil else {
+        writeError("could not find Downright.app; install it in /Applications or run Scripts/bundle-app.sh", status: 69)
+    }
+    var openOptions = MarkdownCLI.OpenOptions()
+    openOptions.background = !options.focus
+    let watcher = AgentWatcher(roots: roots, debounce: options.debounce) { urls in
+        for url in urls {
+            FileHandle.standardError.write(Data("down: opening \(url.path)\n".utf8))
+        }
+        launch(urls.map(\.path), options: openOptions)
+    }
+    guard watcher.start() else {
+        writeError("could not watch \(roots.map(\.path).joined(separator: ", "))", status: 70)
+    }
+    let scope = roots.map { $0.lastPathComponent }.joined(separator: ", ")
+    FileHandle.standardError.write(Data("down: watching \(scope) — Markdown changes open in Downright. ^C to stop.\n".utf8))
+    dispatchMain()
+
+case .hook(let options):
+    let executable = resolvedExecutable()
+    switch options.mode {
+    case .print:
+        print(AgentBridge.hookSnippet(executable: executable))
+    case .install, .uninstall:
+        let url = options.scope.settingsURL(
+            home: URL(fileURLWithPath: NSHomeDirectory()),
+            workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        )
+        let existing = loadSettings(at: url)
+        let result = options.mode == .install
+            ? AgentBridge.installingHook(into: existing, executable: executable)
+            : AgentBridge.removingHook(from: existing, executable: executable)
+        guard result.changed else {
+            print(options.mode == .install
+                ? "Already installed in \(url.path)"
+                : "No Downright hook found in \(url.path)")
+            exit(0)
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try AgentBridge.encode(result.settings).write(to: url, options: .atomic)
+        } catch {
+            writeError("cannot write \(url.path): \(error.localizedDescription)", status: 73)
+        }
+        print(options.mode == .install
+            ? "Installed in \(url.path) — agent edits to Markdown now open in Downright."
+            : "Removed from \(url.path).")
+    }
 }

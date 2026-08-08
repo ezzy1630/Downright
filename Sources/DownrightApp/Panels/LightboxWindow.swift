@@ -14,8 +14,9 @@ import MarkdownRender
 /// point.  Chrome is themed; a viewing surround is not.
 final class LightboxWindow: NSWindow {
     private var lightboxView: LightboxContentView? { contentView as? LightboxContentView }
+    private var reduceMotion = false
 
-    convenience init(image: NSImage, caption: String?) {
+    convenience init(image: NSImage, caption: String?, reduceMotion: Bool = false) {
         self.init(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.borderless], backing: .buffered, defer: true
@@ -27,6 +28,7 @@ final class LightboxWindow: NSWindow {
         isReleasedWhenClosed = false
         animationBehavior = .none
         collectionBehavior = [.fullScreenAuxiliary, .transient]
+        self.reduceMotion = reduceMotion
 
         let view = LightboxContentView(image: image, caption: caption)
         view.onDismiss = { [weak self] in self?.dismiss() }
@@ -41,7 +43,6 @@ final class LightboxWindow: NSWindow {
         lightboxView?.resetZoom()
 
         window.addChildWindow(self, ordered: .above)
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         alphaValue = reduceMotion ? 1 : 0
         makeKeyAndOrderFront(nil)
         makeFirstResponder(contentView)
@@ -58,7 +59,7 @@ final class LightboxWindow: NSWindow {
             self.orderOut(nil)
             self.alphaValue = 1
         }
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard !reduceMotion else {
             finish()
             return
         }

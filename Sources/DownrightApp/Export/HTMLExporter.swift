@@ -229,9 +229,19 @@ struct HTMLExporter {
         case .inlineCode:
             return "<code>\(escape(document.substring(span.contentRange)))</code>"
         case .link(let destination, let linkTitle):
+            // A link with a scheme missing from the allowlist — `javascript:`,
+            // `data:`, `vbscript:`, or an editor scheme — must never become an
+            // active `href` in an exported file the reader then opens in a
+            // browser.  Render it as inert text: no anchor, destination shown.
             let titleAttribute = linkTitle.map { " title=\"\(escape($0))\"" } ?? ""
+            guard linkIsSafe(destination) else {
+                // No `href`: the destination survives only as inert tooltip text,
+                // so the reader can see what the (blocked) link pointed at.
+                return "<span title=\"\(escape(destination))\">\(inner())</span>"
+            }
             return "<a href=\"\(escape(resolveHref(destination)))\"\(titleAttribute)>\(inner())</a>"
         case .autolink(let destination):
+            guard linkIsSafe(destination) else { return escape(destination) }
             return "<a href=\"\(escape(destination))\">\(escape(destination))</a>"
         case .wikilink(let target, let label):
             return "<a class=\"wikilink\" href=\"\(escape(target)).html\">\(escape(label ?? target))</a>"
@@ -268,6 +278,26 @@ struct HTMLExporter {
         // exported sibling, so a folder of exports stays navigable.
         guard !destination.contains("://"), destination.hasSuffix(".md") else { return destination }
         return String(destination.dropLast(3)) + ".html"
+    }
+
+    /// Schemes a Markdown document may legitimately hand to a browser as an
+    /// active link.  Anything else (`javascript:`, `data:`, `vbscript:`, an
+    /// editor's `vscode://`, …) is rendered as inert text, never as `href`.
+    private static let linkSchemeAllowlist: Set<String> = ["http", "https", "mailto"]
+
+    /// True when `destination` is safe to emit as a live `href`: either it has
+    /// no scheme at all (a relative path or in-document `#anchor`), or its
+    /// scheme is one a reader could legitimately follow.
+    private func linkIsSafe(_ destination: String) -> Bool {
+        let lower = destination.lowercased()
+        guard let colon = lower.firstIndex(of: ":") else { return true }
+        let before = lower[..<colon]
+        // A colon inside a *path* (rare) is preceded by a `/`, so this still
+        // parses such destinations as path content, not as a scheme.
+        guard !before.isEmpty,
+              before.rangeOfCharacter(from: CharacterSet(charactersIn: "/?#\\")) == nil
+        else { return true }
+        return Self.linkSchemeAllowlist.contains(String(before))
     }
 
     private func renderImage(source: String, alt: String) -> String {

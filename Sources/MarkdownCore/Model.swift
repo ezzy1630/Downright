@@ -21,8 +21,6 @@ extension NSRange {
     public func touches(offset: Int) -> Bool {
         offset >= location && offset <= upperBound
     }
-
-    public var isEmptyRange: Bool { length == 0 }
 }
 
 // MARK: - Blocks
@@ -156,12 +154,12 @@ public indirect enum BlockContent: Sendable {
         }
     }
 
-    /// Blocks a structural-zoom level 4 keeps as "concrete artifacts" (§5.2).
-    public var isConcreteArtifact: Bool {
-        switch self {
-        case .codeBlock, .table, .mermaid, .mathBlock: return true
-        default: return false
-        }
+    /// A nested list hanging off a list item.  The item's own styling — a
+    /// completed task's strikethrough above all — must stop here, because
+    /// everything below carries its own state and styles itself.
+    public var isList: Bool {
+        if case .list = self { return true }
+        return false
     }
 }
 
@@ -250,10 +248,36 @@ extension MDBlock {
     }
 
     /// Deepest block whose range contains `offset`.
+    /// Deepest block touching `offset`, preferring the leftmost sibling where
+    /// two meet — `touches` includes the upper bound, so adjacent blocks both
+    /// answer to the offset between them.
+    ///
+    /// Children are in source order and do not overlap, so this binary searches
+    /// for the leftmost child that could still reach `offset` instead of
+    /// scanning every sibling.  The decoration engine asks this question once
+    /// per line on a wholesale pass, which made the linear scan quadratic in
+    /// block count.
+    /// Deepest block touching `offset`, preferring the leftmost sibling where
+    /// two meet — `touches` includes the upper bound, so adjacent blocks both
+    /// answer to the offset between them.
+    ///
+    /// Children are in source order and never overlap, which is what lets this
+    /// binary search for the leftmost child that can still reach `offset`
+    /// instead of scanning every sibling.  `ContractTests` locks that invariant
+    /// and checks this against a linear scan at every offset of the corpus —
+    /// the decoration engine asks the question once per line on a wholesale
+    /// pass, which made the old scan quadratic in block count.
     public func block(at offset: Int) -> MDBlock? {
         guard range.touches(offset: offset) else { return nil }
-        for child in children {
-            if let hit = child.block(at: offset) { return hit }
+        var low = 0
+        var high = children.count
+        while low < high {
+            let middle = (low + high) / 2
+            if children[middle].range.upperBound < offset { low = middle + 1 } else { high = middle }
+        }
+        if low < children.count, children[low].range.location <= offset,
+           let hit = children[low].block(at: offset) {
+            return hit
         }
         return self
     }

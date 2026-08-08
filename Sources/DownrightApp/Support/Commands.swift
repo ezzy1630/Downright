@@ -9,14 +9,16 @@ import AppKit
 /// and discoverable without touching four files.
 enum Command: String, CaseIterable, Codable {
     // Modes and views
-    case toggleReadLive, sourceMode, splitView, pinWindow, focusMode, typewriterScrolling
-    case toggleSidebar, outlineQuickOpen, outlinePanel, taskPanel, versionTimeline, compareFiles
+    case sourceMode, splitView, pinWindow, focusMode, typewriterScrolling
+    case statusBar
+    case taskPanel, versionTimeline, compareFiles
     case frontMatterEditor, tableEditor, assetDoctor
     case commandPalette, documentLens, readerProfiles
     case documentHealth, renderTargets, visualDebugger, reviewPanel, workspace, localAI
 
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
+    case followLinkAtCaret, nextLink, previousLink
     case scrollDown, scrollUp, pageDown, pageUp, documentStart, documentEnd
     case goBack, goForward
 
@@ -45,28 +47,29 @@ enum Command: String, CaseIterable, Codable {
     case speakDocument, stopSpeaking
 
     // App
-    case preferences, reloadTheme, showKeybindings, toggleVimKeys, checkForUpdates
+    case preferences, reloadTheme, showKeybindings, checkForUpdates
+    /// Toggles between the light and dark theme without opening Settings.
+    case toggleLightDark
+    /// Jumps to a line number in the document.
+    case goToLine
 
     var title: String {
         switch self {
-        case .toggleReadLive: return "Exit Source Focus"
         case .sourceMode: return "Source Focus"
         case .splitView: return "Split View"
         case .pinWindow: return "Pin Window"
         case .focusMode: return "Focus Mode"
         case .typewriterScrolling: return "Typewriter Scrolling"
-        case .toggleSidebar: return "Contents"
-        case .outlineQuickOpen: return "Search Contents…"
-        case .outlinePanel: return "Outline"
+        case .statusBar: return "Status Bar"
         case .taskPanel: return "Tasks"
         case .versionTimeline: return "Version Timeline"
         case .compareFiles: return "Compare Files…"
-        case .frontMatterEditor: return "Front Matter…"
+        case .frontMatterEditor: return "Front Matter"
         case .tableEditor: return "Edit Table…"
         case .assetDoctor: return "Asset Doctor"
         case .commandPalette: return "Command Palette…"
         case .documentLens: return "Document Lens"
-        case .readerProfiles: return "Reader Profiles…"
+        case .readerProfiles: return "Reader Profiles"
         case .documentHealth: return "Document Health"
         case .renderTargets: return "Render Targets"
         case .visualDebugger: return "Visual Debugger"
@@ -77,6 +80,9 @@ enum Command: String, CaseIterable, Codable {
         case .previousHeading: return "Previous Heading"
         case .nextChange: return "Next Change"
         case .previousChange: return "Previous Change"
+        case .followLinkAtCaret: return "Open Link at Caret"
+        case .nextLink: return "Next Link"
+        case .previousLink: return "Previous Link"
         case .scrollDown: return "Scroll Down"
         case .scrollUp: return "Scroll Up"
         case .pageDown: return "Page Down"
@@ -117,13 +123,13 @@ enum Command: String, CaseIterable, Codable {
         case .tidyDocument: return "Tidy Document…"
         case .toggleBold: return "Bold"
         case .toggleItalic: return "Italic"
-        case .insertLink: return "Link…"
+        case .insertLink: return "Link"
         case .toggleStrikethrough: return "Strikethrough"
         case .toggleInlineCode: return "Inline Code"
         case .indentList: return "Indent"
         case .outdentList: return "Outdent"
         case .toggleTaskAtCaret: return "Toggle Task"
-        case .newDocument: return "New"
+        case .newDocument: return "New…"
         case .open: return "Open…"
         case .save: return "Save"
         case .saveAs: return "Save As…"
@@ -147,8 +153,9 @@ enum Command: String, CaseIterable, Codable {
         case .preferences: return "Settings…"
         case .reloadTheme: return "Reload Themes"
         case .showKeybindings: return "Keyboard Shortcuts…"
-        case .toggleVimKeys: return "Vim-style Keys"
         case .checkForUpdates: return "Check for Updates…"
+        case .toggleLightDark: return "Toggle Light/Dark Theme"
+        case .goToLine: return "Go to Line…"
         }
     }
 
@@ -181,16 +188,16 @@ enum Command: String, CaseIterable, Codable {
              .convertToParagraph, .convertToBulletList, .convertToNumberedList, .convertToTaskList,
              .convertToBlockquote, .indentList, .outdentList, .toggleTaskAtCaret:
             return .format
-        case .toggleReadLive, .sourceMode, .zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4,
+        case .sourceMode, .zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4,
              .zoomLevel5, .zoomIn, .zoomOut, .increaseTextSize, .decreaseTextSize, .resetTextSize,
-             .focusMode, .typewriterScrolling, .toggleSidebar, .outlinePanel, .taskPanel,
+             .focusMode, .typewriterScrolling, .statusBar, .taskPanel,
              .reloadTheme, .commandPalette, .documentLens,
              .readerProfiles, .documentHealth, .renderTargets, .visualDebugger,
              .reviewPanel, .workspace, .localAI:
             return .view
-        case .nextHeading, .previousHeading, .nextChange, .previousChange, .scrollDown, .scrollUp,
-             .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward,
-             .outlineQuickOpen:
+        case .nextHeading, .previousHeading, .nextChange, .previousChange,
+             .followLinkAtCaret, .nextLink, .previousLink, .scrollDown, .scrollUp,
+             .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward:
             return .navigate
         case .promoteHeading, .demoteHeading, .moveBlockUp, .moveBlockDown, .foldSection,
              .unfoldSection, .foldAll, .unfoldAll, .sortListAlphabetically, .sortListByState,
@@ -199,10 +206,14 @@ enum Command: String, CaseIterable, Codable {
             return .document
         case .splitView, .pinWindow:
             return .window
-        case .preferences, .showKeybindings, .toggleVimKeys, .checkForUpdates:
+        case .preferences, .showKeybindings, .checkForUpdates, .toggleLightDark:
             // Settings…, Keyboard Shortcuts…, and Check for Updates… live in
             // the app menu on macOS, and that is what the editor must say.
+            // Toggle Light/Dark is here too — it's an app-wide toggle, not a
+            // per-document setting.
             return .application
+        case .goToLine:
+            return .navigate
         }
     }
 
@@ -212,12 +223,6 @@ enum Command: String, CaseIterable, Codable {
         case .toggleBold, .toggleItalic, .insertLink, .toggleStrikethrough, .toggleInlineCode,
              .indentList, .outdentList:
             return [.live]
-        case .scrollDown, .scrollUp, .pageDown, .pageUp, .documentStart, .documentEnd:
-            // Single-letter bindings only work where there is no caret to
-            // capture them (§7.2).  Heading jumps and structural zoom used to
-            // live here too; they now carry ⌃⌘ equivalents that work anywhere,
-            // and keep their bare read-mode keys through `readModeExtras`.
-            return [.read]
         default:
             return [.read, .live, .source]
         }
@@ -228,11 +233,23 @@ enum Command: String, CaseIterable, Codable {
     /// it would be a no-op.
     var requires: CommandPrecondition {
         switch self {
-        case .newDocument, .open, .preferences, .showKeybindings, .toggleVimKeys,
-             .reloadTheme, .compareFiles:
+        case .newDocument, .open, .preferences, .showKeybindings,
+             .reloadTheme, .compareFiles, .toggleLightDark:
             return .always
         case .checkForUpdates:
             return .updateCheck
+        case .save:
+            return .unsavedChanges
+        case .findNext, .findPrevious:
+            return .findQuery
+        case .goBack:
+            return .backHistory
+        case .goForward:
+            return .forwardHistory
+        case .stopSpeaking:
+            return .speaking
+        case .tableEditor:
+            return .tableAtCaret
         case .revealInFinder, .openInEditor, .versionTimeline, .copySectionLink, .findInSiblings:
             return .documentWithFile
         case .useSelectionForFind, .exportSelectionAsImage:
@@ -267,6 +284,12 @@ enum CommandPrecondition: String, CaseIterable {
     case selection
     /// Needs a configured, idle updater.
     case updateCheck
+    case unsavedChanges
+    case findQuery
+    case backHistory
+    case forwardHistory
+    case speaking
+    case tableAtCaret
 
     func isSatisfied(in context: CommandContext) -> Bool {
         switch self {
@@ -275,6 +298,13 @@ enum CommandPrecondition: String, CaseIterable {
         case .documentWithFile: return context.hasDocument && context.documentHasFile
         case .selection: return context.hasDocument && context.hasSelection
         case .updateCheck: return context.canCheckForUpdates
+        case .unsavedChanges:
+            return context.hasDocument && (context.hasUnsavedChanges || !context.documentHasFile)
+        case .findQuery: return context.hasDocument && context.hasFindQuery
+        case .backHistory: return context.hasDocument && context.canGoBack
+        case .forwardHistory: return context.hasDocument && context.canGoForward
+        case .speaking: return context.hasDocument && context.isSpeaking
+        case .tableAtCaret: return context.hasDocument && context.caretIsInTable
         }
     }
 }
@@ -286,17 +316,35 @@ struct CommandContext: Equatable {
     var documentHasFile: Bool
     var hasSelection: Bool
     var canCheckForUpdates: Bool
+    var hasUnsavedChanges: Bool
+    var hasFindQuery: Bool
+    var canGoBack: Bool
+    var canGoForward: Bool
+    var isSpeaking: Bool
+    var caretIsInTable: Bool
 
     init(
         hasDocument: Bool = false,
         documentHasFile: Bool = false,
         hasSelection: Bool = false,
-        canCheckForUpdates: Bool = false
+        canCheckForUpdates: Bool = false,
+        hasUnsavedChanges: Bool = false,
+        hasFindQuery: Bool = false,
+        canGoBack: Bool = false,
+        canGoForward: Bool = false,
+        isSpeaking: Bool = false,
+        caretIsInTable: Bool = false
     ) {
         self.hasDocument = hasDocument
         self.documentHasFile = documentHasFile
         self.hasSelection = hasSelection
         self.canCheckForUpdates = canCheckForUpdates
+        self.hasUnsavedChanges = hasUnsavedChanges
+        self.hasFindQuery = hasFindQuery
+        self.canGoBack = canGoBack
+        self.canGoForward = canGoForward
+        self.isSpeaking = isSpeaking
+        self.caretIsInTable = caretIsInTable
     }
 
     /// No document anywhere — what the app menu sees while only the start

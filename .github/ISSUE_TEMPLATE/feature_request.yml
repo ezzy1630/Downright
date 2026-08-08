@@ -1,0 +1,36 @@
+name: Feature request
+description: Something the app should do and does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some things are out of scope on purpose, and no argument will move them:
+        no vault, no sync, no collaboration, no plugin system, no rich-text
+        document model, no code execution, and no AI chat panel. The README's
+        "what it deliberately is not" list is the whole set.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you actually trying to do, and what does the app make you do
+        instead? Describe the situation, not the feature — the feature is the
+        part that is up for discussion.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: What you think it should look like
+      description: Optional. A shortcut, a panel, a CLI subcommand, a setting.
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do today
+      description: >
+        Another app, a script, or doing without. Useful for judging how much
+        this actually costs you.

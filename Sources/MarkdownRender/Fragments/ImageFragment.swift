@@ -24,7 +24,9 @@ final class ImageFragment: DownrightFragment {
     override func drawObject(at point: CGPoint, in cg: CGContext) {
         guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         let picture = displaySize()
-        let origin = CGPoint(x: point.x + max(0, (contentWidth - picture.width) / 2), y: point.y)
+        // Images sit in the reading column, so they centre on it — centring on
+        // the full column would push every picture into the right bleed lane.
+        let origin = CGPoint(x: point.x + max(0, (proseContentWidth - picture.width) / 2), y: point.y)
         let rect = CGRect(origin: origin, size: picture)
 
         if let image = loadedImage() {
@@ -56,7 +58,7 @@ final class ImageFragment: DownrightFragment {
             .paragraphStyle: paragraph,
         ])
         cg.drawText(text, in: CGRect(x: point.x, y: rect.maxY + RenderMetrics.imageCaptionGap,
-                                     width: contentWidth, height: style.lineHeight), flipped: true)
+                                     width: proseContentWidth, height: style.lineHeight), flipped: true)
     }
 
     /// Alt text, which the engine parked on `drReference` when it emitted the
@@ -95,13 +97,13 @@ final class ImageFragment: DownrightFragment {
 
     private func displaySize() -> CGSize {
         guard let image = loadedImage(), image.size.width > 0 else {
-            guard let style = styleSheet else { return CGSize(width: contentWidth, height: 64) }
-            return CGSize(width: contentWidth,
+            guard let style = styleSheet else { return CGSize(width: proseContentWidth, height: 64) }
+            return CGSize(width: proseContentWidth,
                           height: failedObjectHeight(missing, style: style))
         }
         let natural = image.size
         let viewportCap = viewportHeightCap
-        let widthScale = min(1, contentWidth / natural.width)
+        let widthScale = min(1, proseContentWidth / natural.width)
         let heightScale = min(1, viewportCap / natural.height)
         let scale = min(widthScale, heightScale)
         return CGSize(width: (natural.width * scale).rounded(), height: (natural.height * scale).rounded())

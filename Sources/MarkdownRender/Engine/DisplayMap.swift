@@ -175,6 +175,40 @@ public enum RangeSet {
 
     /// End of a paragraph's content, i.e. the paragraph range minus its
     /// terminator.
+    /// Sorted and non-overlapping, but *adjacent* ranges stay separate.
+    ///
+    /// `normalized` fuses `[0,3)` with `[3,5)`, which is right for a set of
+    /// regions and wrong for a set of *markers*.  A caret reveal names the
+    /// marker it is un-hiding by its exact range, so fusing a list item's `3. `
+    /// with the `**` beside it made the opening marker unrevealable while its
+    /// closing twin revealed normally: one asterisk pair, two different
+    /// answers, and a stray `**` left in the middle of rendered prose.
+    public static func disjoint(_ ranges: [NSRange]) -> [NSRange] {
+        guard ranges.count > 1 else { return ranges.filter { $0.length > 0 } }
+        let sorted = ranges.filter { $0.length > 0 }.sorted {
+            $0.location == $1.location ? $0.length < $1.length : $0.location < $1.location
+        }
+        var out: [NSRange] = []
+        out.reserveCapacity(sorted.count)
+        for r in sorted {
+            guard var last = out.last else {
+                out.append(r)
+                continue
+            }
+            // A true overlap is ambiguous and still fuses; touching at a
+            // boundary is two markers standing next to each other.
+            if r.location < last.upperBound {
+                if r.upperBound > last.upperBound {
+                    last.length = r.upperBound - last.location
+                    out[out.count - 1] = last
+                }
+            } else {
+                out.append(r)
+            }
+        }
+        return out
+    }
+
     public static func contentEnd(ofParagraph range: NSRange, text: NSString) -> Int {
         var e = Swift.min(range.upperBound, text.length)
         guard e > range.location else { return range.location }
@@ -214,28 +248,6 @@ public enum RangeSet {
         return false
     }
 
-    /// Projects cached source ranges across one edit while dropping every
-    /// range in the edited paragraph span.
-    ///
-    /// A parse result arrives asynchronously. During that gap, keeping valid
-    /// substitutions outside the edit prevents the entire document from
-    /// flashing back to raw Markdown. The edited paragraphs deliberately use
-    /// identity presentation until the parser supplies authoritative ranges.
-    public static func projectedAcrossEdit(
-        _ ranges: [NSRange],
-        edit: NSRange,
-        insertedLength: Int,
-        oldParagraphs: ParagraphIndex,
-        inputIsNormalized: Bool = false
-    ) -> [NSRange] {
-        let projection = SourceEditProjection(
-            edit: edit,
-            insertedLength: insertedLength,
-            oldParagraphs: oldParagraphs
-        )
-        let projected = ranges.compactMap(projection.project)
-        return inputIsNormalized ? projected : normalized(projected)
-    }
 }
 
 /// Immutable coordinate policy for the interval between a source edit and its

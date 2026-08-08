@@ -29,6 +29,9 @@ final class MermaidFragment: DownrightFragment {
             return RenderMetrics.snap(
                 failedObjectHeight(failure, style: style) + style.lineHeight * 0.5, grid: grid)
         }
+        // The bridge returns the diagram cropped to its own ink, so all the air
+        // around it is decided here: one line height, split above and below by
+        // the centring in `drawObject`.
         return RenderMetrics.snap(size.height + style.lineHeight, grid: grid)
     }
 

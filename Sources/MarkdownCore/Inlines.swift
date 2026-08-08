@@ -240,16 +240,24 @@ struct InlineBuilder {
     /// terminator is the explicit `LineBreak`; everything else is `SoftBreak`.
     /// The marker spaces may already sit inside the preceding text span (the
     /// gap is often just the newline), so the test looks at the source too.
+    ///
+    /// Only what precedes the terminator can carry the marker.  Trimming
+    /// newlines off the whole gap instead left the *continuation line's
+    /// indentation* in play: inside a list item the gap is `"\n   "`, whose
+    /// three leading spaces read as the two-space hard break, so every
+    /// hard-wrapped line in every list was classified `.lineBreak` — and
+    /// `HardWrapReflow` protects those, which cost list prose its reflow
+    /// entirely and made `HTMLExporter` emit a `<br>` per wrapped line.
     private func breakKind(in gap: NSRange) -> InlineKind? {
         guard gap.length > 0 else { return nil }
         let source = text.substring(with: gap)
-        guard source.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) }) else { return nil }
+        guard let terminator = source.rangeOfCharacter(from: .newlines) else { return nil }
         let offset = gap.location
         let twoSpacesBefore = offset >= 2
             && text.character(at: offset - 1) == 0x20
             && text.character(at: offset - 2) == 0x20
         let backslashBefore = offset >= 1 && text.character(at: offset - 1) == 0x5C
-        let before = source.trimmingCharacters(in: .newlines)
+        let before = String(source[source.startIndex..<terminator.lowerBound])
         if before.hasSuffix("  ") || before.hasSuffix("\\") || twoSpacesBefore || backslashBefore {
             return .lineBreak
         }

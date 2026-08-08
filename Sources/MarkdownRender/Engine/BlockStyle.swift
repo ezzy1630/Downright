@@ -26,6 +26,46 @@ public struct BlockContext: Hashable, Sendable {
     }
 }
 
+/// Resolving one base writing direction for a whole document.
+enum WritingDirection {
+    /// Ranges whose letters are strongly right-to-left.  All are in the BMP,
+    /// so a scalar comparison covers them without a bidi table.
+    private static func isRightToLeft(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0590...0x05FF,  // Hebrew
+             0x0600...0x06FF,  // Arabic
+             0x0700...0x074F,  // Syriac
+             0x0750...0x077F,  // Arabic Supplement
+             0x0780...0x07BF,  // Thaana
+             0x07C0...0x08FF,  // NKo, Samaritan, Mandaic, Arabic Extended-A
+             0xFB1D...0xFDFF,  // Hebrew and Arabic presentation forms
+             0xFE70...0xFEFF:  // Arabic presentation forms B
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// The direction of the document's first strong letter — the same rule
+    /// HTML's `dir=auto` uses.
+    ///
+    /// Only *letters* vote.  A markdown document opens on `#`, `-`, or a digit
+    /// far more often than on a word, and punctuation is directionally neutral,
+    /// so classifying on the first non-space character would decide nothing and
+    /// decide it loudly.
+    ///
+    /// The scan is bounded because it runs on the decoration path: a document's
+    /// direction is settled by its opening sentence, and reading further would
+    /// cost keystroke latency to learn nothing.
+    static func of(_ text: String, limit: Int = 1024) -> NSWritingDirection {
+        for scalar in text.unicodeScalars.prefix(limit) {
+            if isRightToLeft(scalar) { return .rightToLeft }
+            if CharacterSet.letters.contains(scalar) { return .leftToRight }
+        }
+        return .leftToRight
+    }
+}
+
 /// Fonts, colours, and paragraph styles per block kind.
 ///
 /// Everything here is memoised: a 5k-line document is a few dozen distinct
@@ -37,11 +77,85 @@ final class BlockStyleFactory {
     private var attributeCache: [StyleKey: [NSAttributedString.Key: Any]] = [:]
     private let grid: CGFloat
     private let indentUnit: CGFloat
+    /// How far a wrapped code row hangs past its statement's own left edge.
+    /// Two monospace columns: enough to read as a continuation at a glance,
+    /// small enough that it is never mistaken for a level of nesting.
+    private let codeContinuationIndent: CGFloat
+
+    /// Base writing direction for every block, resolved once for the whole
+    /// document (see `WritingDirection.of`).
+    ///
+    /// It has to be one decision for the document, not `.natural` per
+    /// paragraph.  `.natural` asks each paragraph to resolve its own direction
+    /// from its own first strong character, so a single Hebrew or Arabic bullet
+    /// in an English list became right-aligned on its own — flung to the far
+    /// margin with its bullet on the opposite side, while its siblings stayed
+    /// left.  The list stopped having a left edge.
+    ///
+    /// A browser does not do this: `direction` inherits from the container, so
+    /// every `<li>` in a list shares one direction and only the *runs* inside a
+    /// line get bidi-reordered.  That is the correct model and this matches it.
+    var baseWritingDirection: NSWritingDirection = .leftToRight {
+        didSet {
+            guard baseWritingDirection != oldValue else { return }
+            paragraphCache.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// Width of one monospace column, which is what a code row's own
+    /// indentation is measured in.
+    private let monoAdvance: CGFloat
+    private var codeRowCache: [CodeRowKey: NSParagraphStyle] = [:]
+
+    private struct CodeRowKey: Hashable {
+        var columns: Int
+        var head: CGFloat
+    }
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         self.grid = max(1, styleSheet.baselineGrid)
         self.indentUnit = RenderMetrics.indentUnit(bodySize: styleSheet.bodyFont().pointSize)
+        let mono = styleSheet.monoFont()
+        let advance = NSAttributedString(string: "MM", attributes: [.font: mono]).size().width
+        self.codeContinuationIndent = (advance > 1 ? advance : mono.pointSize).rounded()
+        self.monoAdvance = advance > 1 ? advance / 2 : mono.pointSize / 2
+    }
+
+    /// Columns a code row's leading whitespace occupies, tabs snapping to the
+    /// four-column stops the code paragraph style installs.
+    static func indentColumns(of line: NSString) -> Int {
+        var columns = 0
+        var index = 0
+        while index < line.length {
+            switch line.character(at: index) {
+            case 0x20: columns += 1
+            case 0x09: columns += RenderMetrics.codeTabColumns - (columns % RenderMetrics.codeTabColumns)
+            default: return columns
+            }
+            index += 1
+        }
+        return columns
+    }
+
+    /// The paragraph style for one physical row of a code block, hung off that
+    /// row's *own* indentation.
+    ///
+    /// Rows in a code block do not share a wrap indent.  A row indented four
+    /// columns has to wrap past those four columns; sharing the block's single
+    /// `headIndent` put the continuation of a nested statement to the left of
+    /// the statement itself, which reads as a new line of source rather than as
+    /// the same one carrying on.
+    func codeRowStyle(base: NSParagraphStyle, indentColumns columns: Int) -> NSParagraphStyle {
+        let key = CodeRowKey(columns: columns, head: base.firstLineHeadIndent)
+        if let cached = codeRowCache[key] { return cached }
+        guard let style = base.mutableCopy() as? NSMutableParagraphStyle else { return base }
+        style.headIndent = base.firstLineHeadIndent
+            + CGFloat(columns) * monoAdvance
+            + codeContinuationIndent
+        let frozen = style.copy() as? NSParagraphStyle ?? base
+        codeRowCache[key] = frozen
+        return frozen
     }
 
     struct StyleKey: Hashable {
@@ -54,6 +168,12 @@ final class BlockStyleFactory {
         /// (§11.3).  Two rows at the same depth must never share a cache entry
         /// or whichever decorates first locks the other into its column.
         var task: Bool
+        /// A callout reserves a wider column than the plain quote it is built
+        /// from, so `indent(for:context:)` returns a different value for the
+        /// two.  Without this the paragraph inside `> [!NOTE]` and the one
+        /// inside a bare `>` share an entry, and whichever the decorator
+        /// reaches first locks the other into its indent.
+        var callout: Bool
     }
 
     /// Stable discriminator per block kind, so the cache never confuses a
@@ -90,7 +210,8 @@ final class BlockStyleFactory {
             listDepth: min(context.listDepth, 8),
             quoteDepth: min(context.quoteDepth, 6),
             ordinalDigits: context.ordinal.map { max(1, String(abs($0)).count) } ?? 0,
-            task: context.task
+            task: context.task,
+            callout: context.calloutKind != nil
         )
     }
 
@@ -121,13 +242,46 @@ final class BlockStyleFactory {
         let f = font(for: content)
         switch content {
         case .codeBlock, .mermaid:
-            return RenderMetrics.snap(f.pointSize * 1.45, grid: grid)
+            // Code wants a *tighter* leading than prose, not a looser one: a
+            // block of source is scanned down the left edge, and air between
+            // rows works against that.  Snapping 1.45 *up* to the prose grid
+            // put a 14.7pt face on 24pt rows — 1.63, airier than the body text
+            // it sits inside.
+            //
+            // The grid still has to be honoured, or a ten-line block pushes
+            // everything after it off the baseline (§11.1); half a grid unit
+            // is the finest step that keeps whole blocks landing back on it.
+            // Rounding to nearest picks whichever step sits closest to 1.35
+            // rather than always erring one way.
+            let ideal = f.pointSize * 1.35
+            let snapped = RenderMetrics.snap(
+                ideal, grid: max(1, grid / 2), rounding: .toNearestOrAwayFromZero
+            )
+            // Never below the glyphs' own extent, however coarse the grid.
+            return max(snapped, RenderMetrics.snap(
+                f.ascender - f.descender, grid: max(1, grid / 2)
+            ))
         default:
             break
         }
         let natural = f.ascender - f.descender + f.leading
         let base = max(styleSheet.lineHeight, natural * 1.02)
         return RenderMetrics.snap(base, grid: grid)
+    }
+
+    /// Blocks that may use the bleed lane past the prose measure's trailing
+    /// edge (`RenderMetrics.codeBleed`).
+    ///
+    /// These are the blocks whose content has its own natural width and reads
+    /// worse when squeezed into a reading measure: source, diagrams, tables,
+    /// display math.  Everything else — prose, lists, quotes, callouts, images,
+    /// front matter — is inset back to the measure so the reading column keeps
+    /// its 68–72 characters.
+    static func isFullBleed(_ content: BlockContent) -> Bool {
+        switch content {
+        case .codeBlock, .mermaid, .table, .mathBlock: return true
+        default: return false
+        }
     }
 
     func indent(for content: BlockContent, context: BlockContext) -> CGFloat {
@@ -164,6 +318,20 @@ final class BlockStyleFactory {
         style.lineSpacing = 0
         style.lineBreakMode = .byWordWrapping
         style.alignment = .natural
+        // One direction for the document, so a list keeps a single edge and the
+        // head indents below mean the same thing on every line.
+        style.baseWritingDirection = baseWritingDirection
+
+        // The text container is the prose measure *plus* a trailing bleed lane.
+        // Prose is held back off it so the reading column keeps its 68–72
+        // characters; a full-bleed block leaves the tail alone and so gets the
+        // extra width (§11.1).  Every block still shares one left edge.  The
+        // value is a constant, so a window resize stays a relayout and never
+        // becomes a re-decoration.
+        if !Self.isFullBleed(block.content) {
+            style.tailIndent = -RenderMetrics.codeBleed
+        }
+
         let indent = self.indent(for: block.content, context: context)
         style.firstLineHeadIndent = indent
         style.headIndent = indent
@@ -231,10 +399,26 @@ final class BlockStyleFactory {
         }
 
         // Code is the one block that keeps its glyphs in Read mode, and the
-        // column never scrolls horizontally: wrap unbreakable lines by
-        // character instead of clipping them at the measure.
+        // column never scrolls horizontally, so long lines have to wrap
+        // somewhere.  Not mid-token, though: `.byCharWrapping` cut
+        // `ParsedDocument` into `Pars` / `edDocument` and `caret:` into `car` /
+        // `et:`, which is harder to read than the overflow it was avoiding.
+        // Word wrapping breaks at the syntactic gaps code already has and
+        // still falls back to character breaking for a token longer than the
+        // whole line, so nothing is clipped.
+        //
+        // The continuation indent is what makes the result legible as code: a
+        // wrapped row starts inside its own statement instead of impersonating
+        // a new line of source.  The closing tail inset keeps the last glyph
+        // off the band's right edge, mirroring `codeInsetX` on the left.
         if case .codeBlock = block.content {
-            style.lineBreakMode = .byCharWrapping
+            style.lineBreakMode = .byWordWrapping
+            style.headIndent = style.firstLineHeadIndent + codeContinuationIndent
+            style.tailIndent = -RenderMetrics.codeInsetX
+            // Deterministic tab stops, so the column a tab lands on is the same
+            // one `indentColumns(of:)` counts when it measures a row's hang.
+            style.tabStops = []
+            style.defaultTabInterval = CGFloat(RenderMetrics.codeTabColumns) * monoAdvance
         }
 
         let frozen = style.copy() as? NSParagraphStyle ?? NSParagraphStyle.default

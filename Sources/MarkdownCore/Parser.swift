@@ -535,13 +535,34 @@ struct BlockBuilder {
             else { return nil }
             let spans = inlines.spans(for: cell, bounds: range)
             let content = spans.isEmpty
-                ? range
+                ? emptyCellContentRange(in: range)
                 : NSRange(
                     location: spans[0].range.location,
                     length: max(0, spans[spans.count - 1].range.upperBound - spans[0].range.location)
                 )
             return TableCell(range: range, contentRange: content, inlines: spans)
         }
+    }
+
+    /// Content bounds for a cell with no inline children.
+    ///
+    /// A cell's own range reaches across the row's `|`, and with no span to bound
+    /// the content the whole range was taken as content.  So an *empty* cell's
+    /// content was a pipe: a headerless table (`| | | |`, which is how a
+    /// keybinding table is usually written) drew stray delimiter glyphs where its
+    /// header row should have been blank, and every "is this header empty?"
+    /// question answered no — which is why the renderer's own fallback for a
+    /// missing label never fired.
+    private func emptyCellContentRange(in range: NSRange) -> NSRange {
+        var start = range.location
+        var end = min(range.upperBound, text.length)
+        while start < end, isCellPadding(text.character(at: start)) { start += 1 }
+        while end > start, isCellPadding(text.character(at: end - 1)) { end -= 1 }
+        return NSRange(location: start, length: end - start)
+    }
+
+    private func isCellPadding(_ character: unichar) -> Bool {
+        character == 0x7C || character == 0x20 || character == 0x09
     }
 
     // MARK: Synthetic blocks

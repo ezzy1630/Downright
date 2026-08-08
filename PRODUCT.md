@@ -70,8 +70,8 @@ uses these qualities without copying their product models.
   paths, Mermaid, tables, images, and footnotes.
 - One adaptive TextKit 2 surface with caret-local syntax, scoped Markdown
   editing, and transient full-document Source Focus.
-- Structural zoom, folding, outline, task panel, density gutter, find, and
-  sibling sidebar.
+- Structural zoom, folding, task panel, density gutter with its hover outline,
+  find, and a command palette that opens headings and sibling files.
 - Safe external-write review with rendered diff, unread marks, and local
   snapshots.
 - Path resolution from the document folder and git root. Existing paths open

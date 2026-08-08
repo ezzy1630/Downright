@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [DocumentWindowController] = []
     private var preferencesWindow: NSWindowController?
     private var startWindow: StartWindowController?
+    private var setupWindow: SetupWindowController?
     private let servicesProvider = DownrightServicesProvider()
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
@@ -75,6 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         reportUnavailableStorage(AppPaths.prepareAll())
+        // Counted before anything can read it, so first-run affordances all
+        // agree about which launch this is.
+        Preferences.shared.update { $0.launchCount += 1 }
         parseLaunchArguments()
         NSApp.mainMenu = MainMenu.build()
         applySelectedTheme()
@@ -115,7 +119,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and there is no reason to do it while the user is reading (§8.3).
         DispatchQueue.global(qos: .utility).async { SnapshotStore.shared.prune() }
 
-        defer { flushWarnings() }
+        // The one-time setup panel: where the download-and-drag user gets their
+        // file association, their Quick Look extensions, and `down`.  It never
+        // appears when there is nothing left to do.
+        let showingSetup = presentSetupIfNeeded()
+
+        defer {
+            flushWarnings()
+            // Restored documents and the start window each order themselves
+            // front as they appear, so the panel is re-raised once the rest of
+            // the launch has settled rather than when it was created.
+            if showingSetup { setupWindow?.window?.makeKeyAndOrderFront(nil) }
+        }
         guard windowControllers.isEmpty else { return }
         // Paths on the command line, for running straight out of `.build`
         // during development.  Launch Services never routes these through
@@ -143,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return opened > 0
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows && windowControllers.isEmpty { showStartWindow() }
@@ -248,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
             self.scheduleSessionSave()
+            if self.windowControllers.isEmpty { self.showStartWindow() }
         }
     }
 
@@ -291,15 +307,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showWindow(nil)
     }
 
+    /// The launch after which the start window stops offering the tour.
+    ///
+    /// A "Take the Tour" button that never leaves is a standing admission that
+    /// the app needs explaining, and it costs a slot on the one screen where
+    /// the user is trying to get to their work.  Three launches is enough to
+    /// have noticed it and declined; after that it lives in Help, where an app
+    /// keeps the things you go looking for.
+    static let tourRetirementLaunch = 3
+
+    /// Taken once retires it immediately; three launches retires it regardless.
+    static func shouldOfferTour(hasTakenTour: Bool, launchCount: Int) -> Bool {
+        !hasTakenTour && launchCount <= tourRetirementLaunch
+    }
+
     /// A first launch — no settings file and nothing opened before — is the one
     /// moment the tour is more useful than the open panel, so it leads there.
-    /// After that it stays available as a quiet third action.
+    /// Then it steps back to a quiet third action, then it goes away.
     private func guideOffer(recents: [RecentDocument]) -> StartGuideOffer {
         guard WelcomeDocument.isAvailable else { return .unavailable }
+        let values = Preferences.shared.values
+        guard Self.shouldOfferTour(
+            hasTakenTour: values.hasTakenTour, launchCount: values.launchCount
+        ) else { return .unavailable }
         return Preferences.shared.isFirstRun && recents.isEmpty ? .primary : .secondary
     }
 
+    /// Help → Take the Tour.  The same document the start window offers, minus
+    /// the deadline: this one is always available.
+    @objc func takeTour(_ sender: Any?) {
+        openWelcomeDocument()
+    }
+
     func openWelcomeDocument() {
+        // Recorded on the way in, not on completion: there is no "finished the
+        // tour" event, and having opened it once is the signal that matters.
+        Preferences.shared.update { $0.hasTakenTour = true }
         do {
             open(try WelcomeDocument.materialize(), mode: .live)
         } catch {
@@ -310,6 +353,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startWindow?.window?.makeKeyAndOrderFront(nil)
             flushWarnings()
         }
+    }
+
+    // MARK: - System integration (§10)
+
+    /// Shows the first-run setup panel, once.
+    ///
+    /// Skipped entirely when every step is already done — someone who installed
+    /// with `Scripts/install.sh` has a registered app, a default handler, and
+    /// `down` on their PATH, and interrupting them to say so would be the
+    /// panel's only contribution.
+    /// Returns whether the panel was put on screen.
+    @discardableResult
+    private func presentSetupIfNeeded() -> Bool {
+        guard !Preferences.shared.values.hasAnsweredSetup else {
+            refreshSystemRegistrationIfMoved()
+            return false
+        }
+        guard let controller = SetupWindowController.makeIfNeeded() else {
+            Preferences.shared.update { $0.hasAnsweredSetup = true }
+            refreshSystemRegistrationIfMoved()
+            return false
+        }
+        setupWindow = controller
+        controller.onFinish = { [weak self] in
+            self?.setupWindow = nil
+            self?.noteSystemRegistration()
+        }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    /// LaunchServices and `pluginkit` both record an absolute path, so moving
+    /// or renaming the app leaves them pointing at nothing.  The symptom is
+    /// Quick Look quietly dropping back to plain text weeks after a setup that
+    /// did work, which is close to undiagnosable from the user's side.
+    ///
+    /// Gated on the path actually having changed: an ordinary launch should not
+    /// be paying for four subprocesses.
+    private func refreshSystemRegistrationIfMoved() {
+        let current = Bundle.main.bundleURL.path
+        guard Preferences.shared.values.lastRegisteredBundlePath != current,
+              SystemIntegration.quickLookExtensionsAreBundled,
+              SystemIntegration.isPermanentlyInstalled
+        else { return }
+        // No cache reset here — that discards every thumbnail on the system and
+        // is only worth it the once, when the icons first appear.
+        SystemIntegration.registerWithSystem(resetThumbnailCache: false) { _ in }
+        noteSystemRegistration()
+    }
+
+    private func noteSystemRegistration() {
+        let path = Bundle.main.bundleURL.path
+        Preferences.shared.update { $0.lastRegisteredBundlePath = path }
     }
 
     /// Fades the start window out in parallel with the document content fade-up.
@@ -560,9 +657,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .preferences: showPreferences(selecting: nil); return true
         case .showKeybindings: showPreferences(selecting: .keys); return true
         case .reloadTheme: ThemeStore.shared.reloadUserThemes(); return true
-        case .toggleVimKeys:
-            Preferences.shared.update { $0.vimKeys.toggle() }
-            return true
         case .compareFiles: showComparePanel(); return true
         // The palette has no menu validation in front of it, so it honours the
         // same precondition the menu item does.
@@ -570,6 +664,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard UpdateCoordinator.shared.canCheckForUpdates else { return true }
             UpdateCoordinator.shared.checkForUpdates()
             return true
+        case .toggleLightDark:
+            toggleLightDarkTheme()
+            return true
+        case .goToLine:
+            return false  // handled by the document window controller
         default: return false
         }
     }
@@ -586,7 +685,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         do {
-            try Data("# \(url.deletingPathExtension().lastPathComponent)\n\n".utf8)
+            let name = url.deletingPathExtension().lastPathComponent
+            try Data("# \(name)\n\n".utf8)
                 .write(to: url, options: .atomic)
         } catch {
             presentWriteFailure(error, url: url)
@@ -602,6 +702,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
+    }
+
+    /// Toggles between the currently selected light and dark themes without
+    /// opening Settings.  When following system appearance, it picks the
+    /// opposite half of the pair and stops following.
+    private func toggleLightDarkTheme() {
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        Preferences.shared.update { values in
+            values.followsSystemAppearance = false
+            if isDark {
+                // Currently dark → switch to light.
+                if ThemeStore.shared.themes.first(where: { $0.name == values.themeName })?.appearance == .dark {
+                    values.themeName = "Paper Light"
+                }
+            } else {
+                // Currently light → switch to dark.
+                if ThemeStore.shared.themes.first(where: { $0.name == values.themeName })?.appearance != .dark {
+                    values.themeName = values.darkThemeName
+                }
+            }
+        }
+        // applySelectedTheme picks up the change from the notification.
+    }
+
+    // MARK: - Dock menu
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu(title: "Downright")
+        let recents = DocumentStateStore.shared.recents(limit: 8)
+        if recents.isEmpty {
+            let none = NSMenuItem(title: "No recent files", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        } else {
+            for recent in recents.prefix(8) {
+                let item = NSMenuItem(
+                    title: recent.displayName,
+                    action: #selector(openRecentDocument(_:)),
+                    keyEquivalent: ""
+                )
+                item.representedObject = recent.path
+                item.target = self
+                menu.addItem(item)
+            }
+        }
+        menu.addItem(.separator())
+        let newItem = NSMenuItem(
+            title: "New Document",
+            action: #selector(performDownrightCommand(_:)),
+            keyEquivalent: "n"
+        )
+        newItem.keyEquivalentModifierMask = .command
+        newItem.target = self
+        newItem.representedObject = Command.newDocument.rawValue
+        menu.addItem(newItem)
+        return menu
     }
 
     // MARK: - Warnings
@@ -707,18 +863,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A Compare window is a temporary surface; drop its controller the moment
         // the window closes so repeated comparisons do not accumulate objects
         // (and their notification observers) for the app's lifetime.
-        var token: NSObjectProtocol?
-        token = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: controller.window,
-            queue: .main
-        ) { [weak self, weak controller] _ in
-            // Remove the observer unconditionally so the cycle always unwinds,
-            // even if the owner is gone by the time the window closes.
-            if let token { NotificationCenter.default.removeObserver(token) }
-            guard let self, let controller else { return }
-            self.comparisonWindows.removeAll { $0 === controller }
-        }
+        //
+        // Target/action rather than a block observer, because the block form
+        // cannot express this.  The obvious spelling — capture a `var token` and
+        // remove it from inside — silently does nothing: the observation block
+        // is `@Sendable`, and a `@Sendable` closure captures a `var` **by
+        // value**, so the token is captured while still `nil` and the later
+        // assignment is invisible inside.  `removeObserver` was therefore never
+        // reached and every comparison left a permanent registration behind —
+        // the exact leak the block was written to prevent.  (The compiler says
+        // so: "'token' mutated after capture by sendable closure".)
+        //
+        // The selector form needs no token: the notification carries the window,
+        // which is the same value used to register, so the observation can
+        // remove itself precisely.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(comparisonWindowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: controller.window
+        )
+    }
+
+    /// `willClose` is posted on the main thread, so this lands on the actor the
+    /// delegate is isolated to and may touch `comparisonWindows` directly —
+    /// which the block form could not do either ("main actor-isolated property
+    /// 'comparisonWindows' can not be mutated from a Sendable closure").
+    @objc private func comparisonWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        NotificationCenter.default.removeObserver(
+            self, name: NSWindow.willCloseNotification, object: window
+        )
+        comparisonWindows.removeAll { $0.window === window }
     }
 
     private var comparisonWindows: [CompareWindowController] = []

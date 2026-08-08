@@ -41,7 +41,7 @@ final class FrontMatterFragment: DownrightFragment {
         guard let style = styleSheet, !fields.isEmpty else { return 0 }
         let showsTitle = context?.documentHasH1 == false && fields.contains { $0.key.lowercased() == "title" }
         let chipFont = style.bodyFont().withSize(style.bodyFont().pointSize * 0.85)
-        let available = max(80, contentWidth)
+        let available = max(80, proseContentWidth)
         var used: CGFloat = 0
         var chipLines: CGFloat = 1
         for field in fields where !(showsTitle && field.key.lowercased() == "title") {
@@ -60,7 +60,10 @@ final class FrontMatterFragment: DownrightFragment {
         // No disclosure triangle: nothing hit-tests it and the card has no
         // collapsed state, so it was an affordance that promised an action the
         // app does not have.  The card starts on the text column instead.
-        let card = CGRect(x: point.x, y: point.y, width: contentWidth, height: layoutFragmentFrame.height)
+        // Metadata reads with the prose, so the card keeps to the reading
+        // column rather than spilling into the bleed lane fenced blocks use.
+        let card = CGRect(x: point.x, y: point.y,
+                          width: proseContentWidth, height: layoutFragmentFrame.height)
         let title = fields.first { $0.key.lowercased() == "title" }
         let showsTitle = context?.documentHasH1 == false && title != nil
         var y = card.minY + 2

@@ -22,7 +22,9 @@ final class BreadcrumbView: NSView {
         static let buttonHeight: CGFloat = 24
         static let maximumButtonWidth: CGFloat = 420
         static let horizontalContentAllowance: CGFloat = 26
-        static let sectionChangeDuration: CFTimeInterval = 0.12
+        /// A crumb swapping as the reader crosses into a new section: feedback
+        /// they should register without watching, so it is `Motion.quick`.
+        static let sectionChangeDuration: CFTimeInterval = Motion.quick
     }
 
     weak var delegate: BreadcrumbDelegate?
