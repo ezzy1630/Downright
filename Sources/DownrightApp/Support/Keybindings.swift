@@ -20,6 +20,7 @@ enum KeybindingDefaults {
         .commandPalette:      [KeyBinding("k", [.command, .shift])],
         .nextChange:          [KeyBinding("down", [.option, .shift])],
         .previousChange:      [KeyBinding("up", [.option, .shift])],
+        .markChangesReviewed: [KeyBinding("r", [.command, .shift])],
         .find:                [KeyBinding("f", .command)],
         .findNext:            [KeyBinding("g", .command)],
         .findPrevious:        [KeyBinding("g", [.command, .shift])],

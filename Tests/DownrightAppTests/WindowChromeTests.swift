@@ -145,14 +145,13 @@ struct WindowChromeTests {
         #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
         #expect(controller.primaryContainer.trailingAccessory == nil)
         #expect(toolbar.displayMode == .iconOnly)
-        #expect(toolbar.identifier == "DownrightToolbar.v10")
+        #expect(toolbar.identifier == "DownrightToolbar.v11")
         #expect(toolbar.centeredItemIdentifier?.rawValue == "presentation-mode")
         let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace.rawValue
-        let fixedSpace = NSToolbarItem.Identifier.space.rawValue
         #expect(controller.toolbarDefaultItemIdentifiers(toolbar).map(\.rawValue) == [
             "document-identity", flexibleSpace,
             "presentation-mode", flexibleSpace,
-            "activity", "find", fixedSpace, "tasks-progress", "update-pill", "overflow",
+            "trailing-cluster",
         ])
 
         let identity = try #require(
@@ -180,32 +179,47 @@ struct WindowChromeTests {
         controller.refreshSourceFocusToolbar()
         #expect(mode.selectedSegment == 0)
 
-        // Find is a toolbar item, not an overflow entry.  The overflow used
-        // to be the only interactive control on the trailing edge, which put
-        // every panel in the app behind one unlabelled glyph and a menu — in a
-        // window with room for more buttons.  It shares `ToolbarActionButton`'s
-        // 30pt geometry with the overflow so the cluster reads as one row.
-        for identifier in ["find"] {
-            let button = try #require(
-                toolbar.items.first { $0.itemIdentifier.rawValue == identifier }?.view
-                    as? ToolbarActionButton,
-                "\(identifier) is not a toolbar button"
-            )
-            #expect(button.intrinsicContentSize.width == 30)
-            #expect(button.intrinsicContentSize.height == 30)
-            #expect(!button.isOn, "\(identifier) should rest unlit with its panel closed")
-        }
+        // The trailing controls ship as one cluster item rather than five
+        // separate ones: AppKit pads every custom-view item by its own
+        // margin — a tax even a hidden placeholder pays — which scattered the
+        // row with uneven gaps and stretched the button plates to 36pt beside
+        // the ring's 30pt one.  The stack owns the spacing now, so the row
+        // reads as one tight unit against the trailing edge.
+        let cluster = try #require(
+            toolbar.items.first { $0.itemIdentifier.rawValue == "trailing-cluster" }?.view
+                as? ToolbarTrailingCluster,
+            "the trailing cluster is not a toolbar item"
+        )
+        #expect(cluster.spacing == 6)
+        #expect(cluster.alignment == .centerY)
+        // Find is in the cluster, not inside the `···` overflow.  The overflow
+        // used to be the only interactive control on the trailing edge, which
+        // put every panel in the app behind one unlabelled glyph and a menu —
+        // in a window with room for more buttons.
+        let find = try #require(
+            cluster.arrangedSubviews.first { $0 is ToolbarActionButton } as? ToolbarActionButton,
+            "find is not in the trailing cluster"
+        )
+        #expect(find.intrinsicContentSize.width == 30)
+        #expect(find.intrinsicContentSize.height == 30)
+        #expect(!find.isOn, "find should rest unlit with its panel closed")
+        #expect(cluster.arrangedSubviews.contains { $0 is ActivityIndicatorView })
+        #expect(cluster.arrangedSubviews.contains { $0 is TaskProgressRing })
+        #expect(cluster.arrangedSubviews.contains { $0 is UpdateStatusPill })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "contents" })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
         let overflow = try #require(
-            toolbar.items.first { $0.itemIdentifier.rawValue == "overflow" }?.view as? ToolbarMenuButton
+            cluster.arrangedSubviews.first { $0 is ToolbarMenuButton } as? ToolbarMenuButton,
+            "the overflow menu is not in the trailing cluster"
         )
         #expect(overflow.intrinsicContentSize.width == 30)
         #expect(overflow.intrinsicContentSize.height == 30)
         #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })
         #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
-        #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "activity" })
-        #expect(toolbar.items.contains { $0.itemIdentifier.rawValue == "tasks-progress" })
+        // The cluster leads with the spinner and ends at the menu: activity,
+        // find, ring, pill, overflow — each hidden view costs nothing.
+        #expect(cluster.arrangedSubviews.first is ActivityIndicatorView)
+        #expect(cluster.arrangedSubviews.last is ToolbarMenuButton)
     }
 
     @Test
@@ -306,6 +320,27 @@ struct WindowChromeTests {
     }
 
     @Test
+    func searchInspectorLaysOutItsFindFieldInsideTheVisibleHeader() throws {
+        let inspector = SearchInspectorView()
+        inspector.frame = NSRect(x: 0, y: 0, width: PanelMetrics.detailWidth, height: 600)
+        inspector.layoutSubtreeIfNeeded()
+
+        #expect(inspector.findBar.wantsLayer)
+
+        func descendants(of view: NSView) -> [NSView] {
+            view.subviews.flatMap { [$0] + descendants(of: $0) }
+        }
+
+        let field = try #require(
+            descendants(of: inspector).first { $0 is NSSearchField } as? NSSearchField
+        )
+        let fieldFrame = inspector.convert(field.bounds, from: field)
+        #expect(fieldFrame.width > 100)
+        #expect(fieldFrame.height > 0)
+        #expect(inspector.bounds.intersects(fieldFrame))
+    }
+
+    @Test
     func localFindUsesCompactDocumentBar() {
         let controller = DocumentWindowController()
         defer { controller.close() }
@@ -317,6 +352,30 @@ struct WindowChromeTests {
 
         controller.dismissFindBar()
         #expect(controller.findBar == nil)
+    }
+
+    @Test
+    func ordinaryFindDoesNotReplaceItsQueryWithDocumentSelection() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-find-selection-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        try Data("alpha beta alpha\n".utf8).write(to: file)
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        var query = FindQuery()
+        query.text = "beta"
+        controller.applyFindQuery(query)
+        controller.primaryContainer.textView.setSourceSelectedRanges([
+            NSRange(location: 0, length: 5),
+        ])
+
+        controller.showFindBar(replace: false)
+
+        #expect(controller.findBar?.currentQuery.text == "beta")
     }
 
     /// The find bar's exit used to call `removeFromSuperview()` and *then*

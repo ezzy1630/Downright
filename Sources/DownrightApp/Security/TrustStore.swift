@@ -72,20 +72,21 @@ final class TrustStore {
         guard let canonical = DocumentTrust.canonicalFilePath(path) else { return false }
         let grant = TrustGrant(scope: scope, canonicalPath: canonical.path, effects: effects)
         lock.lock()
+        defer { lock.unlock() }
         values.removeAll { $0.scope == scope && $0.canonicalPath == canonical.path }
         values.append(grant)
-        let snapshot = values
-        lock.unlock()
-        persistence.save(snapshot)
+        // Keep mutation and persistence ordered. Unlocking before the save
+        // lets concurrent callers write snapshots in reverse order, leaving
+        // trust.json stale even though the in-memory grants are current.
+        persistence.save(values)
         return true
     }
 
     func revoke(scope: TrustScope, path: URL) {
         guard let canonical = DocumentTrust.canonicalFilePath(path) else { return }
         lock.lock()
+        defer { lock.unlock() }
         values.removeAll { $0.scope == scope && $0.canonicalPath == canonical.path }
-        let snapshot = values
-        lock.unlock()
-        persistence.save(snapshot)
+        persistence.save(values)
     }
 }

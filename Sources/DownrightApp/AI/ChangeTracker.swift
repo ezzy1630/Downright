@@ -62,7 +62,19 @@ final class ChangeTracker {
         }
     }
 
-    /// Marks fade after ten minutes or on visit (§8.1).
+    /// How long a mark stays on the page before it expires (§8.1).
+    ///
+    /// Expiry is what keeps this a review queue instead of an archive.  It was
+    /// documented and measured but never actually applied to the decorations:
+    /// `unreadMarks` filtered on it for the *counts*, the fade timer computed a
+    /// cutoff and then only asked for a redraw of the same undiminished set, and
+    /// the decorator was handed `marks` whole.  Nothing dropped a mark but the
+    /// user pressing Mark Reviewed on a bar that is only raised by a live
+    /// external write — so a file an agent rewrote and a reader came back to an
+    /// hour later reopened with every changed word still lit, restored from disk
+    /// by `restore(_:textLength:)`, with no visible way to put it out.  A
+    /// document rewritten wholesale then reads as a wall of highlight, which is
+    /// the same as no highlight at all.
     var lifetime: TimeInterval = 600
     /// How long a mark has to sit in the viewport before it counts as read.
     var dwell: TimeInterval = 1.5
@@ -84,11 +96,23 @@ final class ChangeTracker {
     var isEmpty: Bool { marks.isEmpty }
     var count: Int { marks.count }
 
+    /// **The decorator's input**, and what navigation walks: every mark still
+    /// inside its lifetime, visited and unread alike.
+    ///
+    /// The backing store is pruned by the fade timer, but only every thirty
+    /// seconds and only while a document is open, so this is the filter that
+    /// actually decides what reaches the page.  Nothing that draws a mark or
+    /// jumps to one may read `marks` directly — that is how the fade came to be
+    /// a documented behaviour with no implementation.
+    var decoratedMarks: [Mark] {
+        let cutoff = Date().addingTimeInterval(-lifetime)
+        return marks.filter { $0.created > cutoff }
+    }
+
     /// Marks the reader has not looked at yet.  For counts and summaries — the
     /// "12 unread changes" number — not for drawing.
     var unreadMarks: [Mark] {
-        let cutoff = Date().addingTimeInterval(-lifetime)
-        return marks.filter { !$0.visited && $0.created > cutoff }
+        decoratedMarks.filter { !$0.visited }
     }
 
     /// Historical name for `unreadMarks`, kept because callers that genuinely
@@ -246,9 +270,17 @@ final class ChangeTracker {
     /// Re-anchors persisted marks into a document of `textLength` characters.
     /// A mark that no longer fits is dropped rather than clamped: a highlight
     /// over the wrong words is worse than a missing one.
-    func restore(_ persisted: [PersistedMark], textLength: Int) {
+    ///
+    /// A mark that has outlived `lifetime` is dropped too, and for the same
+    /// reason.  The set survives a close/reopen cycle so that closing a window
+    /// is not a claim to have read anything — but that is an argument about
+    /// *minutes*, not about weeks, and a stored mark restored long after the
+    /// reading session it belongs to points at text nobody is still reviewing.
+    func restore(_ persisted: [PersistedMark], textLength: Int, now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-lifetime)
         marks = persisted.compactMap { stored in
             guard let kind = ChangeKind(rawValue: stored.kind) else { return nil }
+            guard stored.created > cutoff else { return nil }
             let range = stored.range.range
             guard range.location >= 0, range.upperBound <= textLength else { return nil }
             return Mark(
@@ -294,15 +326,17 @@ final class ChangeTracker {
     // MARK: - Navigation (§7.2 `[` / `]`, ⌥↑ / ⌥↓)
 
     func next(after offset: Int) -> Mark? {
-        marks.first { $0.range.location > offset } ?? marks.first
+        let marks = decoratedMarks
+        return marks.first { $0.range.location > offset } ?? marks.first
     }
 
     func previous(before offset: Int) -> Mark? {
-        marks.last { $0.range.upperBound < offset } ?? marks.last
+        let marks = decoratedMarks
+        return marks.last { $0.range.upperBound < offset } ?? marks.last
     }
 
     func mark(at offset: Int) -> Mark? {
-        marks.first { $0.range.touches(offset: offset) }
+        decoratedMarks.first { $0.range.touches(offset: offset) }
     }
 
     /// Explicit "I have read this one".  **Not** to be called on arrival at a
@@ -373,15 +407,29 @@ final class ChangeTracker {
         guard !marks.isEmpty else { return }
         let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
-            let cutoff = Date().addingTimeInterval(-self.lifetime)
-            let stale = self.marks.contains { !$0.visited && $0.created <= cutoff }
-            if stale { self.onChange?() }
-            if self.marks.allSatisfy({ $0.visited || $0.created <= cutoff }) {
+            self.dropExpiredMarks()
+            if self.marks.isEmpty {
                 self.fadeTimer?.invalidate()
                 self.fadeTimer = nil
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         fadeTimer = timer
+    }
+
+    /// Retires every mark past its lifetime.
+    ///
+    /// Deliberately not `onReviewed`: a mark ageing out is the queue emptying
+    /// itself, not the reader saying they read it, so the document's review
+    /// baseline stays where it was and the next external write still diffs
+    /// against text the reader actually saw.
+    @discardableResult
+    func dropExpiredMarks(now: Date = Date()) -> Bool {
+        let cutoff = now.addingTimeInterval(-lifetime)
+        let before = marks.count
+        marks.removeAll { $0.created <= cutoff }
+        guard marks.count != before else { return false }
+        onChange?()
+        return true
     }
 }

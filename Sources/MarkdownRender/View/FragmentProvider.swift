@@ -19,6 +19,9 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         textLayoutFragmentFor location: NSTextLocation,
         in textElement: NSTextElement
     ) -> NSTextLayoutFragment {
+        // Any fragment being built means layout ran, so any cache holding
+        // absolute rects measured against the old layout is now suspect.
+        context.layoutGeneration &+= 1
         let plain = { NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange) }
         guard let manager = textElement.textContentManager, let elementRange = textElement.elementRange else {
             return plain()

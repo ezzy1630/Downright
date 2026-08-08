@@ -16,13 +16,19 @@ final class SearchResultsPanelView: NSView, PanelSurface {
     weak var delegate: SearchResultsDelegate?
 
     var styleSheet: StyleSheet {
-        didSet {
-            backdrop.styleSheet = styleSheet
-            applyStyle()
-        }
+        didSet { applyStyle() }
     }
 
     var hits: [SiblingSearch.Hit] = [] { didSet { reload() } }
+
+    /// The query the results answer.  The host owns the search session; the
+    /// panel echoes the text so an empty list can say *for what* nothing was
+    /// found instead of showing a bare "No matches".
+    var query: String = "" { didSet { updateStatus() } }
+
+    /// How many sibling files the last pass scanned, so the empty state can
+    /// also say *where* it looked.  0 means the host has not told us yet.
+    var searchedFileCount: Int = 0 { didSet { updateStatus() } }
 
     var isSearching: Bool = false {
         didSet {
@@ -35,8 +41,14 @@ final class SearchResultsPanelView: NSView, PanelSurface {
 
     // MARK: - Views
 
-    private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: Command.findInSiblings.panelTitle)
+    // No backdrop of its own: this panel only ever lives inside the search
+    // inspector, which already sits on the host's glass column.  A second
+    // vibrancy view here muddied the column — and, worse, made the find bar
+    // above it fail to render at all (an AppKit compositing conflict between
+    // the two materials; the fix is the deletion, not a workaround).
+    //
+    // No title row either: the inspector header names the surface (§7.2), so
+    // the panel leads with a quiet status caption and gets out of the way.
     private let statusLabel = NSTextField(labelWithString: "")
     private let emptyState = PanelEmptyStateView()
     private let spinner = ActivityIndicatorView()
@@ -59,14 +71,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
-        self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         super.init(frame: .zero)
-
-        installBackdrop(backdrop)
-
-        titleLabel.font = PanelFont.header
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
 
         statusLabel.font = PanelFont.secondary
         statusLabel.alignment = .right
@@ -83,21 +88,22 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         table.onActivate = { [weak self] in self?.activateSelection() }
         table.setAccessibilityLabel("Search results")
         addSubview(scroll)
-        emptyState.install(in: self, over: scroll)
+        // Lifted past the geometric centre: with the header row (and, in the
+        // inspector, the find bar) pinning the eye to the top, exact centre
+        // reads as sunk.
+        emptyState.install(in: self, over: scroll, verticalBias: 0.9)
 
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
-            spinner.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
-            spinner.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
+            statusLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
+            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: PanelMetrics.inset),
+            spinner.trailingAnchor.constraint(equalTo: statusLabel.leadingAnchor, constant: -6),
+            spinner.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 14),
             spinner.heightAnchor.constraint(equalToConstant: 14),
-            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            statusLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: spinner.trailingAnchor, constant: 6),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            scroll.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 6),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
@@ -149,17 +155,46 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         emptyState.isHidden = hasResults
         emptyState.configure(
             symbol: isSearching ? "magnifyingglass" : "doc.text.magnifyingglass",
-            title: isSearching ? "Searching" : "No matches",
-            subtitle: isSearching
-                ? "Searching nearby Markdown files…"
-                : "No matching files or lines.",
+            title: emptyStateTitle,
+            subtitle: emptyStateSubtitle,
             styleSheet: styleSheet
         )
         setAccessibilityValue(statusLabel.stringValue)
     }
 
+    // MARK: - Empty-state copy
+
+    /// Three quiet states: a pass in flight, a pass that found nothing (say
+    /// for what, and where it looked), and nothing searched yet (say how to
+    /// start).  A bare "No matches" under a query-less panel read as a bug,
+    /// not as guidance.
+    private var emptyStateTitle: String {
+        if isSearching { return "Searching" }
+        guard !query.isEmpty else { return "Type to search" }
+        return "No matches for “\(Self.truncated(query))”"
+    }
+
+    private var emptyStateSubtitle: String {
+        if isSearching {
+            return searchedFileCount > 0
+                ? "Searching \(searchedFileCount) nearby \(searchedFileCount == 1 ? "file" : "files")…"
+                : "Searching nearby Markdown files…"
+        }
+        guard !query.isEmpty else {
+            return "Matches in this document’s sibling files appear here as you type."
+        }
+        return searchedFileCount > 0
+            ? "Nothing in \(searchedFileCount) nearby \(searchedFileCount == 1 ? "file" : "files") contains it."
+            : "No matching files or lines."
+    }
+
+    /// A query of any length lands in one centred line.
+    private static func truncated(_ query: String, limit: Int = 48) -> String {
+        guard query.count > limit else { return query }
+        return String(query.prefix(limit)) + "…"
+    }
+
     private func applyStyle() {
-        titleLabel.textColor = styleSheet.textSecondary
         statusLabel.textColor = styleSheet.textFaint
         table.reloadData()
     }
@@ -230,7 +265,9 @@ extension SearchResultsPanelView: NSTableViewDataSource, NSTableViewDelegate {
 
 private final class SearchHitRowView: NSView {
     private let lineLabel = NSTextField(labelWithString: "")
-    private let contextLabel = NSTextField(labelWithString: "")
+    /// A wrapping label: `labelWithString` never sets `cell.wraps`, so the
+    /// two-line allowance below used to truncate on line one.
+    private let contextLabel = NSTextField(wrappingLabelWithString: "")
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -245,6 +282,9 @@ private final class SearchHitRowView: NSView {
         contextLabel.font = PanelFont.row
         contextLabel.maximumNumberOfLines = 2
         contextLabel.lineBreakMode = .byTruncatingTail
+        // …and the ellipsis lands on the *last visible* line — without this
+        // the second line just clips mid-word.
+        contextLabel.cell?.truncatesLastVisibleLine = true
         contextLabel.cell?.usesSingleLineMode = false
         contextLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contextLabel)
@@ -252,10 +292,17 @@ private final class SearchHitRowView: NSView {
         NSLayoutConstraint.activate([
             lineLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             lineLabel.widthAnchor.constraint(equalToConstant: 30),
-            lineLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            // The number belongs to the context's first line whether the
+            // context wraps or not, so the two share a baseline rather than
+            // a top edge.
+            lineLabel.firstBaselineAnchor.constraint(equalTo: contextLabel.firstBaselineAnchor),
             contextLabel.leadingAnchor.constraint(equalTo: lineLabel.trailingAnchor, constant: 6),
             contextLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            contextLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            // Centred in the row: one-line hits used to pin to the top and
+            // leave a shelf of dead space under the text, which made the list
+            // read as unevenly spaced.
+            contextLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            contextLabel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 4),
             contextLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -4),
         ])
     }
@@ -271,13 +318,14 @@ private final class SearchHitRowView: NSView {
         // collapsing them keeps the match offset arithmetic exact only if we
         // replace rather than remove, so each newline becomes one space.
         let raw = hit.contextText.replacingOccurrences(of: "\n", with: " ")
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
 
+        // No paragraphStyle here: a truncation mode in the attributed string
+        // defeats the cell's wrap-then-truncate and the row collapses to a
+        // single clipped line.  The label's own `lineBreakMode` +
+        // `maximumNumberOfLines` own that policy.
         let attributed = NSMutableAttributedString(string: raw, attributes: [
             .font: PanelFont.row,
             .foregroundColor: styleSheet.textSecondary,
-            .paragraphStyle: paragraph,
         ])
 
         let offset = hit.range.location - hit.contextRange.location

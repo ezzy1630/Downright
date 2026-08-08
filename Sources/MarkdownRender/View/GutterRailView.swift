@@ -95,7 +95,7 @@ public final class GutterRailView: NSView {
         // §8.1: changed blocks get a coloured bar in the margin.
         let changeBarHeight = style.lineHeight
         for bar in changeBars {
-            guard let rect = rowRect(for: bar.range, in: textView), rect.intersects(visible) else { continue }
+            guard let rect = blockRect(for: bar.range, in: textView), rect.intersects(visible) else { continue }
             let color = style.changeColor(bar.kind)
             let height = max(changeBarHeight, rect.height)
             switch bar.kind {
@@ -277,6 +277,25 @@ public final class GutterRailView: NSView {
         guard let rect = textView.rect(forOffset: range.location) else { return nil }
         let converted = convert(rect, from: textView)
         return NSRect(x: 0, y: converted.minY, width: bounds.width, height: max(converted.height, 1))
+    }
+
+    /// The full vertical span of `range`: the first line's top to the last
+    /// line's bottom.
+    ///
+    /// `rowRect` answers "which row is this offset on", which is the question a
+    /// line number and a heading chip ask.  A change *bar* asks a different one.
+    /// §8.1 says changed blocks get a coloured bar in the margin, and measuring
+    /// it with `rowRect` made it one line tall however much had changed — a stub
+    /// that marked where a rewritten section *began* and said nothing about how
+    /// far it ran, which is the one thing a margin bar exists to say.
+    private func blockRect(for range: NSRange, in textView: MarkdownTextView) -> NSRect? {
+        guard let start = textView.rect(forOffset: range.location) else { return nil }
+        let last = textView.rect(forOffset: max(range.location, range.upperBound - 1)) ?? start
+        let top = convert(start, from: textView)
+        let bottom = convert(last, from: textView)
+        let minY = min(top.minY, bottom.minY)
+        let maxY = max(top.maxY, bottom.maxY)
+        return NSRect(x: 0, y: minY, width: bounds.width, height: max(1, maxY - minY))
     }
 
     // MARK: - Clicking (§7.1)

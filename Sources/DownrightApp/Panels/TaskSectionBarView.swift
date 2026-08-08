@@ -1,6 +1,7 @@
 import AppKit
 import MarkdownCore
 import MarkdownRender
+import QuartzCore
 
 /// Section-map progress bar (§8.5).
 ///
@@ -145,18 +146,27 @@ final class TaskSectionBarView: NSView {
     }
 
     private func placeSegments(animated: Bool, duration: TimeInterval = Motion.deliberate) {
-        guard segmentLayers.count == segments.count else { return }
+guard segmentLayers.count == segments.count else { return }
         CATransaction.begin()
         if animated, !styleSheet.reduceMotion {
             // Implicit animation of the frame pair gives each segment one smooth
             // glide when a count changes — the travel the old bar had, kept.
             CATransaction.setAnimationDuration(duration)
-            CATransaction.setAnimationTimingFunction(Motion.timing(.decelerate))
+            CATransaction.setAnimationTimingFunction(Motion.timing(.structural))
         } else {
             CATransaction.setDisableActions(true)
         }
+        let firstStart = CACurrentMediaTime() + 0.02
         for (index, pair) in segmentLayers.enumerated() {
             let frame = segmentFrame(for: index)
+            if animated, !styleSheet.reduceMotion, index > 0 {
+                // A count changed: the segments cascade in one behind the
+                // other, a `previewStagger` apart, so the bar reads as a wave
+                // rather than a swap.
+                let start = firstStart + CGFloat(index) * Motion.previewStagger
+                pair.track.setValue(start, forKey: "kCATransactionAnimationStartTime")
+                pair.fill.setValue(start, forKey: "kCATransactionAnimationStartTime")
+            }
             // The caps stay perfectly round at whatever height the pointer
             // state gives the segment, so a swell never squares an end off.
             pair.track.cornerRadius = frame.height / 2

@@ -255,15 +255,18 @@ enum CodeFileExtensions {
 // window with room for three more buttons.  `···` keeps what a reader reaches
 // for occasionally; the two panels they reach for constantly are out where
 // they can be seen and hit.
+//
+// The cluster ships as a single toolbar item, not five: AppKit pads every
+// custom-view item by its own margin — a tax even a hidden 1pt placeholder
+// pays — which scattered the row with uneven 14pt/42pt gaps and stretched
+// the button plates to 36pt beside the ring's 30pt one.  `ToolbarTrailingCluster`
+// owns the spacing instead, so the row reads as one tight unit against the
+// trailing edge and the hidden spinner and pill cost nothing.
 
 extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbarItemValidation {
     private static let identityItem = NSToolbarItem.Identifier("document-identity")
     static let modeItem = NSToolbarItem.Identifier("presentation-mode")
-    private static let overflowItem = NSToolbarItem.Identifier("overflow")
-    private static let activityItem = NSToolbarItem.Identifier("activity")
-    private static let tasksItem = NSToolbarItem.Identifier("tasks-progress")
-    private static let updateItem = NSToolbarItem.Identifier("update-pill")
-    private static let findItem = NSToolbarItem.Identifier("find")
+    private static let clusterItem = NSToolbarItem.Identifier("trailing-cluster")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
@@ -271,12 +274,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             .flexibleSpace,
             Self.modeItem,
             .flexibleSpace,
-            Self.activityItem,
-            Self.findItem,
-            .space,
-            Self.tasksItem,
-            Self.updateItem,
-            Self.overflowItem,
+            Self.clusterItem,
         ]
     }
 
@@ -319,79 +317,64 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             )
             return item
 
-        case Self.findItem:
-            let button = ToolbarActionButton(
+        case Self.clusterItem:
+            let findButton = ToolbarActionButton(
                 symbol: "magnifyingglass", label: "Find",
                 help: "Find in this document",
                 target: self, action: #selector(toolbarShowFind(_:))
             )
-            button.styleSheet = activeStyleSheet
-            toolbarFindButton = button
+            findButton.styleSheet = activeStyleSheet
+            toolbarFindButton = findButton
+            let pill = updateStatusPill ?? UpdateStatusPill()
+            updateStatusPill = pill
+            // Held weakly because History and Context fly out of it: a morph
+            // needs the seat of the control the reader actually clicked, and
+            // for everything behind `···` that control is this button.
+            let overflowButton = ToolbarMenuButton(menu: makeOverflowMenu())
+            toolbarOverflowButton = overflowButton
             let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = button
+            item.view = ToolbarTrailingCluster(views: [
+                activityIndicator,
+                findButton,
+                progressRing,
+                pill,
+                overflowButton,
+            ])
             item.isBordered = false
-            item.label = "Find"
-            item.visibilityPriority = .high
-            wireToolbarAction(item, title: "Find", action: #selector(toolbarShowFind(_:)))
-            return item
-
-        case Self.overflowItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = ToolbarMenuButton(menu: makeOverflowMenu())
-            item.isBordered = false
-            item.label = "More"
-            item.toolTip = "More document actions"
-            item.visibilityPriority = .high
-            item.menuFormRepresentation = NSMenuItem(
-                title: "More", action: nil, keyEquivalent: ""
-            )
-            return item
-
-        case Self.activityItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = activityIndicator
-            item.isBordered = false
-            item.label = "Working"
-            item.visibilityPriority = .low
-            item.toolTip = "Document activity"
-            activityIndicator.onVisibilityChange = { [weak self] _ in
-                self?.window?.toolbar?.validateVisibleItems()
-            }
-            return item
-
-        case Self.tasksItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = progressRing
-            item.isBordered = false
-            item.label = "Tasks"
-            // The ring is a permanent control now — it shows an empty track
-            // rather than hiding itself on a document with no tasks — so it
-            // must not be the first item the toolbar drops, and its own
+            item.label = "Actions"
+            // The ring is a permanent control — it shows an empty track rather
+            // than hiding on a document with no tasks — so the cluster must
+            // not be the first item the toolbar drops, and each view's own
             // tooltip is richer than a static one here.
             item.visibilityPriority = .high
-            wireToolbarAction(item, title: "Tasks", action: #selector(toolbarShowTasks(_:)))
             progressRing.onActivate = { [weak self] in
                 self?.toolbarShowTasks(nil)
             }
             progressRing.onVisibilityChange = { [weak self] _ in
                 self?.window?.toolbar?.validateVisibleItems()
             }
-            return item
-
-        case Self.updateItem:
-            let pill = updateStatusPill ?? UpdateStatusPill()
-            updateStatusPill = pill
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.view = pill
-            item.isBordered = false
-            item.label = "Updates"
-            item.toolTip = "Software updates"
-            item.visibilityPriority = .low
-            wireToolbarAction(
-                item,
-                title: "Check for Updates…",
+            activityIndicator.onVisibilityChange = { [weak self] _ in
+                self?.window?.toolbar?.validateVisibleItems()
+            }
+            // When the window narrows enough to drop the cluster, the
+            // toolbar's overflow chevron shows this in its place; the submenu
+            // keeps the panels one reach away.
+            let menuRep = NSMenuItem(title: "Actions", action: nil, keyEquivalent: "")
+            let repMenu = NSMenu(title: "Actions")
+            repMenu.addItem(menuItem(
+                title: "Find", symbol: "magnifyingglass",
+                action: #selector(toolbarShowFind(_:))
+            ))
+            repMenu.addItem(menuItem(
+                title: "Tasks", symbol: "checkmark.circle",
+                action: #selector(toolbarShowTasks(_:))
+            ))
+            repMenu.addItem(menuItem(
+                title: "Check for Updates…", symbol: "arrow.triangle.2.circlepath",
                 action: #selector(toolbarCheckForUpdates(_:))
-            )
+            ))
+            menuRep.submenu = repMenu
+            item.menuFormRepresentation = menuRep
             return item
 
         default:
@@ -412,14 +395,10 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     }
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        switch item.itemIdentifier {
-        case Self.modeItem, Self.findItem, Self.tasksItem, Self.overflowItem:
-            return true
-        case Self.updateItem:
-            return Command.checkForUpdates.isEnabled(in: commandContext)
-        default:
-            return true
-        }
+        // Every toolbar control is always reachable: the mode switch, and the
+        // cluster's panels, ring, pill, and menu.  The pill decides for
+        // itself what a click opens, based on the update coordinator's state.
+        true
     }
 
     private func toolbarModeChanged(_ selectedSegment: Int) {

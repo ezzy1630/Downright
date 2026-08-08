@@ -24,6 +24,9 @@ final class InspectorHostView: NSView {
     private static let switcherSections: [InspectorSection] = [.tasks, .history, .context]
     private var animationGeneration = 0
     var onClose: (() -> Void)?
+    /// When a morph vessel owns the arrival/departure, the unfurl must stand
+    /// down so the two never animate the same view (§ Ring of glass).
+    var morphOwnsTransitions = false
 
     /// The header is chrome like any other panel's, so it follows the theme
     /// rather than the system label colours (§11.3).  A host may assign this;
@@ -79,7 +82,10 @@ final class InspectorHostView: NSView {
         )
         super.init(frame: frameRect)
 
-        titleLabel.font = PanelFont.header
+        // The slim title row is the surface's name, not a caption — it takes
+        // the panel-title font and full text colour so it can carry the pane
+        // on its own (the switcher carries it for multi-surface panes).
+        titleLabel.font = PanelFont.title
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -200,7 +206,7 @@ final class InspectorHostView: NSView {
     }
 
     private func applyStyle() {
-        titleLabel.textColor = styleSheet.textSecondary
+        titleLabel.textColor = styleSheet.text
         closeButton.contentTintColor = styleSheet.textSecondary
         rule.layer?.backgroundColor = styleSheet.rule
             .panelAlpha(styleSheet.increaseContrast ? 0.9 : 0.55, increaseContrast: false).cgColor
@@ -242,6 +248,12 @@ final class InspectorHostView: NSView {
         }
         for (candidate, view) in views { view.isHidden = candidate != section }
         if announceArrival, previous != section, let view = views[section] {
+            guard !morphOwnsTransitions else {
+                // The travelling glass is the arrival now; the unfurl would
+                // only double it.
+                view.alphaValue = 1
+                return
+            }
             playArrival(on: view)
         }
         setAccessibilityValue("\(section.title) section")
@@ -273,6 +285,11 @@ final class InspectorHostView: NSView {
     /// completion runs even when Reduce Motion skips the animation, so callers
     /// can always sequence the collapse behind it.
     func playDeparture(completion: @escaping () -> Void) {
+        guard !morphOwnsTransitions else {
+            // The vessel is the departure; the unfurl would only double it.
+            completion()
+            return
+        }
         animateUnfurl(on: content, arriving: false, completion: completion)
     }
 
@@ -309,7 +326,7 @@ final class InspectorHostView: NSView {
         unfurl.fromValue = arriving ? folded : settled
         unfurl.toValue = arriving ? settled : folded
         unfurl.duration = Motion.deliberate
-        unfurl.timingFunction = Motion.timing(.decelerate)
+        unfurl.timingFunction = Motion.timing(.structural)
         layer.add(unfurl, forKey: "inspector-unfurl")
 
         let fade = CABasicAnimation(keyPath: "opacity")
@@ -318,7 +335,13 @@ final class InspectorHostView: NSView {
         // Leaving is shorter than arriving: a panel should get out of the way
         // as fast as it can while still being seen to go.
         fade.duration = arriving ? Motion.standard : Motion.quick
-        fade.timingFunction = Motion.timing(.decelerate)
+        fade.timingFunction = Motion.timing(.structural)
+        // Arriving, the fade rides one beat behind the unfurl so the surface
+        // reads as unrolling out of the control rather than popping in beside
+        // it; leaving, the panel is already gone before it refolds.
+        // `beginTime` uses the layer's media-time coordinate space. A bare
+        // 0.12 is long in the past and produces no delay.
+        fade.beginTime = arriving ? CACurrentMediaTime() + Motion.quick : 0
         layer.add(fade, forKey: "inspector-fade")
 
         CATransaction.commit()
@@ -327,6 +350,10 @@ final class InspectorHostView: NSView {
     /// How many surfaces the host is holding — a caller closing one needs to
     /// know whether the pane goes with it or another panel takes over.
     var contentCount: Int { views.count }
+
+    /// The surface installed for a section, if any — so a caller that has to
+    /// animate a panel out can name the view it is carrying.
+    func content(for section: InspectorSection) -> NSView? { views[section] }
 
     /// A panel may name itself — the header should say "Review", not the
     /// generic "Inspector", when the Review command opened it (§7.2).

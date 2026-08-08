@@ -76,7 +76,7 @@ struct ChangeReviewTests {
         #expect(!summary.headline.contains("rewritten"))
     }
 
-    // MARK: - Ribbon positions
+    // MARK: - Positions
 
     @Test("Positions are the midpoint of each change as a fraction of the document")
     func positionsAreNormalisedMidpoints() {
@@ -100,7 +100,7 @@ struct ChangeReviewTests {
     }
 
     /// A mark can outlive the edit that shortened the buffer beneath it, so the
-    /// fraction has to stay on the track rather than drawing off the end of it.
+    /// fraction has to stay inside the document rather than falling off its end.
     @Test("A change beyond the end of the document clamps into range")
     func positionsClamp() {
         let summary = ChangeSummaryBarView.Summary(
@@ -110,9 +110,9 @@ struct ChangeReviewTests {
         #expect(summary.positions[0].fraction == 1)
     }
 
-    /// Nothing to place the changes against means no ribbon, rather than a
+    /// Nothing to place the changes against means no positions, rather than a
     /// division by zero.
-    @Test("An empty document yields counts but no ribbon", arguments: [0, -1])
+    @Test("An empty document yields counts but no positions", arguments: [0, -1])
     func emptyDocumentHasNoPositions(_ length: Int) {
         let summary = ChangeSummaryBarView.Summary(marks: [mark(.modified, at: 0)], documentLength: length)
         #expect(summary.rewritten == 1)
@@ -161,10 +161,10 @@ struct ChangeReviewTests {
 
     // MARK: - Accessibility
 
-    /// The ribbon is pure colour and position, so everything it shows has to be
-    /// available in words as well.
+    /// Position is information a sighted reader gets from the marked-up
+    /// document; the spoken form has to carry it in words.
     @Test("The spoken description carries the breakdown and the distribution")
-    func accessibilityDescriptionCarriesTheRibbon() {
+    func accessibilityDescriptionCarriesTheDistribution() {
         let summary = ChangeSummaryBarView.Summary(
             marks: [mark(.inserted, at: 90, length: 2), mark(.inserted, at: 96, length: 2)],
             documentLength: 100
@@ -202,8 +202,8 @@ struct ChangeReviewTests {
         #expect(bar.intrinsicContentSize.height == PanelMetrics.reviewBarHeight)
     }
 
-    @Test("Drawing a summary with a ribbon does not fail")
-    func barDrawsRibbon() {
+    @Test("Drawing a configured bar does not fail")
+    func barDraws() {
         let bar = ChangeSummaryBarView()
         bar.frame = NSRect(x: 0, y: 0, width: 320, height: PanelMetrics.reviewBarHeight)
         bar.configure(summary: ChangeSummaryBarView.Summary(
@@ -214,73 +214,32 @@ struct ChangeReviewTests {
         bar.displayIfNeeded()
     }
 
-    // MARK: - Ribbon interaction
-
-    /// 380pt wide, so the track runs from x=12.5 to x=367.5 and the extremes sit
-    /// at midX 13.75 and 366.25.
-    private func ribbonBar(_ marks: [ChangeTracker.Mark], documentLength: Int = 1000) -> ChangeSummaryBarView {
-        let bar = ChangeSummaryBarView()
-        bar.frame = NSRect(x: 0, y: 0, width: 380, height: PanelMetrics.reviewBarHeight)
-        bar.configure(summary: ChangeSummaryBarView.Summary(marks: marks, documentLength: documentLength))
-        return bar
-    }
-
-    @Test("A click near a tick selects that change")
-    func clickSelectsNearestChange() throws {
-        let first = mark(.inserted, at: 0, length: 0)
-        let last = mark(.deleted, at: 1000, length: 0)
-        let bar = ribbonBar([first, last])
-
-        let atStart = try #require(bar.change(at: NSPoint(x: 13.75, y: 5)))
-        #expect(atStart.id == first.id)
-
-        let atEnd = try #require(bar.change(at: NSPoint(x: 366.25, y: 5)))
-        #expect(atEnd.id == last.id)
-    }
-
-    @Test("A click slightly off a tick still selects it")
-    func clickToleratesImprecision() throws {
-        let only = mark(.modified, at: 500, length: 0)
-        let bar = ribbonBar([only])
-        for offset in [-6.0, -3.0, 0.0, 3.0, 6.0] {
-            let hit = try #require(bar.change(at: NSPoint(x: 190 + offset, y: 5)))
-            #expect(hit.id == only.id)
-        }
-    }
-
-    /// Clicking bare track must do nothing.  Snapping to the nearest change from
-    /// anywhere on the ribbon would send a reader somewhere they did not point.
-    @Test("A click on empty track selects nothing")
-    func clickOnEmptyTrackDoesNothing() {
-        let bar = ribbonBar([mark(.modified, at: 0, length: 0), mark(.modified, at: 1000, length: 0)])
-        #expect(bar.change(at: NSPoint(x: 190, y: 5)) == nil)
-    }
-
-    /// The band provides a 24pt target from the bottom; the label and actions
-    /// above it keep their own clicks.
-    @Test("A click above the ribbon band is not a ribbon click")
-    func clickAboveBandIsIgnored() {
-        let bar = ribbonBar([mark(.modified, at: 500, length: 0)])
-        #expect(bar.change(at: NSPoint(x: 190, y: 5)) != nil)
-        #expect(bar.change(at: NSPoint(x: 190, y: 25)) == nil)
-    }
-
-    @Test("A bar with no changes has no ribbon to click")
-    func emptyBarHasNoRibbon() {
-        let bar = ribbonBar([])
-        #expect(bar.change(at: NSPoint(x: 190, y: 5)) == nil)
-        #expect(bar.change(at: NSPoint(x: 13.75, y: 5)) == nil)
-    }
-
-    /// The tick has to name a mark, not an ordinal: the ribbon is sorted by
-    /// position and the tracker's array is not, so an index would address the
-    /// wrong change the moment those orders disagreed.
-    @Test("Ticks carry the identity of their mark, in document order")
-    func ticksCarryMarkIdentity() {
+    /// Positions keep the identity of their mark and land in document order
+    /// even when the tracker's own array does not.
+    @Test("Positions carry the identity of their mark, in document order")
+    func positionsCarryMarkIdentity() {
         let late = mark(.inserted, at: 900, length: 0)
         let early = mark(.modified, at: 100, length: 0)
         let summary = ChangeSummaryBarView.Summary(marks: [late, early], documentLength: 1000)
         #expect(summary.positions.map(\.id) == [early.id, late.id])
+    }
+
+    // MARK: - Action hierarchy
+
+    /// The weakest action cannot be the brightest pixel: dismiss sits a step
+    /// below the walk chevrons, and the bar's one strong colour belongs to
+    /// the way out — the confirm key wears the stripe's green.
+    @Test("The tint ladder follows the action hierarchy")
+    func actionTintHierarchy() {
+        let bar = ChangeSummaryBarView()
+        let byLabel = Dictionary(
+            uniqueKeysWithValues: buttons(in: bar).map { ($0.accessibilityLabel() ?? "", $0) }
+        )
+        let sheet = bar.styleSheet
+        #expect(byLabel["Previous change"]?.contentTintColor == sheet.textSecondary)
+        #expect(byLabel["Next change"]?.contentTintColor == sheet.textSecondary)
+        #expect(byLabel["Mark changes as reviewed"]?.contentTintColor == sheet.changeColor(.inserted))
+        #expect(byLabel["Dismiss"]?.contentTintColor == sheet.textFaint)
     }
 
     // MARK: - Conflict bar
@@ -333,5 +292,100 @@ struct ChangeReviewTests {
     func reviewBarsNeverTakeTheKeyboard() {
         #expect(!ConflictBarView().acceptsFirstResponder)
         #expect(!ChangeSummaryBarView().acceptsFirstResponder)
+    }
+
+    // MARK: - Expiry
+
+    private func tracker(marksAgedBy ages: [TimeInterval]) -> ChangeTracker {
+        let tracker = ChangeTracker()
+        let now = Date()
+        tracker.restore(
+            ages.enumerated().map { index, age in
+                ChangeTracker.PersistedMark(
+                    id: UUID(),
+                    kind: ChangeKind.modified.rawValue,
+                    range: ChangeTracker.PersistedRange(NSRange(location: index * 20, length: 10)),
+                    wordRanges: [],
+                    deletedText: "",
+                    created: now.addingTimeInterval(-age),
+                    visited: false
+                )
+            },
+            textLength: 1000,
+            now: now
+        )
+        return tracker
+    }
+
+    /// The fade was documented, measured, and never applied to anything that
+    /// draws.  `unreadMarks` filtered on the cutoff for the *counts*, the fade
+    /// timer computed one and then only asked for a redraw of the same
+    /// undiminished set, and the decorator was handed `marks` whole — so a file
+    /// an agent rewrote stayed lit for as long as the window stayed open.
+    @Test("Expired marks leave the page")
+    func expiredMarksAreNotDecorated() {
+        let tracker = tracker(marksAgedBy: [30, 10_000])
+        #expect(tracker.count == 1, "an expired mark never comes back from disk")
+
+        let fresh = ChangeTracker()
+        fresh.apply(hunks: [], newText: "", oldText: "")
+        #expect(fresh.decoratedMarks.isEmpty)
+    }
+
+    /// Restoring is what makes closing a window not a claim to have read
+    /// anything — but that is an argument about minutes, not weeks.
+    @Test("Restore drops marks that outlived their session")
+    func restoreDropsExpiredMarks() {
+        #expect(tracker(marksAgedBy: [1, 2, 3]).count == 3)
+        #expect(tracker(marksAgedBy: [1, 10_000, 3]).count == 2)
+        #expect(tracker(marksAgedBy: [10_000, 20_000]).count == 0)
+    }
+
+    /// Ageing out is the queue emptying itself, not the reader saying they read
+    /// it, so it must never advance the review baseline the way `clear()` does.
+    @Test("Expiry retires marks without claiming they were reviewed")
+    func expiryDoesNotAdvanceTheBaseline() {
+        let tracker = tracker(marksAgedBy: [30])
+        var reviewed = 0
+        var changed = 0
+        tracker.onReviewed = { reviewed += 1 }
+        tracker.onChange = { changed += 1 }
+
+        #expect(tracker.dropExpiredMarks(now: Date()) == false)
+        #expect(changed == 0)
+
+        #expect(tracker.dropExpiredMarks(now: Date().addingTimeInterval(tracker.lifetime + 1)))
+        #expect(tracker.isEmpty)
+        #expect(changed == 1)
+        #expect(reviewed == 0, "a mark ageing out is not a review")
+
+        tracker.clear()
+        #expect(reviewed == 1, "explicitly finishing review is")
+    }
+
+    /// Navigation walks what the reader can see.  `]` jumping to a highlight
+    /// that is no longer drawn is the same defect from the other side.
+    @Test("Change navigation skips expired marks")
+    func navigationSkipsExpiredMarks() {
+        #expect(tracker(marksAgedBy: [10_000]).next(after: 0) == nil)
+        #expect(tracker(marksAgedBy: [10_000]).previous(before: 500) == nil)
+        #expect(tracker(marksAgedBy: [30]).next(after: 0) != nil)
+    }
+
+    /// The review queue's one explicit exit has to be reachable when the
+    /// summary bar is not on screen — which is most of the time, since the bar
+    /// is raised by a live external write and dismissed with it.
+    @Test("Mark Changes Reviewed is a first-class command")
+    func markReviewedIsReachable() {
+        #expect(Command.markChangesReviewed.title == "Mark Changes Reviewed")
+        #expect(Command.markChangesReviewed.menu == .navigate)
+        #expect(KeybindingDefaults.table[.markChangesReviewed]?.isEmpty == false)
+
+        // Enabled only when there is something to retire.
+        let withMarks = CommandContext(hasDocument: true, hasChangeMarks: true)
+        let without = CommandContext(hasDocument: true, hasChangeMarks: false)
+        #expect(Command.markChangesReviewed.isEnabled(in: withMarks))
+        #expect(!Command.markChangesReviewed.isEnabled(in: without))
+        #expect(!Command.nextChange.isEnabled(in: without))
     }
 }

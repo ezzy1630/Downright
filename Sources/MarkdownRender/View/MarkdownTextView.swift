@@ -402,6 +402,10 @@ public final class MarkdownTextView: NSTextView {
     private struct LayoutFingerprint: Equatable {
         var height: CGFloat
         var width: CGFloat
+        /// See `FragmentContext.layoutGeneration`.  Height and width alone
+        /// cannot see a reflow that preserves the document's total height, and
+        /// that reflow leaves every cached band a line away from its text.
+        var generation: Int
     }
     private var bandCacheFingerprint: LayoutFingerprint?
     private var invisiblesApplied = false
@@ -411,8 +415,11 @@ public final class MarkdownTextView: NSTextView {
     private var pendingResizeRequest: ContentResizeRequest?
     private var resizeWorkItem: DispatchWorkItem?
     var copiedCodeFeedbackWorkItem: DispatchWorkItem?
-    /// Drives the short checkbox confirm pop (§7.1) at a fixed cadence until
-    /// every pulse has finished.
+    /// The one per-view driver for the document surface's motion: the short
+    /// checkbox confirm pop (§7.1) and the scroll inertia coast share a
+    /// display link so the lifecycle rules are written once — park when the
+    /// view leaves its window, park in `deinit` (§11.4).
+    private var motionDriver: Motion.SpringDriver?
     var checkboxPulseDisplayLink: CADisplayLink?
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
@@ -543,11 +550,11 @@ public final class MarkdownTextView: NSTextView {
         resizeWorkItem?.cancel()
         scrollCoalesceWorkItem?.cancel()
         copiedCodeFeedbackWorkItem?.cancel()
-        // A repeating 60fps timer on the main run loop would otherwise keep
-        // firing forever after the view is gone: its block only ever
-        // invalidates itself while `self` is still alive.
-        checkboxPulseDisplayLink?.invalidate()
-        checkboxPulseDisplayLink = nil
+        // Repeating 60fps timers on the main run loop would otherwise keep
+        // firing forever after the view is gone: their blocks only ever
+        // invalidate themselves while `self` is still alive, and the display
+        // link itself retains its target.
+        motionDriver?.park()
     }
 
     /// Used only by the convenience initialiser, so a text view can always be
@@ -916,7 +923,7 @@ public final class MarkdownTextView: NSTextView {
         settle.fromValue = previousHeight
         settle.toValue = targetHeight
         settle.duration = Motion.deliberate
-        settle.timingFunction = Motion.timing(.decelerate)
+        settle.timingFunction = Motion.timing(.structural)
         animationLayer.add(settle, forKey: "downrightStructuralZoom")
     }
 
@@ -1803,12 +1810,33 @@ public final class MarkdownTextView: NSTextView {
             // §8.1: changed words are highlighted *in the rendered prose*,
             // never as +/- source lines.  A visited change dims rather than
             // disappearing, so the reader can still see what they reviewed.
-            let alpha: CGFloat = mark.visited ? 0.06 : 0.18
+            //
+            // One encoding per fact.  A changed word used to carry a tint *and*
+            // a full-strength underline in the change hue, on top of the margin
+            // bar for its block and the pip for its section — four channels
+            // saying one thing, and the underline is by far the loudest: a hard
+            // rule in a saturated colour beneath every word, cutting through the
+            // descenders it runs past.  On a section an agent rewrote whole,
+            // that is not a highlight, it is damage.  The tint is the
+            // highlighter idiom: it survives being applied to hundreds of words,
+            // and it marks text instead of striking it.
+            //
+            // Colour alone is not an encoding every reader can see, so the
+            // underline returns under Increase Contrast — there it *is* the
+            // non-colour channel, and there the reader has asked for it.
+            // Unread keeps the weight it was tuned at — the underline is what
+            // was too loud, and dimming the tint at the same time would cost
+            // signal the tint now carries alone.  Visited drops further instead,
+            // so reviewing a change visibly costs it ink: the gap between "read
+            // this" and "seen it" is the queue's only progress indicator, and at
+            // 0.18 against 0.06 the two were nearly the same grey.
+            let alpha: CGFloat = mark.visited ? 0.045 : 0.18
             let colour = styleSheet.changeColor(mark.kind).withAlphaComponent(alpha)
             var paintedAnything = false
             for word in mark.words {
                 guard let wordRange = clampToStorage(word) else { continue }
                 paintedAnything = tint(colour, over: wordRange, in: storage) || paintedAnything
+                guard styleSheet.increaseContrast else { continue }
                 let underline: NSUnderlineStyle = mark.kind == .inserted
                     ? .single
                     : [.single, .patternDash]
@@ -2187,31 +2215,157 @@ public final class MarkdownTextView: NSTextView {
         )
     }
 
-    /// The clip view currently being scrolled by `scroll(toOffset:)`, held only
-    /// for the length of that animation so a gesture can take it back.
-    private weak var animatingScrollClip: NSClipView?
+    /// The programmatic scroll, as one spring on the clip's y.
+    ///
+    /// This replaces a bezier leg, an interrupt that reconstructed the curve's
+    /// slope to recover a velocity, and a hand-rolled inertia coast to spend
+    /// it — roughly ninety lines whose whole job was to rebuild the state a
+    /// fixed-duration animation throws away.  A spring *is* that state, so:
+    ///
+    /// * a second jump mid-flight retargets rather than restarting, which is
+    ///   what repeated Find-next and outline clicks do constantly;
+    /// * the trip is always continuous, because velocity never resets;
+    /// * a trackpad flick needs no synthetic handoff at all — the gesture
+    ///   carries its own momentum, so the spring simply stands down.
+    ///
+    /// `perceptualDuration` is retuned per trip from `Motion.scrollDuration`.
+    /// A spring's settle time is otherwise a constant, and a three-line hop
+    /// and a cross-chapter descent should not cost the same: the distance
+    /// scaling that the bezier had is kept, and only the discontinuity is
+    /// thrown out.
+    private var scrollSpring = Motion.SpringScalar(perceptualDuration: Motion.springDeliberate)
+    private var scrollSpringIsActive = false
+    private weak var scrollSpringClip: NSClipView?
+    /// What the tick resolved, for `apply` to write. The driver keeps the two
+    /// phases apart, and the scroll position is drawn state like any other.
+    private var pendingScrollY: CGFloat?
+    /// Live checkbox pulses from the last `advance` tick, for `apply`'s
+    /// invalidation — the driver lift carries `advance`/`apply` phases apart.
+    private var pendingMotionInvalidation: NSRect?
 
     /// DESIGN.md: "User scroll must interrupt animated scrolling." Without
-    /// this, flicking the trackpad during the 0.32 s settle after a heading
-    /// jump made the animation fight the gesture and yank the page back.
+    /// this, flicking the trackpad during the settle after a heading jump made
+    /// the animation fight the gesture and yank the page back.
     ///
-    /// Stops at wherever the animation has actually reached rather than its
-    /// destination, so the gesture continues from what the reader can see.
+    /// A gesture supplies its own velocity, so the honest response is for the
+    /// spring to stand down where it is rather than hand anything over: two
+    /// owners writing the clip's origin in one frame is how a page ends up
+    /// outrunning the fingers pushing it.
     func interruptAnimatedScroll() {
-        guard let clip = animatingScrollClip else { return }
-        animatingScrollClip = nil
-        let reached = clip.layer?.presentation()?.bounds.origin ?? clip.bounds.origin
-        clip.layer?.removeAllAnimations()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0
-            clip.setBoundsOrigin(reached)
+        guard scrollSpringIsActive else { return }
+        scrollSpringIsActive = false
+        scrollSpringClip = nil
+        pendingScrollY = nil
+        if let clip = enclosingScrollView?.contentView {
+            // Re-base the spring on where the page actually is, so the next
+            // trip starts from the truth rather than from an abandoned target.
+            scrollSpring.snap(to: clip.bounds.origin.y)
         }
-        enclosingScrollView?.reflectScrolledClipView(clip)
+    }
+
+    /// Whether this view is somewhere a display link will actually fire.
+    /// Having a window is not enough — an unordered or offscreen window has no
+    /// screen driving it, so a spring armed there ticks exactly never.
+    var canDriveMotion: Bool {
+        guard let window else { return false }
+        return window.isVisible && window.screen != nil
+    }
+
+    /// The one driver for this document surface (§11.4).  Created on first
+    /// arm; every closure here is weak-backed so the driver can never outlive
+    /// the view it was made for.
+    func armMotionDriver() {
+        if let motionDriver {
+            motionDriver.arm()
+            return
+        }
+        let driver = Motion.SpringDriver(
+            view: self,
+            advance: { [weak self] dt in self?.documentMotionTick(dt: dt) ?? false },
+            apply: { [weak self] in self?.documentMotionApply() }
+        )
+        motionDriver = driver
+        driver.arm()
+    }
+
+    func parkMotionDriver() {
+        motionDriver?.park()
+        scrollSpringIsActive = false
+        scrollSpringClip = nil
+        pendingScrollY = nil
+    }
+
+    /// The display link follows the actual screen refresh rate and only
+    /// invalidates the ornaments that are still animating.  Both document
+    /// motions — the checkbox confirm pop and the scroll spring — step on the
+    /// same clock, so neither can outlive the other or the view.
+    func documentMotionTick(dt: CGFloat) -> Bool {
+        var moving = false
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let live = fragmentContext.checkboxPulses.filter {
+            now - $0.started < CheckboxPulse.duration
+        }
+        if !live.isEmpty {
+            pendingMotionInvalidation = pulseInvalidationRect(for: live.map(\.sourceRange))
+            moving = true
+        }
+
+        if scrollSpringIsActive {
+            guard let clip = scrollSpringClip ?? enclosingScrollView?.contentView else {
+                scrollSpringIsActive = false
+                return moving
+            }
+            var alive = scrollSpring.advance(dt: dt)
+            // The document can grow or shrink under a trip — lazy TextKit
+            // layout resolves above the viewport all the time — so the travel
+            // is re-clamped every frame rather than only when it is planned.
+            let maxY = max(0, (clip.documentView?.frame.height ?? 0) - clip.bounds.height)
+            var y = scrollSpring.value
+            if y < 0 || y > maxY {
+                y = min(maxY, max(0, y))
+                // Landing on an edge is an arrival, not a bounce: stop dead
+                // rather than let the spring push against the end of the
+                // document for the rest of its settle.
+                scrollSpring.snap(to: y)
+                alive = false
+            }
+            pendingScrollY = y
+            scrollSpringIsActive = alive
+            moving = moving || alive
+        }
+        return moving
+    }
+
+    func documentMotionApply() {
+        if let y = pendingScrollY {
+            pendingScrollY = nil
+            // `clip.scroll(to:)` uses the TextKit 2 viewport controller, the
+            // same entry point a non-animated jump uses; writing the bounds
+            // origin directly would bypass it and leave lazily-rendered
+            // fragments unresolved under the travelling viewport.
+            if let clip = scrollSpringClip ?? enclosingScrollView?.contentView {
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+                enclosingScrollView?.reflectScrolledClipView(clip)
+            }
+        }
+        if let rect = pendingMotionInvalidation {
+            pendingMotionInvalidation = nil
+            setNeedsDisplay(rect)
+        }
     }
 
     public override func scrollWheel(with event: NSEvent) {
         interruptAnimatedScroll()
         super.scrollWheel(with: event)
+    }
+
+    /// A live resize reflows the document under the viewport, so the y a trip
+    /// was aiming at stops meaning what it meant when it was chosen.  Ground
+    /// the trip rather than fly it to a stale destination.
+    public override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        interruptAnimatedScroll()
     }
 
     public override func magnify(with event: NSEvent) {
@@ -2257,26 +2411,38 @@ public final class MarkdownTextView: NSTextView {
         case .top: y = rect.minY - RenderMetrics.verticalInset
         case .center: y = rect.midY - height / 2
         case .visible:
-            if clip.bounds.intersects(rect) { return }
+            if clip.bounds.intersects(rect) {
+                // Already on screen: nothing to ask for.  A trip still in the
+                // air is heading somewhere the last caller chose and will
+                // glide there on its own — stopping it here would strand the
+                // page mid-descent for no reason.
+                return
+            }
             y = rect.minY - height / 3
         }
         y = max(0, min(y, max(0, frame.height - height)))
         let target = CGPoint(x: clip.bounds.origin.x, y: y)
+        let distance = abs(y - clip.bounds.origin.y)
 
-        // §11.4: full respect for Reduce Motion.
-        if animated && !styleSheet.reduceMotion {
-            animatingScrollClip = clip
-            Motion.run(
-                reduceMotion: false,
-                duration: Motion.deliberate,
-                curve: .decelerate,
-                changes: { _ in clip.animator().setBoundsOrigin(target) },
-                completion: { [weak self] in
-                    self?.animatingScrollClip = nil
-                    scrollView.reflectScrolledClipView(clip)
-                }
-            )
+        // §11.4: full respect for Reduce Motion.  `canDriveMotion` is the
+        // third condition and not an optimisation: a display link is driven by
+        // a screen, so in a window that is not on one the spring would arm and
+        // then never tick, and a Find-next or an outline click would silently
+        // do nothing.  No display, no journey — just arrive.
+        if animated, !styleSheet.reduceMotion, distance > 0.5, canDriveMotion {
+            // A trip already in the air keeps its position *and its speed*:
+            // this is a change of destination, not a new journey.  Only a
+            // standing start re-bases on where the page happens to be.
+            if !scrollSpringIsActive {
+                scrollSpring.snap(to: clip.bounds.origin.y)
+            }
+            scrollSpring.retune(perceptualDuration: Motion.scrollDuration(for: distance))
+            scrollSpring.target(y)
+            scrollSpringClip = clip
+            scrollSpringIsActive = true
+            armMotionDriver()
         } else {
+            interruptAnimatedScroll()
             // Use the clip view's scrolling entry point instead of mutating
             // bounds directly. AppKit forwards this through the TextKit 2
             // viewport controller, which keeps lazily-rendered fragments in
@@ -2343,7 +2509,7 @@ public final class MarkdownTextView: NSTextView {
             if let cached = self.inlineCodeBandCache[range] {
                 bands = cached
             } else {
-                bands = self.inlineCodeBands(forSourceRange: range)
+                bands = self.inlineCodePillBands(forSourceRange: range, in: storage)
                 guard !bands.isEmpty else { return }
                 self.inlineCodeBandCache[range] = bands
             }
@@ -2362,16 +2528,6 @@ public final class MarkdownTextView: NSTextView {
                 path.fill()
                 path.lineWidth = 1
                 path.stroke()
-            }
-        }
-        storage.enumerateAttribute(.drPathToken, in: visible) { value, range, _ in
-            guard value != nil,
-                  storage.attribute(.drPathExists, at: range.location, effectiveRange: nil) as? Bool == true
-            else { return }
-            for band in self.inlineCodeBands(forSourceRange: range) where band.intersects(rect) {
-                let edge = NSRect(x: band.minX, y: band.minY + 1, width: 2, height: max(1, band.height - 2))
-                self.styleSheet.accent.setFill()
-                NSBezierPath(roundedRect: edge, xRadius: 1, yRadius: 1).fill()
             }
         }
         drawInvisibles(in: visibleSourceRange ?? NSRange(location: 0, length: 0), dirtyRect: rect)
@@ -2520,12 +2676,33 @@ public final class MarkdownTextView: NSTextView {
     private func discardBandCachesIfLayoutMoved() {
         let fingerprint = LayoutFingerprint(
             height: markdownLayoutManager.usageBoundsForTextContainer.height.rounded(),
-            width: (textContainer?.size.width ?? 0).rounded()
+            width: (textContainer?.size.width ?? 0).rounded(),
+            generation: fragmentContext.layoutGeneration
         )
         guard fingerprint != bandCacheFingerprint else { return }
         bandCacheFingerprint = fingerprint
         inlineCodeBandCache.removeAll(keepingCapacity: true)
         invisibleGlyphCache.removeAll(keepingCapacity: true)
+    }
+
+    /// The pill geometry `drawBackground` paints for one `.drInlineCode` run:
+    /// its bands, restricted to the parts of it TextKit actually draws.
+    ///
+    /// A pill is a *behind the glyphs* effect, so it obeys the same rule `tint`
+    /// obeys.  A code span inside a table, a collapsed block, a diagram or an
+    /// image has no glyphs on screen — the fragment draws that element itself,
+    /// from its own cell layout — so asking TextKit for the span's segments
+    /// returns geometry from the hidden linear layout instead, and the pill
+    /// lands somewhere the reader can see but the text is not: a rounded
+    /// rectangle of tint with nothing in it.  Those are the same stray shaded
+    /// squares `glyphBearingRanges` was written for, one draw path further
+    /// down, and a table full of `code` in its cells scatters a dozen of them.
+    ///
+    /// Internal rather than private so that rule is testable without a
+    /// screenshot.
+    func inlineCodePillBands(forSourceRange range: NSRange, in storage: NSTextStorage) -> [CGRect] {
+        glyphBearingRanges(in: range, storage: storage)
+            .flatMap { inlineCodeBands(forSourceRange: $0) }
     }
 
     /// The tinted bands behind an inline code span, one per visual line.
@@ -2665,7 +2842,13 @@ public final class MarkdownTextView: NSTextView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        motionDriver?.viewDidMoveToWindow(window: window)
         installHoverTracking()
+        if window == nil {
+            // Detached views must not keep driving a clip that may belong to
+            // a recycled scroll view — ground the trip with the window.
+            interruptAnimatedScroll()
+        }
         if let scrollObserver {
             NotificationCenter.default.removeObserver(scrollObserver)
             self.scrollObserver = nil

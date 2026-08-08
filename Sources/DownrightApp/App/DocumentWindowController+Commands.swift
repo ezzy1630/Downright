@@ -34,7 +34,8 @@ extension DocumentWindowController: CommandResponder {
             canGoBack: jumpHistory.canGoBack,
             canGoForward: jumpHistory.canGoForward,
             isSpeaking: isSpeakingDocument,
-            caretIsInTable: caretIsInTable
+            caretIsInTable: caretIsInTable,
+            hasChangeMarks: !markdownDocument.changes.decoratedMarks.isEmpty
         )
     }
 
@@ -141,6 +142,7 @@ extension DocumentWindowController: CommandResponder {
         case .previousHeading: jumpHeading(forward: false)
         case .nextChange: jumpChange(forward: true)
         case .previousChange: jumpChange(forward: false)
+        case .markChangesReviewed: markChangesReviewed()
         case .followLinkAtCaret: return textView.activateLinkAtCaret()
         case .nextLink: return textView.moveToLink(forward: true)
         case .previousLink: return textView.moveToLink(forward: false)

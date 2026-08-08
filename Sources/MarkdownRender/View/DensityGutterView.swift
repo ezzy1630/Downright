@@ -30,8 +30,15 @@ public struct DensityBand {
 
 /// Density gutter (§8.6) — the scrollbar's replacement.
 ///
-/// "The whole shape of a 3,000-word document at a glance."  A scrollbar tells
-/// you how much is left; this tells you what is left.
+/// A scrollbar tells you how much is left; this tells you *where the sections
+/// are*, and which of them hold something worth going to.
+///
+/// Not "the whole shape of the document at a glance", which is what this said
+/// while every resting mark was drawing at one length (see `headingMarkWidth`)
+/// — at rest the stack is a column of identical ticks, and shape is what the
+/// hover outline is for.  The honest claim is smaller and is the one the
+/// control delivers: a section index you can scan, with review state hanging
+/// off it.
 ///
 /// The stack is an index of *sections*: one mark per drawn heading, thinned by
 /// depth when the track cannot hold them all, spaced by a pitch derived from
@@ -44,7 +51,7 @@ public struct DensityBand {
 /// colours (§11.2), so inventing six hues here would break the moment someone
 /// loads a monochrome theme — kinds are separated by width and weight instead,
 /// with the tooltip carrying the specifics on hover.
-public final class DensityGutterView: NSView {
+public final class DensityGutterView: Motion.SpringSurfaceView {
     public weak var delegate: DensityGutterDelegate?
 
     public var styleSheet: StyleSheet {
@@ -190,13 +197,173 @@ public final class DensityGutterView: NSView {
     private var pointerLocation: NSPoint?
     private var pointerIsInPreview = false
     private var pointerIsInOutline = false
-    private var railBreathe: CGFloat = 1
-    private var punchBandIndex: Int?
-    private var punchAmount: CGFloat = 0
     private var lastPointerSample: (y: CGFloat, time: CFTimeInterval)?
     private var pointerVelocityY: CGFloat = 0
     private var previousCurrentFraction: CGFloat?
-    private var breatheWorkItem: DispatchWorkItem?
+    private var progressWashLayer: CALayer?
+    private var spineLayer: CALayer?
+
+    // MARK: Rail motion
+
+    /// The rail's motion is one physics channel, not a pile of cached CA
+    /// animations: marks, pips and the whole-rail breathe all chase their
+    /// targets through `Motion.SpringScalar` integrators driven by a single
+    /// display link.  Velocity is state, so an interrupted trip resumes at
+    /// its own speed and a mark that was charging at the pointer keeps the
+    /// momentum it had — the quality a fixed-duration bezier cannot express.
+    ///
+    /// Position *and* velocity are what is animated; the trip takes however
+    /// long physics says, and the display link parks the moment everything
+    /// settles.  The old grow/shrink asymmetry (`hoverGrow` / `hoverShrink`)
+    /// is gone: a spring is symmetric, so the perceived difference between
+    /// growing and shrinking now comes from the pointer's own speed, which is
+    /// the difference that reads as liquid.
+    private var breatheSpring = Motion.SpringScalar(
+        value: 1,
+        perceptualDuration: Motion.springQuick
+    )
+
+    /// One mark's complete visual state — geometry, tint and glow — all
+    /// integrated from the same clock so the mark moves as one body even
+    /// though it is four springs.
+    private struct MarkSimulation {
+        var frame: Motion.SpringRect
+        var color: Motion.SpringColor
+        var glow: Motion.SpringScalar
+        /// Whether the next event asked this mark to settle like the current
+        /// heading; flips the pace between pointer-quick and structural.
+        var wantsSettle: Bool
+
+        init(frame: CGRect, color: CGColor, glow: CGFloat) {
+            self.frame = Motion.SpringRect(rect: frame, perceptualDuration: Motion.springQuick)
+            self.color = Motion.SpringColor(
+                value: Self.foreground(of: color),
+                perceptualDuration: Motion.springQuick
+            )
+            self.glow = Motion.SpringScalar(value: glow, perceptualDuration: Motion.springQuick)
+            wantsSettle = false
+        }
+
+        static func foreground(of color: CGColor) -> NSColor {
+            // `CGColor.components` is in the *source* colour space — a theme
+            // grey arrives as a 2-channel GenericGray2.2 and would read as
+            // opaque black — so normalise to sRGB first; the springs cluster
+            // around colours, which are numbers in one agreed space.
+            let normalized = NSColor(cgColor: color)?.usingColorSpace(.sRGB)
+            guard let components = normalized?.cgColor.components, components.count >= 3 else {
+                return .init(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+            }
+            return NSColor(
+                srgbRed: components[0],
+                green: components[1],
+                blue: components[2],
+                alpha: components.count >= 4 ? components[3] : 1
+            )
+        }
+
+        mutating func retarget(frame: CGRect, color: CGColor, glow: CGFloat, settle: Bool) {
+            if settle != wantsSettle {
+                wantsSettle = settle
+                let pace = settle ? Motion.springStandard : Motion.springQuick
+                self.frame.retune(perceptualDuration: pace)
+                // A heading change moves the mark *and* re-tints it as one
+                // body; the colour springs ride the same pace as the geometry.
+                self.color.retune(perceptualDuration: pace)
+                self.glow.retune(perceptualDuration: pace)
+            }
+            self.frame.target(frame)
+            self.color.target(Self.foreground(of: color))
+            self.glow.target(glow)
+        }
+
+        mutating func snap(frame: CGRect, color: CGColor, glow: CGFloat) {
+            self.frame.snap(to: frame)
+            self.color.snap(to: Self.foreground(of: color))
+            self.glow.snap(to: glow)
+            // A snap is the end of one scaffold; the next retarget must start
+            // from the pointer pace again, so re-launch every spring the
+            // settle had slowed and forget the structural pace.
+            guard wantsSettle else { return }
+            wantsSettle = false
+            self.frame.retune(perceptualDuration: Motion.springQuick)
+            self.color.retune(perceptualDuration: Motion.springQuick)
+            self.glow.retune(perceptualDuration: Motion.springQuick)
+        }
+
+        mutating func advance(dt: CGFloat) -> Bool {
+            var moving = false
+            moving = frame.advance(dt: dt) || moving
+            moving = color.advance(dt: dt) || moving
+            moving = glow.advance(dt: dt) || moving
+            return moving
+        }
+
+        var viewFrame: CGRect {
+            let size = frame.size.value
+            let centre = frame.centre.value
+            return CGRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2, width: size.width, height: size.height)
+        }
+    }
+
+    /// A review pip — the small dots on a mark's leading edge.  They hold the
+    /// mark's fraction but spring independently so a pip can *cascade* in
+    /// behind the band it belongs to (Motion.previewStagger per step).
+    private struct PipSimulation {
+        var centre: Motion.SpringPoint
+        var diameter: Motion.SpringScalar
+        var color: Motion.SpringColor
+        var releaseAt: CFTimeInterval = 0
+        var engaged = false
+
+        init(centre: CGPoint, diameter: CGFloat, color: CGColor) {
+            let quick = Motion.springQuick
+            self.centre = .init(value: centre, perceptualDuration: quick)
+            self.diameter = .init(value: diameter, perceptualDuration: quick)
+            // The pip's alpha is its cascade: it starts invisible, targets the
+            // colour's alpha and takes a velocity kick on release, so it lands
+            // with a swell rather than appearing.
+            self.color = Motion.SpringColor(
+                value: MarkSimulation.foreground(of: color).withAlphaComponent(0),
+                perceptualDuration: quick
+            )
+        }
+
+        mutating func retarget(centre: CGPoint, diameter: CGFloat, color: CGColor, releaseAt: CFTimeInterval, now: CFTimeInterval, releaseNow: Bool) {
+            self.centre.target(centre)
+            self.diameter.target(diameter)
+            self.color.target(MarkSimulation.foreground(of: color))
+            if engaged { return }
+            self.releaseAt = releaseAt
+            if releaseNow || now >= releaseAt {
+                engaged = true
+                self.color.kickAlpha(18)
+            }
+        }
+
+        mutating func snap(centre: CGPoint, diameter: CGFloat, color: CGColor) {
+            self.centre.snap(to: centre)
+            self.diameter.snap(to: diameter)
+            self.color.snap(to: MarkSimulation.foreground(of: color))
+            engaged = true
+        }
+
+        mutating func advance(dt: CGFloat) -> Bool {
+            // A scheduled pip has not engaged yet: report it as moving so the
+            // driver stays alive until its cascade step fires.
+            guard engaged else { return releaseAt > 0 }
+            var moving = false
+            moving = centre.advance(dt: dt) || moving
+            moving = diameter.advance(dt: dt) || moving
+            moving = color.advance(dt: dt) || moving
+            return moving
+        }
+
+        var position: CGPoint { centre.value }
+        var currentColor: NSColor { color.value }
+    }
+
+    private var markSimulations: [MarkSimulation] = []
+    private var pipSimulations: [PipSimulation] = []
 
     /// Bumped on every `bands` assignment so the selection cache can be keyed
     /// without comparing the array itself (which can hold thousands of search
@@ -651,6 +818,7 @@ public final class DensityGutterView: NSView {
             ? Self.scrubVelocityPull * velocityInfluence
             : 0
         let magneticCap = Self.magneticPull + velocityPull
+        let reduceMotion = styleSheet.reduceMotion
 
         while markLayers.count < entries.count {
             let mark = CALayer()
@@ -658,6 +826,14 @@ public final class DensityGutterView: NSView {
             mark.masksToBounds = false
             layer?.addSublayer(mark)
             markLayers.append(mark)
+        }
+        if markSimulations.count > entries.count {
+            markSimulations.removeLast(markSimulations.count - entries.count)
+        }
+        while markSimulations.count < entries.count {
+            markSimulations.append(
+                MarkSimulation(frame: .zero, color: .clear, glow: 0)
+            )
         }
 
         for (index, entry) in entries.enumerated() {
@@ -715,12 +891,8 @@ public final class DensityGutterView: NSView {
                 )
             }
 
-            let punch = (index == punchBandIndex) ? punchAmount * Self.jumpPunchBoost : 0
-            let markWidth = min(
-                available,
-                (bandStyle.widthPoints + focus * 12 + punch) * railBreathe
-            )
-            let markHeight = bandStyle.minHeight + focus * 2.2 + punch * 0.15
+            let markWidth = min(available, bandStyle.widthPoints + focus * 12)
+            let markHeight = bandStyle.minHeight + focus * 2.2
             let magnetic = (pointerY.map { ($0 - entry.y) } ?? 0)
                 * focus * (magneticCap / max(1, Self.proximityRadius))
             let markY = entry.y + max(-magneticCap, min(magneticCap, magnetic))
@@ -732,79 +904,23 @@ public final class DensityGutterView: NSView {
                 width: markWidth,
                 height: markHeight
             )
+            let glow: CGFloat = (!isCurrent || reduceMotion) ? 0 : CGFloat(Self.currentGlowOpacity)
             let mark = markLayers[index]
-            let previousFrame = mark.presentation()?.frame ?? mark.frame
-            let previousColor = mark.presentation()?.backgroundColor ?? mark.backgroundColor
-            let frameChanged = previousFrame != frame
-            let colorChanged = previousColor != bandStyle.color.cgColor
-            let growing = frame.width > previousFrame.width + 0.25
-                || frame.height > previousFrame.height + 0.15
+            if isCurrent { mark.shadowColor = styleSheet.railTickCurrent.cgColor }
 
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            mark.cornerRadius = markHeight / 2
-            mark.frame = frame
-            mark.backgroundColor = bandStyle.color.cgColor
-            mark.isHidden = false
-            if isCurrent, !styleSheet.reduceMotion {
-                mark.shadowColor = styleSheet.railTickCurrent.cgColor
-                mark.shadowRadius = Self.currentGlowRadius
-                mark.shadowOpacity = Self.currentGlowOpacity
-                mark.shadowOffset = .zero
+            if animated && !reduceMotion {
+                markSimulations[index].retarget(
+                    frame: frame,
+                    color: bandStyle.color.cgColor,
+                    glow: glow,
+                    settle: isCurrent && currentChanged
+                )
             } else {
-                mark.shadowOpacity = 0
-                mark.shadowRadius = 0
-            }
-            CATransaction.commit()
-
-            guard animated, !styleSheet.reduceMotion else { continue }
-            let settleThis = isCurrent && currentChanged
-            let duration: TimeInterval = {
-                if settleThis { return Motion.settle }
-                return growing ? Motion.hoverGrow : Motion.hoverShrink
-            }()
-            let timing: CAMediaTimingFunction = settleThis
-                ? CAMediaTimingFunction(controlPoints: 0.22, 1.15, 0.36, 1)
-                : CAMediaTimingFunction(name: .easeOut)
-
-            if frameChanged, previousFrame != .zero {
-                let position = CABasicAnimation(keyPath: "position")
-                position.fromValue = NSValue(
-                    point: NSPoint(x: previousFrame.midX, y: previousFrame.midY)
+                markSimulations[index].snap(
+                    frame: frame,
+                    color: bandStyle.color.cgColor,
+                    glow: glow
                 )
-                position.toValue = NSValue(point: mark.position)
-                position.duration = duration
-                position.timingFunction = timing
-                mark.add(position, forKey: "mark-position")
-
-                let boundsAnimation = CABasicAnimation(keyPath: "bounds")
-                boundsAnimation.fromValue = NSValue(
-                    rect: previousFrame.offsetBy(
-                        dx: -previousFrame.minX, dy: -previousFrame.minY
-                    )
-                )
-                boundsAnimation.toValue = NSValue(rect: mark.bounds)
-                boundsAnimation.duration = duration
-                boundsAnimation.timingFunction = timing
-                mark.add(boundsAnimation, forKey: "mark-bounds")
-            }
-
-            if colorChanged, let previousColor {
-                let colorAnimation = CABasicAnimation(keyPath: "backgroundColor")
-                colorAnimation.fromValue = previousColor
-                colorAnimation.toValue = bandStyle.color.cgColor
-                colorAnimation.duration = duration
-                colorAnimation.timingFunction = timing
-                mark.add(colorAnimation, forKey: "mark-color")
-            }
-
-            if settleThis || (isCurrent && currentChanged) {
-                let glow = CABasicAnimation(keyPath: "shadowOpacity")
-                glow.fromValue = 0
-                glow.toValue = Self.currentGlowOpacity
-                glow.duration = Motion.settle
-                glow.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                mark.add(glow, forKey: "mark-glow")
             }
         }
 
@@ -814,20 +930,25 @@ public final class DensityGutterView: NSView {
             mark.isHidden = true
         }
 
-        updatePipLayers(entries: entries)
+        updatePipLayers(entries: entries, animated: animated)
+        if animated && !reduceMotion {
+            armRailDriver()
+        } else {
+            applySimulations()
+        }
     }
 
     /// Review overlays sit on a fixed leading offset from the *resting* mark
     /// width, so hovering a mark grows the tick without shoving its pips
     /// sideways.
-    private func updatePipLayers(entries: [ResolvedMark]) {
+    private func updatePipLayers(entries: [ResolvedMark], animated: Bool) {
         let contrast = styleSheet.increaseContrast
-        var wanted: [(frame: CGRect, color: NSColor)] = []
-        let diameter = Self.pipDiameter * railBreathe
-        let restingHalf = Self.headingMarkWidth(level: 1) / 2 * railBreathe
+        var wanted: [(x: CGFloat, y: CGFloat, color: NSColor)] = []
+        let diameter = Self.pipDiameter
+        let restingHalf = Self.headingMarkWidth(level: 1) / 2
 
         for entry in entries where !entry.pip.isEmpty {
-            var trailingEdge = bounds.midX - restingHalf - Self.pipLeadingGap * railBreathe
+            var trailingEdge = bounds.midX - restingHalf - Self.pipLeadingGap
             var colors: [NSColor] = []
             if let change = entry.pip.change {
                 colors.append(styleSheet.changeColor(change).withAlphaComponent(contrast ? 1 : 0.95))
@@ -837,12 +958,8 @@ public final class DensityGutterView: NSView {
             }
             for color in colors {
                 wanted.append((
-                    frame: CGRect(
-                        x: trailingEdge - diameter,
-                        y: entry.y - diameter / 2,
-                        width: diameter,
-                        height: diameter
-                    ),
+                    x: trailingEdge - diameter,
+                    y: entry.y - diameter / 2,
                     color: color
                 ))
                 trailingEdge -= diameter + 2.5
@@ -855,18 +972,128 @@ public final class DensityGutterView: NSView {
             layer?.addSublayer(pip)
             pipLayers.append(pip)
         }
+        if pipSimulations.count > wanted.count {
+            pipSimulations.removeLast(pipSimulations.count - wanted.count)
+        }
+        for pip in pipLayers.dropFirst(wanted.count) {
+            pip.isHidden = true
+        }
 
+        let now = CACurrentMediaTime()
+        let releaseNow = !animated || styleSheet.reduceMotion
+        for (index, target) in wanted.enumerated() {
+            if index >= pipSimulations.count {
+                pipSimulations.append(
+                    PipSimulation(
+                        centre: CGPoint(x: target.x, y: target.y),
+                        diameter: diameter,
+                        color: target.color.cgColor
+                    )
+                )
+            }
+            if releaseNow {
+                pipSimulations[index].snap(
+                    centre: CGPoint(x: target.x, y: target.y),
+                    diameter: diameter,
+                    color: target.color.cgColor
+                )
+            } else {
+                pipSimulations[index].retarget(
+                    centre: CGPoint(x: target.x, y: target.y),
+                    diameter: diameter,
+                    color: target.color.cgColor,
+                    releaseAt: now + Motion.previewStagger * CGFloat(index),
+                    now: now,
+                    releaseNow: false
+                )
+            }
+        }
+    }
+
+    // MARK: - Rail driver
+
+    /// Every spring in the rail steps on the same clock.  Arming the driver is
+    /// cheap — the link parks itself the frame everything settles — so events
+    /// can call `armSprings()` freely and the driver decides whether a frame
+    /// is even worth taking.
+    private func armRailDriver() {
+        guard window != nil, !styleSheet.reduceMotion else { return }
+        armSprings()
+    }
+
+    /// One tick of the rail's whole physics channel.  `SpringSurfaceView` owns
+    /// the driver lifecycle (window teardown, `deinit`); this file owns only
+    /// what the springs do.
+    public override func springTick(dt: CGFloat) -> Bool {
+        var moving = breatheSpring.advance(dt: dt)
+        for index in markSimulations.indices {
+            moving = markSimulations[index].advance(dt: dt) || moving
+        }
+        for index in pipSimulations.indices {
+            moving = pipSimulations[index].advance(dt: dt) || moving
+        }
+        return moving
+    }
+
+    public override func springApply() {
+        applySimulations()
+    }
+
+    /// Live resize: the rail's marks are laid out against `bounds.height`, so
+    /// a drag retargets every one of them on every AppKit frame.  Rebuilding
+    /// unanimated puts each mark on its new seat immediately, which is what
+    /// the reader dragging the window edge is asking for.
+    public override func springsSettleImmediately() {
+        updateMarkLayers(animated: false)
+    }
+
+    /// Draw what the springs currently say, in one transaction — the display
+    /// link's per-frame snapshot. Breathe multiplies the resting width so the
+    /// whole rail swells and relaxes as one body without touching the marks'
+    /// own springs.
+    private func applySimulations() {
+        let breathe = breatheSpring.value
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for (index, pip) in pipLayers.enumerated() {
-            guard index < wanted.count else {
-                pip.isHidden = true
-                continue
+        for (index, mark) in markLayers.enumerated() {
+            guard index < markSimulations.count else { continue }
+            let sim = markSimulations[index]
+            let stateless = sim.viewFrame
+            let width = stateless.width * breathe
+            mark.frame = CGRect(
+                x: stateless.midX - width / 2,
+                y: stateless.minY,
+                width: width,
+                height: stateless.height
+            )
+            mark.cornerRadius = stateless.height / 2
+            mark.backgroundColor = sim.color.value.cgColor
+            mark.isHidden = false
+            let glow = sim.glow.value
+            if glow > 0.01 {
+                mark.shadowColor = styleSheet.railTickCurrent.cgColor
+                mark.shadowOpacity = Float(glow)
+                mark.shadowRadius = Self.currentGlowRadius
+                mark.shadowOffset = .zero
+            } else {
+                mark.shadowOpacity = 0
+                mark.shadowRadius = 0
             }
-            pip.frame = wanted[index].frame
-            pip.cornerRadius = diameter / 2
-            pip.backgroundColor = wanted[index].color.cgColor
-            pip.isHidden = false
+        }
+        for (index, pip) in pipSimulations.enumerated() {
+            guard index < pipLayers.count else { continue }
+            let layer = pipLayers[index]
+            let d = pip.diameter.value * breathe
+            let position = pip.position
+            layer.frame = CGRect(
+                x: position.x - d / 2,
+                y: position.y - d / 2,
+                width: d,
+                height: d
+            )
+            layer.cornerRadius = d / 2
+            layer.backgroundColor = pip.currentColor.cgColor
+            layer.isHidden = pip.currentColor.alphaComponent < 0.01
         }
         CATransaction.commit()
     }
@@ -957,27 +1184,25 @@ public final class DensityGutterView: NSView {
     }
 
     private func setRailBreathe(_ target: CGFloat, animated: Bool) {
-        guard abs(railBreathe - target) > 0.001 else { return }
-        railBreathe = target
-        updateMarkLayers(animated: animated)
+        guard abs(breatheSpring.value - target) > 0.001 else { return }
+        if animated && !styleSheet.reduceMotion {
+            breatheSpring.target(target)
+            armRailDriver()
+        } else {
+            breatheSpring.snap(to: target)
+            applySimulations()
+        }
     }
 
+    /// The landing punch is a velocity kick on the mark's own width spring:
+    /// the swell and its settle come out of the same physics as everything
+    /// else, so a jump never announces itself with a distinct easing.
     private func performJumpPunch(at index: Int?) {
-        guard let index else { return }
-        punchBandIndex = index
-        punchAmount = 1
+        guard let index, index < markSimulations.count else { return }
+        markSimulations[index].frame.size.width.kick(Motion.jumpPunchKick)
+        markSimulations[index].frame.size.height.kick(Motion.jumpPunchKick * 0.5)
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-        updateMarkLayers(animated: true)
-
-        let settle = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.punchAmount = 0
-            self.punchBandIndex = nil
-            self.updateMarkLayers(animated: true)
-        }
-        breatheWorkItem?.cancel()
-        breatheWorkItem = settle
-        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.jumpPunch * 0.45, execute: settle)
+        armRailDriver()
     }
 
     private func updateHoveredBand(at point: NSPoint?, animated: Bool) {
@@ -997,10 +1222,12 @@ public final class DensityGutterView: NSView {
 
         let indexChanged = nextIndex != hoveredBandIndex
         hoveredBandIndex = nextIndex
-        // Continuous proximity must track the pointer without CA lag; only
-        // animate when the primary mark changes (enter / leave / switch).
+        // The springs *are* the smoothing: retarget on every pointer move and
+        // let the display link carry the motion.  With CA, only index changes
+        // had to animate (everything else "tracked" via frame-rate snapping);
+        // under the spring driver, avoid-a-frame is the same as teleporting.
         if indexChanged || point != nil || pointerLocation != nil {
-            updateMarkLayers(animated: animated && indexChanged)
+            updateMarkLayers(animated: animated)
         }
     }
 
@@ -1123,7 +1350,10 @@ public final class DensityGutterView: NSView {
         pointerIsInPreview = false
         pointerLocation = point
         setRailBreathe(Self.breatheScale, animated: true)
-        updateHoveredBand(at: point, animated: false)
+        // Entering springs like every other pointer move.  Snapping here made
+        // the marks teleport into their hovered state while the whole-rail
+        // breathe sprang around them — two different motions for one gesture.
+        updateHoveredBand(at: point, animated: true)
         if hoveredBandIndex != nil {
             schedulePreview(at: point)
         }
@@ -1249,14 +1479,11 @@ public final class DensityGutterView: NSView {
             cancelPreviewHide()
             cancelOutlineShow()
             cancelOutlineHide()
-            breatheWorkItem?.cancel()
-            breatheWorkItem = nil
+            parkSprings()
+            breatheSpring.snap(to: 1)
             pointerLocation = nil
             pointerVelocityY = 0
             lastPointerSample = nil
-            punchAmount = 0
-            punchBandIndex = nil
-            railBreathe = 1
             pointerIsInPreview = false
             pointerIsInOutline = false
             preview.hide()

@@ -318,7 +318,7 @@ struct SourceEditProjection: Sendable {
 /// same-length hard-wrap/hidden replacement used by grouped TextKit elements.
 /// All are the same operation on the same map, which is why they cannot
 /// disagree about caret arithmetic.
-public struct DisplaySubstitution {
+public struct DisplaySubstitution: Equatable {
     public var sourceRange: NSRange
     public var displayLength: Int
     /// Attributed replacement; `nil` means "omit", and its length must equal

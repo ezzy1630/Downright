@@ -1048,3 +1048,38 @@ final class ToolbarActionButton: ToolbarInteractiveButton {
         applyTint()
     }
 }
+
+/// The trailing cluster as one toolbar item: activity, Find, the task ring,
+/// the update pill, and the `···` overflow, laid out by hand on a fixed pitch.
+///
+/// These used to ship as five separate toolbar items, which leaves the gaps
+/// to AppKit — and AppKit pads every custom-view item by roughly 20pt, a tax
+/// even the collapsed 1pt placeholders pay, so the row rendered with a 14pt
+/// gap beside a 42pt one and the buttons' plates auto-stretched to 36pt next
+/// to the ring's 30pt one.  One stack view takes the geometry back: every gap
+/// is `Metrics.spacing`, every plate is 30pt, every centre is on the same
+/// line, and the spinner and pill cost nothing while hidden because a stack
+/// view detaches hidden arranged subviews outright.
+@MainActor
+final class ToolbarTrailingCluster: NSStackView {
+    private enum Metrics {
+        /// Edge-to-edge gap between neighbours.  Tight enough that the row
+        /// reads as one cluster against the trailing edge, wide enough that
+        /// two adjacent hover plates never touch.
+        static let spacing: CGFloat = 6
+    }
+
+    init(views: [NSView]) {
+        super.init(frame: .zero)
+        orientation = .horizontal
+        alignment = .centerY
+        spacing = Metrics.spacing
+        // The layout depends on this: the activity cue and the update pill
+        // hide rather than resize, and a detached view takes no spacing with
+        // it, so a hidden neighbour never leaves a hole in the row.
+        detachesHiddenViews = true
+        for view in views { addArrangedSubview(view) }
+    }
+
+    required init?(coder: NSCoder) { nil }
+}

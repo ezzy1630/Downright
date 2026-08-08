@@ -19,8 +19,18 @@ final class SearchInspectorView: NSView {
         get { findBar.showsReplace }
         set {
             findBar.showsReplace = newValue
-            findHeight.constant = newValue ? 178 : 132
+            findHeight.constant = newValue ? Metrics.replaceBarHeight : Metrics.findBarHeight
         }
+    }
+
+    /// The find bar is exactly its rows plus air.  The old fixed heights
+    /// (132/178) left a dead band between the navigation row and whatever
+    /// sat below — the void the empty state used to float under.
+    private enum Metrics {
+        /// 8 top + one 28pt field row + 8 bottom above the hairline.
+        static let findBarHeight: CGFloat = 44
+        /// Adds 8 spacing + a 24pt replace row.
+        static let replaceBarHeight: CGFloat = 76
     }
 
     private let backdrop: PanelBackdrop
@@ -51,7 +61,7 @@ final class SearchInspectorView: NSView {
         resultHost.translatesAutoresizingMaskIntoConstraints = false
         addSubview(resultHost)
 
-        findHeight = findBar.heightAnchor.constraint(equalToConstant: 132)
+        findHeight = findBar.heightAnchor.constraint(equalToConstant: Metrics.findBarHeight)
         NSLayoutConstraint.activate([
             findBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             findBar.trailingAnchor.constraint(equalTo: trailingAnchor),

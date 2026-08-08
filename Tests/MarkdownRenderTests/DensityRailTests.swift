@@ -20,17 +20,50 @@ struct DensityRailTests {
         #expect(DensityGutterView.breatheScale == 1.08)
         #expect(DensityGutterView.neighborhoodDim == 0.82)
         #expect(DensityGutterView.jumpPunchBoost == 4)
-        #expect(Motion.hoverGrow == 0.08)
-        #expect(Motion.hoverShrink == 0.18)
-        #expect(Motion.settle == 0.20)
-        #expect(Motion.jumpPunch == 0.14)
-        #expect(Motion.breathe == 0.12)
-        #expect(Motion.previewStagger == 0.04)
+        #expect(Motion.springQuick == 0.12)
+        #expect(Motion.springStandard == 0.20)
+        #expect(Motion.springDeliberate == 0.32)
+        #expect(Motion.jumpPunchKick == 480)
+        #expect(Motion.breathe == Motion.quick)
+        #expect(Motion.previewStagger == Motion.quick / 3)
         #expect(DensityOutlineWindow.rowHeight == 44)
         #expect(DensityOutlineWindow.cornerRadius == 14)
         #expect(DensityOutlineWindow.showDwell == 0.25)
         #expect(DensityOutlineWindow.showDuration == 0.12)
         #expect(DensityOutlineWindow.hideDuration == 0.09)
+    }
+
+    /// The integrator is the closed-form damped-harmonic solution, so where
+    /// the state lands after any elapsed time is a pure function of that time
+    /// — a dropped 33 ms frame lands exactly where the 120 Hz stream would
+    /// have, instead of Euler's error accumulating.  Advancing half twice
+    /// must land exactly where advancing once lands, mid-flight.
+    @Test("Spring integration is frame-rate independent")
+    func springIsFrameRateIndependent() {
+        for dt: CGFloat in [1.0 / 120.0, 1.0 / 60.0, 1.0 / 30.0] {
+            var whole = Motion.SpringScalar(value: 0, perceptualDuration: Motion.springQuick)
+            whole.target(100)
+            var split = Motion.SpringScalar(value: 0, perceptualDuration: Motion.springQuick)
+            split.target(100)
+            _ = whole.advance(dt: dt)
+            _ = split.advance(dt: dt / 2)
+            _ = split.advance(dt: dt / 2)
+            #expect(abs(whole.value - split.value) < 1e-9)
+            #expect(abs(whole.velocity - split.velocity) < 1e-9)
+        }
+    }
+
+    /// A sub-unit trip (glow 0 → 0.12, breathe 1 → 1.08) used to settle on an
+    /// absolute tolerance and teleport across its last fraction.  The band is
+    /// travel-scaled now, but the rule under test is the same: a finite step
+    /// count must never jump the full travel.
+    @Test("Sub-unit springs traverse the travel instead of teleporting")
+    func subUnitSpringsTraverse() {
+        var glow = Motion.SpringScalar(value: 0, perceptualDuration: Motion.springQuick)
+        glow.target(0.12)
+        _ = glow.advance(dt: 1.0 / 120.0)
+        #expect(glow.value > 0)
+        #expect(glow.value < 0.12)
     }
 
     @Test("Hover opens near a mark but dismisses outside its row")
@@ -119,6 +152,50 @@ struct DensityRailTests {
         #expect(DensityGutterView.headingMarkWidth(level: 2, emphasized: true) == 32)
         #expect(DensityGutterView.headingMarkWidth(level: 3, emphasized: true) == 32)
         #expect(DensityGutterView.headingMarkWidth(level: 4, emphasized: true) == 32)
+    }
+
+    /// The rail's hover regression, as a clock rule.
+    ///
+    /// Every pointer event arms the driver, and arming used to re-base the
+    /// clock.  Mouse events and the display link share the main run loop, so an
+    /// event landing shortly before a frame left that frame only the sliver of
+    /// time since the event to integrate — and a continuous hover retargets at
+    /// the event rate, so nearly every frame's elapsed time was thrown away.
+    /// The springs crawled while the pointer moved and completed the instant it
+    /// stopped: motion in glue.  Arming a running clock must be inert.
+    @Test("Arming a running driver never swallows elapsed time")
+    func armingDoesNotRebaseTheClock() {
+        var clock = Motion.FrameClock()
+        #expect(clock.start(now: 0) == true)
+        #expect(clock.isRunning)
+
+        let frame: CFTimeInterval = 1.0 / 120.0
+        #expect(abs(clock.tick(now: frame) - CGFloat(frame)) < 1e-9)
+
+        // A pointer event arrives mid-frame and arms the already-running
+        // driver.  It must report "already running" and touch nothing.
+        #expect(clock.start(now: frame * 1.9) == false)
+
+        // The next frame therefore still integrates a whole frame, not the
+        // sliver between the event and the tick.
+        #expect(abs(clock.tick(now: frame * 2) - CGFloat(frame)) < 1e-9)
+
+        clock.stop()
+        #expect(!clock.isRunning)
+        #expect(clock.start(now: 99) == true)
+    }
+
+    /// A parked driver re-armed after an idle spell starts from *now*, so the
+    /// first frame back is one frame long — never the whole idle gap replayed
+    /// into the springs as a teleport.
+    @Test("Re-arming after a park starts the clock fresh")
+    func reArmingStartsFresh() {
+        var clock = Motion.FrameClock()
+        clock.start(now: 100)
+        _ = clock.tick(now: 100.5)
+        clock.stop()
+        clock.start(now: 900)
+        #expect(abs(clock.tick(now: 900.01) - 0.01) < 1e-9)
     }
 
     @Test("Neighbourhood dim softens distant marks under hover")

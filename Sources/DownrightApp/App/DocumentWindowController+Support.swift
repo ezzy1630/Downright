@@ -246,6 +246,10 @@ extension DocumentWindowController {
     func showSiblingSearch() {
         guard let scanner else { return }
         showFindInspector(replace: false)
+        // The header names the surface that opened (§7.2): with results
+        // installed this is no longer a bare "Search" — it is the sibling
+        // search, and the results panel drops its own title row accordingly.
+        inspectorHost?.setTitle(Command.findInSiblings.panelTitle, for: .search)
         if searchResults == nil {
             let panel = SearchResultsPanelView()
             panel.delegate = self
@@ -253,10 +257,16 @@ extension DocumentWindowController {
             searchResults = panel
             searchInspector?.setResults(panel)
         }
-        searchResults?.isSearching = true
 
         let urls = scanner.siblings.map(\.url)
         let query = currentFindQuery
+        // Hand the panel what and where before the pass runs, so the
+        // searching and empty states can name both instead of a bare "No
+        // matches" floating in an empty list.
+        searchResults?.query = query.text
+        searchResults?.searchedFileCount = urls.count
+        searchResults?.isSearching = true
+
         DispatchQueue.global(qos: .userInitiated).async {
             let hits = SiblingSearch.search(query, in: urls)
             DispatchQueue.main.async { [weak self] in

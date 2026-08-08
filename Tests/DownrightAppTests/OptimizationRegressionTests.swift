@@ -68,4 +68,25 @@ struct OptimizationRegressionTests {
         #expect(result.contextText == "Ship the release.")
         #expect(result.line == 3)
     }
+
+    @Test
+    func workspaceSearchRejectsFilesThatOutgrowTheirIndexedBound() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-ws-search-bound-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = root.appendingPathComponent("note.md")
+        let indexed = "# Note\n"
+        try Data((indexed + String(repeating: "oversized ", count: 10_000)).utf8).write(to: file)
+        let entry = WorkspaceIndexEntry(
+            url: file, relativePath: "note.md", text: "", headings: [],
+            frontMatter: [], links: [], byteCount: Int64(indexed.utf8.count)
+        )
+        let snapshot = WorkspaceIndexSnapshot(rootURL: root, revision: 1, entries: [entry])
+
+        #expect(WorkspaceSearch.search(
+            WorkspaceSearchQuery(text: "oversized"), in: snapshot
+        ).isEmpty)
+    }
 }

@@ -166,6 +166,16 @@ extension MarkdownTextView {
         var linkRange: NSRange?
         if let linkHit, linkHit.range.length > 0, payload?.kind != .image {
             linkRange = linkHit.range
+        } else if let pathHit = attribute(.drPathToken, atSourceOffset: offset),
+                  pathHit.range.length > 0,
+                  attribute(.drPathExists, atSourceOffset: offset)?.value as? Bool == true {
+            // A resolvable path is interactive, so it answers the pointer the
+            // way every other interactive run does — on hover.  It used to say
+            // so permanently, with an accent bar down its leading edge, which
+            // on a dark ground is indistinguishable from an insertion point
+            // parked mid-sentence: a caret that never blinks and never moves,
+            // once per path, in prose that is full of them.
+            linkRange = pathHit.range
         }
         if linkRange != hoveredLinkRange {
             hoveredLinkRange = linkRange
@@ -240,34 +250,18 @@ extension MarkdownTextView {
         driveCheckboxPulseRedraw()
     }
 
-    /// Keeps redrawing while any checkbox pulse is live, then stops.  The pop
-    /// is drawn by the fragment, not stored as text attributes, so the only
-    /// thing this has to do is ask for frames.
+    /// Keeps redrawing while any checkbox pulse is live, then parks the
+    /// driver.  The pop is drawn by the fragment, not stored as text
+    /// attributes, so the only thing this has to do is ask for frames; halving
+    /// the pulse-started members of the clock is done by the shared document
+    /// driver's `advance` hook, which also carries the scroll inertia coast.
     private func driveCheckboxPulseRedraw() {
-        checkboxPulseDisplayLink?.invalidate()
-        let displayLink = displayLink(target: self, selector: #selector(stepCheckboxPulse(_:)))
-        displayLink.add(to: .main, forMode: .common)
-        checkboxPulseDisplayLink = displayLink
-    }
-
-    @objc private func stepCheckboxPulse(_ displayLink: CADisplayLink) {
-        let now = CFAbsoluteTimeGetCurrent()
-        let live = fragmentContext.checkboxPulses.filter {
-            now - $0.started < CheckboxPulse.duration
-        }
-        guard !live.isEmpty else {
-            displayLink.invalidate()
-            checkboxPulseDisplayLink = nil
-            return
-        }
-        // The display link follows the actual screen refresh rate and only
-        // invalidates the ornaments that are still animating.
-        setNeedsDisplay(pulseInvalidationRect(for: live.map(\.sourceRange)))
+        armMotionDriver()
     }
 
     /// The area a pulsing ornament can reach: the blocks holding the boxes,
     /// widened into the hanging indent the ornament is drawn in.
-    private func pulseInvalidationRect(for ranges: [NSRange]) -> NSRect {
+    func pulseInvalidationRect(for ranges: [NSRange]) -> NSRect {
         var union = NSRect.zero
         for range in ranges {
             guard let start = rect(forOffset: range.location) else { continue }

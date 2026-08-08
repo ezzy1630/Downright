@@ -64,7 +64,6 @@ import Testing
                                        effectiveRange: &childStyle) as? NSParagraphStyle)?.headIndent
     // The child's style must not extend back over the parent's paragraph.
     let parentOffset = (text as NSString).range(of: "parent").location
-    let parentStyle = (storage.attribute(.paragraphStyle, at: parentOffset, effectiveRange: nil) as? NSParagraphStyle)
     #expect(childHead != nil)
     #expect(childStyle.location > parentOffset, "child paragraph style leaked back onto the parent line")
 }

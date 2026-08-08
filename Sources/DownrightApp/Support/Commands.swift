@@ -18,6 +18,12 @@ enum Command: String, CaseIterable, Codable {
 
     // Navigation
     case nextHeading, previousHeading, nextChange, previousChange
+    /// Clears every change mark and moves the review baseline forward (§8.1).
+    /// The only other way to reach this was the Review / Keep mine / Take
+    /// theirs bar, which is raised by a live external write and dismissed with
+    /// it — so a reader who came back to a rewritten file later had no way at
+    /// all to put the highlighting out.
+    case markChangesReviewed
     case followLinkAtCaret, nextLink, previousLink
     case scrollDown, scrollUp, pageDown, pageUp, documentStart, documentEnd
     case goBack, goForward
@@ -82,6 +88,7 @@ enum Command: String, CaseIterable, Codable {
         case .previousHeading: return "Previous Heading"
         case .nextChange: return "Next Change"
         case .previousChange: return "Previous Change"
+        case .markChangesReviewed: return "Mark Changes Reviewed"
         case .followLinkAtCaret: return "Open Link at Caret"
         case .nextLink: return "Next Link"
         case .previousLink: return "Previous Link"
@@ -207,6 +214,7 @@ enum Command: String, CaseIterable, Codable {
              .reviewPanel, .workspace, .localAI:
             return .view
         case .nextHeading, .previousHeading, .nextChange, .previousChange,
+             .markChangesReviewed,
              .followLinkAtCaret, .nextLink, .previousLink, .scrollDown, .scrollUp,
              .pageDown, .pageUp, .documentStart, .documentEnd, .goBack, .goForward:
             return .navigate
@@ -265,6 +273,8 @@ enum Command: String, CaseIterable, Codable {
             return .documentWithFile
         case .useSelectionForFind, .exportSelectionAsImage:
             return .selection
+        case .nextChange, .previousChange, .markChangesReviewed:
+            return .changeMarks
         default:
             return .document
         }
@@ -301,11 +311,14 @@ enum CommandPrecondition: String, CaseIterable {
     case forwardHistory
     case speaking
     case tableAtCaret
+    /// Needs at least one live change mark to walk or to retire.
+    case changeMarks
 
     func isSatisfied(in context: CommandContext) -> Bool {
         switch self {
         case .always: return true
         case .document: return context.hasDocument
+        case .changeMarks: return context.hasDocument && context.hasChangeMarks
         case .documentWithFile: return context.hasDocument && context.documentHasFile
         case .selection: return context.hasDocument && context.hasSelection
         case .updateCheck: return context.canCheckForUpdates
@@ -333,6 +346,8 @@ struct CommandContext: Equatable {
     var canGoForward: Bool
     var isSpeaking: Bool
     var caretIsInTable: Bool
+    /// At least one unexpired change mark is on the page.
+    var hasChangeMarks: Bool
 
     init(
         hasDocument: Bool = false,
@@ -344,7 +359,8 @@ struct CommandContext: Equatable {
         canGoBack: Bool = false,
         canGoForward: Bool = false,
         isSpeaking: Bool = false,
-        caretIsInTable: Bool = false
+        caretIsInTable: Bool = false,
+        hasChangeMarks: Bool = false
     ) {
         self.hasDocument = hasDocument
         self.documentHasFile = documentHasFile
@@ -356,6 +372,7 @@ struct CommandContext: Equatable {
         self.canGoForward = canGoForward
         self.isSpeaking = isSpeaking
         self.caretIsInTable = caretIsInTable
+        self.hasChangeMarks = hasChangeMarks
     }
 
     /// No document anywhere — what the app menu sees while only the start

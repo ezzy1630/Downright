@@ -138,7 +138,20 @@ enum WorkspaceSearch {
 
     private static func resolvedText(for entry: WorkspaceIndexEntry) -> String? {
         if !entry.text.isEmpty { return entry.text }
-        return try? String(contentsOf: entry.url, encoding: .utf8)
+        // The index bounds every accepted file, but a file can grow after the
+        // scan. A whole-file read here bypasses that bound. Read one byte past
+        // the indexed size and reject stale oversized entries; the watcher
+        // will publish a fresh snapshot.
+        guard entry.byteCount >= 0,
+              entry.byteCount < Int64(Int.max),
+              let handle = try? FileHandle(forReadingFrom: entry.url)
+        else { return nil }
+        defer { try? handle.close() }
+        let limit = Int(entry.byteCount) + 1
+        guard let data = try? handle.read(upToCount: limit),
+              data.count <= entry.byteCount
+        else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func lineStartOffsets(in text: NSString) -> [Int] {

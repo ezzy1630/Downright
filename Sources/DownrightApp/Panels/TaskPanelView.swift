@@ -1716,7 +1716,7 @@ private final class TaskUndoPillView: NSView {
         }
         alphaValue = 0
         layer?.transform = CATransform3DMakeTranslation(0, 6, 0)
-        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .decelerate) { _ in
+        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .structural) { _ in
             self.animator().alphaValue = 1
             self.layer?.transform = CATransform3DIdentity
         }

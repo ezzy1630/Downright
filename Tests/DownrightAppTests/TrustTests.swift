@@ -70,6 +70,58 @@ struct DocumentTrustTests {
         let escaped = root.appendingPathComponent("real/../outside", isDirectory: true)
         #expect(!DocumentTrust.isWithin(escaped, real))
     }
+
+    @Test
+    func concurrentMutationsPersistInMemoryOrder() {
+        let persistence = DelayedFirstSaveTrustPersistence()
+        let store = TrustStore(persistence: persistence)
+        let group = DispatchGroup()
+        let first = URL(fileURLWithPath: "/tmp/downright-trust-first")
+        let second = URL(fileURLWithPath: "/tmp/downright-trust-second")
+
+        group.enter()
+        DispatchQueue.global().async {
+            _ = store.grant(scope: .file, path: first, effects: [.readLocalAsset])
+            group.leave()
+        }
+        #expect(persistence.firstSaveStarted.wait(timeout: .now() + 1) == .success)
+        group.enter()
+        DispatchQueue.global().async {
+            _ = store.grant(scope: .file, path: second, effects: [.launchPathOrEditor])
+            group.leave()
+        }
+        #expect(group.wait(timeout: .now() + 2) == .success)
+
+        #expect(Set(persistence.persisted()) == Set(store.grants()))
+    }
+}
+
+/// Delays the first save long enough for a second caller to expose reversed
+/// persistence. Without TrustStore's ordered mutation/save boundary, the
+/// older snapshot lands last and silently drops the second grant.
+private final class DelayedFirstSaveTrustPersistence: TrustStorePersistence, @unchecked Sendable {
+    let firstSaveStarted = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var saveCount = 0
+    private var stored: [TrustGrant] = []
+
+    func load() -> [TrustGrant] { [] }
+
+    func save(_ grants: [TrustGrant]) {
+        let call = lock.withLock {
+            saveCount += 1
+            return saveCount
+        }
+        if call == 1 {
+            firstSaveStarted.signal()
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        lock.withLock { stored = grants }
+    }
+
+    func persisted() -> [TrustGrant] {
+        lock.withLock { stored }
+    }
 }
 
 @MainActor

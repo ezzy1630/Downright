@@ -261,7 +261,7 @@ enum MainMenu {
                 .commands([.previousHeading, .nextHeading]),
                 .commands([.previousLink, .nextLink, .followLinkAtCaret]),
                 .commands([.goToLine]),
-                .commands([.previousChange, .nextChange]),
+                .commands([.previousChange, .nextChange, .markChangesReviewed]),
                 .commands([.goBack, .goForward]),
                 .commands([.scrollUp, .scrollDown, .pageUp, .pageDown]),
                 .commands([.documentStart, .documentEnd]),

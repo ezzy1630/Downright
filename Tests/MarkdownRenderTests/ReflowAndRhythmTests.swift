@@ -590,3 +590,39 @@ private func composite(_ color: NSColor, over background: NSColor) -> NSColor {
     }
     #expect(tinted == [word])
 }
+
+/// The same rule, on the draw path that never got it.
+///
+/// `tint` was taught to ask `glyphBearingRanges` first; the inline-code pill
+/// in `drawBackground` was not, so a table full of `code` in its cells still
+/// scattered rounded rectangles across the object at positions taken from the
+/// hidden linear layout — visible tint, no text under it, nowhere near the
+/// cell the span actually lives in.
+@Test @MainActor func anInlineCodePillNeverPaintsOverAGlyphReplacedFragment() {
+    let source = """
+    Prose with `inline code` in it.
+
+    | | |
+    |---|---|
+    | `⌘E` | Use selection for Find |
+
+    """
+    let text = source as NSString
+    let storage = NSTextStorage(string: source)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 620, height: 1200), storage: storage, styleSheet: sheet())
+    view.mode = .read
+    view.update(
+        document: MarkdownParser.parse(source),
+        dirty: DirtySet(ranges: [NSRange(location: 0, length: text.length)], isWholesale: true))
+    view.prepareForDisplay()
+
+    // The span in prose keeps its pill: TextKit draws those glyphs.
+    let prose = text.range(of: "inline code")
+    #expect(!view.inlineCodePillBands(forSourceRange: prose, in: storage).isEmpty)
+
+    // The span inside the table gets none — the table fragment replaces the
+    // glyphs, so there is nothing on screen for a pill to sit behind.
+    let inTable = text.range(of: "⌘E")
+    #expect(view.inlineCodePillBands(forSourceRange: inTable, in: storage).isEmpty)
+}

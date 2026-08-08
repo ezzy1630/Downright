@@ -66,6 +66,13 @@ private final class PanelStatusBadge: NSTextField {
         let size = super.intrinsicContentSize
         return NSSize(width: size.width + 12, height: 20)
     }
+
+    /// A pill, not a rounded rect: at this height a fixed radius reads as a
+    /// box that never decided what it was, where a capsule reads as settled.
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = bounds.height / 2
+    }
 }
 
 /// A transient side surface.  `preferredWidth` exists so a host can animate the
@@ -164,15 +171,15 @@ enum RelativeTime {
 
 // MARK: - Backgrounds
 
-/// Panel background: vibrancy where the system allows it, a flat themed fill
-/// where Reduce Transparency or Increase Contrast is on (§11.4).  The fill is
-/// drawn rather than set on a layer so a dynamic `NSColor` re-resolves when the
-/// effective appearance changes.
+/// Panel background: native vibrancy, or a flat themed fill where Reduce
+/// Transparency or Increase Contrast is on (§11.4). The fill is drawn rather
+/// than set on a layer so a dynamic
+/// `NSColor` re-resolves when the effective appearance changes.
 final class PanelBackdrop: NSView {
     var styleSheet: StyleSheet { didSet { applyStyle() } }
-    /// When true, draws the theme's `surface` colour instead of vibrancy — for
-    /// panels that must read as a distinct card against the page rather than
-    /// chrome that dissolves into it (§11.4).
+    /// When true, draws the theme's `surface` colour instead of the material —
+    /// for panels that must read as a distinct card against the page rather
+    /// than chrome that dissolves into it (§11.4).
     var usesSurfaceFill = false { didSet { applyStyle() } }
     /// When true, the material blends with the window's own content so the
     /// document ghosts through the chrome — the glassy read the inspector and
@@ -184,7 +191,7 @@ final class PanelBackdrop: NSView {
             applyStyle()
         }
     }
-    /// Darkens or lightens the glass on top of the material so a panel stays
+    /// Darkens or lightens the material so a panel stays
     /// legible over whatever is behind it.  0 is the raw material.
     var veilAlpha: CGFloat = 0 {
         didSet {
@@ -193,9 +200,14 @@ final class PanelBackdrop: NSView {
         }
     }
 
+    /// `NSGlassEffectView` is deliberately not used as a detached background.
+    /// AppKit only guarantees z-order for its `contentView`; using it behind
+    /// arbitrary sibling controls made whole panel rows disappear on macOS 26.
+    /// This view's contract is background-only, so vibrancy is the safe native
+    /// material until panel content is hosted inside glass content views.
     private let effect = NSVisualEffectView()
     /// Drawn between the material and the content: a themed wash that keeps
-    /// text readable without flattening the glass into an opaque slab.
+    /// text readable without flattening vibrancy into an opaque slab.
     private let veilLayer = CALayer()
 
     init(
@@ -233,10 +245,11 @@ final class PanelBackdrop: NSView {
     }
 
     private func applyStyle() {
-        effect.isHidden = prefersOpaque || usesSurfaceFill
-        // The veil only exists to calm the glass; over an opaque fill there is
-        // nothing to ghost, so it would only muddy the colour.
-        veilLayer.isHidden = effect.isHidden
+        let hidden = prefersOpaque || usesSurfaceFill
+        effect.isHidden = hidden
+        // The veil only exists to calm vibrancy; over an opaque fill there is
+        // nothing to ghost, so it should only muddy the colour.
+        veilLayer.isHidden = hidden
         veilLayer.backgroundColor = styleSheet.background.cgColor
         needsDisplay = true
     }
@@ -323,6 +336,11 @@ enum PanelList {
         table.headerView = nil
         table.backgroundColor = .clear
         table.style = .plain
+        // Group rows are the panel's own `PanelGroupRowView` captions, not
+        // the system's: a floated group row draws a material slab and a
+        // separator hairline that read as artefacts on the themed glass, and
+        // these lists are short enough that a sticky header never earns it.
+        table.floatsGroupRows = false
         table.gridStyleMask = []
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.selectionHighlightStyle = .regular
@@ -390,12 +408,21 @@ final class ButtonAction: NSObject {
 }
 
 enum PanelButton {
+    /// One size and weight for every chrome glyph.  Unconfigured symbols draw
+    /// at text weight and go wispy on the themed surfaces; a medium 13pt glyph
+    /// holds its own next to the medium-weight labels it sits beside.
+    private static let symbolConfiguration = NSImage.SymbolConfiguration(
+        pointSize: 13,
+        weight: .medium
+    )
+
     static func symbol(
         _ name: String,
         label: String,
         action: ButtonAction
     ) -> NSButton {
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: label)
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: label)?
+            .withSymbolConfiguration(symbolConfiguration)
         let button = PanelSymbolButton(image: image ?? NSImage(), target: action, action: #selector(ButtonAction.fire(_:)))
         button.isBordered = false
         button.bezelStyle = .accessoryBarAction
@@ -440,10 +467,54 @@ enum PanelButton {
 /// Keep the glyph visually small while giving keyboard and pointer users a
 /// comfortable target. Callers with an explicit compact layout can still
 /// constrain the button; normal panel chrome uses this intrinsic size.
+///
+/// Borderless glyphs on a themed surface get no feedback from AppKit — no
+/// bezel, no rollover — so the button answers the pointer itself: a wash in
+/// its own tint colour, deepening on the press.  Tint-derived rather than a
+/// fixed grey, so an accented button glows in its accent and a faint one
+/// stays quiet (§11.4: hover states need clear feedback).
 private final class PanelSymbolButton: NSButton {
     override var intrinsicContentSize: NSSize {
         let size = super.intrinsicContentSize
         return NSSize(width: max(28, size.width), height: max(28, size.height))
+    }
+
+    private var isHovered = false
+    private var hoverTracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        refreshTrackingArea(
+            &hoverTracking,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect]
+        )
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // A disabled button (a walk chevron with nothing to walk) keeps its
+        // dimmed glyph and skips the wash — hovering a no-op must not promise
+        // an action.
+        if isHovered, isEnabled {
+            let boost = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            let alpha = isHighlighted ? (boost ? 0.18 : 0.12) : (boost ? 0.12 : 0.07)
+            (contentTintColor ?? .labelColor).withAlphaComponent(alpha).setFill()
+            NSBezierPath(
+                roundedRect: bounds.insetBy(dx: 2, dy: 2),
+                xRadius: PanelMetrics.rowSurfaceRadius,
+                yRadius: PanelMetrics.rowSurfaceRadius
+            ).fill()
+        }
+        super.draw(dirtyRect)
     }
 }
 
@@ -484,6 +555,7 @@ class MessageBarView: NSView {
     private let statusLabel = PanelStatusBadge(labelWithString: "")
     private let actionStack = NSStackView()
     private var actions: [ButtonAction] = []
+    private var closeButton: NSButton?
     private let stripeWidth: CGFloat = 2
 
     init(styleSheet: StyleSheet, stripeColor: NSColor) {
@@ -501,7 +573,6 @@ class MessageBarView: NSView {
         statusLabel.textColor = styleSheet.textFaint
         statusLabel.alignment = .center
         statusLabel.wantsLayer = true
-        statusLabel.layer?.cornerRadius = PanelMetrics.cornerRadius
         statusLabel.isHidden = true
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -514,6 +585,7 @@ class MessageBarView: NSView {
         let dismiss = ButtonAction { [weak self] in self?.onDismiss?() }
         actions.append(dismiss)
         let close = PanelButton.symbol("xmark", label: "Dismiss", action: dismiss)
+        closeButton = close
         addSubview(close)
 
         NSLayoutConstraint.activate([
@@ -575,12 +647,23 @@ class MessageBarView: NSView {
         invalidateIntrinsicContentSize()
     }
 
+    /// Adjusts the gap after one action so the stack reads as groups — a walk
+    /// pair, then the finishing actions — rather than one undifferentiated run
+    /// of evenly spaced glyphs.
+    func setActionSpacing(_ spacing: CGFloat, after button: NSButton) {
+        actionStack.setCustomSpacing(spacing, after: button)
+        invalidateIntrinsicContentSize()
+    }
+
     func applyStyle() {
         label.textColor = styleSheet.text
         statusLabel.textColor = styleSheet.textFaint
         statusLabel.layer?.backgroundColor = styleSheet.text
             .withAlphaComponent(styleSheet.increaseContrast ? 0.11 : 0.06)
             .cgColor
+        // Dismiss is the weakest action on the bar; untinted it drew at full
+        // strength and was the brightest pixel on the strip.
+        closeButton?.contentTintColor = styleSheet.textFaint
         needsDisplay = true
     }
 
@@ -767,7 +850,7 @@ final class PanelSegmentedControl: NSView {
         }
         CATransaction.begin()
         CATransaction.setAnimationDuration(Motion.standard)
-        CATransaction.setAnimationTimingFunction(Motion.timing(.decelerate))
+        CATransaction.setAnimationTimingFunction(Motion.timing(.structural))
         thumbLayer.frame = target
         CATransaction.commit()
     }
@@ -1050,7 +1133,7 @@ final class PanelProgressBar: NSView {
         // Implicit animation of bounds/position gives a single smooth glide.
         CATransaction.begin()
         CATransaction.setAnimationDuration(Motion.deliberate)
-        CATransaction.setAnimationTimingFunction(Motion.timing(.decelerate))
+        CATransaction.setAnimationTimingFunction(Motion.timing(.structural))
         fillLayer.frame = target
         CATransaction.commit()
     }
@@ -1349,7 +1432,13 @@ final class PanelCheckbox: NSView {
             // it, so the whole confirmation is over inside `standard` — long
             // enough to see, short enough that ticking six tasks in a row does
             // not queue up six animations.
-            let pop = Motion.pop(from: 0.7, overshoot: 1.07, duration: Motion.standard)
+            let pop = Motion.pop(
+                from: 0.7,
+                overshoot: 1.07,
+                duration: Motion.standard,
+                travelAxis: CGVector(dx: 1, dy: 0),
+                cornerRadius: bounds.height / 2
+            )
             let fadeIn = CABasicAnimation(keyPath: "opacity")
             fadeIn.fromValue = 0
             fadeIn.toValue = 1
@@ -1445,7 +1534,7 @@ final class PanelCheckbox: NSView {
         scale.fromValue = 0.85
         scale.toValue = 1.6
         scale.duration = Motion.deliberate
-        scale.timingFunction = Motion.timing(.decelerate)
+        scale.timingFunction = Motion.timing(.structural)
 
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0.5
@@ -1589,16 +1678,25 @@ final class PanelEmptyStateView: NSView {
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(subtitleLabel)
 
+        // A long title (an echoed query, say) truncates instead of spilling
+        // past the panel's edge: centre a hugged label that is *allowed* to be
+        // narrower than its text, and AppKit's truncation does the rest.
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         NSLayoutConstraint.activate([
             symbolView.topAnchor.constraint(equalTo: topAnchor),
             symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
             symbolView.widthAnchor.constraint(equalToConstant: 40),
             symbolView.heightAnchor.constraint(equalToConstant: 40),
-            titleLabel.topAnchor.constraint(equalTo: symbolView.bottomAnchor, constant: 10),
+            titleLabel.topAnchor.constraint(equalTo: symbolView.bottomAnchor, constant: 12),
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            subtitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            subtitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             subtitleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             subtitleLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -1612,41 +1710,51 @@ final class PanelEmptyStateView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        discLayer.frame = symbolView.frame.insetBy(dx: -2, dy: -2)
+        discLayer.frame = symbolView.frame.insetBy(dx: -6, dy: -6)
         discLayer.cornerRadius = discLayer.bounds.width / 2
         CATransaction.commit()
     }
 
     func configure(symbol: String, title: String, subtitle: String, styleSheet: StyleSheet) {
         let contrast = styleSheet.increaseContrast
-        discLayer.backgroundColor = styleSheet.accent
+        // A neutral well, not an accent wash: an empty state is the *absence*
+        // of content, and the theme's loudest colour made it read as an alert
+        // — and as a muddy smudge where the glass behind it is dark.
+        discLayer.backgroundColor = styleSheet.textFaint
             .panelAlpha(0.12, increaseContrast: contrast).cgColor
         discLayer.opacity = 1
 
         symbolView.image = NSImage(
             systemSymbolName: symbol,
             accessibilityDescription: title
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 18, weight: .medium))
-        symbolView.contentTintColor = styleSheet.accent
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 19, weight: .medium))
+        symbolView.contentTintColor = styleSheet.textSecondary
 
         titleLabel.stringValue = title
         titleLabel.textColor = styleSheet.text
         subtitleLabel.stringValue = subtitle
-        subtitleLabel.textColor = styleSheet.textFaint
+        subtitleLabel.textColor = styleSheet.textSecondary
         setAccessibilityRole(.group)
         setAccessibilityLabel(subtitle.isEmpty ? title : "\(title): \(subtitle)")
     }
 
     /// Centre the state over `list` and hide it.  Every panel installs it the
     /// same way, so "nothing to show" lands in the same place in each one.
-    func install(in panel: NSView, over list: NSView) {
+    /// `verticalBias` < 1 lifts the state toward the optical centre — under a
+    /// heavy header the geometric centre reads as low.
+    func install(in panel: NSView, over list: NSView, verticalBias: CGFloat = 1.0) {
         translatesAutoresizingMaskIntoConstraints = false
         isHidden = true
         panel.addSubview(self)
         NSLayoutConstraint.activate([
             leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: PanelMetrics.inset),
             trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -PanelMetrics.inset),
-            centerYAnchor.constraint(equalTo: list.centerYAnchor),
+            NSLayoutConstraint(
+                item: self, attribute: .centerY,
+                relatedBy: .equal,
+                toItem: list, attribute: .centerY,
+                multiplier: verticalBias, constant: 0
+            ),
         ])
     }
 

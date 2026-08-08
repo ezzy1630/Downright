@@ -110,6 +110,17 @@ public final class FragmentContext {
     /// Monotonic counter bumped every time the text storage changes, so the
     /// table geometry cache cannot serve a stale layout for the same offset.
     var textRevision: Int = 0
+    /// Monotonic counter bumped every time TextKit builds a layout fragment.
+    ///
+    /// The one honest "geometry may have moved" signal the view can get.  Caches
+    /// that hold *absolute* rects — the inline-code bands, the invisibles —
+    /// cannot be keyed on the text, because a reflow that leaves the text alone
+    /// still moves every rect in it; and they cannot be keyed on the document's
+    /// total height, because a reflow can preserve it (a line that leaves one
+    /// paragraph and joins the next) and then every cached rect is a line out of
+    /// place while the fingerprint says nothing happened.  A fragment being
+    /// *built* is exactly the event those caches need to hear about.
+    var layoutGeneration: Int = 0
 
     public init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet

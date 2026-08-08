@@ -41,6 +41,20 @@ final class DocumentWindowController: NSWindowController {
     var searchInspector: SearchInspectorView?
     var historyInspector: HistoryInspectorView?
     var inspectorHost: InspectorHostView?
+    /// The travelling glass body, kept while any trip is in flight and
+    /// removed on settle.  One vessel serves every trip in the window.
+    private var morphVessel: MorphVessel?
+    /// Where the vessel currently in flight is headed.  A resize or divider
+    /// drag re-aims the trip, and the two directions do not share a
+    /// destination: a dismissal is flying *to the ring*, so recomputing the
+    /// pane anchor for it would drag the glass back the way it came.
+    private enum MorphDestination { case pane, ring }
+    private var morphDestination: MorphDestination = .pane
+    /// Which section's control the current trip calls home, so a re-aim can
+    /// find the right seat — Find's button and `···` are not in the same place.
+    private var morphHomeSection: InspectorSection = .tasks
+    /// Notification tokens that keep a flying trip aimed at the live pane.
+    private var morphRetargetTokens: [NSObjectProtocol] = []
     var frontMatterEditor: FrontMatterEditorView?
     var assetDoctorPanel: AssetDoctorView?
     var tidySheetWindow: NSWindow?
@@ -84,6 +98,8 @@ final class DocumentWindowController: NSWindowController {
     /// the toolbar item owns its view; the controller only needs them to keep
     /// their lit state in step with the panels they open.
     weak var toolbarFindButton: ToolbarActionButton?
+    /// The `···` button. Sections that live behind it morph out of it.
+    weak var toolbarOverflowButton: ToolbarMenuButton?
     /// One update pill per window; created lazily by the toolbar and owned by
     /// the toolbar item's view.  It observes the coordinator itself, so it
     /// needs no wiring from the controller.  Internal (not private) because
@@ -450,6 +466,14 @@ final class DocumentWindowController: NSWindowController {
         windowSplitController = split
         inspectorItem = inspector
         window?.contentViewController = split
+        // Layer 3: on macOS 26 the window's whole content lives inside one
+        // glass container, so the travelling vessel and the pane's backdrop
+        // merge as they get close instead of rendering as two surfaces that
+        // happen to overlap (§Morph.Layer3).
+        if #available(macOS 26.0, *) {
+            installMorphGlassContainerIfAvailable()
+        }
+        installMorphRetargeting()
 
         NSLayoutConstraint.activate([
             primaryContainer!.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
@@ -469,11 +493,68 @@ final class DocumentWindowController: NSWindowController {
         buildToolbar()
     }
 
+    // MARK: Morph chip: Layer 3 container
+
+    /// Wraps the split — document and docked inspector — in an
+    /// `NSGlassEffectContainerView`.  The container merges descendant glass
+    /// views within a proximity, which is the Layer 3 clause of the morph
+    /// spec: the pane's backdrop and the travelling vessel are both `.regular`
+    /// glass with transparent tints, so when the vessel overlaps the pane on
+    /// landing they are rendered as one surface, not two that happen to
+    /// coincide.  The vessel stays a subview of the window's content view,
+    /// which *is* the container on macOS 26 — no change to where trips spawn.
+    @available(macOS 26.0, *)
+    private func installMorphGlassContainerIfAvailable() {
+        guard let hostWindow = window else { return }
+        let container = NSGlassEffectContainerView()
+        container.contentView = windowSplitController.splitView
+        let holder = NSViewController()
+        holder.view = container
+        hostWindow.contentViewController = holder
+    }
+
+    /// Keep a flying trip aimed at the pane's true resting place.  A live
+    /// window resize or a divider drag moves the pane half a metre while the
+    /// vessel is mid-air; retargeting only refits the destination.
+    private func installMorphRetargeting() {
+        guard window != nil else { return }
+        let center = NotificationCenter.default
+        let windowToken = center.addObserver(
+            forName: NSWindow.didResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.retargetMorphDestination()
+            }
+        }
+        let splitToken = center.addObserver(
+            forName: NSSplitView.didResizeSubviewsNotification,
+            object: windowSplitController?.splitView, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.retargetMorphDestination()
+            }
+        }
+        morphRetargetTokens = [windowToken, splitToken]
+    }
+
+    private func retargetMorphDestination() {
+        guard let vessel = morphVessel, let window else { return }
+        let anchor: Motion.MorphAnchor = switch morphDestination {
+        case .pane:
+            Motion.MorphAnchor(frame: destinationPaneAnchor(in: window), cornerRadius: 12)
+        case .ring:
+            morphSourceControl(for: morphHomeSection)
+                .map { controlMorphAnchor(for: $0, in: window) }
+                ?? ringMorphAnchor(in: window)
+        }
+        vessel.retarget(to: anchor, window: window)
+    }
+
     private func buildToolbar() {
         // Keep the document switch in the optical centre with explicit flexible
         // spaces. AppKit then owns hit testing and the layout stays stable when
         // a toolbar item is hidden or the window gets narrower.
-        let toolbar = NSToolbar(identifier: "DownrightToolbar.v10")
+        let toolbar = NSToolbar(identifier: "DownrightToolbar.v11")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.sizeMode = .regular
@@ -919,9 +1000,10 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func refreshChangeDecorations() {
-        // `marks`, not `visibleMarks`: a visited change dims rather than
-        // vanishing, so walking the review queue with ] does not erase it.
-        primaryContainer.textView.changeMarks = markdownDocument.changes.marks.map {
+        // `decoratedMarks`, not `unreadMarks`: a visited change dims rather than
+        // vanishing, so walking the review queue with ] does not erase it — but
+        // an expired one is gone, which is what makes the queue a queue.
+        primaryContainer.textView.changeMarks = markdownDocument.changes.decoratedMarks.map {
             MarkdownTextView.ChangeMark(
                 kind: $0.kind,
                 range: $0.range,
@@ -932,6 +1014,26 @@ final class DocumentWindowController: NSWindowController {
         }
         splitContainer?.textView.changeMarks = primaryContainer.textView.changeMarks
         refreshDensityBands()
+    }
+
+    /// "I have read all of these" — the review queue's one explicit exit.
+    ///
+    /// Reachable from the Navigate menu, ⌘⇧R and the palette, not only from the
+    /// summary bar.  The bar is raised by a live external write and goes away
+    /// with it, so it can only ever answer for changes that arrived while the
+    /// window was in front of you; marks outlive the bar by design (they are
+    /// persisted across a close/reopen), and until this existed the reader who
+    /// came back to a rewritten file simply had no control that turned the
+    /// highlighting off.
+    func markChangesReviewed() {
+        guard !markdownDocument.changes.isEmpty else { return }
+        let count = markdownDocument.changes.count
+        markdownDocument.changes.clear()
+        dismissChangeSummary()
+        toolbarDocumentIdentityView?.hasExternalChanges = false
+        announceTransientStatus(
+            "Marked \(count) change\(count == 1 ? "" : "s") as reviewed"
+        )
     }
 
     // MARK: - External changes (§8.1)
@@ -1047,7 +1149,230 @@ final class DocumentWindowController: NSWindowController {
         rootView.needsLayout = true
     }
 
+    // MARK: - End of life
+
+    deinit {
+        for token in morphRetargetTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
     // MARK: - Panels
+
+    // MARK: Morphing arrivals
+
+    /// Whether this window can fly a travelling glass vessel.  Reduce Motion
+    /// keeps the existing unfurl so a reader who asked for less motion still
+    /// gets exactly the animation they accepted.
+    private var canMorphInspector: Bool {
+        guard window != nil, !activeStyleSheet.reduceMotion else { return false }
+        return true
+    }
+
+    /// A panel arrives *out of the control that summoned it*: the source is
+    /// that control's seat, the destination is the empty glass of the docked
+    /// pane.  One code path for every section — the only thing that varies is
+    /// which control the glass pours out of.
+    ///
+    /// The pane opens on its own animator rather than instantly.  A hard
+    /// uncollapse reflows every line of the document in one frame and *then*
+    /// plays a beautiful half-second glide into the space it made — the
+    /// reader's eye is dragged by the text jump and never sees the morph.
+    /// Widening under the vessel costs nothing and makes the two halves one
+    /// movement.
+    ///
+    /// Returns `false` when there is nothing honest to fly out of, so the
+    /// caller can fall back to the host's unfurl.
+    @discardableResult
+    private func presentViaMorph(_ view: NSView, section: InspectorSection) -> Bool {
+        guard canMorphInspector, let window, let host = inspectorHost,
+              let source = morphSourceControl(for: section)
+        else { return false }
+
+        host.morphOwnsTransitions = true
+        morphDestination = .pane
+        morphHomeSection = section
+        setInspectorCollapsed(false, animated: true)
+        host.setContent(view, section: section)
+        applyPreferredInspectorWidth(for: view)
+        // The animator sets the model immediately, so a layout flush here
+        // resolves the pane's *resting* frame even while its presentation is
+        // still sliding open — which is exactly the anchor the vessel wants.
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        var trip = MorphVessel.Trip(
+            from: controlMorphAnchor(for: source, in: window),
+            to: Motion.MorphAnchor(frame: destinationPaneAnchor(in: window), cornerRadius: 12),
+            incomingContent: view,
+            outgoingContent: nil
+        )
+        trip.onSettle = { [weak self] in
+            guard let self else { return }
+            // The arrival belongs to the panel, not to the host: with the
+            // glass at rest the host's own unfurl rules the next change.
+            self.inspectorHost?.morphOwnsTransitions = false
+            self.morphVessel?.removeFromSuperview()
+            self.morphVessel = nil
+        }
+        let vessel = makeMorphVessel(in: window)
+        // `makeMorphVessel` already owns the reference.  Re-assigning it after
+        // the flight would resurrect a vessel that landed *during* `fly` — a
+        // trip with no display to fly on settles synchronously, and its
+        // `onSettle` has already torn the glass down and cleared this.
+        vessel.fly(trip, window: window)
+        // Belt and braces on the anchor: if the split view resolved an
+        // intermediate width above, re-aim once the pane's own animation has
+        // committed.  Retargeting a spring is continuous, so a correction the
+        // reader never sees costs nothing.
+        DispatchQueue.main.async { [weak self] in
+            self?.retargetMorphDestination()
+        }
+        return true
+    }
+
+    /// The arrival run backwards: the glass carries the panel home to the
+    /// control it came out of, and the pane closes behind it.
+    ///
+    /// Returns `false` when the section has no source control to dock into,
+    /// so the caller can fall back to fold-and-collapse.
+    @discardableResult
+    private func dismissViaMorph(_ view: NSView, section: InspectorSection) -> Bool {
+        guard canMorphInspector, let window,
+              let source = morphSourceControl(for: section)
+        else { return false }
+
+        inspectorHost?.morphOwnsTransitions = true
+        morphDestination = .ring
+        morphHomeSection = section
+        let vessel = makeMorphVessel(in: window)
+        var trip = MorphVessel.Trip(
+            from: Motion.MorphAnchor(frame: destinationPaneAnchor(in: window), cornerRadius: 12),
+            to: controlMorphAnchor(for: source, in: window),
+            incomingContent: nil,
+            outgoingContent: view
+        )
+        // The pane gives its width back at the content handoff, not on
+        // landing.  By that point the list has faded out and the vessel is
+        // empty glass, so nothing the reader was reading moves — and the
+        // document reclaims its column *while* the glass is still flying home
+        // rather than snapping shut a beat after it arrives.
+        trip.onHandoff = { [weak self] in
+            self?.collapseInspectorPane(animated: true)
+        }
+        trip.onSettle = { [weak self] in
+            guard let self else { return }
+            self.inspectorHost?.morphOwnsTransitions = false
+            self.inspectorHost?.removeContent(view, section: section)
+            // The collapse began at the handoff; this only guarantees the end
+            // state if that animation was pre-empted.
+            self.collapseInspectorPane(animated: false)
+            self.refreshToolbarSelectionState()
+            self.morphVessel?.removeFromSuperview()
+            self.morphVessel = nil
+        }
+        vessel.fly(trip, window: window)
+        return true
+    }
+
+    private func presentTaskPanelViaMorph(_ panel: TaskPanelView) {
+        if !presentViaMorph(panel, section: .tasks) {
+            showInInspectorFallback(panel)
+        }
+    }
+
+    private func presentTaskPanelDismissal(_ panel: TaskPanelView) {
+        if !dismissViaMorph(panel, section: .tasks) {
+            inspectorHost?.removeContent(panel, section: .tasks)
+            collapseInspectorPane(animated: false)
+            refreshToolbarSelectionState()
+        }
+    }
+
+    private func showInInspectorFallback(_ panel: TaskPanelView) {
+        showInInspector(panel, section: .tasks)
+    }
+
+    /// The vessel is a child of the window's glass container's content view —
+/// on macOS 26 that is the split, which is exactly where the container
+/// merges descendant glass — and of the content view everywhere else.  Its
+/// geometry is owned by the springs; the superview only decides the lanes
+/// it may fly through.
+    private func makeMorphVessel(in window: NSWindow) -> MorphVessel {
+        let vessel = morphVessel ?? MorphVessel(frame: .zero)
+        vessel.autoresizingMask = []
+        morphVessel = vessel
+        // A vessel that landed is detached but may still be held; re-seat it
+        // rather than fly a body that is not in the hierarchy, which would
+        // animate perfectly and draw nothing.
+        guard vessel.superview == nil else { return vessel }
+        let target: NSView
+        if #available(macOS 26.0, *),
+           let container = window.contentView as? NSGlassEffectContainerView,
+           let inner = container.contentView {
+            target = inner
+        } else {
+            target = window.contentView ?? NSView()
+        }
+        target.addSubview(vessel)
+        return vessel
+    }
+
+    /// The ring's seat in window space — the pill this morph detaches from.
+    /// The ring itself lives in the toolbar, which this window's content
+    /// cannot cover, so the seat is the ring's visible sliver: the vessel
+    /// reads as pouring out of the button instead of popping in above it.
+    private func ringMorphAnchor(in window: NSWindow) -> Motion.MorphAnchor {
+        controlMorphAnchor(for: progressRing, in: window)
+    }
+
+    /// A toolbar control's seat in window space — the pill a morph detaches
+    /// from, or docks back into.
+    ///
+    /// Toolbar controls live above the window's content, which the vessel
+    /// cannot fly over, so the seat is clipped to the control's *visible*
+    /// sliver.  That is deliberate: the glass reads as pouring out of the
+    /// button rather than popping into existence above it.
+    private func controlMorphAnchor(for control: NSView, in window: NSWindow) -> Motion.MorphAnchor {
+        guard let content = window.contentView, control.window === window else {
+            return Motion.MorphAnchor(frame: .zero, cornerRadius: 12)
+        }
+        let controlFrame = control.convert(control.bounds, to: nil)
+        let seat = controlFrame.insetBy(dx: -4, dy: -4)
+        let visible = seat.intersection(content.convert(content.bounds, to: nil))
+        let frame = visible.isEmpty || visible.isNull ? seat : visible
+        let radius = max(3, min(30, frame.height / 2))
+        return Motion.MorphAnchor(frame: frame, cornerRadius: radius, tint: nil)
+    }
+
+    /// The control an inspector section flies out of, and docks back into.
+    ///
+    /// This is the whole of the "which control summoned this panel" contract.
+    /// A section with no visible source cannot morph honestly — there is no
+    /// body for the glass to come out of — so it returns `nil` and the caller
+    /// falls back to the host's own unfurl rather than inventing an origin.
+    private func morphSourceControl(for section: InspectorSection) -> NSView? {
+        let control: NSView? = switch section {
+        case .tasks: progressRing
+        case .search: toolbarFindButton
+        // Everything behind `···` genuinely comes out of that button.
+        default: toolbarOverflowButton
+        }
+        guard let control, control.window != nil, !control.isHiddenOrHasHiddenAncestor else {
+            return nil
+        }
+        return control
+    }
+
+    /// The docked pane once it is fully open: window space, pushed six points
+    /// past its edge so the vessel's glass overlaps the pane's own backdrop
+    /// and the two bodies merge on landing instead of meeting on a hairline
+    /// of document background.
+    private func destinationPaneAnchor(in window: NSWindow) -> NSRect {
+        guard let host = inspectorHost, host.window === window else {
+            return NSRect(x: window.contentView?.bounds.width ?? 400, y: -8, width: 40, height: 40)
+        }
+        return host.convert(host.bounds, to: nil).insetBy(dx: -6, dy: -6)
+    }
 
     func toggleTaskPanel() {
         // The task list is a *docked* inspector (§8.5): opening it narrows the
@@ -1066,6 +1391,8 @@ final class DocumentWindowController: NSWindowController {
         panel.tasks = markdownDocument.parsed.tasks
         panel.headings = markdownDocument.parsed.headings
         panel.onClose = { [weak self] in self?.closeTaskPanel() }
+        // `showInInspector` flies the morph itself when there is a control to
+        // fly out of, and unfurls when there is not — one call, both paths.
         showInInspector(panel, section: .tasks)
         progressRing.isActive = true
         panel.reload()
@@ -1081,6 +1408,14 @@ final class DocumentWindowController: NSWindowController {
               !inspectorItem.isCollapsed, !activeStyleSheet.reduceMotion else {
             inspectorHost?.removeContent(panel, section: .tasks)
             if inspectorHost?.hasContent != true { collapseInspectorPane(animated: false) }
+            refreshToolbarSelectionState()
+            return
+        }
+        if canMorphInspector {
+            // The glass flies home: the pane's contents dim out in the first
+            // progress window, the vessel shrinks through the empty gap, and
+            // only when it docks in the ring does the pane give its width back.
+            presentTaskPanelDismissal(panel)
             refreshToolbarSelectionState()
             return
         }
@@ -1163,6 +1498,15 @@ final class DocumentWindowController: NSWindowController {
             inspectorHost = created
             host = created
         }
+        // A panel that has a control to come out of flies out of it; the
+        // unfurl below is what a section with no honest origin gets, and what
+        // Reduce Motion gets in every case.  The host has to exist before the
+        // morph can aim at the pane, which is why this runs here rather than
+        // at the call site.
+        if presentViaMorph(view, section: section) {
+            refreshToolbarSelectionState()
+            return
+        }
         // Uncollapse before the content goes in: the panel's arrival
         // animation needs a window to play in, and a collapsed pane has none.
         // The pane widens on the same clock the panel unfurls on, so the two
@@ -1197,6 +1541,16 @@ final class DocumentWindowController: NSWindowController {
     /// replaces.
     func closeInspector() {
         guard !inspectorItem.isCollapsed else {
+            refreshToolbarSelectionState()
+            return
+        }
+        // Closing is the arrival run backwards.  A section that flew out of a
+        // control flies back into it — the pane is only carrying one panel, so
+        // there is nothing left behind for the glass to abandon.
+        if let section = inspectorHost?.selectedSection,
+           let view = inspectorHost?.content(for: section),
+           inspectorHost?.contentCount == 1,
+           dismissViaMorph(view, section: section) {
             refreshToolbarSelectionState()
             return
         }
@@ -1313,32 +1667,16 @@ final class DocumentWindowController: NSWindowController {
         }
 
         bar.showsReplace = replace
-        // ⌘F means "find this" when text is selected: seed from the selection.
-        // Otherwise the bar reopens on its last query (#2) so it never starts
-        // empty.
-        if selectionRange().length > 0 {
-            seedFindBarFromSelection(bar)
-        } else if !findSession.query.isEmpty {
+        // Keep ⌘F and ⌘E distinct, as on macOS: Find opens the previous query;
+        // Use Selection for Find explicitly replaces it. Auto-seeding from a
+        // restored multi-line document selection can otherwise fill the field
+        // with a whole paragraph before the reader types a character.
+        if !findSession.query.isEmpty {
             bar.setQueryText(findSession.query.text)
             runFind(findSession.query)
         }
         bar.focusSearchField()
         refreshToolbarSelectionState()
-    }
-
-    /// ⌘F on a selection is "find this", so the field starts from what is
-    /// selected and the document advances past the very occurrence that seeded it.
-    private func seedFindBarFromSelection(_ bar: FindBarView) {
-        let sel = selectionRange()
-        guard sel.length > 0 else { return }
-        let text = (markdownDocument.text as NSString).substring(with: sel)
-        bar.setQueryText(text)
-        var query = FindQuery()
-        query.text = text
-        // Compute the match set without jumping to the seeded occurrence; the
-        // advance below moves straight to the next match past the selection.
-        runFind(query, scrollToMatch: false)
-        advanceFind(forward: true)
     }
 
     func showFindInspector(replace: Bool) {

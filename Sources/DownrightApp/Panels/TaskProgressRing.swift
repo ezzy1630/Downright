@@ -393,7 +393,12 @@ final class TaskProgressRing: NSView {
         checkLayer.strokeEnd = 1
         checkLayer.opacity = 1
 
-        let pop = Motion.pop(from: 0.9, overshoot: 1.08, duration: Motion.deliberate)
+        let pop = Motion.pop(
+            from: 0.9,
+            overshoot: 1.08,
+            duration: Motion.deliberate,
+            travelAxis: CGVector(dx: 0, dy: 1)
+        )
         pop.beginTime = CACurrentMediaTime() + Motion.quick
         pop.fillMode = .backwards
         glyphLayer.add(pop, forKey: "completion-pop")
@@ -452,7 +457,11 @@ final class TaskProgressRing: NSView {
             return
         }
 
-        let pop = Motion.pop(from: ToolbarChromePolicy.ringPressedScale, overshoot: 1.12)
+        let pop = Motion.pop(
+            from: ToolbarChromePolicy.ringPressedScale,
+            overshoot: 1.12,
+            travelAxis: CGVector(dx: 0, dy: 1)
+        )
         glyphLayer.removeAnimation(forKey: "press-transform")
         glyphLayer.add(pop, forKey: "press-transform")
         glyphLayer.transform = CATransform3DIdentity
@@ -470,7 +479,7 @@ final class TaskProgressRing: NSView {
         grow.fromValue = 1
         grow.toValue = 2.1
         grow.duration = Motion.deliberate
-        grow.timingFunction = Motion.timing(.decelerate)
+        grow.timingFunction = Motion.timing(.structural)
         pingLayer.add(grow, forKey: "ping-grow")
         pingLayer.transform = CATransform3DMakeScale(2.1, 2.1, 1)
         let fade = CABasicAnimation(keyPath: "opacity")

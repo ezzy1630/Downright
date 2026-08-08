@@ -409,7 +409,7 @@ private final class StartView: NSView {
         contentStack.wantsLayer = true
         contentStack.layer?.opacity = 0
         contentStack.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: 10))
-        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .decelerate) { _ in
+        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .structural) { _ in
             self.contentStack.layer?.opacity = 1
             self.contentStack.layer?.setAffineTransform(.identity)
         }

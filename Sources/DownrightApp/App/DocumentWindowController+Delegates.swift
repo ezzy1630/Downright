@@ -511,14 +511,6 @@ extension DocumentWindowController: ChangeSummaryBarDelegate {
         perform(forward ? .nextChange : .previousChange)
     }
 
-    /// Arriving is not reviewing — the same rule `jumpChange` follows.  The mark
-    /// stays unvisited so its highlight is still there when the reader lands on
-    /// it; dwell and departure are what clear it.
-    func changeSummaryBar(_ bar: ChangeSummaryBarView, didSelectChangeWith id: UUID) {
-        guard let mark = markdownDocument.changes.marks.first(where: { $0.id == id }) else { return }
-        jump(to: mark.range.location, label: "Change")
-    }
-
     func changeSummaryBarDidRequestMarkReviewed(_ bar: ChangeSummaryBarView) {
         markdownDocument.changes.clear()
         dismissChangeSummary()
