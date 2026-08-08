@@ -201,6 +201,7 @@ final class MorphVessel: Motion.SpringSurfaceView {
         guard trip != nil else { return }
         rect.snap(to: rect.target)
         radius.snap(to: radius.target)
+        tint.snap(to: tint.target)
         progress.snap(to: 1)
         isMoving = false
         springApply()

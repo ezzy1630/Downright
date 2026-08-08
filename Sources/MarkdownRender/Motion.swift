@@ -468,6 +468,13 @@ public enum Motion {
         public var value: NSColor {
             OKLab.sRGB(L: lab.L.value, a: lab.a.value, b: lab.b.value, alpha: alpha.value)
         }
+
+        /// The colour this spring is heading for — for a surface that has to
+        /// abandon the journey and land (live resize, a trip with no display
+        /// to fly on).
+        public var target: NSColor {
+            OKLab.sRGB(L: lab.L.target, a: lab.a.target, b: lab.b.target, alpha: alpha.target)
+        }
     }
 
     // MARK: OKLab

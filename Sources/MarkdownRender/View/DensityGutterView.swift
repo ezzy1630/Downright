@@ -308,11 +308,26 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     /// A review pip — the small dots on a mark's leading edge.  They hold the
     /// mark's fraction but spring independently so a pip can *cascade* in
     /// behind the band it belongs to (Motion.previewStagger per step).
-    private struct PipSimulation {
+    ///
+    /// Internal rather than private only so the rail's own tests can drive the
+    /// cascade a frame at a time: the release schedule is the one part of this
+    /// that can fail silently — by never releasing — and a bug that shows up
+    /// as "an invisible dot and a busy display link" is not one to leave to
+    /// the eye.
+    struct PipSimulation {
         var centre: Motion.SpringPoint
         var diameter: Motion.SpringScalar
         var color: Motion.SpringColor
-        var releaseAt: CFTimeInterval = 0
+        /// Seconds still to wait before this pip joins the cascade.
+        ///
+        /// Counted down by `advance` rather than compared against a wall
+        /// clock, because the driver is the only thing that knows time is
+        /// passing.  A release *deadline* could only be crossed by an event,
+        /// and a cascade is precisely the case where no further event is
+        /// coming: the pips beyond the first would sit unengaged for ever,
+        /// invisible, while `advance` kept reporting them as moving and the
+        /// display link spun at full refresh on an idle window.
+        var delayRemaining: CGFloat = 0
         var engaged = false
 
         init(centre: CGPoint, diameter: CGFloat, color: CGColor) {
@@ -328,15 +343,15 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             )
         }
 
-        mutating func retarget(centre: CGPoint, diameter: CGFloat, color: CGColor, releaseAt: CFTimeInterval, now: CFTimeInterval, releaseNow: Bool) {
+        mutating func retarget(centre: CGPoint, diameter: CGFloat, color: CGColor, delay: CGFloat, releaseNow: Bool) {
             self.centre.target(centre)
             self.diameter.target(diameter)
             self.color.target(MarkSimulation.foreground(of: color))
             if engaged { return }
-            self.releaseAt = releaseAt
-            if releaseNow || now >= releaseAt {
-                engaged = true
-                self.color.kickAlpha(18)
+            if releaseNow || delay <= 0 {
+                engage()
+            } else {
+                delayRemaining = delay
             }
         }
 
@@ -344,13 +359,26 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             self.centre.snap(to: centre)
             self.diameter.snap(to: diameter)
             self.color.snap(to: MarkSimulation.foreground(of: color))
+            delayRemaining = 0
             engaged = true
         }
 
+        /// Join the cascade: the alpha spring takes a velocity kick so the pip
+        /// swells into place rather than merely appearing.
+        private mutating func engage() {
+            engaged = true
+            delayRemaining = 0
+            color.kickAlpha(18)
+        }
+
         mutating func advance(dt: CGFloat) -> Bool {
-            // A scheduled pip has not engaged yet: report it as moving so the
-            // driver stays alive until its cascade step fires.
-            guard engaged else { return releaseAt > 0 }
+            if !engaged {
+                delayRemaining -= dt
+                // Still waiting its turn: moving, in the sense the driver
+                // cares about — there is more to draw after this frame.
+                guard delayRemaining <= 0 else { return true }
+                engage()
+            }
             var moving = false
             moving = centre.advance(dt: dt) || moving
             moving = diameter.advance(dt: dt) || moving
@@ -979,7 +1007,6 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             pip.isHidden = true
         }
 
-        let now = CACurrentMediaTime()
         let releaseNow = !animated || styleSheet.reduceMotion
         for (index, target) in wanted.enumerated() {
             if index >= pipSimulations.count {
@@ -1002,8 +1029,7 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
                     centre: CGPoint(x: target.x, y: target.y),
                     diameter: diameter,
                     color: target.color.cgColor,
-                    releaseAt: now + Motion.previewStagger * CGFloat(index),
-                    now: now,
+                    delay: Motion.previewStagger * CGFloat(index),
                     releaseNow: false
                 )
             }
