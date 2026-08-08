@@ -35,6 +35,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     /// Set while the host is scanning the folder for the first time.  A folder
     /// scan is work in progress, not an empty folder.
     var isScanning: Bool = false { didSet { reload() } }
+    var errorMessage: String? { didSet { if errorMessage != oldValue { reload() } } }
 
     var preferredWidth: CGFloat { PanelMetrics.listWidth }
 
@@ -43,7 +44,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     private let countLabel = NSTextField(labelWithString: "")
     private let tabControl: PanelSegmentedControl
     private let searchField = NSSearchField()
-    private let spinner = NSProgressIndicator()
+    private let spinner = ActivityIndicatorView()
     private let emptyState = PanelEmptyStateView()
     private let table = PanelList.makeTableView(identifier: "workspaceSidebar")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
@@ -89,9 +90,6 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(countLabel)
 
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(spinner)
 
@@ -126,7 +124,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             spinner.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
             spinner.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 14),
@@ -171,7 +169,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     /// may say "none" until this is false.
     private var isBusy: Bool {
         switch selectedTab {
-        case .files: return isScanning || !hasScanned
+        case .files: return errorMessage == nil && (isScanning || !hasScanned)
         case .search: return isSearching
         case .backlinks: return false
         }
@@ -209,7 +207,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
                 : "\(backlinks.count) backlink\(backlinks.count == 1 ? "" : "s")"
         }
         countLabel.setAccessibilityLabel(countLabel.stringValue)
-        if isBusy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        if isBusy { spinner.begin() } else { spinner.end() }
         table.reloadData()
         updateEmptyState()
         setAccessibilityValue(countLabel.stringValue)
@@ -222,7 +220,9 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
             return
         }
         let state: (symbol: String, title: String, subtitle: String)
-        switch (selectedTab, isBusy) {
+        if let errorMessage {
+            state = ("exclamationmark.triangle", "Workspace unavailable", errorMessage)
+        } else { switch (selectedTab, isBusy) {
         case (.files, true):
             state = ("folder", "Scanning the folder", "Listing the Markdown files\nnext to this document.")
         case (.files, false):
@@ -235,7 +235,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
             state = ("magnifyingglass", "No matches", "Nothing in this workspace\ncontains “\(searchField.stringValue)”.")
         case (.backlinks, _):
             state = ("arrow.triangle.branch", "No backlinks", "No workspace file links to\nthis document yet.")
-        }
+        } }
         emptyState.configure(symbol: state.symbol, title: state.title, subtitle: state.subtitle, styleSheet: styleSheet)
         emptyState.isHidden = false
         scroll.isHidden = true

@@ -15,8 +15,14 @@ import MarkdownRender
 final class LightboxWindow: NSWindow {
     private var lightboxView: LightboxContentView? { contentView as? LightboxContentView }
     private var reduceMotion = false
+    private var reduceTransparency = false
 
-    convenience init(image: NSImage, caption: String?, reduceMotion: Bool = false) {
+    convenience init(
+        image: NSImage,
+        caption: String?,
+        reduceMotion: Bool = false,
+        reduceTransparency: Bool = false
+    ) {
         self.init(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.borderless], backing: .buffered, defer: true
@@ -29,8 +35,14 @@ final class LightboxWindow: NSWindow {
         animationBehavior = .none
         collectionBehavior = [.fullScreenAuxiliary, .transient]
         self.reduceMotion = reduceMotion
+        self.reduceTransparency = reduceTransparency
 
-        let view = LightboxContentView(image: image, caption: caption)
+        let view = LightboxContentView(
+            image: image,
+            caption: caption,
+            reduceMotion: reduceMotion,
+            reduceTransparency: reduceTransparency
+        )
         view.onDismiss = { [weak self] in self?.dismiss() }
         contentView = view
     }
@@ -40,14 +52,14 @@ final class LightboxWindow: NSWindow {
     func present(over window: NSWindow) {
         let frame = window.screen?.visibleFrame ?? window.frame
         setFrame(frame, display: true)
-        lightboxView?.resetZoom()
+        lightboxView?.resetZoom(animated: false)
 
         window.addChildWindow(self, ordered: .above)
         alphaValue = reduceMotion ? 1 : 0
         makeKeyAndOrderFront(nil)
         makeFirstResponder(contentView)
         guard !reduceMotion else { return }
-        PanelAnimation.run(reduceMotion: false, duration: 0.15) { _ in
+        PanelAnimation.run(reduceMotion: false, duration: Motion.selection) { _ in
             animator().alphaValue = 1
         }
     }
@@ -63,7 +75,7 @@ final class LightboxWindow: NSWindow {
             finish()
             return
         }
-        PanelAnimation.run(reduceMotion: false, duration: 0.12, { _ in
+        PanelAnimation.run(reduceMotion: false, duration: Motion.quick, { _ in
             animator().alphaValue = 0
         }, completion: finish)
     }
@@ -78,7 +90,9 @@ private final class LightboxContentView: NSView {
 
     private let image: NSImage
     private let caption: String?
-    private var scale: CGFloat = 1
+    private let reduceMotion: Bool
+    private let reduceTransparency: Bool
+    @objc dynamic private var scale: CGFloat = 1 { didSet { needsDisplay = true } }
     private var offset = CGSize.zero
     private var didDrag = false
     private var isGripping = false
@@ -87,9 +101,11 @@ private final class LightboxContentView: NSView {
     private let minimumScale: CGFloat = 0.05
     private let maximumScale: CGFloat = 16
 
-    init(image: NSImage, caption: String?) {
+    init(image: NSImage, caption: String?, reduceMotion: Bool, reduceTransparency: Bool) {
         self.image = image
         self.caption = caption?.isEmpty == true ? nil : caption
+        self.reduceMotion = reduceMotion
+        self.reduceTransparency = reduceTransparency
         super.init(frame: .zero)
         setAccessibilityRole(.image)
         setAccessibilityLabel(self.caption ?? "Image")
@@ -110,10 +126,25 @@ private final class LightboxContentView: NSView {
         return min(1, min(available.width / size.width, available.height / size.height))
     }
 
-    func resetZoom() {
-        scale = fitScale
-        offset = .zero
-        needsDisplay = true
+    func resetZoom(animated: Bool = true) {
+        setZoom(scale: fitScale, offset: .zero, animated: animated)
+    }
+
+    override class func defaultAnimation(forKey key: NSAnimatablePropertyKey) -> Any? {
+        if key == "scale" { return CABasicAnimation() }
+        return super.defaultAnimation(forKey: key)
+    }
+
+    private func setZoom(scale targetScale: CGFloat, offset targetOffset: CGSize, animated: Bool = true) {
+        offset = targetOffset
+        guard animated, !reduceMotion, window != nil else {
+            scale = targetScale
+            needsDisplay = true
+            return
+        }
+        Motion.run(reduceMotion: false, duration: Motion.standard, curve: .decelerate) { _ in
+            self.animator().scale = targetScale
+        }
     }
 
     private var imageRect: NSRect {
@@ -133,16 +164,14 @@ private final class LightboxContentView: NSView {
 
         let unitX = (anchor.x - old.minX) / old.width
         let unitY = (anchor.y - old.minY) / old.height
-        scale = newScale
-
-        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let size = NSSize(width: image.size.width * newScale, height: image.size.height * newScale)
         let originX = anchor.x - unitX * size.width
         let originY = anchor.y - unitY * size.height
-        offset = CGSize(
+        let targetOffset = CGSize(
             width: originX - (bounds.midX - size.width / 2),
             height: originY - (bounds.midY - size.height / 2)
         )
-        needsDisplay = true
+        setZoom(scale: newScale, offset: targetOffset)
     }
 
     // MARK: Input
@@ -179,9 +208,7 @@ private final class LightboxContentView: NSView {
         }
         if event.clickCount == 2 {
             // Fit ⇄ actual size, the standard image-viewer double-click.
-            scale = abs(scale - fitScale) < 0.001 ? 1 : fitScale
-            offset = .zero
-            needsDisplay = true
+            setZoom(scale: abs(scale - fitScale) < 0.001 ? 1 : fitScale, offset: .zero)
             return
         }
         guard !didDrag else { return }
@@ -198,9 +225,7 @@ private final class LightboxContentView: NSView {
         case "-", "_": zoom(by: 1 / 1.25, about: NSPoint(x: bounds.midX, y: bounds.midY))
         case "0": resetZoom()
         case "1":
-            scale = 1
-            offset = .zero
-            needsDisplay = true
+            setZoom(scale: 1, offset: .zero)
         default: super.keyDown(with: event)
         }
     }
@@ -216,8 +241,7 @@ private final class LightboxContentView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         // Opaque under Reduce Transparency; a scrim is decoration, and the
         // setting says not to depend on it.
-        let opaque = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-        NSColor.black.withAlphaComponent(opaque ? 1 : 0.88).setFill()
+        NSColor.black.withAlphaComponent(reduceTransparency ? 1 : 0.88).setFill()
         dirtyRect.fill()
 
         let rect = imageRect
@@ -234,7 +258,7 @@ private final class LightboxContentView: NSView {
         paragraph.lineBreakMode = .byTruncatingTail
         paragraph.alignment = .center
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12),
+            .font: PanelFont.system(12),
             .foregroundColor: NSColor.white,
             .paragraphStyle: paragraph,
         ]

@@ -108,7 +108,7 @@ final class StartWindowController: NSWindowController {
             window.close()
             completion?()
         }
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard animated, !StartTheme.makeSheet().reduceMotion else {
             finish()
             return
         }
@@ -404,12 +404,12 @@ private final class StartView: NSView {
     }
 
     private func playEntrance() {
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduce = sheet.reduceMotion
         guard !reduce else { return }
         contentStack.wantsLayer = true
         contentStack.layer?.opacity = 0
         contentStack.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: 10))
-        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .spring) { _ in
+        Motion.run(reduceMotion: false, duration: Motion.deliberate, curve: .decelerate) { _ in
             self.contentStack.layer?.opacity = 1
             self.contentStack.layer?.setAffineTransform(.identity)
         }
@@ -497,7 +497,7 @@ private final class StartDropOverlay: NSView {
         guard active != isActive else { return }
         isActive = active
         isHidden = false
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduce = sheet.reduceMotion
         let apply = { self.layer?.opacity = active ? 1 : 0 }
         if reduce {
             apply()
@@ -721,7 +721,7 @@ private final class StartHeroView: NSView {
     func setDropActive(_ active: Bool) {
         guard active != isDropActive else { return }
         isDropActive = active
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduceMotion = sheet.reduceMotion
         let changes = {
             self.dropHint.textColor = active ? self.sheet.accent : self.sheet.textSecondary
             self.dropIcon.contentTintColor = active ? self.sheet.accent : self.sheet.textFaint
@@ -857,7 +857,7 @@ private final class RecentDocumentsPanel: NSView {
     var rowButtons: [RecentDocumentButton] { rowViews }
 
     func revealRows() {
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduce = sheet.reduceMotion
         guard !reduce, !rowViews.isEmpty else { return }
         for (index, row) in rowViews.enumerated() {
             row.wantsLayer = true
@@ -951,6 +951,14 @@ private final class StartTextButton: NSButton {
     override var intrinsicContentSize: NSSize {
         NSSize(width: ceil(title.size(withAttributes: [.font: font ?? .systemFont(ofSize: 11.5)]).width), height: 20)
     }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds.insetBy(dx: -3, dy: -2), xRadius: 5, yRadius: 5).fill()
+    }
+
+    override var focusRingMaskBounds: NSRect { bounds.insetBy(dx: -3, dy: -2) }
 
     func apply(sheet: StyleSheet) {
         self.sheet = sheet
@@ -1298,7 +1306,7 @@ private final class StartActionButton: NSButton {
         }
         if animated {
             Motion.run(
-                reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                reduceMotion: sheet.reduceMotion,
                 duration: Motion.quick,
                 curve: .easeOut
             ) { _ in changes() }
@@ -1674,7 +1682,7 @@ private final class RecentDocumentButton: NSButton {
                     : .identity
             )
         }
-        if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if animated, !sheet.reduceMotion {
             Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in apply() }
         } else {
             apply()

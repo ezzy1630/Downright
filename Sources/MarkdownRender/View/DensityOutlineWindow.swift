@@ -243,20 +243,32 @@ private final class DensityOutlineRow: NSTableCellView {
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        needsDisplay = true
+        applyBackground(animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        needsDisplay = true
+        applyBackground(animated: true)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard isCurrent || isHovered else { return }
-        let alpha: CGFloat = isCurrent ? 0.08 : 0.05
-        styleSheet.text.withAlphaComponent(alpha).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6).fill()
+    }
+
+    private func applyBackground(animated: Bool) {
+        let alpha: CGFloat = isCurrent ? 0.08 : (isHovered ? 0.05 : 0)
+        let target = styleSheet.text.withAlphaComponent(alpha).cgColor
+        guard animated, !styleSheet.reduceMotion, window != nil else {
+            layer?.backgroundColor = target
+            return
+        }
+        let fade = CABasicAnimation(keyPath: "backgroundColor")
+        fade.fromValue = layer?.presentation()?.backgroundColor ?? layer?.backgroundColor
+        fade.toValue = target
+        fade.duration = Motion.hover
+        fade.timingFunction = Motion.timing(.snap)
+        layer?.add(fade, forKey: "row-hover")
+        layer?.backgroundColor = target
     }
 
     func configure(entry: DensityOutlineEntry, styleSheet: StyleSheet) {
@@ -266,6 +278,8 @@ private final class DensityOutlineRow: NSTableCellView {
         label.stringValue = entry.title
         label.font = NSFont.systemFont(ofSize: 12, weight: entry.isCurrent ? .semibold : .regular)
         label.textColor = entry.isCurrent ? styleSheet.accent : styleSheet.text
+        layer?.cornerRadius = 6
+        applyBackground(animated: false)
     }
 }
 
@@ -296,7 +310,13 @@ private final class OutlineBackdrop: NSVisualEffectView {
     override func mouseExited(with event: NSEvent) { onPointerPresence?(false) }
 
     override func draw(_ dirtyRect: NSRect) {
+        material = styleSheet.reduceTransparency ? .windowBackground : .popover
+        blendingMode = styleSheet.reduceTransparency ? .withinWindow : .behindWindow
         super.draw(dirtyRect)
+        if styleSheet.reduceTransparency {
+            styleSheet.background.setFill()
+            bounds.fill()
+        }
         styleSheet.rule.setStroke()
         let path = NSBezierPath(
             roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),

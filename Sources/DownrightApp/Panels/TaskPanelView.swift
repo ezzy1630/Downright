@@ -145,9 +145,12 @@ final class TaskPanelView: NSView, PanelSurface {
         // matte slab, and a whisper of a themed veil keeps the rows legible
         // over a busy page.  The rule that separates it from the host's
         // header belongs to the host.
-        backdrop.usesSurfaceFill = false
+        // Tasks is a working sidebar, not a transient overlay. Give it a
+        // stable surface so rows remain distinct from the document in every
+        // wallpaper, transparency, and appearance combination.
+        backdrop.usesSurfaceFill = true
         backdrop.blendsWithinWindow = true
-        backdrop.veilAlpha = 0.12
+        backdrop.veilAlpha = 0
         installBackdrop(backdrop)
 
         buildHeader()
@@ -1663,7 +1666,7 @@ private final class TaskUndoPillView: NSView {
         undoButton.target = action
         undoButton.action = #selector(ButtonAction.fire(_:))
         undoButton.isBordered = false
-        undoButton.font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+        undoButton.font = PanelFont.system(11.5, weight: .semibold)
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setContentHuggingPriority(.required, for: .horizontal)
         addSubview(undoButton)

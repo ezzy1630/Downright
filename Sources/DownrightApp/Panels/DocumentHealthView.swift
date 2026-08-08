@@ -103,7 +103,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         preview.isEditable = false
         preview.isSelectable = true
         preview.isRichText = false
-        preview.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        preview.font = PanelFont.monospaced(10)
         preview.drawsBackground = true
         preview.textContainerInset = NSSize(width: 6, height: 5)
         preview.setAccessibilityLabel("Source change preview")
@@ -152,7 +152,7 @@ final class DocumentHealthView: NSView, PanelSurface {
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             countLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),

@@ -147,11 +147,18 @@ public final class MarkdownContainerView: NSView {
         super.layout()
         let topHeight = topAccessoryHeight
         let topLaneHeight = self.topLaneHeight
-        let isFloatingDensityMap = leadingAccessory is DensityGutterView
-        let leadingWidth = isFloatingDensityMap
+        let densityMap = (leadingAccessory as? DensityGutterView)
+            ?? (trailingAccessory as? DensityGutterView)
+        let hasLeadingDensityMap = leadingAccessory is DensityGutterView
+        let leadingWidth = hasLeadingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
             : (leadingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 24 } ?? 0)
-        let trailingWidth = trailingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 14 } ?? 0
+        let trailingWidth = trailingAccessory.map {
+            if $0 is DensityGutterView {
+                return $0.fittingSize.width > 0 ? $0.fittingSize.width : DensityGutterView.width
+            }
+            return $0.fittingSize.width > 0 ? $0.fittingSize.width : 14
+        } ?? 0
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
 
         leadingAccessory?.frame = NSRect(x: 0, y: 0,
@@ -235,19 +242,19 @@ public final class MarkdownContainerView: NSView {
         gutter.frame = NSRect(x: max(0, textOrigin - gutterWidth), y: topLaneHeight,
                               width: gutterWidth, height: scrollView.frame.height)
 
-        if isFloatingDensityMap, let leadingAccessory {
-            // Sticky full-height stick on the leading edge. The mark stack is
+        if let densityMap {
+            // Sticky full-height stick on the selected edge. The mark stack is
             // centred in the window, not the scrolled document — so the map
             // never rides with the text and never shrinks under the breadcrumb.
-            leadingAccessory.frame = NSRect(
-                x: 0,
+            densityMap.frame = NSRect(
+                x: hasLeadingDensityMap ? 0 : bounds.width - trailingWidth,
                 y: 0,
-                width: leadingWidth,
+                width: hasLeadingDensityMap ? leadingWidth : trailingWidth,
                 height: bounds.height
             )
-            // Keep the stick above the scroll view / marker rail so the left
-            // hit lane stays responsive.
-            addSubview(leadingAccessory, positioned: .above, relativeTo: nil)
+            // Keep the stick above the scroll view / marker rail so its hit
+            // lane stays responsive.
+            addSubview(densityMap, positioned: .above, relativeTo: nil)
         }
 
     }

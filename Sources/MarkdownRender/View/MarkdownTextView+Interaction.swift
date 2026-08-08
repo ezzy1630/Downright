@@ -244,24 +244,25 @@ extension MarkdownTextView {
     /// is drawn by the fragment, not stored as text attributes, so the only
     /// thing this has to do is ask for frames.
     private func driveCheckboxPulseRedraw() {
-        checkboxPulseTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let now = CFAbsoluteTimeGetCurrent()
-            let live = self.fragmentContext.checkboxPulses.filter {
-                now - $0.started < CheckboxPulse.duration
-            }
-            guard !live.isEmpty else {
-                self.checkboxPulseTimer?.invalidate()
-                self.checkboxPulseTimer = nil
-                return
-            }
-            // Invalidating the whole view at 60fps meant one tick on a long
-            // checklist redrew every fragment in the document.
-            self.setNeedsDisplay(self.pulseInvalidationRect(for: live.map(\.sourceRange)))
+        checkboxPulseDisplayLink?.invalidate()
+        let displayLink = displayLink(target: self, selector: #selector(stepCheckboxPulse(_:)))
+        displayLink.add(to: .main, forMode: .common)
+        checkboxPulseDisplayLink = displayLink
+    }
+
+    @objc private func stepCheckboxPulse(_ displayLink: CADisplayLink) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let live = fragmentContext.checkboxPulses.filter {
+            now - $0.started < CheckboxPulse.duration
         }
-        RunLoop.main.add(timer, forMode: .common)
-        checkboxPulseTimer = timer
+        guard !live.isEmpty else {
+            displayLink.invalidate()
+            checkboxPulseDisplayLink = nil
+            return
+        }
+        // The display link follows the actual screen refresh rate and only
+        // invalidates the ornaments that are still animating.
+        setNeedsDisplay(pulseInvalidationRect(for: live.map(\.sourceRange)))
     }
 
     /// The area a pulsing ornament can reach: the blocks holding the boxes,
@@ -310,6 +311,7 @@ extension MarkdownTextView {
     }
 
     public override func mouseDown(with event: NSEvent) {
+        interruptAnimatedScroll()
         let point = convert(event.locationInWindow, from: nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 

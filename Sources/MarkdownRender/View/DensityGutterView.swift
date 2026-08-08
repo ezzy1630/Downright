@@ -621,9 +621,14 @@ public final class DensityGutterView: NSView {
                 color: styleSheet.searchHit.withAlphaComponent(contrast ? 1 : 0.92)
             )
         case .change(let changeKind):
+            let geometry: (width: CGFloat, height: CGFloat) = switch changeKind {
+            case .inserted: (16, 3)
+            case .modified: (12, 5)
+            case .deleted: (6, 6)
+            }
             return BandStyle(
-                widthPoints: min(16, maxWidth),
-                minHeight: 3,
+                widthPoints: min(geometry.width, maxWidth),
+                minHeight: geometry.height,
                 color: styleSheet.changeColor(changeKind).withAlphaComponent(contrast ? 1 : 0.95)
             )
         case .codeBlock, .table, .math, .taskList, .image, .callout:
@@ -781,31 +786,16 @@ public final class DensityGutterView: NSView {
                 position.timingFunction = timing
                 mark.add(position, forKey: "mark-position")
 
-                if settleThis {
-                    let widthSpring = CASpringAnimation(keyPath: "bounds")
-                    widthSpring.fromValue = NSValue(
-                        rect: previousFrame.offsetBy(
-                            dx: -previousFrame.minX, dy: -previousFrame.minY
-                        )
+                let boundsAnimation = CABasicAnimation(keyPath: "bounds")
+                boundsAnimation.fromValue = NSValue(
+                    rect: previousFrame.offsetBy(
+                        dx: -previousFrame.minX, dy: -previousFrame.minY
                     )
-                    widthSpring.toValue = NSValue(rect: mark.bounds)
-                    widthSpring.mass = 1
-                    widthSpring.stiffness = 220
-                    widthSpring.damping = 18
-                    widthSpring.duration = widthSpring.settlingDuration
-                    mark.add(widthSpring, forKey: "mark-bounds")
-                } else {
-                    let boundsAnimation = CABasicAnimation(keyPath: "bounds")
-                    boundsAnimation.fromValue = NSValue(
-                        rect: previousFrame.offsetBy(
-                            dx: -previousFrame.minX, dy: -previousFrame.minY
-                        )
-                    )
-                    boundsAnimation.toValue = NSValue(rect: mark.bounds)
-                    boundsAnimation.duration = duration
-                    boundsAnimation.timingFunction = timing
-                    mark.add(boundsAnimation, forKey: "mark-bounds")
-                }
+                )
+                boundsAnimation.toValue = NSValue(rect: mark.bounds)
+                boundsAnimation.duration = duration
+                boundsAnimation.timingFunction = timing
+                mark.add(boundsAnimation, forKey: "mark-bounds")
             }
 
             if colorChanged, let previousColor {
@@ -1110,9 +1100,7 @@ public final class DensityGutterView: NSView {
         guard let index else { return }
         punchBandIndex = index
         punchAmount = 1
-        if !styleSheet.reduceMotion {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-        }
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         updateMarkLayers(animated: true)
 
         let settle = DispatchWorkItem { [weak self] in

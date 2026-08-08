@@ -55,12 +55,12 @@ final class TrustPromptView: NSView, PanelSurface {
         super.init(frame: .zero)
         installBackdrop(backdrop)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = PanelFont.system(13, weight: .semibold)
         titleLabel.maximumNumberOfLines = 3
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
-        targetLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        targetLabel.font = PanelFont.monospaced(11)
         targetLabel.maximumNumberOfLines = 4
         targetLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(targetLabel)
@@ -97,7 +97,7 @@ final class TrustPromptView: NSView, PanelSurface {
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             targetLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             targetLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             targetLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),

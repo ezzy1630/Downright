@@ -98,10 +98,12 @@ final class DocumentLensView: NSView, PanelSurface {
 
     private func buildHeader() {
         titleLabel.font = PanelFont.header
+        titleLabel.isHidden = true
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
         countLabel.font = PanelFont.secondary
+        countLabel.isHidden = true
         countLabel.alignment = .right
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(countLabel)
@@ -124,13 +126,13 @@ final class DocumentLensView: NSView, PanelSurface {
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             countLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
             tabControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             tabControl.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            tabControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            tabControl.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             targetControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             targetControl.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             targetControl.topAnchor.constraint(equalTo: tabControl.bottomAnchor, constant: 4),

@@ -91,7 +91,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             detailLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),

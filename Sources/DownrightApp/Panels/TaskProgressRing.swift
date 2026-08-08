@@ -152,6 +152,11 @@ final class TaskProgressRing: NSView {
         NSSize(width: Metrics.control, height: Metrics.control)
     }
 
+    /// A toolbar lives inside the titlebar's draggable region. Explicitly
+    /// claiming the pointer prevents a double-click on this custom NSView from
+    /// leaking through to the titlebar and miniaturizing the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     // MARK: - Geometry
 
     override func layout() {
@@ -612,4 +617,3 @@ final class TaskProgressRing: NSView {
             ?? NSScreen.main?.backingScaleFactor ?? 2
     }
 }
-

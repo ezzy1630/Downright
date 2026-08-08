@@ -173,7 +173,7 @@ struct DocumentLensModel: Sendable {
                 let detail = blockLabel(block.content)
                 items.append(DocumentLensItem(
                     id: "block:\(block.range.location):\(blockOrdinal)", title: detail,
-                    detail: sourceLine(document, at: block.range.location), range: block.range, kind: .block
+                    detail: "", range: block.range, kind: .block
                 ))
                 blockOrdinal += 1
             }
@@ -332,10 +332,6 @@ struct DocumentLensModel: Sendable {
         case .warning: .warning
         case .error: .error
         }
-    }
-
-    private static func sourceLine(_ document: ParsedDocument, at offset: Int) -> String {
-        "Line \(document.line(at: offset))"
     }
 
     private static func blockLabel(_ content: BlockContent) -> String {

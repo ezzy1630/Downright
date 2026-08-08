@@ -113,7 +113,7 @@ struct WindowChromeTests {
         #expect(button.attributedTitle.string == "Typography and colour")
         #expect(button.accessibilityLabel() == "Current section: Typography and colour")
         #expect(!button.isHidden)
-        #expect(abs(crumb.currentTitleOrigin) < 0.5)
+        #expect(crumb.currentTitleOrigin > 0)
 
         let menu = crumb.makePathMenu()
         #expect(menu.items.map(\.title) == ["Downright Design", "Typography and colour"])

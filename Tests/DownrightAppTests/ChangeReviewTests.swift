@@ -256,13 +256,13 @@ struct ChangeReviewTests {
         #expect(bar.change(at: NSPoint(x: 190, y: 5)) == nil)
     }
 
-    /// The band is the bottom of the bar only; the label and the actions above
-    /// it must keep their own clicks.
+    /// The band provides a 24pt target from the bottom; the label and actions
+    /// above it keep their own clicks.
     @Test("A click above the ribbon band is not a ribbon click")
     func clickAboveBandIsIgnored() {
         let bar = ribbonBar([mark(.modified, at: 500, length: 0)])
         #expect(bar.change(at: NSPoint(x: 190, y: 5)) != nil)
-        #expect(bar.change(at: NSPoint(x: 190, y: 18)) == nil)
+        #expect(bar.change(at: NSPoint(x: 190, y: 25)) == nil)
     }
 
     @Test("A bar with no changes has no ribbon to click")

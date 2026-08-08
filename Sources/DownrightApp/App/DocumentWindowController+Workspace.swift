@@ -80,6 +80,11 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         }
         installTrailing(panel, title: Command.workspace.panelTitle)
         let root = markdownDocument.url?.deletingLastPathComponent() ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        guard FileManager.default.isReadableFile(atPath: root.path) else {
+            panel.isScanning = false
+            panel.errorMessage = "Downright cannot read this folder. Check its permissions and try again."
+            return
+        }
         // The first scan can take a moment on a large folder; the panel says so
         // rather than showing an empty file list that reads as "no files".
         panel.isScanning = true

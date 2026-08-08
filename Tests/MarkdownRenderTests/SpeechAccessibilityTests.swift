@@ -41,4 +41,31 @@ struct SpeechAccessibilityTests {
         #expect(view.accessibilityRole() == .textArea)
         #expect(view.accessibilityCustomActions()?.map(\.name) == ["Open link at caret", "Copy code block"])
     }
+
+    @Test("rendered fragments expose semantic accessibility children")
+    func renderedFragmentChildren() {
+        let source = """
+        | A | B |
+        | - | - |
+        | 1 | 2 |
+
+        $$x^2$$
+
+        ```mermaid
+        graph LR; A-->B
+        ```
+        """
+        let view = MarkdownTextView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            storage: NSTextStorage(string: source)
+        )
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+
+        let labels = (view.accessibilityChildren() ?? []).compactMap {
+            ($0 as? NSAccessibilityElement)?.accessibilityLabel()
+        }
+        #expect(labels.contains("Markdown table"))
+        #expect(labels.contains("Display math"))
+        #expect(labels.contains("Mermaid diagram"))
+    }
 }

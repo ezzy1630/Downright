@@ -2,17 +2,17 @@ import AppKit
 import MarkdownRender
 
 enum InspectorSection: Int, CaseIterable, Equatable {
-    case search
-    case tasks
-    case history
-    case context
+    case tasks = 0
+    case history = 1
+    case context = 2
+    case search = 3
 
     var title: String {
         switch self {
         case .search: "Search"
         case .tasks: "Tasks"
         case .history: "History"
-        case .context: "Inspector"
+        case .context: "Document"
         }
     }
 }
@@ -21,6 +21,7 @@ enum InspectorSection: Int, CaseIterable, Equatable {
 /// this view owns only its header, close affordance, and content lifecycle.
 @MainActor
 final class InspectorHostView: NSView {
+    private static let switcherSections: [InspectorSection] = [.tasks, .history, .context]
     private var animationGeneration = 0
     var onClose: (() -> Void)?
 
@@ -42,6 +43,9 @@ final class InspectorHostView: NSView {
     private let closeButton: NSButton
     private let sectionControl: PanelSegmentedControl
     private let content = NSView()
+    /// A persistent boundary between document and inspector. Glass alone is
+    /// too dependent on the wallpaper and theme to define the two surfaces.
+    private let leadingRule = NSView()
     /// One rule between the host's chrome and whatever panel is inside it, so
     /// the header reads as the panel's own cap rather than as part of the list
     /// that happens to start below it.
@@ -70,7 +74,7 @@ final class InspectorHostView: NSView {
     override init(frame frameRect: NSRect) {
         closeButton = PanelButton.symbol("xmark", label: "Close inspector", action: ButtonAction({}))
         sectionControl = PanelSegmentedControl(
-            items: InspectorSection.allCases.map(\.title),
+            items: Self.switcherSections.map(\.title),
             styleSheet: .current
         )
         super.init(frame: frameRect)
@@ -90,13 +94,13 @@ final class InspectorHostView: NSView {
         rule.translatesAutoresizingMaskIntoConstraints = false
 
         sectionControl.onChange = { [weak self] index in
-            guard let section = InspectorSection(rawValue: index) else { return }
+            guard let section = Self.switcherSections.element(at: index) else { return }
             self?.select(section)
         }
         sectionControl.setAccessibilityLabel("Inspector sections")
         sectionControl.setAccessibilityHelp("Choose which inspector panel is shown")
-        for section in InspectorSection.allCases {
-            sectionControl.setEnabled(false, forSegment: section.rawValue)
+        for index in Self.switcherSections.indices {
+            sectionControl.setEnabled(false, forSegment: index)
         }
         sectionControl.translatesAutoresizingMaskIntoConstraints = false
 
@@ -121,6 +125,9 @@ final class InspectorHostView: NSView {
         addSubview(sectionControl)
         addSubview(closeButton)
         addSubview(rule)
+        leadingRule.wantsLayer = true
+        leadingRule.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(leadingRule)
 
         // The close button rides whichever header row is on screen, and the
         // rule sits under whichever is lower — both pairs swap in
@@ -142,6 +149,11 @@ final class InspectorHostView: NSView {
             backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
             backdrop.topAnchor.constraint(equalTo: topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            leadingRule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            leadingRule.topAnchor.constraint(equalTo: topAnchor),
+            leadingRule.bottomAnchor.constraint(equalTo: bottomAnchor),
+            leadingRule.widthAnchor.constraint(equalToConstant: PanelMetrics.hairline),
 
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             titleLabel.trailingAnchor.constraint(
@@ -192,6 +204,8 @@ final class InspectorHostView: NSView {
         closeButton.contentTintColor = styleSheet.textSecondary
         rule.layer?.backgroundColor = styleSheet.rule
             .panelAlpha(styleSheet.increaseContrast ? 0.9 : 0.55, increaseContrast: false).cgColor
+        leadingRule.layer?.backgroundColor = styleSheet.rule
+            .panelAlpha(styleSheet.increaseContrast ? 1 : 0.82, increaseContrast: false).cgColor
     }
 
     /// Esc closes the inspector, whatever is inside it.  Doing it here rather
@@ -207,7 +221,9 @@ final class InspectorHostView: NSView {
     func setContent(_ view: NSView, section: InspectorSection) {
         if let old = views[section], old !== view { old.removeFromSuperview() }
         views[section] = view
-        sectionControl.setEnabled(true, forSegment: section.rawValue)
+        if let index = Self.switcherSections.firstIndex(of: section) {
+            sectionControl.setEnabled(true, forSegment: index)
+        }
         installIfNeeded(view)
         select(section, announceArrival: true)
     }
@@ -221,7 +237,9 @@ final class InspectorHostView: NSView {
         let previous = selectedSection
         selectedSection = section
         updateHeaderChrome()
-        sectionControl.setSelectedIndex(section.rawValue)
+        if let index = Self.switcherSections.firstIndex(of: section) {
+            sectionControl.setSelectedIndex(index)
+        }
         for (candidate, view) in views { view.isHidden = candidate != section }
         if announceArrival, previous != section, let view = views[section] {
             playArrival(on: view)
@@ -341,9 +359,11 @@ final class InspectorHostView: NSView {
             ruleBelowSwitcher.isActive = false
             return
         }
-        let switcherVisible = views.count > 1
+        let switcherVisible = Self.switcherSections.filter { views[$0] != nil }.count > 1
         let title = sectionTitles[section] ?? section.title
-        let titleVisible = !switcherVisible || title != section.title
+        let titleVisible = !switcherVisible
+            || title != section.title
+            || !Self.switcherSections.contains(section)
 
         titleLabel.stringValue = title
         titleLabel.setAccessibilityLabel("\(title) inspector")
@@ -365,7 +385,9 @@ final class InspectorHostView: NSView {
     func removeContent(section: InspectorSection) {
         views.removeValue(forKey: section)?.removeFromSuperview()
         sectionTitles.removeValue(forKey: section)
-        sectionControl.setEnabled(false, forSegment: section.rawValue)
+        if let index = Self.switcherSections.firstIndex(of: section) {
+            sectionControl.setEnabled(false, forSegment: index)
+        }
         guard selectedSection == section else { updateHeaderChrome(); return }
         selectedSection = views.keys.sorted { $0.rawValue < $1.rawValue }.first
         if let selectedSection { select(selectedSection) }

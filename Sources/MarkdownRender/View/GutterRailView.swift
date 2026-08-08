@@ -98,13 +98,36 @@ public final class GutterRailView: NSView {
         for bar in changeBars {
             guard let rect = rowRect(for: bar.range, in: textView), rect.intersects(visible) else { continue }
             let color = style.changeColor(bar.kind)
-            NSBezierPath(roundedRect: NSRect(x: bounds.maxX - 5, y: rect.minY, width: 2.5, height: max(changeBarHeight, rect.height)),
-                         xRadius: 1.25, yRadius: 1.25).fill(with: color)
+            let height = max(changeBarHeight, rect.height)
+            switch bar.kind {
+            case .inserted:
+                NSBezierPath(
+                    roundedRect: NSRect(x: bounds.maxX - 5, y: rect.minY, width: 2.5, height: height),
+                    xRadius: 1.25,
+                    yRadius: 1.25
+                ).fill(with: color)
+            case .modified:
+                color.setStroke()
+                let path = NSBezierPath()
+                path.lineWidth = 2
+                path.setLineDash([3, 2], count: 2, phase: 0)
+                path.move(to: NSPoint(x: bounds.maxX - 3.5, y: rect.minY))
+                path.line(to: NSPoint(x: bounds.maxX - 3.5, y: rect.minY + height))
+                path.stroke()
+            case .deleted:
+                let wedge = NSBezierPath()
+                wedge.move(to: NSPoint(x: bounds.maxX - 7, y: rect.minY))
+                wedge.line(to: NSPoint(x: bounds.maxX - 2, y: rect.minY + 4))
+                wedge.line(to: NSPoint(x: bounds.maxX - 7, y: rect.minY + 8))
+                wedge.close()
+                color.setFill()
+                wedge.fill()
+            }
         }
 
         guard textView.mode.policy.showsGutterMarkers || hoveredHeadingIsVisible else { return }
 
-        let font = style.monoFont(size: max(9, style.bodyFont().pointSize * 0.62))
+        let font = style.monoFont(size: max(11, style.bodyFont().pointSize * 0.62))
         // Same draw-ahead band the row intersection has always used, hoisted so
         // the loop can also stop on it.
         let band = visible.insetBy(dx: 0, dy: -40)
@@ -221,7 +244,7 @@ public final class GutterRailView: NSView {
     private func drawLineNumbers(style: StyleSheet, textView: MarkdownTextView, visible: NSRect) {
         let top = textView.topVisibleOffset
         let first = max(0, (lineStarts.lastIndex { $0 <= top } ?? 0) - 2)
-        let font = style.monoFont(size: max(9, style.bodyFont().pointSize * 0.58))
+        let font = style.monoFont(size: max(11, style.bodyFont().pointSize * 0.58))
         let color = style.marker.withAlphaComponent(0.72)
         for index in first..<lineStarts.count {
             guard let rect = rowRect(
@@ -239,6 +262,32 @@ public final class GutterRailView: NSView {
                 x: max(2, bounds.width - Self.markerInset - size.width),
                 y: rect.minY + max(0, (style.lineHeight - size.height) / 2)
             ))
+
+            // Wrapped source lines keep one logical number. Mark every visual
+            // continuation so it cannot be mistaken for an unnumbered blank
+            // line. The next logical line's origin gives the exact wrapped
+            // height without duplicating TextKit's line-breaking policy.
+            let nextY: CGFloat? = {
+                guard index + 1 < lineStarts.count else { return nil }
+                return rowRect(
+                    for: NSRange(location: lineStarts[index + 1], length: 0),
+                    in: textView
+                )?.minY
+            }()
+            guard let nextY else { continue }
+            var continuationY = rect.minY + style.lineHeight
+            let continuation = NSAttributedString(string: "↳", attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ])
+            let continuationSize = continuation.size()
+            while continuationY + style.lineHeight * 0.5 < nextY {
+                continuation.draw(at: NSPoint(
+                    x: max(2, bounds.width - Self.markerInset - continuationSize.width),
+                    y: continuationY + max(0, (style.lineHeight - continuationSize.height) / 2)
+                ))
+                continuationY += style.lineHeight
+            }
         }
     }
 

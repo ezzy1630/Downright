@@ -356,6 +356,7 @@ public final class MarkdownTextView: NSTextView {
     /// Changes whose every word lives inside an object fragment, so the prose
     /// highlight had nothing to paint and a rule stands in for it.
     private var objectChangeMarks: [ChangeMark] = []
+    private var fragmentAccessibilityElements: [NSAccessibilityElement] = []
     private var pathExistence: [PathToken: Bool] = [:]
     private var codeCollapseOverrides: [Int: Bool] = [:]
     /// Inline-code backgrounds are geometry, not text attributes. Cache their
@@ -391,7 +392,7 @@ public final class MarkdownTextView: NSTextView {
     var copiedCodeFeedbackWorkItem: DispatchWorkItem?
     /// Drives the short checkbox confirm pop (§7.1) at a fixed cadence until
     /// every pulse has finished.
-    var checkboxPulseTimer: Timer?
+    var checkboxPulseDisplayLink: CADisplayLink?
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
     /// One-shot camera lock for semantic controls such as checkboxes. Their
@@ -523,8 +524,8 @@ public final class MarkdownTextView: NSTextView {
         // A repeating 60fps timer on the main run loop would otherwise keep
         // firing forever after the view is gone: its block only ever
         // invalidates itself while `self` is still alive.
-        checkboxPulseTimer?.invalidate()
-        checkboxPulseTimer = nil
+        checkboxPulseDisplayLink?.invalidate()
+        checkboxPulseDisplayLink = nil
     }
 
     /// Used only by the convenience initialiser, so a text view can always be
@@ -596,6 +597,7 @@ public final class MarkdownTextView: NSTextView {
             invalidateAllFragments()
         }
         gutterRail?.reload()
+        refreshFragmentAccessibility()
         let resizeRequest: ContentResizeRequest
         if isWholesaleUpdate {
             resizeRequest = .immediate
@@ -631,6 +633,38 @@ public final class MarkdownTextView: NSTextView {
         } else if !followsCaret, !followsLocalEdit {
             restoreViewport(to: anchor)
         }
+    }
+
+    /// TextKit exposes this view as one text area. Rendered objects also need
+    /// structural children, or VoiceOver reaches only their raw Markdown
+    /// source. These virtual nodes name the object while the text area keeps
+    /// its normal editable range API.
+    private func refreshFragmentAccessibility() {
+        guard mode != .source else {
+            fragmentAccessibilityElements = []
+            setAccessibilityChildren(nil)
+            return
+        }
+        var elements: [NSAccessibilityElement] = []
+        parsedDocument.root.walk { block in
+            let label: String? = switch block.content {
+            case .table: "Markdown table"
+            case .mathBlock: "Display math"
+            case .mermaid: "Mermaid diagram"
+            default: nil
+            }
+            guard let label else { return }
+            let frame = rect(forOffset: block.range.location) ?? .zero
+            let element = NSAccessibilityElement()
+            element.setAccessibilityRole(.group)
+            element.setAccessibilityLabel(label)
+            element.setAccessibilityParent(self)
+            element.setAccessibilityFrameInParentSpace(frame)
+            element.setAccessibilityHelp("Rendered \(label.lowercased())")
+            elements.append(element)
+        }
+        fragmentAccessibilityElements = elements
+        setAccessibilityChildren(elements)
     }
 
     /// Keep the current pixel camera through the next parse/decorate commit.
@@ -849,15 +883,12 @@ public final class MarkdownTextView: NSTextView {
         wantsLayer = true
         guard let animationLayer = self.layer else { return }
         animationLayer.removeAnimation(forKey: "downrightStructuralZoom")
-        let spring = CASpringAnimation(keyPath: "bounds.size.height")
-        spring.fromValue = previousHeight
-        spring.toValue = targetHeight
-        spring.mass = 1
-        spring.stiffness = 190
-        spring.damping = 18
-        spring.initialVelocity = 0
-        spring.duration = spring.settlingDuration
-        animationLayer.add(spring, forKey: "downrightStructuralZoom")
+        let settle = CABasicAnimation(keyPath: "bounds.size.height")
+        settle.fromValue = previousHeight
+        settle.toValue = targetHeight
+        settle.duration = Motion.deliberate
+        settle.timingFunction = Motion.timing(.decelerate)
+        animationLayer.add(settle, forKey: "downrightStructuralZoom")
     }
 
     /// True while the visible region sits within a hair of the bottom of the
@@ -966,6 +997,7 @@ public final class MarkdownTextView: NSTextView {
         applyPathExistence()
         invalidateAllFragments()
         gutterRail?.reload()
+        refreshFragmentAccessibility()
     }
 
     /// Theme colour / accent swaps that do not change typography.
@@ -1657,6 +1689,13 @@ public final class MarkdownTextView: NSTextView {
             for word in mark.words {
                 guard let wordRange = clampToStorage(word) else { continue }
                 paintedAnything = tint(colour, over: wordRange, in: storage) || paintedAnything
+                let underline: NSUnderlineStyle = mark.kind == .inserted
+                    ? .single
+                    : [.single, .patternDash]
+                storage.addAttributes([
+                    .underlineStyle: underline.rawValue,
+                    .underlineColor: styleSheet.changeColor(mark.kind),
+                ], range: wordRange)
             }
             // A change inside a table, a diagram, or a collapsed block has no
             // glyphs to sit behind, so it gets a rule beside the object instead
@@ -2028,6 +2067,16 @@ public final class MarkdownTextView: NSTextView {
         super.scrollWheel(with: event)
     }
 
+    public override func magnify(with event: NSEvent) {
+        interruptAnimatedScroll()
+        super.magnify(with: event)
+    }
+
+    public override func swipe(with event: NSEvent) {
+        interruptAnimatedScroll()
+        super.swipe(with: event)
+    }
+
     public func scroll(toOffset offset: Int, position: ScrollPosition, animated: Bool) {
         // Navigating into a folded section has to reveal it.  An elided offset
         // resolves to a zero-height fragment, so without this the outline, the
@@ -2058,7 +2107,7 @@ public final class MarkdownTextView: NSTextView {
             Motion.run(
                 reduceMotion: false,
                 duration: Motion.deliberate,
-                curve: .spring,
+                curve: .decelerate,
                 changes: { _ in clip.animator().setBoundsOrigin(target) },
                 completion: { [weak self] in
                     self?.animatingScrollClip = nil

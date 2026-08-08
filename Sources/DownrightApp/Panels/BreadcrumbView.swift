@@ -200,7 +200,7 @@ final class BreadcrumbView: NSView {
         NSAttributedString(string: text, attributes: [
             // Chrome should remain visibly distinct from the document heading
             // it names. Medium system text reads as navigation, not content.
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .font: PanelFont.system(12, weight: .medium),
             .foregroundColor: styleSheet.textSecondary,
         ])
     }
@@ -231,15 +231,11 @@ final class BreadcrumbView: NSView {
         let availableWidth = min(bounds.width, Metrics.maximumButtonWidth)
         let width = min(availableWidth, titleWidth + Metrics.horizontalContentAllowance)
         sectionButton.frame = NSRect(
-            x: 0,
+            x: max(0, (bounds.width - max(44, width)) / 2),
             y: (bounds.height - Metrics.buttonHeight) / 2,
             width: max(44, width),
             height: Metrics.buttonHeight
         )
-        // Borderless NSButton cells retain a small native content inset. Shift
-        // the control, not its text, so the visible title shares the document's
-        // exact leading axis while the hit target and feedback stay native.
-        sectionButton.frame.origin.x -= currentTitleOrigin
         discardCursorRects()
         window?.invalidateCursorRects(for: self)
     }

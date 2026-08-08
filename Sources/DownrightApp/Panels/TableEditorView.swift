@@ -37,8 +37,12 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: "Table")
     private let statusLabel = NSTextField(labelWithString: "")
-    private let tableView = NSTableView()
-    private let scrollView = NSScrollView()
+    private let tableView: PanelTableView = {
+        let table = PanelList.makeTableView(identifier: "tableEditorSeed")
+        table.tableColumns.forEach(table.removeTableColumn)
+        return table
+    }()
+    private lazy var scrollView = PanelList.makeScrollView(documentView: tableView)
     private let alignmentPopup = NSPopUpButton()
     private let sourceButton = NSButton(title: "Edit Source", target: nil, action: nil)
     private let doneButton = NSButton(title: "Done", target: nil, action: nil)
@@ -125,11 +129,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         tableView.target = self
         tableView.action = #selector(cellClicked(_:))
         tableView.setAccessibilityLabel("Editable markdown table")
-        scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.borderType = .noBorder
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
         configureAlignmentPopup()
@@ -483,6 +483,10 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         field.setAccessibilityLabel("Table row \(row + 1), column \(column + 1)")
         field.setAccessibilityRole(.textField)
         return field
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PanelList.selectionRow(in: tableView, owner: self, styleSheet: styleSheet)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

@@ -79,9 +79,6 @@ public enum Motion {
         /// the motion is short enough that the curve is felt more than seen.
         case snap
 
-        /// Kept so existing call sites keep compiling; `decelerate` is the
-        /// honest name for what this curve does.
-        public static let spring: Curve = .decelerate
     }
 
     public static func timing(_ curve: Curve = .decelerate) -> CAMediaTimingFunction {

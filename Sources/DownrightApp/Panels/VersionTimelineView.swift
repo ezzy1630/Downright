@@ -107,7 +107,9 @@ final class VersionTimelineView: NSView {
             setAccessibilityValueDescription("No versions")
             return
         }
-        setAccessibilityValueDescription("\(RelativeTime.stamp(record.date)), \(RelativeTime.long(record.date))")
+        setAccessibilityValueDescription(
+            "\(kindLabel(record.kind)), \(RelativeTime.stamp(record.date)), \(RelativeTime.long(record.date))"
+        )
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -163,6 +165,14 @@ final class VersionTimelineView: NSView {
         }
     }
 
+    private func kindLabel(_ kind: SnapshotStore.SnapshotKind) -> String {
+        switch kind {
+        case .external: "External change"
+        case .local: "Local save"
+        case .baseline: "Baseline"
+        }
+    }
+
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
@@ -187,7 +197,26 @@ final class VersionTimelineView: NSView {
                 .setFill()
             let position = x(for: record.date)
             let height = hovered ? tickHeight + 4 : tickHeight
-            NSRect(x: position - 1, y: track.midY - height / 2, width: hovered ? 3 : 2, height: height).fill()
+            let tick = NSRect(
+                x: position - (hovered ? 1.5 : 1),
+                y: track.midY - height / 2,
+                width: hovered ? 3 : 2,
+                height: height
+            )
+            switch record.kind {
+            case .external:
+                let wedge = NSBezierPath()
+                wedge.move(to: NSPoint(x: tick.midX, y: tick.minY - 3))
+                wedge.line(to: NSPoint(x: tick.minX - 2, y: tick.minY + 2))
+                wedge.line(to: NSPoint(x: tick.maxX + 2, y: tick.minY + 2))
+                wedge.close()
+                wedge.fill()
+                tick.fill()
+            case .local:
+                tick.fill()
+            case .baseline:
+                NSBezierPath(ovalIn: NSRect(x: tick.midX - 3, y: track.midY - 3, width: 6, height: 6)).fill()
+            }
         }
 
         guard let record = selectedRecord else { return }
@@ -199,7 +228,7 @@ final class VersionTimelineView: NSView {
         NSBezierPath(ovalIn: knob).fill()
 
         drawCaption(
-            "\(RelativeTime.stamp(record.date))  ·  \(RelativeTime.long(record.date))",
+            "\(kindLabel(record.kind))  ·  \(RelativeTime.stamp(record.date))  ·  \(RelativeTime.long(record.date))",
             at: position, color: styleSheet.text
         )
     }
@@ -240,7 +269,7 @@ final class VersionTimelineView: NSView {
     override func drawFocusRingMask() {
         NSBezierPath(
             roundedRect: trackRect.insetBy(dx: -4, dy: -tickHeight),
-            xRadius: 6, yRadius: 6
+            xRadius: PanelMetrics.cornerRadius, yRadius: PanelMetrics.cornerRadius
         ).fill()
     }
 

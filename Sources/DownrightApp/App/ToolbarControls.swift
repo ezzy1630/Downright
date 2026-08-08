@@ -374,6 +374,12 @@ extension ToolbarDocumentIdentityView: NSDraggingSource {
 /// by typography and one baseline, not a capsule competing with the document.
 @MainActor
 final class ToolbarPresentationControl: NSView {
+    var styleSheet: StyleSheet = .current {
+        didSet {
+            documentButton.styleSheet = styleSheet
+            sourceButton.styleSheet = styleSheet
+        }
+    }
     private enum Metrics {
         static let width: CGFloat = 176
         static let height: CGFloat = 32
@@ -606,7 +612,7 @@ final class ToolbarPresentationControl: NSView {
             height: Metrics.indicatorHeight
         )
         selectionIndicator.backgroundColor = NSColor.labelColor.cgColor
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard animated, !styleSheet.reduceMotion else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             selectionIndicator.frame = frame
@@ -630,7 +636,7 @@ final class ToolbarPresentationControl: NSView {
             isWindowActive: active,
             increaseContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         )
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard animated, !styleSheet.reduceMotion else {
             selectionIndicator.removeAnimation(forKey: "window-emphasis")
             selectionIndicator.opacity = opacity
             return
@@ -657,6 +663,8 @@ final class ToolbarPresentationControl: NSView {
 /// sync across the mode rail and trailing menu.
 @MainActor
 class ToolbarInteractiveButton: NSButton {
+    var styleSheet: StyleSheet = .current { didSet { styleSheetDidChange() } }
+    func styleSheetDidChange() {}
     var feedbackInsetX: CGFloat = 5
     var feedbackInsetY: CGFloat = 3
     var feedbackCornerRadius: CGFloat = 5
@@ -758,7 +766,7 @@ class ToolbarInteractiveButton: NSButton {
     }
 
     private func animateFeedbackOpacity(to opacity: Float, animated: Bool) {
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduceMotion = styleSheet.reduceMotion
         guard animated, !reduceMotion else {
             feedbackLayer.removeAnimation(forKey: "feedback-opacity")
             feedbackLayer.opacity = opacity
@@ -776,7 +784,7 @@ class ToolbarInteractiveButton: NSButton {
     private func updatePressTransform(animated: Bool) {
         let scale = isPressedForFeedback ? ToolbarChromePolicy.pressedScale : 1
         let transform = CATransform3DMakeScale(scale, scale, 1)
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduceMotion = styleSheet.reduceMotion
         guard animated, !reduceMotion else {
             layer?.transform = transform
             return
@@ -976,9 +984,7 @@ final class ToolbarActionButton: ToolbarInteractiveButton {
         }
     }
 
-    var styleSheet: StyleSheet = .current {
-        didSet { applyTint() }
-    }
+    override func styleSheetDidChange() { applyTint() }
 
     init(symbol: String, label: String, help: String, target: AnyObject?, action: Selector) {
         super.init(frame: .zero)

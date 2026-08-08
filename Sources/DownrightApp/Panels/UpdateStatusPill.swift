@@ -72,7 +72,7 @@ final class UpdateStatusPill: NSButton {
         shell.addSubview(iconView)
 
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        label.font = PanelFont.system(11.5, weight: .semibold)
         label.maximumNumberOfLines = 1
         label.isEditable = false
         label.isSelectable = false
@@ -182,7 +182,7 @@ final class UpdateStatusPill: NSButton {
         let opacity = ToolbarChromePolicy.feedbackOpacity(
             for: interaction, increaseContrast: sheet.increaseContrast
         )
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, window != nil else {
+        guard !sheet.reduceMotion, window != nil else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             feedbackLayer.opacity = opacity
@@ -214,7 +214,7 @@ final class UpdateStatusPill: NSButton {
         setAccessibilityLabel(accessibilityLabel(for: model))
         setAccessibilityValue(visible ? label.stringValue : "")
         if visible { isHidden = false }
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduce = sheet.reduceMotion
         // Collapse to 1pt, never 0: the toolbar auto-measures this view and a
         // zero-width frame logs an ambiguous-layout warning on every launch.
         let targetWidth: CGFloat = visible ? intrinsicContentSize.width : 1

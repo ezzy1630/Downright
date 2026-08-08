@@ -74,7 +74,7 @@ final class CommandPaletteView: NSView, PanelSurface {
 
     private func buildInterface() {
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = PanelMetrics.cornerRadius
         layer?.masksToBounds = true
 
         backdrop.translatesAutoresizingMaskIntoConstraints = false
@@ -89,7 +89,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         searchField.placeholderString = "Search commands, headings, files"
         searchField.sendsSearchStringImmediately = true
         searchField.controlSize = .large
-        searchField.font = NSFont.systemFont(ofSize: 16)
+        searchField.font = PanelFont.system(16)
         searchField.isBezeled = false
         searchField.focusRingType = .none
         searchField.delegate = self
@@ -127,7 +127,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         hintLabel.setAccessibilityLabel("Keyboard commands: move, open, close")
         addSubview(hintLabel)
 
-        prefixLabel.font = NSFont.systemFont(ofSize: 10.5)
+        prefixLabel.font = PanelFont.system(10.5)
         prefixLabel.alignment = .left
         prefixLabel.lineBreakMode = .byTruncatingTail
         prefixLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

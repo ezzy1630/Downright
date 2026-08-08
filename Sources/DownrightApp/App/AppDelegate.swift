@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
     private var appearanceObservation: NSKeyValueObservation?
+    private static let systemThemeChanged = Notification.Name("AppleInterfaceThemeChangedNotification")
 
     // MARK: - Lifecycle
 
@@ -101,6 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.applySelectedTheme() }
         }
+        // `NSApp.effectiveAppearance` can lag while a document window still
+        // carries the old explicit appearance. The distributed system event is
+        // the authoritative edge when macOS changes Light/Dark mode.
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(systemAppearanceDidChange(_:)),
+            name: Self.systemThemeChanged,
+            object: nil
+        )
         Preferences.shared.onLoadFault = { [weak self] load in
             guard case .recovered(let backup) = load else { return }
             self?.reportSettingsRecovery(backup: backup)
@@ -166,6 +176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DistributedNotificationCenter.default().removeObserver(
+            self, name: Self.systemThemeChanged, object: nil
+        )
         NSUnregisterServicesProvider("Downright")
         saveSession()
         for controller in windowControllers { controller.documentWillClose() }
@@ -413,7 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func dismissStartWindow() {
         guard let controller = startWindow else { return }
         startWindow = nil
-        let animated = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animated = !StyleSheet.current.reduceMotion
         controller.dismiss(animated: animated)
     }
 
@@ -426,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var tabGroup: Int?
         var tabOrder: Int?
         var selectedTab: Bool?
+        var fullScreen: Bool?
     }
 
     private func saveSession() {
@@ -456,7 +470,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 mode: controller.mode.rawValue,
                 tabGroup: groupID,
                 tabOrder: tabOrder,
-                selectedTab: selected
+                selectedTab: selected,
+                fullScreen: controller.window?.styleMask.contains(.fullScreen)
             )
         }
         guard let data = try? JSONEncoder().encode(windows) else { return }
@@ -512,6 +527,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) else { continue }
             if let frame = AppDelegate.reachableFrame(NSRectFromString(entry.frame)) {
                 controller.window?.setFrame(frame, display: true)
+            }
+            if entry.fullScreen == true, let restoredWindow = controller.window {
+                DispatchQueue.main.async { restoredWindow.toggleFullScreen(nil) }
             }
             if let group = entry.tabGroup, groupHosts[group] == nil, let window = controller.window {
                 groupHosts[group] = window
@@ -635,7 +653,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// follows the system — is what makes the Appearance popups take effect
     /// without a relaunch.
     private func applySelectedTheme() {
-        ThemeStore.shared.select(named: Preferences.shared.themeName(for: NSApp.effectiveAppearance))
+        let appearance = Preferences.shared.values.followsSystemAppearance
+            ? Self.macOSAppearance
+            : NSApp.effectiveAppearance
+        ThemeStore.shared.select(named: Preferences.shared.themeName(for: appearance))
+    }
+
+    /// The actual macOS preference, independent of any appearance an existing
+    /// app window inherited before Follow System was enabled.
+    private static var macOSAppearance: NSAppearance {
+        let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+        return NSAppearance(named: dark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
+    }
+
+    @objc private func systemAppearanceDidChange(_ notification: Notification) {
+        guard Preferences.shared.values.followsSystemAppearance else { return }
+        NSApp.appearance = nil
+        applySelectedTheme()
     }
 
     @objc private func preferencesDidChange() {

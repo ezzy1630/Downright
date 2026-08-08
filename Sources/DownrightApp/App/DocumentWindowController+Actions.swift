@@ -68,7 +68,8 @@ extension DocumentWindowController {
             LightboxWindow(
                 image: image,
                 caption: caption,
-                reduceMotion: self.activeStyleSheet.reduceMotion
+                reduceMotion: self.activeStyleSheet.reduceMotion,
+                reduceTransparency: self.activeStyleSheet.reduceTransparency
             ).present(over: window)
         }
         if url.isFileURL {

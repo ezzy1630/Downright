@@ -158,11 +158,11 @@ private final class UpdatePanelHeader: NSView {
         addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.font = PanelFont.title
         addSubview(titleLabel)
 
         versionsLabel.translatesAutoresizingMaskIntoConstraints = false
-        versionsLabel.font = .systemFont(ofSize: 11)
+        versionsLabel.font = PanelFont.secondary
         addSubview(versionsLabel)
 
         NSLayoutConstraint.activate([
@@ -440,20 +440,20 @@ private final class UpdateNotesView: NSView {
 
         if let metadata {
             let sizeLabel = NSTextField(labelWithString: UpdateNotesView.sizeText(metadata.contentLength))
-            sizeLabel.font = .systemFont(ofSize: 11)
+            sizeLabel.font = PanelFont.secondary
             sizeLabel.textColor = sheet.textFaint
             stack.addArrangedSubview(sizeLabel)
         }
 
         if case .informational = coordinator.phase {
             let info = NSTextField(wrappingLabelWithString: "This update is informational — there is nothing to download. The details are below, or open the full announcement in your browser.")
-            info.font = .systemFont(ofSize: 12)
+            info.font = PanelFont.row
             info.textColor = sheet.textSecondary
             stack.addArrangedSubview(info)
         }
 
         let notesTitle = NSTextField(labelWithString: "What's New")
-        notesTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+        notesTitle.font = PanelFont.header
         notesTitle.textColor = sheet.textSecondary
         stack.addArrangedSubview(notesTitle)
 
@@ -473,7 +473,7 @@ private final class UpdateNotesView: NSView {
             scroll.documentView = UpdateNotesView.releaseNotesTextView(for: data, sheet: sheet)
         case .failed:
             let failed = NSTextField(wrappingLabelWithString: "Release notes couldn't be downloaded.")
-            failed.font = .systemFont(ofSize: 12)
+            failed.font = PanelFont.row
             failed.textColor = sheet.textFaint
             stack.addArrangedSubview(failed)
         case .none:
@@ -481,12 +481,12 @@ private final class UpdateNotesView: NSView {
                 scroll.documentView = UpdateNotesView.markdownTextView(for: markdown, sheet: sheet)
             } else if let url = metadata?.releaseNotesURL {
                 let loading = NSTextField(wrappingLabelWithString: "Loading release notes from \(url.host ?? "")…")
-                loading.font = .systemFont(ofSize: 12)
+                loading.font = PanelFont.row
                 loading.textColor = sheet.textFaint
                 stack.addArrangedSubview(loading)
             } else {
                 let empty = NSTextField(wrappingLabelWithString: "No release notes for this update.")
-                empty.font = .systemFont(ofSize: 12)
+                empty.font = PanelFont.row
                 empty.textColor = sheet.textFaint
                 stack.addArrangedSubview(empty)
             }
@@ -563,7 +563,7 @@ private final class UpdateProgressView: NSView {
         addSubview(bar)
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.font = PanelFont.secondary
         detailLabel.textColor = sheet.textFaint
         addSubview(detailLabel)
 
@@ -607,7 +607,7 @@ private final class UpdateStatusMessageView: NSView {
     init(text: String, detail: String?, spinner: Bool, sheet: StyleSheet) {
         super.init(frame: .zero)
         let title = NSTextField(wrappingLabelWithString: text)
-        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.font = PanelFont.system(13, weight: .medium)
         title.textColor = sheet.text
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -618,7 +618,7 @@ private final class UpdateStatusMessageView: NSView {
         stack.spacing = 8
         if let detail {
             let detailLabel = NSTextField(wrappingLabelWithString: detail)
-            detailLabel.font = .systemFont(ofSize: 12)
+            detailLabel.font = PanelFont.row
             detailLabel.textColor = sheet.textSecondary
             stack.addArrangedSubview(detailLabel)
         }
@@ -662,26 +662,26 @@ private final class UpdateFailureView: NSView {
         addSubview(stack)
 
         let summary = NSTextField(wrappingLabelWithString: failure.message)
-        summary.font = .systemFont(ofSize: 13, weight: .medium)
+        summary.font = PanelFont.system(13, weight: .medium)
         summary.textColor = .systemOrange
         summary.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(summary)
 
         let explanation = NSTextField(wrappingLabelWithString: "Nothing has been changed on disk. You can try again, or check later.")
-        explanation.font = .systemFont(ofSize: 12)
+        explanation.font = PanelFont.row
         explanation.textColor = sheet.textSecondary
         stack.addArrangedSubview(explanation)
 
         detailDisclosure.translatesAutoresizingMaskIntoConstraints = false
         detailDisclosure.setButtonType(.pushOnPushOff)
         detailDisclosure.bezelStyle = .inline
-        detailDisclosure.font = .systemFont(ofSize: 11)
+        detailDisclosure.font = PanelFont.secondary
         detailDisclosure.target = self
         detailDisclosure.action = #selector(toggleDetail)
         stack.addArrangedSubview(detailDisclosure)
 
         let detailLabel = NSTextField(wrappingLabelWithString: failure.technicalDetail ?? "\(failure.code)")
-        detailLabel.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        detailLabel.font = PanelFont.monospaced(10.5)
         detailLabel.textColor = sheet.textFaint
         detailLabel.isHidden = true
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -757,7 +757,7 @@ final class UpdatePanelButton: NSButton {
         super.init(frame: .zero)
         self.title = title
         bezelStyle = .rounded
-        font = .systemFont(ofSize: 12, weight: .medium)
+        font = PanelFont.system(12, weight: .medium)
         controlSize = .regular
         focusRingType = .default
         target = actionTarget

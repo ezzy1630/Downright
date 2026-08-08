@@ -263,33 +263,15 @@ private final class PreviewContentView: NSView {
         needsDisplay = true
     }
 
-    /// Stagger steps are dispatched as anonymous work items and are not
-    /// cancellable, so each one re-checks the generation it belongs to.  A
-    /// hide / re-show (which bumps `staggerGeneration`) then cannot be
-    /// overwritten by an in-flight fade from an earlier section.
     private func animateSnippetAlpha(to target: CGFloat, generation: Int) {
-        let steps = 6
-        let start = snippetAlpha
-        let delta = target - start
-        guard abs(delta) > 0.01 else {
-            snippetAlpha = target
-            needsDisplay = true
-            return
-        }
-        for step in 1...steps {
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, self.staggerGeneration == generation else { return }
-                let t = CGFloat(step) / CGFloat(steps)
-                // Ease-out.
-                let eased = 1 - (1 - t) * (1 - t)
-                self.snippetAlpha = start + delta * eased
-                self.needsDisplay = true
-            }
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + 0.018 * Double(step),
-                execute: work
-            )
-        }
+        guard staggerGeneration == generation, abs(target - snippetAlpha) > 0.01 else { return }
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = Motion.quick
+        fade.timingFunction = Motion.timing(.decelerate)
+        layer?.add(fade, forKey: "snippet-reveal")
+        snippetAlpha = target
+        needsDisplay = true
     }
 
     func fittingSize(maxWidth: CGFloat) -> NSSize {

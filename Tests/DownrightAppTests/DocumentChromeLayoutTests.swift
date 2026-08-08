@@ -152,6 +152,7 @@ struct TaskProgressRingAccessibilityTests {
         #expect(ring.accessibilityLabel() == "No tasks")
         #expect(ring.toolTip == "No tasks — Open Tasks")
         #expect(ring.accessibilityRole() == .button)
+        #expect(!ring.mouseDownCanMoveWindow)
     }
 
     /// The glyph draws no numeral below ten, so the figure has to live in words

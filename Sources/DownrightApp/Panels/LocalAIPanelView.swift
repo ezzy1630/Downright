@@ -69,7 +69,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
         }
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             taskPopup.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             taskPopup.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             taskPopup.widthAnchor.constraint(equalToConstant: 150),

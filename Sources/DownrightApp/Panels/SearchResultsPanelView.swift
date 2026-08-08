@@ -38,8 +38,8 @@ final class SearchResultsPanelView: NSView, PanelSurface {
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: Command.findInSiblings.panelTitle)
     private let statusLabel = NSTextField(labelWithString: "")
-    private let emptyLabel = NSTextField(wrappingLabelWithString: "")
-    private let spinner = NSProgressIndicator()
+    private let emptyState = PanelEmptyStateView()
+    private let spinner = ActivityIndicatorView()
     private let table = PanelList.makeTableView(identifier: "searchResults")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
 
@@ -73,16 +73,6 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(statusLabel)
 
-        emptyLabel.font = PanelFont.row
-        emptyLabel.alignment = .center
-        emptyLabel.textColor = styleSheet.textSecondary
-        emptyLabel.maximumNumberOfLines = 0
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(emptyLabel)
-
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(spinner)
 
@@ -93,10 +83,11 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         table.onActivate = { [weak self] in self?.activateSelection() }
         table.setAccessibilityLabel("Search results")
         addSubview(scroll)
+        emptyState.install(in: self, over: scroll)
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             spinner.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
             spinner.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 14),
@@ -108,9 +99,6 @@ final class SearchResultsPanelView: NSView, PanelSurface {
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
-            emptyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            emptyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
         ])
 
         applyStyle()
@@ -146,10 +134,10 @@ final class SearchResultsPanelView: NSView, PanelSurface {
 
     private func updateStatus() {
         if isSearching {
-            spinner.startAnimation(nil)
+            spinner.begin()
             statusLabel.stringValue = "Searching…"
         } else {
-            spinner.stopAnimation(nil)
+            spinner.end()
             let files = Set(hits.map(\.url.path)).count
             statusLabel.stringValue = hits.isEmpty
                 ? "No matches"
@@ -158,18 +146,21 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
         let hasResults = !rows.isEmpty
         table.isHidden = !hasResults
-        emptyLabel.isHidden = hasResults
-        emptyLabel.stringValue = isSearching
-            ? "Searching nearby Markdown files…"
-            : "No matching files or lines."
-        emptyLabel.setAccessibilityLabel(emptyLabel.stringValue)
+        emptyState.isHidden = hasResults
+        emptyState.configure(
+            symbol: isSearching ? "magnifyingglass" : "doc.text.magnifyingglass",
+            title: isSearching ? "Searching" : "No matches",
+            subtitle: isSearching
+                ? "Searching nearby Markdown files…"
+                : "No matching files or lines.",
+            styleSheet: styleSheet
+        )
         setAccessibilityValue(statusLabel.stringValue)
     }
 
     private func applyStyle() {
         titleLabel.textColor = styleSheet.textSecondary
         statusLabel.textColor = styleSheet.textFaint
-        emptyLabel.textColor = styleSheet.textSecondary
         table.reloadData()
     }
 

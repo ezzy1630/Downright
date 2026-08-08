@@ -79,7 +79,7 @@ final class AssetDoctorView: NSView, PanelSurface {
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             statusLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
@@ -313,7 +313,7 @@ private final class AssetDiagnosticRowView: NSView {
         super.init(frame: .zero)
         self.identifier = identifier
 
-        severityLabel.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        severityLabel.font = PanelFont.system(11, weight: .bold)
         severityLabel.alignment = .center
         severityLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(severityLabel)
@@ -334,7 +334,7 @@ private final class AssetDiagnosticRowView: NSView {
         actionsAction = action
         actionsButton.target = action
         actionsButton.action = #selector(ButtonAction.fire(_:))
-        actionsButton.alphaValue = 0
+        actionsButton.alphaValue = 1
         addSubview(actionsButton)
 
         NSLayoutConstraint.activate([
@@ -420,14 +420,9 @@ private final class AssetDiagnosticRowView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) { setActionsVisible(true) }
-    override func mouseExited(with event: NSEvent) { setActionsVisible(false) }
+    override func mouseExited(with event: NSEvent) { setActionsVisible(true) }
 
     private func setActionsVisible(_ visible: Bool) {
-        PanelAnimation.run(
-            reduceMotion: reduceMotion,
-            duration: Motion.quick
-        ) { _ in
-            self.actionsButton.animator().alphaValue = visible ? 1 : 0
-        }
+        actionsButton.alphaValue = 1
     }
 }

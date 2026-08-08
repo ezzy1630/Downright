@@ -45,6 +45,7 @@ enum PanelMetrics {
     static let barHeight: CGFloat = 32
     static let reviewBarHeight: CGFloat = 30
     static let inset: CGFloat = 10
+    static let headerTopPadding: CGFloat = 8
     static let cornerRadius: CGFloat = 6
     static let hairline: CGFloat = 1
 
@@ -84,6 +85,12 @@ protocol PanelSurface: NSView {
 enum PanelFont {
     private static var adjustment: CGFloat { Preferences.shared.values.textSizeAdjustment }
     private static func size(_ base: CGFloat) -> CGFloat { max(11, min(22, base + adjustment)) }
+    static func system(_ base: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        .systemFont(ofSize: size(base), weight: weight)
+    }
+    static func monospaced(_ base: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        .monospacedSystemFont(ofSize: size(base), weight: weight)
+    }
     static var row: NSFont { .systemFont(ofSize: size(12.5)) }
     static var rowEmphasised: NSFont { .systemFont(ofSize: size(12.5), weight: .semibold) }
     static var secondary: NSFont { .systemFont(ofSize: size(11.5)) }
@@ -405,7 +412,7 @@ enum PanelButton {
         let button = NSButton(title: title, target: action, action: #selector(ButtonAction.fire(_:)))
         button.bezelStyle = .rounded
         button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: 12)
+        button.font = PanelFont.system(12)
         if isDefault { button.keyEquivalent = "\r" }
         button.focusRingType = .default
         button.setAccessibilityLabel(title)
@@ -420,7 +427,7 @@ enum PanelButton {
         button.setButtonType(.pushOnPushOff)
         button.bezelStyle = .rounded
         button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: 12)
+        button.font = PanelFont.system(12)
         button.focusRingType = .default
         button.setAccessibilityLabel(label)
         button.setAccessibilityRole(.checkBox)
@@ -494,7 +501,7 @@ class MessageBarView: NSView {
         statusLabel.textColor = styleSheet.textFaint
         statusLabel.alignment = .center
         statusLabel.wantsLayer = true
-        statusLabel.layer?.cornerRadius = 5
+        statusLabel.layer?.cornerRadius = PanelMetrics.cornerRadius
         statusLabel.isHidden = true
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -563,7 +570,7 @@ class MessageBarView: NSView {
     }
 
     func useReviewBarLayout() {
-        label.font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+        label.font = PanelFont.system(12.5, weight: .medium)
         actionStack.spacing = 3
         invalidateIntrinsicContentSize()
     }
@@ -616,7 +623,7 @@ final class PanelSegmentedControl: NSView {
     static let controlHeight: CGFloat = 26
     private static let minimumSegmentWidth: CGFloat = 46
     private static let labelPadding: CGFloat = 20
-    private static let labelFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+    private static var labelFont: NSFont { PanelFont.system(11.5, weight: .semibold) }
 
     /// The track's radius follows its height, so the same control reads as one
     /// shape whether a header gives it 22pt or 26pt.
@@ -770,8 +777,8 @@ final class PanelSegmentedControl: NSView {
             let selected = index == selectedIndex
             textLayer.font = (selected
                 ? Self.labelFont
-                : NSFont.systemFont(ofSize: 11.5, weight: .medium)) as CTFont
-            textLayer.fontSize = 11.5
+                : PanelFont.system(11.5, weight: .medium)) as CTFont
+            textLayer.fontSize = Self.labelFont.pointSize
             let alpha: CGFloat = disabledIndices.contains(index)
                 ? (styleSheet.increaseContrast ? 0.45 : 0.30)
                 : (selected ? 1 : dimmedAlpha(for: index))
@@ -1571,7 +1578,7 @@ final class PanelEmptyStateView: NSView {
         discLayer.opacity = 0
         layer?.addSublayer(discLayer)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.font = PanelFont.system(12.5, weight: .semibold)
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)

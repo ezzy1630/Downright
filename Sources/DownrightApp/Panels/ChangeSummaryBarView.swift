@@ -308,7 +308,7 @@ final class ChangeSummaryBarView: MessageBarView {
     /// The ribbon is 2pt tall, which is not a pointer target.  Clicks are taken
     /// from the bottom band of the bar instead, which is empty chrome — the
     /// label and the actions are centred well above it.
-    private static let ribbonHitHeight: CGFloat = 11
+    private static let ribbonHitHeight: CGFloat = 24
     /// How far from a tick a click still counts as that tick.  Wide enough to
     /// hit a 2.5pt mark without aiming, narrow enough that clicking empty track
     /// stays a no-op rather than jumping somewhere arbitrary.

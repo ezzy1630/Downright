@@ -72,6 +72,8 @@ final class DocumentWindowController: NSWindowController {
     private var focusDimmingViews: [FocusDimmingView] = []
     private var isSynchronizingPanes = false
     private var hasAppliedInitialInspectorWidth = false
+    private var inspectorTransitionGeneration = 0
+    private var inspectorWantsCollapsed = true
     private var pendingInitialRestoreOffset: Int?
     private var deferredInitialRestoreOffset: Int?
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
@@ -132,18 +134,13 @@ final class DocumentWindowController: NSWindowController {
         // archives can resurrect obsolete toolbar item views across releases.
         window.isRestorable = false
         window.minSize = NSSize(width: 520, height: 400)
-        // `setFrameAutosaveName` restores the saved frame the moment it is
-        // assigned, and it reports whether it found one.  The default content
-        // size below used to run unconditionally straight afterwards, which
-        // threw that frame away on every launch: resize the window, quit,
-        // reopen, and it was 1020×728 again — and a window that had been left
-        // in full screen came back at the default size too.
-        let restoredFrame = window.setFrameAutosaveName("DownrightDocumentWindow")
         self.init(window: window)
         window.delegate = self
         buildInterface()
-        if !restoredFrame {
-            window.setContentSize(NSSize(width: 1020, height: 728))
+        window.setContentSize(NSSize(width: 1020, height: 728))
+        if let screen = window.screen ?? NSScreen.main {
+            _ = window.cascadeTopLeft(from: NSPoint(x: screen.visibleFrame.minX + 80, y: screen.visibleFrame.maxY - 60))
+        } else {
             window.center()
         }
         wireDocument()
@@ -402,15 +399,15 @@ final class DocumentWindowController: NSWindowController {
         // The current-section cue lives in a stable orientation lane. A
         // reader must never trade the first line of prose for navigation.
         primaryContainer.topAccessoryOverlaysContent = false
-        // Keep the document map on the leading edge of the document surface.
-        // It reads as contents there; on the trailing edge it looks like an
-        // unexplained second scrollbar.
+        // The document map is navigation, not a second scrollbar. Keep it in
+        // the leading lane where the outline it expands into belongs.
         primaryContainer.leadingAccessory = densityGutterView
         breadcrumbView.delegate = self
         breadcrumbView.styleSheet = activeStyleSheet
         densityGutterView.delegate = self
         densityGutterView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
+        toolbarPresentationControl?.styleSheet = activeStyleSheet
 
         rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
         trailingPane = NSView()
@@ -561,6 +558,13 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func applyWindowAppearance(for theme: Theme) {
+        // Following macOS means native controls inherit macOS directly. Do not
+        // pin each window to the selected theme's appearance: that severs the
+        // system appearance chain even when the theme pair changes correctly.
+        if Preferences.shared.values.followsSystemAppearance {
+            window?.appearance = nil
+            return
+        }
         switch theme.appearance {
         case .light: window?.appearance = NSAppearance(named: .aqua)
         case .dark: window?.appearance = NSAppearance(named: .darkAqua)
@@ -659,6 +663,15 @@ final class DocumentWindowController: NSWindowController {
         let newMode = newMode.normalizedForEditing
         mode = newMode
         for pane in documentPanes where pane.textView.mode != newMode {
+            if !activeStyleSheet.reduceMotion, pane.textView.window != nil {
+                pane.textView.wantsLayer = true
+                pane.textView.layer?.removeAnimation(forKey: "mode-crossfade")
+                let transition = CATransition()
+                transition.type = .fade
+                transition.duration = Motion.standard
+                transition.timingFunction = Motion.timing(.decelerate)
+                pane.textView.layer?.add(transition, forKey: "mode-crossfade")
+            }
             pane.textView.mode = newMode
         }
         // Never persist a transient raw-source presentation.
@@ -1133,13 +1146,7 @@ final class DocumentWindowController: NSWindowController {
         // animation needs a window to play in, and a collapsed pane has none.
         // The pane widens on the same clock the panel unfurls on, so the two
         // halves of "the panel came out of the toolbar" land together.
-        if inspectorItem.isCollapsed {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = activeStyleSheet.reduceMotion ? 0 : Motion.standard
-                context.timingFunction = Motion.timing(.decelerate)
-                inspectorItem.animator().isCollapsed = false
-            }
-        }
+        setInspectorCollapsed(false, animated: true)
         host.setContent(view, section: section)
         applyPreferredInspectorWidth(for: view)
         refreshToolbarSelectionState()
@@ -1182,16 +1189,29 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func collapseInspectorPane(animated: Bool) {
-        guard !inspectorItem.isCollapsed else { return }
+        setInspectorCollapsed(true, animated: animated)
+    }
+
+    private func setInspectorCollapsed(_ collapsed: Bool, animated: Bool) {
+        let previousTarget = inspectorWantsCollapsed
+        inspectorTransitionGeneration &+= 1
+        let generation = inspectorTransitionGeneration
+        inspectorWantsCollapsed = collapsed
+        guard inspectorItem.isCollapsed != collapsed || previousTarget != collapsed else { return }
         guard animated, !activeStyleSheet.reduceMotion else {
-            inspectorItem.isCollapsed = true
+            inspectorItem.isCollapsed = collapsed
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
+        NSAnimationContext.runAnimationGroup({ context in
             context.duration = Motion.standard
             context.timingFunction = Motion.timing(.decelerate)
-            inspectorItem.animator().isCollapsed = true
-        }
+            inspectorItem.animator().isCollapsed = collapsed
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.inspectorTransitionGeneration == generation else { return }
+                self.inspectorItem.isCollapsed = self.inspectorWantsCollapsed
+            }
+        })
     }
 
     /// Keeps auxiliary windows (timeline, compare, lightbox) alive for as long
