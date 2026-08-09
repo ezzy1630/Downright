@@ -474,6 +474,11 @@ enum PanelButton {
 /// fixed grey, so an accented button glows in its accent and a faint one
 /// stays quiet (§11.4: hover states need clear feedback).
 private final class PanelSymbolButton: NSButton {
+    /// Set by owners that carry a theme, for the same reason every other
+    /// animated control here takes one: only the style sheet knows that a
+    /// Reader Profile has forced Reduce Motion on (§11.4).
+    var styleSheet: StyleSheet = .current
+
     override var intrinsicContentSize: NSSize {
         let size = super.intrinsicContentSize
         return NSSize(width: max(28, size.width), height: max(28, size.height))
@@ -481,6 +486,26 @@ private final class PanelSymbolButton: NSButton {
 
     private var isHovered = false
     private var hoverTracking: NSTrackingArea?
+
+    /// The wash is pointer feedback, and the motion system reserves springs
+    /// for exactly that: it used to flip between two opacities on the frame
+    /// the pointer crossed the edge, which on a row of adjacent glyphs reads
+    /// as a strobe rather than as the pointer being followed.
+    ///
+    /// A spring also earns its keep on the *reversal*.  Sweeping the pointer
+    /// back and forth across two neighbouring buttons interrupts each wash
+    /// mid-rise; velocity is state here, so each one turns around from the
+    /// speed it had instead of restarting from a standstill.
+    private var wash = Motion.SpringScalar(value: 0, perceptualDuration: Motion.hover)
+    private var washDriver: Motion.SpringDriver?
+
+    /// A disabled button (a walk chevron with nothing to walk) washes to
+    /// nothing — hovering a no-op must not promise an action.
+    private var washTarget: CGFloat {
+        guard isHovered, isEnabled else { return 0 }
+        let boost = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        return isHighlighted ? (boost ? 0.18 : 0.12) : (boost ? 0.12 : 0.07)
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -492,21 +517,65 @@ private final class PanelSymbolButton: NSButton {
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        needsDisplay = true
+        retargetWash()
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        needsDisplay = true
+        retargetWash()
     }
 
+    /// Press and enablement are the cell's state, not this view's, and the
+    /// cell can change them without any setter here being called.  Rather than
+    /// guess which mutations are observable, notice on the way to the screen
+    /// that the wash is aimed at the wrong place: a redraw is exactly what
+    /// those changes do cause, and this is the last moment before one.
+    override func viewWillDraw() {
+        super.viewWillDraw()
+        if wash.target != washTarget { retargetWash() }
+    }
+
+    private func retargetWash() {
+        // No theme motion, or nowhere for a display link to tick: arrive.
+        guard !styleSheet.reduceMotion, let window,
+              window.isVisible, window.screen != nil else {
+            washDriver?.park()
+            wash.snap(to: washTarget)
+            needsDisplay = true
+            return
+        }
+        wash.target(washTarget)
+        let driver = washDriver ?? makeWashDriver()
+        if !driver.arm() {
+            wash.snap(to: washTarget)
+            needsDisplay = true
+        }
+    }
+
+    private func makeWashDriver() -> Motion.SpringDriver {
+        let driver = Motion.SpringDriver(
+            view: self,
+            advance: { [weak self] dt in self?.wash.advance(dt: dt) ?? false },
+            // The wash is drawn, not layered, so the frame's state reaches the
+            // screen as an invalidation. A 28pt square for a tenth of a second
+            // is cheaper than the layer juggling needed to keep a sublayer
+            // underneath the glyph.
+            apply: { [weak self] in self?.needsDisplay = true }
+        )
+        washDriver = driver
+        return driver
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        washDriver?.viewDidMoveToWindow(window: window)
+    }
+
+    deinit { washDriver?.park() }
+
     override func draw(_ dirtyRect: NSRect) {
-        // A disabled button (a walk chevron with nothing to walk) keeps its
-        // dimmed glyph and skips the wash — hovering a no-op must not promise
-        // an action.
-        if isHovered, isEnabled {
-            let boost = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            let alpha = isHighlighted ? (boost ? 0.18 : 0.12) : (boost ? 0.12 : 0.07)
+        let alpha = wash.value
+        if alpha > 0.001, isEnabled {
             (contentTintColor ?? .labelColor).withAlphaComponent(alpha).setFill()
             NSBezierPath(
                 roundedRect: bounds.insetBy(dx: 2, dy: 2),
