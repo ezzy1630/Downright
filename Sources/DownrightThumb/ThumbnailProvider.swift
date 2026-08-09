@@ -39,14 +39,18 @@ final class ThumbnailProvider: QLThumbnailProvider {
         // of them look wrong before you had read a word.
         let size = ThumbnailProvider.pageSize(fitting: request.maximumSize)
 
-        let reply = QLThumbnailReply(contextSize: size) { context in
+        // This renderer uses AppKit text and paths, so request Quick Look's
+        // AppKit current-context variant. The Core Graphics overload applies
+        // the request's Retina scale before our NSGraphicsContext bridge;
+        // bridging it again made Finder show only the bottom-left quarter.
+        let reply = QLThumbnailReply(contextSize: size, currentContextDrawing: {
             ThumbnailProvider.draw(
                 title: title, subtitle: subtitle,
                 tasks: taskCount > 0 ? (doneCount, taskCount) : nil,
-                size: size, in: context
+                size: size
             )
             return true
-        }
+        })
         handler(reply, nil)
     }
 
@@ -95,11 +99,9 @@ final class ThumbnailProvider: QLThumbnailProvider {
 
     private static func draw(
         title: String, subtitle: String, tasks: (done: Int, total: Int)?,
-        size: CGSize, in context: CGContext
+        size: CGSize
     ) {
-        let nsContext = NSGraphicsContext(cgContext: context, flipped: false)
         NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = nsContext
         defer { NSGraphicsContext.restoreGraphicsState() }
 
         let radius = size.width * 0.055
