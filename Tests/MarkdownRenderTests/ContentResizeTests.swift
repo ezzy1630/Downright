@@ -38,8 +38,10 @@ struct ContentResizeTests {
                             isWholesale: false))
         #expect(view.pendingResizeRequestForTesting == .semantic)
 
-        try await Task.sleep(for: .milliseconds(35))
-        #expect(view.pendingResizeRequestForTesting == .semantic)
+        // The pending assertion above proves the semantic request was not run
+        // inline. Do not assert that a wall-clock sleep shorter than the idle
+        // delay resumes on time: a loaded CI main actor may resume only after
+        // the correctly scheduled work item has already fired.
         try await Task.sleep(for: .milliseconds(120))
         #expect(view.pendingResizeRequestForTesting == nil)
     }

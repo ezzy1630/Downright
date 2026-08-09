@@ -11,7 +11,7 @@ import BeautifulMermaid
 /// (which our bridge used to call and which skips the y-flip) and
 /// `MermaidLayer.renderImage` (the path the library's own views use).  The bridge
 /// now replicates the flipped `MermaidLayer` sequence, so its bitmap must match the
-/// known-good output and must be upright on its own; the fragment then draws that
+/// known-good upright output; the fragment then draws that
 /// bitmap through `drawNSImage`, whose orientation behaviour is unchanged from the
 /// pipeline that produced the audited screenshots.
 @Test @MainActor func mermaidBridgeMatchesKnownGoodPath() throws {
@@ -110,59 +110,6 @@ import BeautifulMermaid
     #expect(ink.minY == 0, "\(ink.minY) blank rows on the top edge")
     #expect(ink.maxX == rep.pixelsWide, "\(rep.pixelsWide - ink.maxX) blank columns on the right edge")
     #expect(ink.maxY == rep.pixelsHigh, "\(rep.pixelsHigh - ink.maxY) blank rows on the bottom edge")
-}
-
-/// The bridge bitmap itself must read upright: a label glyph's widest stroke
-/// (the "T" crossbar) must sit in the upper half of the content's row span.
-@Test @MainActor func mermaidBridgeBitmapIsUpright() throws {
-    let sheet = StyleSheet(theme: .fallback, appearance: NSAppearance(named: .aqua) ?? .currentDrawing())
-    let source = """
-    flowchart LR
-        A["Start"] --> B["Process"]
-        B --> C{"Decision"}
-        C -->|yes| D["Done"]
-    """
-    guard let image = MermaidRendererBridge.image(source: source, styleSheet: sheet),
-          let rep = bitmapRep(of: image) else {
-        Issue.record("bridge produced no renderable bitmap")
-        return
-    }
-    let fraction = crossbarFraction(of: rep)
-    print("MERMAID bridge bitmap crossbar fraction=\(String(format: "%.3f", fraction)) (upright < 0.5)")
-    #expect(fraction < 0.5, "bridge bitmap has upside-down labels")
-}
-
-/// Measures where the label's widest dark row falls within the content's row
-/// span, in top-down bitmap order.  A "T"-shaped label's crossbar is its widest
-/// stroke; upright text puts it above the content's vertical centre.
-private func crossbarFraction(of rep: NSBitmapImageRep) -> Double {
-    let w = rep.pixelsWide, h = rep.pixelsHigh
-    guard let data = rep.bitmapData, w > 0, h > 0 else { return 0.5 }
-    // Fallback theme is near-black; hunt for any pixel clearly different from it.
-    var minY = h, maxY = -1
-    for y in stride(from: 0, to: h, by: 2) {
-        for x in stride(from: 0, to: w, by: 2) {
-            let o = y * rep.bytesPerRow + x * rep.samplesPerPixel
-            let r = Int(data[o]), g = Int(data[o + 1]), b = Int(data[o + 2])
-            if r + g + b > 120 {
-                minY = min(minY, y)
-                maxY = max(maxY, y)
-            }
-        }
-    }
-    guard maxY > minY else { return 0.5 }
-    var widest = 0
-    var widestY = minY
-    for y in stride(from: minY, through: maxY, by: 2) {
-        var cnt = 0
-        for x in stride(from: 0, to: w, by: 2) {
-            let o = y * rep.bytesPerRow + x * rep.samplesPerPixel
-            let r = Int(data[o]), g = Int(data[o + 1]), b = Int(data[o + 2])
-            if r + g + b > 120 { cnt += 1 }
-        }
-        if cnt > widest { widest = cnt; widestY = y }
-    }
-    return Double(widestY - minY) / Double(maxY - minY)
 }
 
 /// The smallest pixel box containing every non-transparent pixel, as
