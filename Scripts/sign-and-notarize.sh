@@ -62,10 +62,10 @@ APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
 sign() { codesign --force --options runtime --timestamp --sign "$IDENTITY" "$1"; }
 
 echo "==> Signing every nested executable (no --deep)"
-sign "$APP/Contents/Frameworks/Sparkle.framework"
 for helper in "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc; do
     [ -d "$helper" ] && sign "$helper"
 done
+sign "$APP/Contents/Frameworks/Sparkle.framework"
 for appex in "$APP"/Contents/PlugIns/*.appex; do
     [ -d "$appex" ] && sign "$appex"
 done
@@ -74,6 +74,7 @@ sign "$APP"
 
 echo "==> Verifying signatures"
 for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" \
+            "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/XPCServices/*.xpc \
             "$APP/Contents/MacOS/down" "$APP"/Contents/PlugIns/*.appex; do
     [ -e "$item" ] || continue
     codesign --verify --strict --verbose=2 "$item"
@@ -87,12 +88,13 @@ fi
 
 echo "==> Notarizing"
 ZIP="$ROOT/dist/Downright-$MARKETING_VERSION.zip"
+NOTARY_ZIP="$ROOT/dist/.Downright-$MARKETING_VERSION-notarization.zip"
 mkdir -p "$ROOT/dist"
-ditto -c -k --keepParent --sequesterRsrc "$APP" "$ZIP"
+ditto -c -k --keepParent --sequesterRsrc "$APP" "$NOTARY_ZIP"
 
 # The ephemeral API key must outlive EVERY submit that references it (the zip
 # and, with MAKE_DMG=1, the DMG), so it is removed by the EXIT trap, not inline.
-CLEANUP=()
+CLEANUP=("$NOTARY_ZIP")
 trap 'rm -f "${CLEANUP[@]}"' EXIT
 if [ -n "${KEYCHAIN_PROFILE:-}" ]; then
     NOTARY=(--keychain-profile "$KEYCHAIN_PROFILE")
@@ -101,13 +103,18 @@ else
     CLEANUP+=(/tmp/downright-AuthKey.p8)
     NOTARY=(--key /tmp/downright-AuthKey.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
 fi
-xcrun notarytool submit "$ZIP" "${NOTARY[@]}" --wait --timeout 20m
+xcrun notarytool submit "$NOTARY_ZIP" "${NOTARY[@]}" --wait --timeout 20m
 
 echo "==> Stapling and verifying"
 xcrun stapler staple "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 spctl --assess --type execute --verbose=4 "$APP"
 xcrun stapler validate "$APP"
+
+# The archive submitted above necessarily predates stapling. Rebuild the
+# artifact users receive so the offline Gatekeeper ticket is inside the zip.
+rm -f "$ZIP"
+ditto -c -k --keepParent --sequesterRsrc "$APP" "$ZIP"
 
 if [ "${MAKE_DMG:-0}" = "1" ]; then
     echo "==> Building and notarizing the DMG"

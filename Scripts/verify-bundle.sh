@@ -43,9 +43,8 @@ if [ -d "$FW" ]; then
     # Helper names/paths changed across Sparkle versions (2.9 uses
     # Versions/B/XPCServices/{Downloader,Installer}.xpc); require both helpers
     # somewhere under the framework rather than pinning one path.
-    HELPER_DIRS="$(find "$FW" -type d -name XPCServices -maxdepth 6 2>/dev/null)"
-    check "$(find $HELPER_DIRS -maxdepth 1 -name 'Downloader.xpc' 2>/dev/null | grep -q . && echo 1 || echo 0)" "Sparkle Downloader XPC helper"
-    check "$(find $HELPER_DIRS -maxdepth 1 -name 'Installer.xpc' 2>/dev/null | grep -q . && echo 1 || echo 0)" "Sparkle Installer XPC helper"
+    check "$(find "$FW" -maxdepth 8 -type d -name 'Downloader.xpc' -path '*/XPCServices/*' 2>/dev/null | grep -q . && echo 1 || echo 0)" "Sparkle Downloader XPC helper"
+    check "$(find "$FW" -maxdepth 8 -type d -name 'Installer.xpc' -path '*/XPCServices/*' 2>/dev/null | grep -q . && echo 1 || echo 0)" "Sparkle Installer XPC helper"
 else
     check 0 "Sparkle.framework embedded"
 fi
@@ -128,6 +127,9 @@ if [ -d "$CONTENTS/PlugIns" ]; then
         check "$([ -n "$(appex_resource "$appex" SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf)" ] && echo 1 || echo 0)" \
               "$NAME carries the SwiftMath math fonts"
     done
+else
+    check 0 "DownrightQL.appex embedded"
+    check 0 "DownrightThumb.appex embedded"
 fi
 
 # --- Version consistency -----------------------------------------------------

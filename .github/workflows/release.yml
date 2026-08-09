@@ -34,7 +34,7 @@ jobs:
     steps:
       # ---------------------------------------------------------------- gates
       - name: Checkout full history
-        uses: actions/checkout@v4  # pin to the commit SHA of your v4 checkout tag
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           fetch-depth: 0
 
@@ -166,10 +166,10 @@ jobs:
           # Sparkle framework + its nested XPC helpers first.  Sparkle 2.9.5
           # ships the helpers under Versions/B/XPCServices (unversioned bundle
           # layout inside), so discover them rather than hard-coding a path.
-          sign "$APP/Contents/Frameworks/Sparkle.framework"
           for helper in "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc; do
             [ -d "$helper" ] && sign "$helper"
           done
+          sign "$APP/Contents/Frameworks/Sparkle.framework"
           # Quick Look extensions.
           for appex in "$APP"/Contents/PlugIns/*.appex; do sign "$appex"; done
           # The CLI lives in MacOS/ and is signed as part of the app bundle.
@@ -177,7 +177,10 @@ jobs:
           # The host last.
           sign "$APP"
           # Verify each individually.
-          for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" "$APP"/Contents/PlugIns/*.appex; do
+          for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" \
+              "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc \
+              "$APP"/Contents/PlugIns/*.appex; do
+            [ -e "$item" ] || continue
             codesign --verify --strict --verbose=2 "$item"
           done
 
@@ -186,17 +189,23 @@ jobs:
         run: |
           set -euo pipefail
           APP="${{ env.APP }}"
-          # Staple must happen on the app *before* zipping.
-          xcrun stapler staple "$APP"
-          # Build the distribution zip from the signed+stapled app.
-          ditto -c -k --keepParent --sequesterRsrc "$APP" "Downright-$TAG.zip"
+          # Submit a transport archive of the signed app. Apple creates the
+          # ticket only after this succeeds; stapling before submission can
+          # never work for a fresh build.
+          NOTARY_ZIP="$RUNNER_TEMP/Downright-$TAG-notarization.zip"
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "$NOTARY_ZIP"
           echo "$APPLE_API_PRIVATE_KEY_P8" | base64 --decode > /tmp/AuthKey.p8
-          xcrun notarytool submit "Downright-$TAG.zip" \
+          xcrun notarytool submit "$NOTARY_ZIP" \
             --key /tmp/AuthKey.p8 \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER_ID" \
             --wait --timeout 20m
           rm -f /tmp/AuthKey.p8
+          xcrun stapler staple "$APP"
+          rm -f "$NOTARY_ZIP"
+          # Rebuild the user-facing archive from the stapled app so offline
+          # Gatekeeper verification does not depend on reaching Apple's CDN.
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "Downright-$TAG.zip"
           # Final verification battery.
           codesign --verify --deep --strict --verbose=2 "$APP"
           spctl --assess --type execute --verbose=4 "$APP"
@@ -341,7 +350,7 @@ jobs:
 
       # --------------------------------------------------------------- publish
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2  # pin to a release-tagged SHA in production
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -382,7 +391,7 @@ jobs:
           done
 
       - name: Upload Pages artifact (appcast + release notes)
-        uses: actions/upload-pages-artifact@v3  # pin to a release-tagged SHA in production
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:
           path: artifacts/pages
           name: github-pages
@@ -400,4 +409,4 @@ jobs:
     steps:
       - name: Deploy signed appcast to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4  # pin to a release-tagged SHA in production
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

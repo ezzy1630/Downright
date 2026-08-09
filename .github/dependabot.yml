@@ -1,7 +1,8 @@
 version: 2
 
 updates:
-  # ci.yml and release.yml pin actions by major tag, which drifts silently.
+  # ci.yml and release.yml pin actions by immutable commit SHA. Dependabot
+  # opens reviewed SHA bumps without restoring mutable major tags.
   - package-ecosystem: github-actions
     directory: /
     schedule:
