@@ -173,6 +173,14 @@ final class ChangeSummaryBarView: MessageBarView {
             self.delegate?.changeSummaryBarDidRequestDismiss(self)
         }
 
+        // This is a transient notice, not a review toolbar.  Review remains
+        // available from the Navigate menu and keyboard commands; keeping its
+        // controls here made a brief disk-update cue read like permanent UI.
+        hideButtons(in: self)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerRadius = Self.cornerRadius
+
         setAccessibilityLabel("Document updated on disk")
         // The base's own `applyStyle` ran before these buttons existed, and a
         // host that never reassigns `styleSheet` would otherwise show every
@@ -188,12 +196,21 @@ final class ChangeSummaryBarView: MessageBarView {
     override var intrinsicContentSize: NSSize {
         NSSize(
             width: min(Self.maximumWidth, max(Self.minimumWidth, fittedWidth)),
-            height: PanelMetrics.reviewBarHeight
+            height: Self.toastHeight
         )
     }
 
-    private static let minimumWidth: CGFloat = 260
-    private static let maximumWidth: CGFloat = 520
+    private static let minimumWidth: CGFloat = 190
+    private static let maximumWidth: CGFloat = 330
+    static let toastHeight: CGFloat = 38
+    private static let cornerRadius: CGFloat = 19
+
+    private func hideButtons(in view: NSView) {
+        for subview in view.subviews {
+            if let button = subview as? NSButton { button.isHidden = true }
+            hideButtons(in: subview)
+        }
+    }
 
     /// Configures the bar from the tracker's marks — the preferred entry point,
     /// and the only one that can say where the changes fell.
@@ -268,5 +285,19 @@ final class ChangeSummaryBarView: MessageBarView {
         previousButton?.contentTintColor = styleSheet.textSecondary
         nextButton?.contentTintColor = styleSheet.textSecondary
         reviewedButton?.contentTintColor = styleSheet.changeColor(.inserted)
+        layer?.cornerRadius = Self.cornerRadius
+    }
+
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius)
+        styleSheet.background.setFill()
+        shape.fill()
+        styleSheet.text.withAlphaComponent(styleSheet.increaseContrast ? 0.10 : 0.055).setFill()
+        shape.fill()
+
+        styleSheet.rule.withAlphaComponent(0.7).setStroke()
+        shape.lineWidth = PanelMetrics.hairline
+        shape.stroke()
     }
 }

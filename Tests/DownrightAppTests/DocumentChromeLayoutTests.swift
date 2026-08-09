@@ -32,11 +32,7 @@ struct DocumentChromeLayoutTests {
         return (file, { try? FileManager.default.removeItem(at: directory) })
     }
 
-    /// The change bar used to be pinned to the window's top, which is the same
-    /// band the breadcrumb's reserved lane occupies.  On a wide window the two
-    /// happened to miss each other horizontally; at 640pt the bar sat across
-    /// 227pt of the trail.  Narrow widths are therefore the ones worth holding.
-    @Test("The change bar clears the breadcrumb's lane at every window width",
+    @Test("The change toast stays in the window corner at every width",
           arguments: [1400.0, 1100.0, 900.0, 760.0, 640.0])
     func changeBarClearsBreadcrumbLane(_ width: Double) throws {
         let (file, cleanup) = try makeDocument()
@@ -52,20 +48,14 @@ struct DocumentChromeLayoutTests {
 
         let bar = try #require(controller.changeSummaryBar)
         let root = try #require(controller.window?.contentView)
-        let crumb = controller.breadcrumbView
-        let crumbRect = crumb.convert(crumb.bounds, to: root)
         let barRect = bar.convert(bar.bounds, to: root)
 
-        #expect(!crumbRect.intersects(barRect), "the change bar overlaps the breadcrumb at \(Int(width))pt")
-        // Below the lane, not off the top of the window.
-        #expect(barRect.maxY <= crumbRect.minY)
-        #expect(barRect.minY > 0)
+        #expect(abs(barRect.maxX - (root.bounds.maxX - 16)) < 0.5)
+        #expect(abs(barRect.maxY - (root.bounds.maxY - 14)) < 0.5)
     }
 
-    /// Hiding the breadcrumb collapses its lane, so the offset is a constant
-    /// that has to be refreshed rather than one set once at creation.
-    @Test("Hiding the breadcrumb moves the change bar up into the freed lane")
-    func changeBarFollowsTheLane() throws {
+    @Test("Breadcrumb visibility does not move the corner toast")
+    func changeToastIgnoresTheBreadcrumbLane() throws {
         let (file, cleanup) = try makeDocument()
         defer { cleanup() }
 
@@ -83,8 +73,8 @@ struct DocumentChromeLayoutTests {
         controller.refreshChangeSummaryTopInset()
         let withoutLane = try #require(controller.changeSummaryTopConstraint).constant
 
-        #expect(withoutLane < withLane)
-        #expect(withoutLane == 8)
+        #expect(withoutLane == withLane)
+        #expect(withoutLane == 14)
     }
 
     /// One formula for the lane, shared by the container that reserves it and

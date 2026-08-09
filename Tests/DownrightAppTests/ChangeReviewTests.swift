@@ -190,7 +190,7 @@ struct ChangeReviewTests {
             documentLength: 100
         ))
         #expect(bar.message == "1 added · 1 rewritten")
-        #expect(bar.intrinsicContentSize.height == PanelMetrics.reviewBarHeight)
+        #expect(bar.intrinsicContentSize.height == ChangeSummaryBarView.toastHeight)
     }
 
     @Test("The count-only entry point still works for callers with no marks")
@@ -199,13 +199,13 @@ struct ChangeReviewTests {
         bar.configure(message: "Updated on disk", changeCount: 4)
         #expect(bar.message == "Updated on disk")
         #expect(bar.positionStatusForTesting.isEmpty)
-        #expect(bar.intrinsicContentSize.height == PanelMetrics.reviewBarHeight)
+        #expect(bar.intrinsicContentSize.height == ChangeSummaryBarView.toastHeight)
     }
 
     @Test("Drawing a configured bar does not fail")
     func barDraws() {
         let bar = ChangeSummaryBarView()
-        bar.frame = NSRect(x: 0, y: 0, width: 320, height: PanelMetrics.reviewBarHeight)
+        bar.frame = NSRect(x: 0, y: 0, width: 320, height: ChangeSummaryBarView.toastHeight)
         bar.configure(summary: ChangeSummaryBarView.Summary(
             marks: [mark(.inserted, at: 0), mark(.modified, at: 50), mark(.deleted, at: 99)],
             documentLength: 100

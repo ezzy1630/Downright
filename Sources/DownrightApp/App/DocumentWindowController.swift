@@ -35,8 +35,9 @@ final class DocumentWindowController: NSWindowController {
     var findBar: FindBarView?
     var conflictBar: ConflictBarView?
     var changeSummaryBar: ChangeSummaryBarView?
-    /// Held so the bar can be moved when the breadcrumb's lane changes height.
+    /// Held for layout tests and the transient toast's fixed corner inset.
     var changeSummaryTopConstraint: NSLayoutConstraint?
+    private var changeSummaryDismissWorkItem: DispatchWorkItem?
     var searchResults: SearchResultsPanelView?
     var searchInspector: SearchInspectorView?
     var historyInspector: HistoryInspectorView?
@@ -955,9 +956,8 @@ final class DocumentWindowController: NSWindowController {
         // document surface is meant not to do.
         densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
         statusBarView.hasFileURL = markdownDocument.url != nil
-        let changes = markdownDocument.changes.marks.map { ($0.kind, $0.range) }
         densityGutterView.bands = DensityGutterView.bands(
-            for: parsed, changes: changes, searchHits: findSession.matches
+            for: parsed, changes: [], searchHits: findSession.matches
         )
         let length = CGFloat(max(1, parsed.length))
         let source = containerTextView
@@ -1000,19 +1000,11 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func refreshChangeDecorations() {
-        // `decoratedMarks`, not `unreadMarks`: a visited change dims rather than
-        // vanishing, so walking the review queue with ] does not erase it — but
-        // an expired one is gone, which is what makes the queue a queue.
-        primaryContainer.textView.changeMarks = markdownDocument.changes.decoratedMarks.map {
-            MarkdownTextView.ChangeMark(
-                kind: $0.kind,
-                range: $0.range,
-                words: $0.wordRanges,
-                visited: $0.visited,
-                deletedText: $0.deletedText
-            )
-        }
-        splitContainer?.textView.changeMarks = primaryContainer.textView.changeMarks
+        // Change tracking still powers summaries, navigation, persistence, and
+        // accessibility.  The coloured document marks and density-rail dots
+        // are intentionally absent from the calm reading surface.
+        primaryContainer.textView.changeMarks = []
+        splitContainer?.textView.changeMarks = []
         refreshDensityBands()
     }
 
@@ -1079,7 +1071,7 @@ final class DocumentWindowController: NSWindowController {
     /// roughly 1000pt the bar simply sat on top of the trail — 227pt of overlap
     /// at 640pt wide.  Clearing the container's reserved lane is what keeps them
     /// two pieces of chrome instead of one collision.
-    private var changeSummaryTopInset: CGFloat { primaryContainer.topLaneHeight + 8 }
+    private var changeSummaryTopInset: CGFloat { 14 }
 
     /// The lane changes height when the breadcrumb is hidden — Focus mode — so
     /// the bar's offset is a constant that gets refreshed, not one set once.
@@ -1090,21 +1082,22 @@ final class DocumentWindowController: NSWindowController {
     /// itself from the tracker's marks; a message is for the events the marks
     /// cannot name, such as a rename.
     func showChangeSummary(_ message: String? = nil) {
+        changeSummaryDismissWorkItem?.cancel()
         if changeSummaryBar == nil {
             let bar = ChangeSummaryBarView()
             bar.delegate = self
             bar.styleSheet = activeStyleSheet
             changeSummaryBar = bar
             bar.translatesAutoresizingMaskIntoConstraints = false
-            rootView.addSubview(bar)
+            rootView.addSubview(bar, positioned: .above, relativeTo: nil)
             let top = bar.topAnchor.constraint(
-                equalTo: primaryContainer.topAnchor,
+                equalTo: rootView.topAnchor,
                 constant: changeSummaryTopInset
             )
             changeSummaryTopConstraint = top
             NSLayoutConstraint.activate([
                 top,
-                bar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -12),
+                bar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             ])
         }
         refreshChangeSummaryTopInset()
@@ -1116,6 +1109,9 @@ final class DocumentWindowController: NSWindowController {
             )
         )
         rootView.needsLayout = true
+        rootView.layoutSubtreeIfNeeded()
+        animateChangeSummaryInIfNeeded()
+        scheduleChangeSummaryDismissal()
     }
 
     func showConflictBar(_ message: String) {
@@ -1142,11 +1138,84 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func dismissChangeSummary() {
+        changeSummaryDismissWorkItem?.cancel()
+        changeSummaryDismissWorkItem = nil
         if let changeSummaryBar {
             changeSummaryBar.removeFromSuperview()
         }
         changeSummaryBar = nil
         rootView.needsLayout = true
+    }
+
+    private func scheduleChangeSummaryDismissal() {
+        let work = DispatchWorkItem { [weak self] in self?.animateChangeSummaryOut() }
+        changeSummaryDismissWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: work)
+    }
+
+    private func animateChangeSummaryInIfNeeded() {
+        guard let bar = changeSummaryBar else { return }
+        bar.layer?.removeAllAnimations()
+        guard !activeStyleSheet.reduceMotion, let layer = bar.layer else {
+            bar.alphaValue = 1
+            return
+        }
+
+        let transform = CAKeyframeAnimation(keyPath: "transform")
+        transform.values = [
+            CATransform3DMakeScale(0.72, 0.82, 1),
+            CATransform3DMakeScale(1.04, 0.96, 1),
+            CATransform3DIdentity,
+        ]
+        transform.keyTimes = [0, 0.64, 1]
+        transform.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeInEaseOut),
+        ]
+        transform.duration = 0.42
+
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = 0
+        opacity.toValue = 1
+        opacity.duration = 0.20
+        layer.add(transform, forKey: "change-toast-materialize")
+        layer.add(opacity, forKey: "change-toast-fade-in")
+        bar.alphaValue = 1
+    }
+
+    private func animateChangeSummaryOut() {
+        guard let bar = changeSummaryBar else { return }
+        changeSummaryDismissWorkItem = nil
+        guard !activeStyleSheet.reduceMotion, let layer = bar.layer else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                bar.animator().alphaValue = 0
+            } completionHandler: { [weak self] in
+                Task { @MainActor in self?.dismissChangeSummary() }
+            }
+            return
+        }
+
+        let group = CAAnimationGroup()
+        let transform = CAKeyframeAnimation(keyPath: "transform")
+        transform.values = [
+            CATransform3DIdentity,
+            CATransform3DMakeScale(1.03, 0.94, 1),
+            CATransform3DMakeScale(0.62, 0.74, 1),
+        ]
+        transform.keyTimes = [0, 0.30, 1]
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = 1
+        opacity.toValue = 0
+        group.animations = [transform, opacity]
+        group.duration = 0.34
+        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        group.isRemovedOnCompletion = false
+        group.fillMode = .forwards
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in self?.dismissChangeSummary() }
+        layer.add(group, forKey: "change-toast-dematerialize")
+        CATransaction.commit()
     }
 
     // MARK: - End of life
