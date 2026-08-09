@@ -9,7 +9,10 @@ permissions:
 
 jobs:
   swift:
-    runs-on: macos-15
+    # AppKit Liquid Glass symbols are part of the macOS 26 SDK.  macos-15's
+    # default Xcode 16.4 has Swift 6 but cannot resolve those APIs at compile
+    # time, even behind availability checks.
+    runs-on: macos-26
     # check.sh with RUN_DRBENCH=1 builds debug + runs all suites + builds
     # drbench in release and enforces the §12 budgets; that is three full
     # build graphs, so leave generous headroom.

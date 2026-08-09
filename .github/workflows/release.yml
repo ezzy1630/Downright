@@ -18,7 +18,9 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    # The app directly references macOS 26 AppKit Liquid Glass APIs, so both
+    # CI and the shipping archive must compile against the macOS 26 SDK.
+    runs-on: macos-26
     environment: release
     timeout-minutes: 90
     permissions:
