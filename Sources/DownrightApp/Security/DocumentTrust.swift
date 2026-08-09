@@ -16,6 +16,7 @@ enum DocumentTrustState: String, Codable, CaseIterable, Sendable {
 
 enum TrustEffect: String, Codable, CaseIterable, Hashable, Sendable {
     case openExternalLink
+    case loadRemoteAsset
     case readLocalAsset
     case launchPathOrEditor
     case automationAppIntent
@@ -23,6 +24,7 @@ enum TrustEffect: String, Codable, CaseIterable, Hashable, Sendable {
     var title: String {
         switch self {
         case .openExternalLink: "Open an external link"
+        case .loadRemoteAsset: "Load a remote image"
         case .readLocalAsset: "Read a local asset"
         case .launchPathOrEditor: "Open a path or editor"
         case .automationAppIntent: "Run an app or automation intent"

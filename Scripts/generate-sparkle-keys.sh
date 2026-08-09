@@ -23,6 +23,7 @@ GEN_KEYS="$(ls /tmp/sparkle*/bin/generate_keys /usr/local/bin/generate_keys 2>/d
 if [ -z "$GEN_KEYS" ]; then
     echo "Sparkle tools not found. Fetch them first:" >&2
     echo "  curl -fsSL -o /tmp/sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.9.5/Sparkle-2.9.5.tar.xz" >&2
+    echo "  echo '015336b601493e05c237964954bff6191370003d94edefe663724c88840d73cc  /tmp/sparkle.tar.xz' | shasum -a 256 -c -" >&2
     echo "  tar xf /tmp/sparkle.tar.xz -C /tmp" >&2
     echo "Then re-run this script." >&2
     exit 1

@@ -634,6 +634,24 @@ struct AppLayerTests {
         #expect(html.contains("class=\"missing\""))
     }
 
+    @Test @MainActor func htmlExportNeverRetainsActiveExternalImageSources() throws {
+        let root = try makeExportRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let html = exportHTML(
+            "![web](https://tracker.example/pixel.png) "
+                + "![file](file:///private/etc/passwd) "
+                + "![data](data:image/svg+xml,<svg/>) "
+                + "![protocol](//tracker.example/pixel.png)",
+            baseDirectory: root
+        )
+
+        #expect(!html.contains("<img src=\"https://"))
+        #expect(!html.contains("<img src=\"file:"))
+        #expect(!html.contains("<img src=\"data:"))
+        #expect(!html.contains("<img src=\"//"))
+        #expect(html.components(separatedBy: "class=\"missing\"").count - 1 == 4)
+    }
+
     @Test func plainTextRenderingStripsMarkup() {
         let markdown = "# Heading\n\nSome **bold** and `code` and a [link](https://x.test).\n"
         let document = MarkdownParser.parse(markdown)

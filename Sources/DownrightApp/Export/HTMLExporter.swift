@@ -302,8 +302,14 @@ struct HTMLExporter {
 
     private func renderImage(source: String, alt: String) -> String {
         let caption = alt.isEmpty ? "" : "<figcaption>\(escape(alt))</figcaption>"
-        guard !source.contains("://") else {
-            return "<figure><img src=\"\(escape(source))\" alt=\"\(escape(alt))\">\(caption)</figure>"
+        // A self-contained export must never retain a network, data, custom-
+        // scheme, or file URL. Besides violating the format contract, a
+        // remote `src` turns opening an exported review into a tracking
+        // request, while `file://` can expose a local path outside the
+        // document folder. Only confined relative assets may become live
+        // image sources below.
+        guard !hasURLScheme(source), !source.hasPrefix("//") else {
+            return missingImage(source: source, alt: alt, caption: caption)
         }
         guard let base = baseDirectory else {
             // No document folder to resolve against: keep the reference as-is
@@ -344,6 +350,14 @@ struct HTMLExporter {
         let basePath = base.resolvingSymlinksInPath().standardizedFileURL.path
         let prefix = basePath.hasSuffix("/") ? basePath : basePath + "/"
         return candidate.path.hasPrefix(prefix) ? candidate : nil
+    }
+
+    private func hasURLScheme(_ source: String) -> Bool {
+        guard let colon = source.firstIndex(of: ":") else { return false }
+        let prefix = source[..<colon]
+        guard !prefix.isEmpty else { return false }
+        let scheme = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+-."))
+        return prefix.unicodeScalars.allSatisfy { scheme.contains($0) }
     }
 
     private func missingImage(source: String, alt: String, caption: String) -> String {

@@ -296,8 +296,11 @@ jobs:
 
       - name: Fetch Sparkle signing tools (pinned version)
         run: |
+          set -euo pipefail
+          SPARKLE_SHA256="015336b601493e05c237964954bff6191370003d94edefe663724c88840d73cc"
           curl -fsSL -o /tmp/sparkle.tar.xz \
             https://github.com/sparkle-project/Sparkle/releases/download/2.9.5/Sparkle-2.9.5.tar.xz
+          echo "$SPARKLE_SHA256  /tmp/sparkle.tar.xz" | shasum -a 256 -c -
           tar xf /tmp/sparkle.tar.xz -C /tmp
           ls /tmp/sparkle/bin/
 

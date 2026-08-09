@@ -59,8 +59,16 @@ extension DocumentWindowController {
 
     func presentLightbox(source: String, caption: String?) {
         guard let window else { return }
-        let url = LocalAssetPolicy.request(raw: source, documentURL: markdownDocument.url)?.url
-            ?? (source.contains("://") ? URL(string: source) : nil)
+        let localURL = LocalAssetPolicy.request(raw: source, documentURL: markdownDocument.url)?.url
+        let remoteURL = URL(string: source).flatMap { url -> URL? in
+            guard let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  url.host != nil else {
+                return nil
+            }
+            return url
+        }
+        let url = localURL ?? remoteURL
         guard let url else { return }
         let present = {
             self.documentPanes.forEach { $0.textView.refreshLocalAssets() }
@@ -75,7 +83,7 @@ extension DocumentWindowController {
         if url.isFileURL {
             authorizeLocalEffect(.readLocalAsset, target: url, action: present)
         } else {
-            authorizeExternalURL(url, action: present)
+            authorizeRemoteAssetURL(url, action: present)
         }
     }
 

@@ -81,6 +81,31 @@ struct ReviewSidecarTests {
         #expect(FileManager.default.fileExists(atPath: LocalReviewSidecarStore.sidecarURL(for: document).path))
     }
 
+    @Test func sidecarStoreRejectsOversizedRepositoryInputBeforeDecoding() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = directory.appendingPathComponent("note.md")
+        let sidecar = LocalReviewSidecarStore.sidecarURL(for: document)
+        try Data(repeating: 0x20, count: LocalReviewSidecarStore.maximumBytes + 1).write(to: sidecar)
+
+        #expect(throws: CocoaError.self) {
+            _ = try LocalReviewSidecarStore().load(for: document)
+        }
+    }
+
+    @Test func hostileAnchorIntegersCannotOverflowOrEscapeReturnedRanges() {
+        let anchor = ReviewAnchor(
+            range: NSRange(location: Int.max, length: Int.max),
+            selectedText: "Text",
+            beforeFingerprint: "",
+            afterFingerprint: ""
+        )
+        let result = ReviewAnchorResolver.resolve(anchor, in: "Text")
+        #expect(result.range == nil)
+        #expect(result.status == .stale)
+    }
+
     @Test func criticMarkupIsDetectedButNeverGenerated() {
         let source = "++add++ and {--remove--} and ==mark=="
         #expect(ReviewSidecarEngine.criticMarkupRanges(in: source).count == 3)

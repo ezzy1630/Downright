@@ -69,6 +69,30 @@ extension DocumentWindowController: TrustPromptViewDelegate {
     }
 
     @discardableResult
+    func authorizeRemoteAssetURL(_ url: URL, action: @escaping () -> Void) -> TrustDecision {
+        authorizeTrust(
+            TrustRequest(
+                effect: .loadRemoteAsset,
+                target: TrustTarget(displayName: url.absoluteString, externalURL: url.absoluteString),
+                documentURL: markdownDocument.url
+            ),
+            action: action
+        )
+    }
+
+    @discardableResult
+    func authorizeAutomationURL(_ url: URL, action: @escaping () -> Void) -> TrustDecision {
+        authorizeTrust(
+            TrustRequest(
+                effect: .automationAppIntent,
+                target: TrustTarget(displayName: url.absoluteString, externalURL: url.absoluteString),
+                documentURL: markdownDocument.url
+            ),
+            action: action
+        )
+    }
+
+    @discardableResult
     func authorizeLocalEffect(
         _ effect: TrustEffect,
         target url: URL,

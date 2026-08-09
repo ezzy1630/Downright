@@ -18,9 +18,15 @@ enum ReviewAnchorResolver {
 
     static func resolve(_ anchor: ReviewAnchor, in text: String, contextLength: Int = 48) -> ReviewResolution {
         let source = text as NSString
-        guard !anchor.selectedText.isEmpty else { return ReviewResolution(status: .orphan, range: nil) }
+        let selectedLength = (anchor.selectedText as NSString).length
+        guard selectedLength > 0 else { return ReviewResolution(status: .orphan, range: nil) }
 
-        if matches(anchor, at: anchor.range.location, in: source, contextLength: contextLength) {
+        // The range is decoded from an adjacent, repository-controlled JSON
+        // file. Never return its length unless it agrees with the selected
+        // text, and avoid arithmetic on an attacker-supplied Int that could
+        // overflow before the ordinary bounds check runs.
+        if anchor.range.length == selectedLength,
+           matches(anchor, at: anchor.range.location, in: source, contextLength: contextLength) {
             return ReviewResolution(status: .exact, range: anchor.range)
         }
 
@@ -48,8 +54,9 @@ enum ReviewAnchorResolver {
     }
 
     private static func matches(_ anchor: ReviewAnchor, at location: Int, in source: NSString, contextLength: Int) -> Bool {
-        guard location >= 0, location + (anchor.selectedText as NSString).length <= source.length else { return false }
         let selectedLength = (anchor.selectedText as NSString).length
+        guard location >= 0, selectedLength <= source.length,
+              location <= source.length - selectedLength else { return false }
         guard source.substring(with: NSRange(location: location, length: selectedLength)) == anchor.selectedText else { return false }
         let beforeStart = max(0, location - contextLength)
         let before = source.substring(with: NSRange(location: beforeStart, length: location - beforeStart))

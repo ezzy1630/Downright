@@ -57,6 +57,26 @@ struct DocumentTrustTests {
     }
 
     @Test
+    func webLinkPermissionDoesNotAuthorizeRemoteImageLoading() {
+        let document = URL(fileURLWithPath: "/workspace/README.md")
+        let grant = TrustGrant(
+            scope: .file,
+            canonicalPath: document.path,
+            effects: [.openExternalLink]
+        )
+        let remoteImage = TrustRequest(
+            effect: .loadRemoteAsset,
+            target: TrustTarget(
+                displayName: "https://tracker.example/pixel.png",
+                externalURL: "https://tracker.example/pixel.png"
+            ),
+            documentURL: document
+        )
+
+        #expect(DocumentTrust(grants: [grant]).decision(for: remoteImage) == .ask)
+    }
+
+    @Test
     func symlinkResolvesToRealPathAndTraversalStaysOutside() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("downright-trust-symlink-\(UUID().uuidString)", isDirectory: true)
@@ -143,6 +163,40 @@ struct TrustPromptViewTests {
         #expect(delegate.decision == .deny)
         #expect(delegate.request == request)
         #expect(view.accessibilityLabel() == "Permission Needed")
+    }
+
+    @Test
+    func promptNamesTheFileItsGrantWillPersist() {
+        let local = TrustRequest(
+            effect: .launchPathOrEditor,
+            target: TrustTarget(
+                displayName: "/workspace/scripts/build.sh",
+                canonicalPath: "/workspace/scripts/build.sh"
+            ),
+            documentURL: URL(fileURLWithPath: "/workspace/README.md")
+        )
+        let web = TrustRequest(
+            effect: .openExternalLink,
+            target: TrustTarget(displayName: "https://example.com", externalURL: "https://example.com"),
+            documentURL: URL(fileURLWithPath: "/workspace/README.md")
+        )
+
+        #expect(TrustPromptView.fileGrantName(for: local) == "build.sh")
+        #expect(TrustPromptView.fileGrantName(for: web) == "README.md")
+    }
+
+    @Test
+    func linkClassificationSeparatesWebFilesAndAutomationSchemes() {
+        #expect(MarkdownLinkDestination.classify("#intro") == .anchor("intro"))
+        #expect(MarkdownLinkDestination.classify("notes/plan.md") == .relative("notes/plan.md"))
+        #expect(MarkdownLinkDestination.classify("https://example.com")
+            == .web(URL(string: "https://example.com")!))
+        #expect(MarkdownLinkDestination.classify("mailto:review@example.com")
+            == .web(URL(string: "mailto:review@example.com")!))
+        #expect(MarkdownLinkDestination.classify("file:///private/etc/hosts")
+            == .localFile(URL(string: "file:///private/etc/hosts")!))
+        #expect(MarkdownLinkDestination.classify("vscode://file/tmp/note.md")
+            == .automation(URL(string: "vscode://file/tmp/note.md")!))
     }
 }
 

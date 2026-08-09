@@ -153,8 +153,9 @@ final class TrustPromptView: NSView, PanelSurface {
             "Requested by \(URL(fileURLWithPath: $0).lastPathComponent)."
         } ?? "Requested by the current document."
 
-        allowFileButton.isHidden = documentName == nil
-        allowFileButton.title = documentName.map { "Always Allow for \($0)" } ?? "Always Allow for This File"
+        let fileName = Self.fileGrantName(for: request)
+        allowFileButton.isHidden = fileName == nil
+        allowFileButton.title = fileName.map { "Always Allow for \($0)" } ?? "Always Allow for This File"
         // Name the folder.  "Allow for Folder" without the folder is a grant
         // whose scope the reader cannot see.
         allowFolderButton.isHidden = folderName == nil
@@ -172,8 +173,12 @@ final class TrustPromptView: NSView, PanelSurface {
         [denyButton, allowOnceButton, allowFileButton, allowFolderButton, revokeButton]
     }
 
-    private var documentName: String? {
-        request?.documentPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+    /// The file the policy will actually persist. Local effects are scoped to
+    /// their target; URL effects without a local target are scoped to the
+    /// requesting document. The button must name that same file.
+    static func fileGrantName(for request: TrustRequest) -> String? {
+        let path = request.target.canonicalPath ?? request.documentPath
+        return path.map { URL(fileURLWithPath: $0).lastPathComponent }
     }
 
     /// The folder a "Allow for Folder" grant would actually cover.
@@ -189,6 +194,8 @@ final class TrustPromptView: NSView, PanelSurface {
         switch request.effect {
         case .openExternalLink:
             return "Open \(host(of: request.target.externalURL) ?? "an external site") in your browser?"
+        case .loadRemoteAsset:
+            return "Load an image from \(host(of: request.target.externalURL) ?? "an external site")?"
         case .readLocalAsset:
             return "Read a file from outside this document’s folder?"
         case .launchPathOrEditor:
@@ -202,6 +209,8 @@ final class TrustPromptView: NSView, PanelSurface {
         switch effect {
         case .openExternalLink:
             return "Allowing hands the address below to your default browser. Downright does not load it."
+        case .loadRemoteAsset:
+            return "Allowing contacts the server below and displays its image. The server can observe your IP address."
         case .readLocalAsset:
             return "Allowing lets this document display the file below. Downright reads it; it never writes to it."
         case .launchPathOrEditor:

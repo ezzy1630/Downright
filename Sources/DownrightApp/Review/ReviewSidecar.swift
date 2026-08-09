@@ -97,6 +97,11 @@ protocol ReviewSidecarStore: AnyObject {
 }
 
 final class LocalReviewSidecarStore: ReviewSidecarStore {
+    /// Sidecars are repository-controlled input. Bound the read before JSON
+    /// decoding so a checkout cannot make opening a small Markdown file pull
+    /// an arbitrarily large adjacent review file into memory.
+    static let maximumBytes = 8 * 1024 * 1024
+
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -109,7 +114,11 @@ final class LocalReviewSidecarStore: ReviewSidecarStore {
     func load(for documentURL: URL) throws -> ReviewSidecar {
         let url = Self.sidecarURL(for: documentURL)
         guard FileManager.default.fileExists(atPath: url.path) else { return ReviewSidecar() }
-        return try decoder.decode(ReviewSidecar.self, from: Data(contentsOf: url))
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: Self.maximumBytes + 1) ?? Data()
+        guard data.count <= Self.maximumBytes else { throw CocoaError(.fileReadTooLarge) }
+        return try decoder.decode(ReviewSidecar.self, from: data)
     }
 
     func save(_ sidecar: ReviewSidecar, for documentURL: URL) throws {

@@ -2,6 +2,29 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+enum MarkdownLinkDestination: Equatable {
+    case anchor(String)
+    case web(URL)
+    case localFile(URL)
+    case automation(URL)
+    case relative(String)
+    case invalid
+
+    static func classify(_ destination: String) -> Self {
+        if destination.hasPrefix("#") {
+            return .anchor(String(destination.dropFirst()))
+        }
+        guard let url = URL(string: destination), let scheme = url.scheme?.lowercased() else {
+            return destination.isEmpty ? .invalid : .relative(destination)
+        }
+        switch scheme {
+        case "http", "https", "mailto": return .web(url)
+        case "file": return .localFile(url)
+        default: return .automation(url)
+        }
+    }
+}
+
 // MARK: - Text surface
 
 extension DocumentWindowController: MarkdownTextViewDelegate {
@@ -52,34 +75,51 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         _ view: MarkdownTextView, didActivateLink destination: String,
         at range: NSRange, modifiers: NSEvent.ModifierFlags
     ) {
-        // In-document anchor.
-        if destination.hasPrefix("#") {
-            let slug = String(destination.dropFirst())
+        switch MarkdownLinkDestination.classify(destination) {
+        case .anchor(let slug):
             guard let heading = markdownDocument.parsed.headings.first(where: { $0.slug == slug }) else { return }
             jump(to: heading.range.location, label: heading.title)
             return
-        }
 
-        if destination.contains("://") {
-            guard let url = URL(string: destination) else { return }
+        case .web(let url):
             authorizeExternalURL(url) { NSWorkspace.shared.open(url) }
             return
-        }
 
-        // A relative link opens in place; ⌘-click keeps the current document
-        // and opens the target in the active native tab group.
-        guard let base = markdownDocument.url?.deletingLastPathComponent() else { return }
-        let target = base.appendingPathComponent(destination).standardizedFileURL
-        guard FileManager.default.fileExists(atPath: target.path) else { return }
-        if DocumentTypes.isMarkdown(target.pathExtension) {
-            if modifiers.contains(.command) {
-                (NSApp.delegate as? AppDelegate)?.open(target)
-            } else {
-                openInPlace(target)
-            }
-        } else {
+        case .localFile(let target):
+            let target = target.standardizedFileURL
+            guard FileManager.default.fileExists(atPath: target.path) else { return }
             authorizeLocalEffect(.launchPathOrEditor, target: target) {
-                NSWorkspace.shared.open(target)
+                if DocumentTypes.isMarkdown(target.pathExtension) {
+                    (NSApp.delegate as? AppDelegate)?.open(target)
+                } else {
+                    NSWorkspace.shared.open(target)
+                }
+            }
+            return
+
+        case .automation(let url):
+            authorizeAutomationURL(url) { NSWorkspace.shared.open(url) }
+            return
+
+        case .invalid:
+            return
+
+        case .relative(let relative):
+            // A relative link opens in place; ⌘-click keeps the current
+            // document and opens the target in the active native tab group.
+            guard let base = markdownDocument.url?.deletingLastPathComponent() else { return }
+            let target = base.appendingPathComponent(relative).standardizedFileURL
+            guard FileManager.default.fileExists(atPath: target.path) else { return }
+            if DocumentTypes.isMarkdown(target.pathExtension) {
+                if modifiers.contains(.command) {
+                    (NSApp.delegate as? AppDelegate)?.open(target)
+                } else {
+                    openInPlace(target)
+                }
+            } else {
+                authorizeLocalEffect(.launchPathOrEditor, target: target) {
+                    NSWorkspace.shared.open(target)
+                }
             }
         }
     }
