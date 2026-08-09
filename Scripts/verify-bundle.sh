@@ -111,8 +111,13 @@ appex_resource() {
 
 appex_entitlement() {
     local appex="$1" key="$2"
-    codesign -d --entitlements :- "$appex" 2>/dev/null \
-        | plutil -extract "$key" raw -o - - 2>/dev/null \
+    local key_path="${key//./\\.}"
+    # `codesign -d` writes the entitlement plist to stderr along with its
+    # diagnostics.  Keep that stream, isolate the XML, then query it.  Dropping
+    # stderr made every correctly signed extension look unsandboxed.
+    codesign -d --entitlements :- "$appex" 2>&1 \
+        | awk '/<\?xml/{found=1} found{print} /<\/plist>/{exit}' \
+        | plutil -extract "$key_path" raw -o - - 2>/dev/null \
         || true
 }
 

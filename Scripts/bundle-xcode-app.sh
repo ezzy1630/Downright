@@ -83,16 +83,24 @@ while IFS= read -r bundle; do
     rm -rf "$bundle/Contents"
 done < <(find "$APP" -type d -name "*.bundle")
 
-# Sign nested Sparkle helpers/frameworks and the appex bundles individually,
-# then the app — never codesign --deep for the production path.
+# Sign inside-out, even for the ad-hoc QA bundle.  Re-sealing a child after its
+# parent invalidates the parent's resource envelope and hides release-only bugs.
 if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
-    codesign --force --deep --sign - "$APP/Contents/Frameworks/Sparkle.framework" 2>/dev/null || true
+    SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+    SPARKLE_VERSION="$SPARKLE/Versions/B"
+    codesign --force --sign - "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+    codesign --force --preserve-metadata=entitlements --sign - \
+        "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+    codesign --force --sign - "$SPARKLE_VERSION/Autoupdate"
+    codesign --force --sign - "$SPARKLE_VERSION/Updater.app"
+    codesign --force --sign - "$SPARKLE"
 fi
 for appex in "$APP"/Contents/PlugIns/*.appex; do
     [ -e "$appex" ] || continue
     codesign --force --sign - --entitlements "$ROOT/Config/QuickLook.entitlements" \
-        "$appex" 2>/dev/null || true
+        "$appex"
 done
+codesign --force --sign - "$APP/Contents/MacOS/down"
 codesign --force --sign - "$APP"
 
 echo "==> Verifying bundle layout"
