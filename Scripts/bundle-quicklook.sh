@@ -90,19 +90,10 @@ done
 
 HELPER_BIN="$HELPER/.build/$CONFIGURATION"
 
-# App-sandbox is what Xcode's ENABLE_APP_SANDBOX gives these targets.  The
-# read-only file entitlement covers the URL the Quick Look host hands over.
-ENTITLEMENTS="$HELPER/extension.entitlements"
-cat > "$ENTITLEMENTS" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.app-sandbox</key><true/>
-    <key>com.apple.security.files.user-selected.read-only</key><true/>
-</dict>
-</plist>
-PLIST
+# Keep Xcode, the direct SwiftPM bundler, and production signing on one
+# entitlement contract. The read-only grant covers the file URL Quick Look
+# hands the extension; no broader directory entitlement is present.
+ENTITLEMENTS="$ROOT/Config/QuickLook.entitlements"
 
 PLUGINS="$APP/Contents/PlugIns"
 rm -rf "$PLUGINS"
