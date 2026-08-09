@@ -146,6 +146,66 @@ struct ContentResizeTests {
         #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
     }
 
+    @Test("repeated typing leaves one ordered layout fragment per source element")
+    func repeatedTypingDoesNotStackStaleFragments() throws {
+        let paragraph = "A paragraph with enough words to form several stable lines of rendered text."
+        let text = (0..<80).map { "## Section \($0)\n\n\(paragraph)" }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 700))
+        container.scrollView.reflectScrolledClipView(clip)
+        var editOffset = container.textView.topVisibleOffset + 8
+
+        for character in "stacked fragments" {
+            let expectedInvalidationStart = container.textView
+                .paragraphRange(containing: editOffset).location
+            #expect(container.textView.performSourceEdit(
+                range: NSRange(location: editOffset, length: 0),
+                replacement: String(character)
+            ))
+            let invalidated = try #require(
+                container.textView.lastFragmentInvalidationRangeForTesting
+            )
+            #expect(invalidated.location == expectedInvalidationStart)
+            #expect(invalidated.upperBound == storage.length)
+            let changed = storage.string
+            container.textView.update(
+                document: MarkdownParser.parse(changed),
+                dirty: DirtySet(
+                    ranges: [NSRange(location: editOffset, length: 1)],
+                    isWholesale: false
+                )
+            )
+            editOffset += 1
+        }
+
+        let layout = try #require(container.textView.textLayoutManager)
+        layout.ensureLayout(for: layout.documentRange)
+        var previousMaxY = -CGFloat.greatestFiniteMagnitude
+        var sourceOffsets: [Int] = []
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location) { fragment in
+            let offset = layout.offset(
+                from: layout.documentRange.location,
+                to: fragment.rangeInElement.location
+            )
+            sourceOffsets.append(offset)
+            #expect(
+                fragment.layoutFragmentFrame.minY + 0.5 >= previousMaxY,
+                "layout fragments overlap or move backwards at source offset \(offset)"
+            )
+            previousMaxY = fragment.layoutFragmentFrame.maxY
+            return true
+        }
+        #expect(sourceOffsets == sourceOffsets.sorted())
+        #expect(Set(sourceOffsets).count == sourceOffsets.count)
+    }
+
     /// The other half of the same promise, on the path a local edit does *not*
     /// take: an external change, a debounced second parse, a theme swap.  Those
     /// restore the reading position from a source anchor, and the restore used

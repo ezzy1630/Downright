@@ -455,6 +455,7 @@ public final class MarkdownTextView: NSTextView {
     // internals to the app target.
     var pendingResizeRequestForTesting: ContentResizeRequest? { pendingResizeRequest }
     var cachedLayoutElementCountForTesting: Int { contentStorage.cachedElementCountForTesting }
+    var lastFragmentInvalidationRangeForTesting: NSRange?
     /// Heading under the pointer, for the gutter's anchor glyph (§7.1).
     var hoveredHeadingIndex: Int?
     /// Link span under the pointer.  Drawn as a transient underline in
@@ -1391,18 +1392,30 @@ public final class MarkdownTextView: NSTextView {
         let last = paragraphIndex.paragraphRange(containing: max(edit.location, insertedEnd - 1))
         let affected = first.union(last).intersection(NSRange(location: 0, length: storage.length))
         guard let affected, affected.length > 0 else { return }
+        // A length-changing edit moves the NSTextRange of every element after
+        // it.  The content-storage cache already drops those shifted elements,
+        // but TextKit's layout manager owns a second cache of fragments.  If
+        // only `affected` is invalidated, that cache can keep the old suffix
+        // while accepting its shifted replacement: both generations then draw
+        // at once, producing stacked rows and invalid geometry for viewport
+        // restoration.  Preserve the settled prefix, but retire the complete
+        // suffix whose source identity changed.  Same-length replacements do
+        // not move downstream ranges and remain paragraph-local.
+        let layoutAffected = insertedLength == edit.length
+            ? affected
+            : NSRange(location: affected.location, length: storage.length - affected.location)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: projectedHardWrapRanges,
             displayMap: displayMap,
-            invalidating: [affected]
+            invalidating: [layoutAffected]
         )
         storage.beginEditing()
         storage.removeAttribute(.drFragment, range: affected)
         storage.removeAttribute(.drElided, range: affected)
         storage.endEditing()
         applyHiddenAttribute(projectedHidden, scope: affected)
-        invalidateFragments(in: affected)
+        invalidateFragments(in: layoutAffected)
     }
 
     func beginSourceEdit() {
@@ -2817,6 +2830,7 @@ public final class MarkdownTextView: NSTextView {
     /// caret move would throw away the layout of a 5k-line file to reveal two
     /// asterisks (§12).
     func invalidateFragments(in sourceRange: NSRange?) {
+        lastFragmentInvalidationRangeForTesting = sourceRange
         inlineCodeBandCache.removeAll(keepingCapacity: true)
         invisibleGlyphCache.removeAll(keepingCapacity: true)
         guard let sourceRange else {
