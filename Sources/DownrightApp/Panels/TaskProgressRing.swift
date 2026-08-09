@@ -252,31 +252,20 @@ final class TaskProgressRing: NSView {
     /// digits will not fit a 22pt ring, so a very long plan says "99+" and the
     /// tooltip carries the exact figure.
     /// The numeral inside the ring — and the two states that deliberately have
-    /// none.
-    ///
-    /// An accent ring around a lone digit is macOS's unread-count idiom, and a
-    /// toolbar reader parses it as "one notification" long before "one task
-    /// left".  Two changes keep it saying what it means without giving up the
-    /// figure:
-    ///
-    ///   * **Below ten it draws no numeral.**  A one- or two-task remainder is
-    ///     legible from the arc — an almost-closed ring *is* "nearly done" —
-    ///     and it is exactly the count range a badge would be showing.  Past
-    ///     ten the arc stops resolving individual tasks and the number starts
-    ///     earning its place.
-    ///
-    ///   * **An open panel drops it entirely.**  The panel's own section bar
-    ///     and caption are already reporting the same numbers a few points
-    ///     away, and the same figure in two places is how a calm app stops
-    ///     being one.  The ring falls back to being the lit button that owns
-    ///     the panel.
-    ///
-    /// The count is never lost: `updateAccessibility` and the tooltip both
-    /// spell it out in words, in every state.
+    /// none.  A single remaining task is useful information at a glance, so
+    /// the ring keeps the compact numeral for every short plan as well as for
+    /// larger plans.  The open-panel and all-done states deliberately drop it:
+    /// the panel owns the tally while open, and the checkmark owns completion.
+    /// The count is never lost: `updateAccessibility` and the tooltip spell it
+    /// out in words in every state.
     private var countText: String {
-        guard progress.total > 0, !isComplete, !isActive, remaining >= 10 else { return "" }
+        guard progress.total > 0, !isComplete, !isActive else { return "" }
         return remaining > 99 ? "99+" : "\(remaining)"
     }
+
+    /// Internal read-only hook for focused UI tests. The drawn text remains
+    /// owned by the layer; tests only need to verify which states expose it.
+    var countTextForTesting: String { countText }
 
     // MARK: - Styling
 

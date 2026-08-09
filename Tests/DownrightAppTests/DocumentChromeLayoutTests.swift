@@ -145,12 +145,11 @@ struct TaskProgressRingAccessibilityTests {
         #expect(!ring.mouseDownCanMoveWindow)
     }
 
-    /// The glyph draws no numeral below ten, so the figure has to live in words
-    /// or it is not anywhere.
     @Test("A partly finished plan reports the count and the remainder")
     func partialRingReportsRemainder() {
         let ring = TaskProgressRing()
         ring.progress = (done: 3, total: 7)
+        #expect(ring.countTextForTesting == "4")
         #expect(ring.accessibilityLabel() == "3 of 7 tasks complete")
         #expect(ring.toolTip == "3 of 7 tasks complete, 4 left — Open Tasks")
     }
@@ -159,7 +158,16 @@ struct TaskProgressRingAccessibilityTests {
     func singleRemainderReadsNaturally() {
         let ring = TaskProgressRing()
         ring.progress = (done: 6, total: 7)
+        #expect(ring.countTextForTesting == "1")
         #expect(ring.toolTip?.contains("1 left") == true)
+    }
+
+    @Test("An open panel gives the tally to the panel")
+    func activeRingHidesDrawnCount() {
+        let ring = TaskProgressRing()
+        ring.progress = (done: 3, total: 7)
+        ring.isActive = true
+        #expect(ring.countTextForTesting.isEmpty)
     }
 
     @Test("A finished plan says so rather than saying nothing")

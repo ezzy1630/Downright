@@ -80,6 +80,20 @@ struct PanelAccessibilityTests {
         #expect((view.accessibilityValue() as? String) == "No tasks")
         #expect(view.visibleTaskCountForTesting == 0)
         #expect(view.captionForTesting == "")
+        #expect(view.emptyAddButtonForTesting.title == "Add task")
+        #expect(view.emptyAddButtonForTesting.accessibilityRole() == .button)
+        view.emptyAddButtonForTesting.performClick(nil)
+        #expect(view.quickAddEditingForTesting)
+    }
+
+    @Test
+    func undoPillReservesTheLastRows() {
+        let view = TaskPanelView()
+        let baseInset = view.undoBottomInsetForTesting
+        view.presentUndoForTesting(title: "Done")
+        #expect(view.undoBottomInsetForTesting > baseInset)
+        view.dismissUndoForTesting()
+        #expect(view.undoBottomInsetForTesting == baseInset)
     }
 
     @Test

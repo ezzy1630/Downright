@@ -77,6 +77,16 @@ final class TaskPanelView: NSView, PanelSurface {
     var statusLineForTesting: String { worklist.statusLine }
     var captionForTesting: String { captionLabel.stringValue }
     var rowCountForTesting: Int { rows.count }
+    var emptyAddButtonForTesting: NSButton { emptyAddButton }
+    var quickAddEditingForTesting: Bool { editingAddSection != nil }
+    var undoBottomInsetForTesting: CGFloat { scroll.contentInsets.bottom }
+    func presentUndoForTesting(title: String = "Task") {
+        undoPill.present(title: title)
+        updateScrollInsetsForUndoPill()
+    }
+    func dismissUndoForTesting() {
+        undoPill.dismiss(animated: false)
+    }
     func setCompletedPileExpandedForTesting(_ expanded: Bool, section: Int) {
         let key = sectionKey(for: section)
         if expanded { expandedPiles.insert(key) } else { expandedPiles.remove(key) }
@@ -91,6 +101,7 @@ final class TaskPanelView: NSView, PanelSurface {
     private let table = PanelList.makeTableView(identifier: "tasks")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private let emptyState = PanelEmptyStateView()
+    private let emptyAddButton = NSButton(title: "Add task", target: nil, action: nil)
     private let undoPill = TaskUndoPillView()
 
     private enum Row: Equatable {
@@ -124,6 +135,7 @@ final class TaskPanelView: NSView, PanelSurface {
     private var pendingCompletionMark: Int?
     private var deferredRebuild: DispatchWorkItem?
     private var undoMarkOffset: Int?
+    private let baseScrollBottomInset: CGFloat = 10
     /// Menu actions are target/action pairs; the menu holds no strong
     /// reference, so the panel does for the menu's lifetime.
     private var menuActions: [ButtonAction] = []
@@ -145,12 +157,14 @@ final class TaskPanelView: NSView, PanelSurface {
         // matte slab, and a whisper of a themed veil keeps the rows legible
         // over a busy page.  The rule that separates it from the host's
         // header belongs to the host.
-        // Tasks is a working sidebar, not a transient overlay. Give it a
-        // stable surface so rows remain distinct from the document in every
-        // wallpaper, transparency, and appearance combination.
-        backdrop.usesSurfaceFill = true
+        // Tasks is a working sidebar, but it still belongs to the document's
+        // glass surface. Keep the native within-window material in the normal
+        // case and add only a restrained veil; PanelBackdrop falls back to an
+        // opaque theme fill when Reduce Transparency or Increase Contrast is
+        // enabled.
+        backdrop.usesSurfaceFill = false
         backdrop.blendsWithinWindow = true
-        backdrop.veilAlpha = 0
+        backdrop.veilAlpha = 0.10
         installBackdrop(backdrop)
 
         buildHeader()
@@ -159,6 +173,7 @@ final class TaskPanelView: NSView, PanelSurface {
         installChrome()
         applyStyle()
         reload()
+        updateScrollInsetsForUndoPill()
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Tasks")
@@ -194,12 +209,23 @@ final class TaskPanelView: NSView, PanelSurface {
         table.setDraggingSourceOperationMask(.move, forLocal: true)
         // A little air after the last row, so the plan never ends flush
         // against the glass.
-        scroll.contentView.contentInsets = .init(top: 0, left: 0, bottom: 10, right: 0)
+        scroll.contentInsets = .init(
+            top: 0, left: 0, bottom: baseScrollBottomInset, right: 0
+        )
     }
 
     private func buildUndoPill() {
         undoPill.onUndo = { [weak self] in self?.undoCompletion() }
+        undoPill.onVisibilityChange = { [weak self] in self?.updateScrollInsetsForUndoPill() }
         undoPill.isHidden = true
+    }
+
+    private func updateScrollInsetsForUndoPill() {
+        var insets = scroll.contentInsets
+        insets.bottom = baseScrollBottomInset + (undoPill.isHidden
+            ? 0
+            : TaskUndoPillView.height + 12)
+        scroll.contentInsets = insets
     }
 
     private func installChrome() {
@@ -235,6 +261,30 @@ final class TaskPanelView: NSView, PanelSurface {
         // Installed last so "nothing here yet" floats over the (empty) list in
         // the same place every panel puts it.
         emptyState.install(in: self, over: scroll)
+
+        emptyAddButton.bezelStyle = .rounded
+        emptyAddButton.controlSize = .small
+        emptyAddButton.font = PanelFont.system(12, weight: .semibold)
+        emptyAddButton.image = NSImage(
+            systemSymbolName: "plus",
+            accessibilityDescription: "Add task"
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+        emptyAddButton.imagePosition = .imageLeading
+        emptyAddButton.target = self
+        emptyAddButton.action = #selector(addTaskFromEmptyState(_:))
+        emptyAddButton.setAccessibilityRole(.button)
+        emptyAddButton.setAccessibilityLabel("Add task")
+        emptyAddButton.toolTip = "Add task"
+        emptyAddButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(emptyAddButton)
+        NSLayoutConstraint.activate([
+            emptyAddButton.topAnchor.constraint(equalTo: emptyState.bottomAnchor, constant: 12),
+            emptyAddButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyAddButton.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            emptyAddButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            emptyAddButton.heightAnchor.constraint(equalToConstant: 26),
+        ])
+        emptyAddButton.isHidden = true
     }
 
     // MARK: - Style
@@ -273,6 +323,7 @@ final class TaskPanelView: NSView, PanelSurface {
     private func updateEmptyState() {
         let empty = worklist.totalCount == 0 && editingAddSection == nil
         emptyState.isHidden = !empty
+        emptyAddButton.isHidden = !empty
         if empty { configureEmptyState() }
     }
 
@@ -280,7 +331,7 @@ final class TaskPanelView: NSView, PanelSurface {
         emptyState.configure(
             symbol: "checklist",
             title: "No tasks yet",
-            subtitle: "Press ⌘N to add the first task, or type “- [ ]” in the document.",
+            subtitle: "Add a task here, or type “- [ ]” in the document.",
             styleSheet: styleSheet
         )
     }
@@ -439,6 +490,7 @@ final class TaskPanelView: NSView, PanelSurface {
             pendingCompletionMark = task.markRange.location
             undoMarkOffset = task.markRange.location
             undoPill.present(title: task.text)
+            updateScrollInsetsForUndoPill()
         } else {
             pendingCompletionMark = nil
         }
@@ -487,6 +539,10 @@ final class TaskPanelView: NSView, PanelSurface {
     }
 
     // MARK: - Quick add
+
+    @objc private func addTaskFromEmptyState(_ sender: Any?) {
+        beginNewTask()
+    }
 
     /// ⌘N, or a click on a section's "Add task" row.  The field opens in the
     /// section the reader is looking at — the selected task's, then Up Next's,
@@ -1634,6 +1690,7 @@ private final class TaskUndoPillView: NSView {
     static let height: CGFloat = 28
 
     var onUndo: (() -> Void)?
+    var onVisibilityChange: (() -> Void)?
     var styleSheet: StyleSheet = .current {
         didSet { applyStyle() }
     }
@@ -1709,7 +1766,7 @@ private final class TaskUndoPillView: NSView {
             alphaValue = 1
             return
         }
-        isHidden = false
+        setHidden(false)
         guard !styleSheet.reduceMotion, window != nil else {
             alphaValue = 1
             return
@@ -1727,7 +1784,7 @@ private final class TaskUndoPillView: NSView {
         dismissTimer = nil
         wantsVisible = false
         guard animated, !styleSheet.reduceMotion, window != nil else {
-            isHidden = true
+            setHidden(true)
             return
         }
         Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
@@ -1735,9 +1792,15 @@ private final class TaskUndoPillView: NSView {
         } completion: {
             // A re-present during the fade outranks the fade.
             guard !self.wantsVisible else { return }
-            self.isHidden = true
+            self.setHidden(true)
             self.layer?.transform = CATransform3DIdentity
         }
+    }
+
+    private func setHidden(_ hidden: Bool) {
+        guard isHidden != hidden else { return }
+        isHidden = hidden
+        onVisibilityChange?()
     }
 
     private func armDismiss(after interval: TimeInterval) {
