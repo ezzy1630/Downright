@@ -21,6 +21,24 @@ enum SaveError: Error {
     case blockedByExternalConflict
 }
 
+/// Owns the command boundary AppKit otherwise keeps private.  Storage delegate
+/// callbacks arrive after the text system has already started moving the
+/// selection, which is too late to remember the reader's camera.
+@MainActor
+final class MarkdownUndoManager: UndoManager {
+    var onWillApplyUndoRedo: (() -> Void)?
+
+    override func undo() {
+        onWillApplyUndoRedo?()
+        super.undo()
+    }
+
+    override func redo() {
+        onWillApplyUndoRedo?()
+        super.redo()
+    }
+}
+
 /// The document: raw text, the tree over it, and everything that watches it.
 ///
 /// §3.1 is enforced here and nowhere else needs to worry about it — the
@@ -99,7 +117,7 @@ final class MarkdownDocument: NSObject {
 
     let changes = ChangeTracker()
     var state: DocumentState
-    let undoManager = UndoManager()
+    let undoManager = MarkdownUndoManager()
 
     /// Fires after every reparse with the set of blocks needing re-decoration.
     var onReparse: ((ParsedDocument, DirtySet) -> Void)?
@@ -109,6 +127,12 @@ final class MarkdownDocument: NSObject {
     var onParseActivity: ((Bool) -> Void)?
     var onExternalEvent: ((ExternalEvent) -> Void)?
     var onDirtyChanged: ((Bool) -> Void)?
+    /// Undo and redo mutate storage outside `MarkdownTextView`'s source-edit
+    /// path. The owner uses this boundary to lock every visible viewport before
+    /// the synchronous reparse changes layout.
+    var onWillApplyUndoRedo: (() -> Void)? {
+        didSet { undoManager.onWillApplyUndoRedo = onWillApplyUndoRedo }
+    }
     /// Called when a save reaches the disk boundary and fails.  The buffer and
     /// dirty state remain untouched so the controller can offer recovery.
     var onSaveFailure: ((Error) -> Void)?
@@ -988,6 +1012,10 @@ extension MarkdownDocument: NSTextStorageDelegate {
             invalidateParseWorkForEdit()
             if !isApplyingExternalChange {
                 setDirty(true)
+            }
+            if undoManager.isUndoing || undoManager.isRedoing {
+                reparseSynchronously(notifying: true, wholesale: false)
+                return
             }
             scheduleReparse()
         }

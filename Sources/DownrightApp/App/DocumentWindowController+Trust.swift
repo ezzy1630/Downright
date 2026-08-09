@@ -11,6 +11,27 @@ private var trustThemeKey: UInt8 = 0
 /// call `authorizeTrust(_:action:)`; this extension owns the decision UI only.
 @MainActor
 extension DocumentWindowController: TrustPromptViewDelegate {
+    func configureLocalAssetAccess(
+        for textView: MarkdownTextView, documentURL: URL?
+    ) {
+        textView.documentURL = documentURL
+        textView.localAssetAuthorizer = { [weak self] target in
+            self?.allowsLocalAsset(target) ?? false
+        }
+    }
+
+    /// Render-time trust check. `.ask` is intentionally treated as blocked;
+    /// prompts are only legal from an explicit user action, never from draw.
+    private func allowsLocalAsset(_ url: URL) -> Bool {
+        guard let canonical = DocumentTrust.canonicalFilePath(url) else { return false }
+        let request = TrustRequest(
+            effect: .readLocalAsset,
+            target: TrustTarget(displayName: canonical.path, canonicalPath: canonical.path),
+            documentURL: markdownDocument.url
+        )
+        return trustDecision(for: request) == .allow
+    }
+
     private var trustStore: TrustStore {
         if let store = objc_getAssociatedObject(self, &trustStoreKey) as? TrustStore { return store }
         let store = TrustStore.shared

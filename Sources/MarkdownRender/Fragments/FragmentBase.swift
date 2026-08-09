@@ -91,6 +91,9 @@ public final class FragmentContext {
     /// Directory images and diagrams resolve against (§3.4 — unsandboxed, so
     /// this is a plain path, not a security-scoped bookmark).
     public var documentURL: URL?
+    /// Existing app trust, if any. Rendering never prompts; a `false`/`nil`
+    /// decision leaves unsafe image destinations visibly blocked.
+    public var localAssetAuthorizer: ((URL) -> Bool)?
     /// Paragraph structure of the current text, for line counts and collapse.
     var paragraphIndex: ParagraphIndex = .empty
     /// Zoom + fold + search visibility (§5.2, §7.1, §9.4).

@@ -59,11 +59,11 @@ extension DocumentWindowController {
 
     func presentLightbox(source: String, caption: String?) {
         guard let window else { return }
-        let url: URL? = source.contains("://")
-            ? URL(string: source)
-            : markdownDocument.url?.deletingLastPathComponent().appendingPathComponent(source)
+        let url = LocalAssetPolicy.request(raw: source, documentURL: markdownDocument.url)?.url
+            ?? (source.contains("://") ? URL(string: source) : nil)
         guard let url else { return }
         let present = {
+            self.documentPanes.forEach { $0.textView.refreshLocalAssets() }
             guard let image = NSImage(contentsOf: url) else { return }
             LightboxWindow(
                 image: image,
@@ -80,8 +80,9 @@ extension DocumentWindowController {
     }
 
     func saveImageCopy(source: String) {
-        guard let base = markdownDocument.url?.deletingLastPathComponent() else { return }
-        let origin = base.appendingPathComponent(source).standardizedFileURL
+        guard let origin = LocalAssetPolicy.request(
+            raw: source, documentURL: markdownDocument.url
+        )?.url else { return }
         authorizeLocalEffect(.readLocalAsset, target: origin) {
             let panel = NSSavePanel()
             panel.nameFieldStringValue = origin.lastPathComponent

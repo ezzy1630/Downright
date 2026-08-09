@@ -688,11 +688,12 @@ extension MarkdownTextView {
         let oldParagraphs = paragraphIndex
         let oldHiddenRanges = currentDisplayMap.baseHiddenRangesForEditProjection
         let deletedText = storage.attributedSubstring(from: clamped).string
+        let inserted = (replacement as NSString).length
         let preservesParagraphStructure = !containsParagraphSeparator(deletedText)
             && !containsParagraphSeparator(replacement)
+        projectFragmentPayloads(across: clamped, insertedLength: inserted)
         beginSourceEdit()
         storage.replaceCharacters(in: clamped, with: replacement)
-        let inserted = (replacement as NSString).length
         rebuildParagraphIndex()
         adjustScopedSourceFocus(forEdit: clamped, insertedLength: inserted)
         projectDisplayMapAcrossEdit(
@@ -710,6 +711,26 @@ extension MarkdownTextView {
         setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
         handleSelectionChanged()
         return true
+    }
+
+    /// Keep reference-valued fragment metadata aligned with the storage while
+    /// the parser works on its immutable snapshot. Attribute runs move with an
+    /// `NSTextStorage` edit; their payload objects must be moved explicitly.
+    private func projectFragmentPayloads(across range: NSRange, insertedLength: Int) {
+        guard let storage = textStorage, storage.length > 0 else { return }
+        var seen = Set<ObjectIdentifier>()
+        storage.enumerateAttribute(
+            .drFragment,
+            in: NSRange(
+                location: min(range.location, storage.length),
+                length: max(0, storage.length - min(range.location, storage.length))
+            )
+        ) { value, _, _ in
+            guard let payload = value as? FragmentPayload else { return }
+            let identity = ObjectIdentifier(payload)
+            guard seen.insert(identity).inserted else { return }
+            payload.projectSourceRanges(across: range, insertedLength: insertedLength)
+        }
     }
 
     private func containsParagraphSeparator(_ string: String) -> Bool {

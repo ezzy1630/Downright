@@ -178,6 +178,7 @@ final class DocumentWindowController: NSWindowController {
             extraDirectories: Preferences.shared.values.siblingScanDirectories
         )
         pathResolver = PathResolver(documentURL: url)
+        configureLocalAssetAccess(for: primaryContainer.textView, documentURL: url)
 
         window?.title = url.lastPathComponent
         window?.subtitle = url.deletingLastPathComponent().lastPathComponent
@@ -590,6 +591,12 @@ final class DocumentWindowController: NSWindowController {
             self?.window?.isDocumentEdited = dirty
             if dirty { self?.scheduleAutosave() }
         }
+        markdownDocument.onWillApplyUndoRedo = { [weak self] in
+            guard let self else { return }
+            for pane in self.documentPanes {
+                pane.textView.preserveViewportAcrossUndoRedo()
+            }
+        }
         markdownDocument.onSaveFailure = { [weak self] error in
             self?.presentSaveError(error)
         }
@@ -692,6 +699,10 @@ final class DocumentWindowController: NSWindowController {
         window?.title = newURL.lastPathComponent
         window?.subtitle = newURL.deletingLastPathComponent().lastPathComponent
         window?.representedURL = newURL
+        configureLocalAssetAccess(for: primaryContainer.textView, documentURL: newURL)
+        if let splitContainer {
+            configureLocalAssetAccess(for: splitContainer.textView, documentURL: newURL)
+        }
         pathResolver = PathResolver(documentURL: newURL)
         scanner = SiblingScanner(
             documentURL: newURL,
@@ -1351,8 +1362,13 @@ final class DocumentWindowController: NSWindowController {
 
     private func presentTaskPanelDismissal(_ panel: TaskPanelView) {
         if !dismissViaMorph(panel, section: .tasks) {
-            inspectorHost?.removeContent(panel, section: .tasks)
-            collapseInspectorPane(animated: false)
+            guard let host = inspectorHost else { return }
+            collapseInspectorPane(animated: true)
+            host.playDeparture { [weak self, weak panel] in
+                guard let self, let panel else { return }
+                self.inspectorHost?.removeContent(panel, section: .tasks)
+                self.refreshToolbarSelectionState()
+            }
             refreshToolbarSelectionState()
         }
     }
@@ -1421,7 +1437,10 @@ final class DocumentWindowController: NSWindowController {
     /// falls back to the host's own unfurl rather than inventing an origin.
     private func morphSourceControl(for section: InspectorSection) -> NSView? {
         let control: NSView? = switch section {
-        case .tasks: progressRing
+        // Tasks is a long vertical work surface. Expanding it diagonally from
+        // the small ring made the panel read as a ballooning card; its own
+        // rounded top-edge reveal now pours straight down from the toolbar.
+        case .tasks: nil
         case .search: toolbarFindButton
         // Everything behind `···` genuinely comes out of that button.
         default: toolbarOverflowButton
@@ -1945,6 +1964,7 @@ final class DocumentWindowController: NSWindowController {
         second.textView.markdownDelegate = self
         wireKeyEventHandler(second.textView)
         second.styleSheet = activeStyleSheet
+        configureLocalAssetAccess(for: second.textView, documentURL: markdownDocument.url)
         second.textView.configuration = renderConfiguration
         let source = containerTextView
         second.textView.mode = source.mode

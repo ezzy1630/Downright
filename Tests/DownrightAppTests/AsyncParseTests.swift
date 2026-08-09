@@ -23,6 +23,42 @@ struct AsyncParseTests {
         #expect(document.parsed.text == document.text)
     }
 
+    @Test @MainActor
+    func undoAndRedoLockViewportAndReparseBeforeReturning() {
+        let document = MarkdownDocument()
+        document.adopt(text: "one\n", displayURL: nil)
+        #expect(document.replace(
+            NSRange(location: 0, length: document.storage.length),
+            with: "two lines\nsecond\n",
+            actionName: "Expand"
+        ))
+        document.ensureParsedCurrent()
+
+        var viewportLocks = 0
+        var reparsesObservedAfterLock = 0
+        var textSeenAtLock: [String] = []
+        document.onWillApplyUndoRedo = {
+            viewportLocks += 1
+            textSeenAtLock.append(document.text)
+        }
+        document.onReparse = { _, _ in
+            if viewportLocks > reparsesObservedAfterLock {
+                reparsesObservedAfterLock += 1
+            }
+        }
+
+        document.undoManager.undo()
+        #expect(document.text == "one\n")
+        #expect(document.parsed.text == document.text)
+
+        document.undoManager.redo()
+        #expect(document.text == "two lines\nsecond\n")
+        #expect(document.parsed.text == document.text)
+        #expect(viewportLocks == 2)
+        #expect(reparsesObservedAfterLock == 2)
+        #expect(textSeenAtLock == ["two lines\nsecond\n", "one\n"])
+    }
+
     @Test
     func injectedWorkerRunsPureParseAndDiff() async {
         let worker = MarkdownParseWorker { text, previous, revision in

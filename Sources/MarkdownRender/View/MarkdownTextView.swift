@@ -275,6 +275,23 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// App-side trust hook for local assets outside the document directory.
+    /// The renderer only evaluates it; it never presents a prompt while draw
+    /// is in progress.
+    public var localAssetAuthorizer: ((URL) -> Bool)? {
+        didSet {
+            fragmentContext.localAssetAuthorizer = localAssetAuthorizer
+            invalidateAllFragments()
+        }
+    }
+
+    /// Re-evaluate blocked local image fragments after an explicit trust grant.
+    /// This is called by user actions, never from a draw callback.
+    public func refreshLocalAssets() {
+        invalidateAllFragments()
+        needsDisplay = true
+    }
+
     /// Reveal raw Markdown for a logical selection or block without changing
     /// the presentation of surrounding content.  Scope expands to paragraph
     /// boundaries so TextKit never has one paragraph in two coordinate modes.
@@ -423,6 +440,7 @@ public final class MarkdownTextView: NSTextView {
     var checkboxPulseDisplayLink: CADisplayLink?
     private var resizeGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
+    private var pendingResizeViewportY: CGFloat?
     /// One-shot camera lock for semantic controls such as checkboxes. Their
     /// edit changes source bytes but is not a navigation request.
     private var nextDocumentUpdateViewportY: CGFloat?
@@ -641,7 +659,8 @@ public final class MarkdownTextView: NSTextView {
             resizeRequest,
             anchor: resizeRequest == .immediate || followsCaret || lockedViewportY != nil
                 ? nil
-                : anchor
+                : anchor,
+            viewportY: lockedViewportY
         )
 
         // Async parses replace only the tree and decorations. Keep the same
@@ -705,6 +724,17 @@ public final class MarkdownTextView: NSTextView {
     /// Used by rendered controls whose mutation must answer in place.
     public func preserveViewportOnNextDocumentUpdate() {
         nextDocumentUpdateViewportY = enclosingScrollView?.contentView.bounds.origin.y
+    }
+
+    /// Undo changes both bytes and selection. Capture before `NSUndoManager`
+    /// starts, then repair once more on the next run-loop turn after AppKit has
+    /// finished making the restored caret visible.
+    public func preserveViewportAcrossUndoRedo() {
+        guard let y = enclosingScrollView?.contentView.bounds.origin.y else { return }
+        nextDocumentUpdateViewportY = y
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreViewport(y: y)
+        }
     }
 
     private func restoreViewport(y: CGFloat) {
@@ -972,13 +1002,21 @@ public final class MarkdownTextView: NSTextView {
     /// Schedules a height pass. Structural updates run now. Semantic parse
     /// results wait for an idle gap and coalesce, so typing does not force a
     /// document-wide TextKit layout on the main actor for every result.
-    private func requestContentResize(_ request: ContentResizeRequest, anchor: ViewportAnchor? = nil) {
+    private func requestContentResize(
+        _ request: ContentResizeRequest,
+        anchor: ViewportAnchor? = nil,
+        viewportY: CGFloat? = nil
+    ) {
         if let anchor { pendingResizeAnchor = anchor }
+        if let viewportY { pendingResizeViewportY = viewportY }
         // A scroll repair exists *because* the reader moved the camera. Any
         // anchor still queued from an earlier commit describes where they used
         // to be looking, and applying it after the height settles is the exact
         // "the page jumped somewhere else" jolt this path is meant to avoid.
-        if request == .scrollRepair { pendingResizeAnchor = nil }
+        if request == .scrollRepair {
+            pendingResizeAnchor = nil
+            pendingResizeViewportY = nil
+        }
         pendingResizeRequest = ContentResizePolicy.merge(pendingResizeRequest, with: request)
         guard let pending = pendingResizeRequest else { return }
 
@@ -990,8 +1028,11 @@ public final class MarkdownTextView: NSTextView {
         if pending == .immediate {
             pendingResizeRequest = nil
             pendingResizeAnchor = nil
+            let viewportY = pendingResizeViewportY
+            pendingResizeViewportY = nil
             resizeNeedsRepair = false
             resizeToFitContent()
+            if let viewportY { restoreViewport(y: viewportY) }
             return
         }
         resizeNeedsRepair = true
@@ -1003,10 +1044,16 @@ public final class MarkdownTextView: NSTextView {
             self.pendingResizeRequest = nil
             let anchor = self.pendingResizeAnchor
             self.pendingResizeAnchor = nil
+            let viewportY = self.pendingResizeViewportY
+            self.pendingResizeViewportY = nil
             self.resizeNeedsRepair = pending == .semantic
             self.resizeToFitContent(
                 layoutScope: pending == .semantic ? .viewport : .document)
-            if let anchor { self.restoreViewport(to: anchor) }
+            if let viewportY {
+                self.restoreViewport(y: viewportY)
+            } else if let anchor {
+                self.restoreViewport(to: anchor)
+            }
         }
         resizeWorkItem = workItem
         let delay = ContentResizePolicy.idleDelay(for: pending)

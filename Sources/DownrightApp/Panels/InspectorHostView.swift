@@ -301,6 +301,7 @@ final class InspectorHostView: NSView {
             return
         }
         view.wantsLayer = true
+        view.layoutSubtreeIfNeeded()
         guard let layer = view.layer else {
             completion?()
             return
@@ -311,27 +312,71 @@ final class InspectorHostView: NSView {
         }
 
         let settled = CATransform3DIdentity
-        var folded = CATransform3DMakeScale(1, 0.94, 1)
-        folded = CATransform3DTranslate(folded, 0, 10, 0)
+        let lifted = CATransform3DMakeTranslation(0, arriving ? -14 : -8, 0)
+
+        // Reveal the surface from its top edge. Scaling the panel distorted its
+        // text and grew from the centre, which read as a card popping sideways.
+        // A rounded mask keeps every glyph at final size while the glass pours
+        // downward into the pane.
+        let mask = CAShapeLayer()
+        mask.frame = layer.bounds
+        mask.isGeometryFlipped = layer.isGeometryFlipped
+        let fullPath = CGPath(
+            roundedRect: layer.bounds,
+            cornerWidth: 12,
+            cornerHeight: 12,
+            transform: nil
+        )
+        let foldedHeight = min(max(3, layer.bounds.height * 0.035), 18)
+        let foldedY = layer.isGeometryFlipped
+            ? layer.bounds.minY
+            : layer.bounds.maxY - foldedHeight
+        let foldedPath = CGPath(
+            roundedRect: CGRect(
+                x: layer.bounds.minX,
+                y: foldedY,
+                width: layer.bounds.width,
+                height: foldedHeight
+            ),
+            cornerWidth: min(9, foldedHeight / 2),
+            cornerHeight: min(9, foldedHeight / 2),
+            transform: nil
+        )
+        mask.path = arriving ? fullPath : foldedPath
+        layer.mask = mask
 
         CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self, weak layer] in
+        CATransaction.setCompletionBlock { [weak self, weak layer, weak mask] in
             guard let self, self.animationGeneration == generation else { return }
             layer?.removeAnimation(forKey: "inspector-unfurl")
             layer?.removeAnimation(forKey: "inspector-fade")
+            mask?.removeAllAnimations()
+            layer?.mask = nil
             completion?()
         }
 
-        let unfurl = CABasicAnimation(keyPath: "transform")
-        unfurl.fromValue = arriving ? folded : settled
-        unfurl.toValue = arriving ? settled : folded
+        let reveal = CABasicAnimation(keyPath: "path")
+        reveal.fromValue = arriving ? foldedPath : fullPath
+        reveal.toValue = arriving ? fullPath : foldedPath
+        reveal.duration = Motion.deliberate
+        reveal.timingFunction = Motion.timing(.structural)
+        mask.add(reveal, forKey: "inspector-liquid-reveal")
+
+        let unfurl = CAKeyframeAnimation(keyPath: "transform")
+        unfurl.values = arriving
+            ? [lifted, CATransform3DMakeTranslation(0, 2, 0), settled]
+            : [settled, CATransform3DMakeTranslation(0, -2, 0), lifted]
+        unfurl.keyTimes = [0, 0.76, 1]
         unfurl.duration = Motion.deliberate
-        unfurl.timingFunction = Motion.timing(.structural)
+        unfurl.timingFunctions = [
+            Motion.timing(.structural),
+            Motion.timing(.decelerate),
+        ]
         layer.add(unfurl, forKey: "inspector-unfurl")
 
         let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = arriving ? 0 : 1
-        fade.toValue = arriving ? 1 : 0
+        fade.fromValue = arriving ? 0.12 : 1
+        fade.toValue = arriving ? 1 : 0.12
         // Leaving is shorter than arriving: a panel should get out of the way
         // as fast as it can while still being seen to go.
         fade.duration = arriving ? Motion.standard : Motion.quick

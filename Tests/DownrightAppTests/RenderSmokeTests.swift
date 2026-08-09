@@ -142,7 +142,14 @@ struct RenderSmokeTests {
         #expect(map.frame.minY == container.bounds.minY)
         #expect(map.frame.height == container.bounds.height)
         #expect(map.frame.midY == container.bounds.midY)
-        #expect(map.frame.minX == container.bounds.minX)
+        let textOrigin = container.scrollView.frame.minX
+            + container.scrollView.contentInsets.left
+            + RenderMetrics.revealSlack
+        let expectedX = max(
+            0,
+            textOrigin - RenderMetrics.gutterWidth - DensityGutterView.width - 24
+        )
+        #expect(abs(map.frame.minX - expectedX) < 0.5)
         #expect(map.frame.width == DensityGutterView.width)
     }
 
@@ -157,9 +164,21 @@ struct RenderSmokeTests {
         container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         container.layoutSubtreeIfNeeded()
 
-        #expect(map.frame == NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 700))
+        let textOrigin = container.scrollView.frame.minX
+            + container.scrollView.contentInsets.left
+            + RenderMetrics.revealSlack
+        let expectedX = max(
+            0,
+            textOrigin - RenderMetrics.gutterWidth - DensityGutterView.width - 24
+        )
+        #expect(map.frame == NSRect(
+            x: expectedX,
+            y: 0,
+            width: DensityGutterView.width,
+            height: 700
+        ))
         #expect(container.scrollView.frame.minY == 0)
-        #expect(map.frame.midX == DensityGutterView.width / 2)
+        #expect(abs(map.frame.midX - (expectedX + DensityGutterView.width / 2)) < 0.5)
     }
 
     @Test("Document and Source keep the same left column geometry")

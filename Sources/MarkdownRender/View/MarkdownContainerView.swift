@@ -190,8 +190,9 @@ public final class MarkdownContainerView: NSView {
                                   height: max(0, bounds.height - topLaneHeight))
 
         // The text column is centred in the measure (§11.1). The document map
-        // is intentionally kept in the quiet leading lane so it does not
-        // masquerade as a second scrollbar beside the text.
+        // lives in the quiet leading margin, optically tied to the page rather
+        // than stranded on the window edge where it reads as a second,
+        // unrelated scrollbar.
         // The inset is measured to where the *text* starts, not to where the
         // text view starts: the view carries `revealSlack` of its own lead-in
         // so a caret-anchored reveal can shift a line left (§6.1c).
@@ -272,11 +273,15 @@ public final class MarkdownContainerView: NSView {
                               width: gutterWidth, height: scrollView.frame.height)
 
         if let densityMap {
-            // Sticky full-height stick on the selected edge. The mark stack is
+            // Sticky full-height map in the selected margin. The mark stack is
             // centred in the window, not the scrolled document — so the map
             // never rides with the text and never shrinks under the breadcrumb.
+            let leadingMapX = max(
+                0,
+                textOrigin - gutterWidth - leadingWidth - Metrics.densityMapGap
+            )
             densityMap.frame = NSRect(
-                x: hasLeadingDensityMap ? 0 : bounds.width - trailingWidth,
+                x: hasLeadingDensityMap ? leadingMapX : bounds.width - trailingWidth,
                 y: 0,
                 width: hasLeadingDensityMap ? leadingWidth : trailingWidth,
                 height: bounds.height
@@ -303,6 +308,13 @@ public final class MarkdownContainerView: NSView {
         scrollView.backgroundColor = textView.styleSheet.background
         gutter.reload()
         needsLayout = true
+    }
+
+    private enum Metrics {
+        /// Air between the block-marker rail and the document map. Close
+        /// enough to read as one navigation system; far enough to keep their
+        /// hit lanes distinct.
+        static let densityMapGap: CGFloat = 24
     }
 
 }

@@ -9,6 +9,12 @@ import MarkdownCore
 /// because the app is unsandboxed (§3.4).
 final class ImageFragment: DownrightFragment {
 
+    private enum LoadResult {
+        case loaded(NSImage)
+        case missing
+        case blocked
+    }
+
     override var suppressesText: Bool { true }
 
     override var overrideHeight: CGFloat? {
@@ -29,7 +35,8 @@ final class ImageFragment: DownrightFragment {
         let origin = CGPoint(x: point.x + max(0, (proseContentWidth - picture.width) / 2), y: point.y)
         let rect = CGRect(origin: origin, size: picture)
 
-        if let image = loadedImage() {
+        let result = loadResult()
+        if case let .loaded(image) = result {
             cg.saveGState()
             cg.setShadow(offset: CGSize(width: 0, height: 2),
                          blur: RenderMetrics.imageShadowRadius,
@@ -46,7 +53,11 @@ final class ImageFragment: DownrightFragment {
         } else {
             // §8.4's trust instrument applied to images: a picture the agent
             // says it wrote and did not is visibly absent, not silently blank.
-            drawFailedObject(missing, in: rect, style: style, in: cg)
+            let failure: FailedObject = switch result {
+            case .blocked: blocked
+            case .missing, .loaded: missing
+            }
+            drawFailedObject(failure, in: rect, style: style, in: cg)
         }
 
         guard !caption.isEmpty else { return }
@@ -75,6 +86,10 @@ final class ImageFragment: DownrightFragment {
         FailedObject(label: "Missing image", source: payload.detail)
     }
 
+    private var blocked: FailedObject {
+        FailedObject(label: "Blocked image", source: payload.detail)
+    }
+
     /// What the image is composited over.
     ///
     /// Transparent line art is usually black ink, so compositing it on the page
@@ -96,7 +111,7 @@ final class ImageFragment: DownrightFragment {
     }
 
     private func displaySize() -> CGSize {
-        guard let image = loadedImage(), image.size.width > 0 else {
+        guard case let .loaded(image) = loadResult(), image.size.width > 0 else {
             guard let style = styleSheet else { return CGSize(width: proseContentWidth, height: 64) }
             return CGSize(width: proseContentWidth,
                           height: failedObjectHeight(missing, style: style))
@@ -109,10 +124,15 @@ final class ImageFragment: DownrightFragment {
         return CGSize(width: (natural.width * scale).rounded(), height: (natural.height * scale).rounded())
     }
 
-    private func loadedImage() -> NSImage? {
-        guard let url = resolvedURL() else { return nil }
-        return MarkdownFragmentImageCaches.images.image(
-            for: url, maxPixelDimension: targetPixelDimension)
+    private func loadResult() -> LoadResult {
+        guard let request = resolvedRequest() else { return .blocked }
+        guard LocalAssetPolicy.allows(
+            request, authorizer: context?.localAssetAuthorizer
+        ) else { return .blocked }
+        guard let image = MarkdownFragmentImageCaches.images.image(
+            for: request.url, maxPixelDimension: targetPixelDimension
+        ) else { return .missing }
+        return .loaded(image)
     }
 
     private var viewportHeightCap: CGFloat {
@@ -129,13 +149,7 @@ final class ImageFragment: DownrightFragment {
         return min(2048, max(1, Int(ceil(points * scale))))
     }
 
-    private func resolvedURL() -> URL? {
-        let raw = payload.detail
-        guard !raw.isEmpty else { return nil }
-        if let url = URL(string: raw), url.scheme == "file" { return url }
-        if raw.hasPrefix("/") { return URL(fileURLWithPath: raw) }
-        if raw.hasPrefix("~") { return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath) }
-        guard let base = context?.documentURL?.deletingLastPathComponent() else { return nil }
-        return URL(fileURLWithPath: raw, relativeTo: base).standardizedFileURL
+    private func resolvedRequest() -> LocalAssetRequest? {
+        LocalAssetPolicy.request(raw: payload.detail, documentURL: context?.documentURL)
     }
 }

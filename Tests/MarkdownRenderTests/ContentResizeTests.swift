@@ -253,6 +253,41 @@ struct ContentResizeTests {
         #expect(abs(try screenY() - before) < 0.5, "the deferred resize moved the page")
     }
 
+    @Test("undo camera repair survives AppKit's deferred caret scroll")
+    func undoCameraRepairRunsAfterTheCommand() async {
+        let text = (0..<80).map { "## Section \($0)\n\nParagraph \($0)" }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 703))
+        container.scrollView.reflectScrolledClipView(clip)
+        container.textView.preserveViewportAcrossUndoRedo()
+
+        storage.replaceCharacters(in: NSRange(location: 16, length: 1), with: "x")
+        container.textView.update(
+            document: MarkdownParser.parse(storage.string),
+            dirty: DirtySet(ranges: [NSRange(location: 16, length: 1)], isWholesale: false)
+        )
+
+        // NSTextView can make the restored selection visible after storage
+        // observers have returned. The queued repair and the later semantic
+        // height pass must both preserve the command-boundary pixel camera.
+        clip.scroll(to: .zero)
+        container.scrollView.reflectScrolledClipView(clip)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        #expect(abs(clip.bounds.origin.y - 703) < 0.5)
+        try? await Task.sleep(for: .milliseconds(160))
+        #expect(abs(clip.bounds.origin.y - 703) < 0.5)
+    }
+
     /// A stale over-tall frame (from an earlier estimate or a shrunk document)
     /// must not shrink while the viewport is pinned to the bottom, or the clip
     /// clamps and the whole page drops.  Once the user scrolls away from the

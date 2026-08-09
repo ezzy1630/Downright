@@ -226,7 +226,7 @@ public enum FragmentKind: String, Sendable {
 /// A class so it can ride along as an attribute value without copying.
 public final class FragmentPayload: NSObject {
     public let kind: FragmentKind
-    public let sourceRange: NSRange
+    public var sourceRange: NSRange
     public let blockIdentity: BlockIdentity
     /// Fence language, mermaid diagram type, image path, LaTeX source …
     public let detail: String
@@ -239,6 +239,82 @@ public final class FragmentPayload: NSObject {
         self.sourceRange = sourceRange
         self.blockIdentity = blockIdentity
         self.detail = detail
+    }
+
+    /// Carries absolute parser coordinates across the short interval between a
+    /// source edit and the async parse that replaces this payload.
+    ///
+    /// `NSTextStorage` moves the attribute run itself when characters are
+    /// inserted or removed. The object stored in that run is a reference type,
+    /// though, so its ranges do not move with it. A length-changing edit above
+    /// a table therefore used to leave the table drawing from the old offsets:
+    /// leading cell text disappeared and trailing Markdown markers leaked.
+    /// Project the old metadata over the same edit immediately; the fresh parse
+    /// remains authoritative when it arrives.
+    func projectSourceRanges(across edit: NSRange, insertedLength: Int) {
+        sourceRange = Self.project(sourceRange, across: edit, insertedLength: insertedLength)
+        guard var tableData else { return }
+        tableData.delimiterRange = Self.project(
+            tableData.delimiterRange, across: edit, insertedLength: insertedLength
+        )
+        tableData.rows = tableData.rows.map { row in
+            TableRow(
+                range: Self.project(row.range, across: edit, insertedLength: insertedLength),
+                cells: row.cells.map { cell in
+                    TableCell(
+                        range: Self.project(cell.range, across: edit, insertedLength: insertedLength),
+                        contentRange: Self.project(
+                            cell.contentRange, across: edit, insertedLength: insertedLength
+                        ),
+                        inlines: cell.inlines.map {
+                            Self.project($0, across: edit, insertedLength: insertedLength)
+                        }
+                    )
+                },
+                isHeader: row.isHeader
+            )
+        }
+        self.tableData = tableData
+    }
+
+    private static func project(
+        _ span: InlineSpan,
+        across edit: NSRange,
+        insertedLength: Int
+    ) -> InlineSpan {
+        InlineSpan(
+            kind: span.kind,
+            range: project(span.range, across: edit, insertedLength: insertedLength),
+            contentRange: project(span.contentRange, across: edit, insertedLength: insertedLength),
+            leadingMarkerRange: span.leadingMarkerRange.map {
+                project($0, across: edit, insertedLength: insertedLength)
+            },
+            trailingMarkerRange: span.trailingMarkerRange.map {
+                project($0, across: edit, insertedLength: insertedLength)
+            },
+            children: span.children.map {
+                project($0, across: edit, insertedLength: insertedLength)
+            }
+        )
+    }
+
+    private static func project(
+        _ range: NSRange,
+        across edit: NSRange,
+        insertedLength: Int
+    ) -> NSRange {
+        let delta = insertedLength - edit.length
+        if range.upperBound <= edit.location { return range }
+        if range.location >= edit.upperBound {
+            return NSRange(location: max(0, range.location + delta), length: range.length)
+        }
+
+        // The edit intersects this semantic range. Preserve the part on each
+        // side and let the replacement occupy the intersected interval.
+        let prefix = max(0, edit.location - range.location)
+        let suffix = max(0, range.upperBound - edit.upperBound)
+        let location = min(range.location, edit.location)
+        return NSRange(location: location, length: prefix + insertedLength + suffix)
     }
 }
 

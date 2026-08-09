@@ -941,6 +941,48 @@ private func displayText(_ source: String, hidden: [NSRange]) -> String {
     )
 }
 
+@Test @MainActor
+func lengthChangingEditKeepsDownstreamFragmentRangesAlignedUntilParse() throws {
+    let source = """
+    Intro contains three removable letters.
+
+    | | |
+    |---|---|
+    | **Rendered diff** | Updates *in place* with `code`. |
+
+    ```swift
+    let answer = 42
+    ```
+    """
+    let storage = NSTextStorage(string: source)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 900, height: 900),
+        storage: storage,
+        styleSheet: styleSheet()
+    )
+    view.mode = .live
+    view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+
+    let edit = (source as NSString).range(of: "ont")
+    #expect(view.performSourceEdit(range: edit, replacement: ""))
+
+    let current = storage.string as NSString
+    let tableStart = current.range(of: "| | |").location
+    let codeStart = current.range(of: "```swift").location
+    let table = try #require(
+        storage.attribute(.drFragment, at: tableStart, effectiveRange: nil) as? FragmentPayload
+    )
+    let code = try #require(
+        storage.attribute(.drFragment, at: codeStart, effectiveRange: nil) as? FragmentPayload
+    )
+    let row = try #require(table.tableData?.bodyRows.first)
+
+    #expect(table.sourceRange.location == tableStart)
+    #expect(code.sourceRange.location == codeStart)
+    #expect(TableCellPresentation.plainText(for: row.cells[0], in: storage) == "Rendered diff")
+    #expect(TableCellPresentation.plainText(for: row.cells[1], in: storage) == "Updates in place with code.")
+}
+
 @Test func oneLineTableCellsKeepTheirFinalGlyph() {
     let source = "| Mode | Target |\n|---|---:|\n| Read | 250 |"
     let document = MarkdownParser.parse(source)
