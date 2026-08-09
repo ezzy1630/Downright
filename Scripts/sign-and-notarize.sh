@@ -60,14 +60,25 @@ fi
 APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
 
 sign() { codesign --force --options runtime --timestamp --sign "$IDENTITY" "$1"; }
+sign_preserving_entitlements() {
+    codesign --force --options runtime --timestamp \
+        --preserve-metadata=entitlements --sign "$IDENTITY" "$1"
+}
+sign_quicklook() {
+    codesign --force --options runtime --timestamp \
+        --entitlements "$ROOT/Config/QuickLook.entitlements" --sign "$IDENTITY" "$1"
+}
 
 echo "==> Signing every nested executable (no --deep)"
-for helper in "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc; do
-    [ -d "$helper" ] && sign "$helper"
-done
-sign "$APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE_VERSION="$SPARKLE/Versions/B"
+sign "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+sign_preserving_entitlements "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+sign "$SPARKLE_VERSION/Autoupdate"
+sign "$SPARKLE_VERSION/Updater.app"
+sign "$SPARKLE"
 for appex in "$APP"/Contents/PlugIns/*.appex; do
-    [ -d "$appex" ] && sign "$appex"
+    [ -d "$appex" ] && sign_quicklook "$appex"
 done
 sign "$APP/Contents/MacOS/down"
 sign "$APP"
@@ -75,6 +86,8 @@ sign "$APP"
 echo "==> Verifying signatures"
 for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" \
             "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/XPCServices/*.xpc \
+            "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/Autoupdate \
+            "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/Updater.app \
             "$APP/Contents/MacOS/down" "$APP"/Contents/PlugIns/*.appex; do
     [ -e "$item" ] || continue
     codesign --verify --strict --verbose=2 "$item"

@@ -163,15 +163,28 @@ jobs:
           APP="${{ env.APP }}"
           IDENTITY="Developer ID Application: ${{ secrets.DEVELOPER_ID_APPLICATION_NAME }} (${{ secrets.DEVELOPER_ID_APPLICATION_TEAM_ID }})"
           sign() { codesign --force --options runtime --timestamp --sign "$IDENTITY" "$1"; }
-          # Sparkle framework + its nested XPC helpers first.  Sparkle 2.9.5
-          # ships the helpers under Versions/B/XPCServices (unversioned bundle
-          # layout inside), so discover them rather than hard-coding a path.
-          for helper in "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc; do
-            [ -d "$helper" ] && sign "$helper"
-          done
-          sign "$APP/Contents/Frameworks/Sparkle.framework"
+          sign_preserving_entitlements() {
+            codesign --force --options runtime --timestamp \
+              --preserve-metadata=entitlements --sign "$IDENTITY" "$1"
+          }
+          sign_quicklook() {
+            codesign --force --options runtime --timestamp \
+              --entitlements Config/QuickLook.entitlements --sign "$IDENTITY" "$1"
+          }
+          # Sparkle's documented manual distribution order is inside-out.
+          # Downloader carries a required entitlement that re-signing must
+          # preserve; the other helpers still need our hardened-runtime seal.
+          SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+          SPARKLE_VERSION="$SPARKLE/Versions/B"
+          sign "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+          sign_preserving_entitlements "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+          sign "$SPARKLE_VERSION/Autoupdate"
+          sign "$SPARKLE_VERSION/Updater.app"
+          sign "$SPARKLE"
           # Quick Look extensions.
-          for appex in "$APP"/Contents/PlugIns/*.appex; do sign "$appex"; done
+          for appex in "$APP"/Contents/PlugIns/*.appex; do
+            sign_quicklook "$appex"
+          done
           # The CLI lives in MacOS/ and is signed as part of the app bundle.
           sign "$APP/Contents/MacOS/down"
           # The host last.
@@ -179,6 +192,8 @@ jobs:
           # Verify each individually.
           for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" \
               "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc \
+              "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/Autoupdate \
+              "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/Updater.app \
               "$APP"/Contents/PlugIns/*.appex; do
             [ -e "$item" ] || continue
             codesign --verify --strict --verbose=2 "$item"

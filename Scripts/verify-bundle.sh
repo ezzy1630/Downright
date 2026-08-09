@@ -45,6 +45,8 @@ if [ -d "$FW" ]; then
     # somewhere under the framework rather than pinning one path.
     check "$(find "$FW" -maxdepth 8 -type d -name 'Downloader.xpc' -path '*/XPCServices/*' 2>/dev/null | grep -q . && echo 1 || echo 0)" "Sparkle Downloader XPC helper"
     check "$(find "$FW" -maxdepth 8 -type d -name 'Installer.xpc' -path '*/XPCServices/*' 2>/dev/null | grep -q . && echo 1 || echo 0)" "Sparkle Installer XPC helper"
+    check "$([ -x "$FW/Versions/B/Autoupdate" ] && echo 1 || echo 0)" "Sparkle Autoupdate helper"
+    check "$([ -d "$FW/Versions/B/Updater.app" ] && echo 1 || echo 0)" "Sparkle Updater app"
 else
     check 0 "Sparkle.framework embedded"
 fi
@@ -107,6 +109,13 @@ appex_resource() {
     [ -e "$appex/Contents/Resources/$relative" ] && echo "$appex/Contents/Resources/$relative"
 }
 
+appex_entitlement() {
+    local appex="$1" key="$2"
+    codesign -d --entitlements :- "$appex" 2>/dev/null \
+        | plutil -extract "$key" raw -o - - 2>/dev/null \
+        || true
+}
+
 if [ -d "$CONTENTS/PlugIns" ]; then
     check "$([ -d "$CONTENTS/PlugIns/DownrightQL.appex" ] && echo 1 || echo 0)" "DownrightQL.appex embedded"
     check "$([ -d "$CONTENTS/PlugIns/DownrightThumb.appex" ] && echo 1 || echo 0)" "DownrightThumb.appex embedded"
@@ -126,6 +135,10 @@ if [ -d "$CONTENTS/PlugIns" ]; then
         # SwiftMath opens first so it cannot regress unnoticed.
         check "$([ -n "$(appex_resource "$appex" SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf)" ] && echo 1 || echo 0)" \
               "$NAME carries the SwiftMath math fonts"
+        check "$([ "$(appex_entitlement "$appex" com.apple.security.app-sandbox)" = "true" ] && echo 1 || echo 0)" \
+              "$NAME retains App Sandbox entitlement"
+        check "$([ "$(appex_entitlement "$appex" com.apple.security.get-task-allow)" != "true" ] && echo 1 || echo 0)" \
+              "$NAME omits get-task-allow"
     done
 else
     check 0 "DownrightQL.appex embedded"

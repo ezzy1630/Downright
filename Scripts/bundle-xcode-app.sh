@@ -90,7 +90,8 @@ if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
 fi
 for appex in "$APP"/Contents/PlugIns/*.appex; do
     [ -e "$appex" ] || continue
-    codesign --force --sign - "$appex" 2>/dev/null || true
+    codesign --force --sign - --entitlements "$ROOT/Config/QuickLook.entitlements" \
+        "$appex" 2>/dev/null || true
 done
 codesign --force --sign - "$APP"
 
