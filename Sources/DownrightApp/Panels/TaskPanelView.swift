@@ -46,10 +46,13 @@ protocol TaskPanelDelegate: AnyObject {
 final class TaskPanelView: NSView, PanelSurface {
     weak var delegate: TaskPanelDelegate?
     var onClose: (() -> Void)?
+    /// Fired after the row model changes. The floating owner refits directly
+    /// from this signal; a queued frame was both late and prone to racing a
+    /// second document parse.
+    var onContentSizeChange: (() -> Void)?
 
     var styleSheet: StyleSheet {
         didSet {
-            backdrop.styleSheet = styleSheet
             sectionBar.styleSheet = styleSheet
             undoPill.styleSheet = styleSheet
             applyStyle()
@@ -64,6 +67,26 @@ final class TaskPanelView: NSView, PanelSurface {
     /// width, one tier below the detail panels.
     var preferredWidth: CGFloat { 300 }
 
+    /// The height the current content wants at its current width. NSTableView's
+    /// document view expands to its clip view when the rows are short, so its
+    /// bounds are a viewport measurement, not a content measurement. Sum the
+    /// row model's actual heights instead, then add the list insets and panel
+    /// chrome. The floating host applies the ceiling after this honest read.
+    var fittedContentHeight: CGFloat {
+        layoutSubtreeIfNeeded()
+        let width = max(table.bounds.width, preferredWidth)
+        let listHeight = rows.isEmpty
+            ? emptyState.fittingSize.height + 12 + 26
+            : rows.indices.reduce(CGFloat.zero) { total, row in
+                total + rowHeight(row, width: width)
+            }
+        let insets = scroll.contentInsets
+        return PanelLayout.headerTop
+            + sectionBar.intrinsicContentSize.height
+            + PanelLayout.headerToListGap
+            + insets.top + listHeight + insets.bottom
+    }
+
     var visibleTaskCountForTesting: Int {
         rows.reduce(into: 0) { count, row in
             if case .task = row { count += 1 }
@@ -77,6 +100,14 @@ final class TaskPanelView: NSView, PanelSurface {
     var statusLineForTesting: String { worklist.statusLine }
     var captionForTesting: String { captionLabel.stringValue }
     var rowCountForTesting: Int { rows.count }
+    var contentDocumentHeightForTesting: CGFloat { scroll.documentView?.bounds.height ?? 0 }
+    var contentViewportHeightForTesting: CGFloat { scroll.contentView.bounds.height }
+    var measuredListHeightForTesting: CGFloat {
+        let width = max(table.bounds.width, preferredWidth)
+        return rows.isEmpty
+            ? emptyState.fittingSize.height + 12 + 26
+            : rows.indices.reduce(CGFloat.zero) { $0 + rowHeight($1, width: width) }
+    }
     var emptyAddButtonForTesting: NSButton { emptyAddButton }
     var quickAddEditingForTesting: Bool { editingAddSection != nil }
     var undoBottomInsetForTesting: CGFloat { scroll.contentInsets.bottom }
@@ -95,7 +126,6 @@ final class TaskPanelView: NSView, PanelSurface {
 
     // MARK: - Views
 
-    private let backdrop: PanelBackdrop
     private let sectionBar: TaskSectionBarView
     private let captionLabel = NSTextField(labelWithString: "")
     private let table = PanelList.makeTableView(identifier: "tasks")
@@ -113,6 +143,14 @@ final class TaskPanelView: NSView, PanelSurface {
         case pile(Int)
         /// Quick-add row of a section; -1 is the whole document (empty plan).
         case add(Int)
+    }
+
+    /// The panel's own vertical rhythm: air above the section map, air
+    /// between the map and the list.  Named so the fitted-height measurement
+    /// below reads the same numbers the constraints install.
+    private enum PanelLayout {
+        static let headerTop: CGFloat = 12
+        static let headerToListGap: CGFloat = 8
     }
 
     private var worklist = TaskWorklist(tasks: [], headings: [])
@@ -148,24 +186,8 @@ final class TaskPanelView: NSView, PanelSurface {
 
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
-        self.backdrop = PanelBackdrop(styleSheet: styleSheet)
         self.sectionBar = TaskSectionBarView(styleSheet: styleSheet)
         super.init(frame: .zero)
-
-        // The panel is glass (§11.4): the material blends with the window so
-        // the document ghosts through the column rather than stopping at a
-        // matte slab, and a whisper of a themed veil keeps the rows legible
-        // over a busy page.  The rule that separates it from the host's
-        // header belongs to the host.
-        // Tasks is a working sidebar, but it still belongs to the document's
-        // glass surface. Keep the native within-window material in the normal
-        // case and add only a restrained veil; PanelBackdrop falls back to an
-        // opaque theme fill when Reduce Transparency or Increase Contrast is
-        // enabled.
-        backdrop.usesSurfaceFill = false
-        backdrop.blendsWithinWindow = true
-        backdrop.veilAlpha = 0.10
-        installBackdrop(backdrop)
 
         buildHeader()
         buildTable()
@@ -240,7 +262,7 @@ final class TaskPanelView: NSView, PanelSurface {
         let rail = TaskRowMetrics.contentInset
         NSLayoutConstraint.activate([
             sectionBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rail),
-            sectionBar.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            sectionBar.topAnchor.constraint(equalTo: topAnchor, constant: PanelLayout.headerTop),
 
             captionLabel.leadingAnchor.constraint(equalTo: sectionBar.trailingAnchor, constant: 8),
             captionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -rail),
@@ -248,7 +270,7 @@ final class TaskPanelView: NSView, PanelSurface {
 
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: sectionBar.bottomAnchor, constant: 8),
+            scroll.topAnchor.constraint(equalTo: sectionBar.bottomAnchor, constant: PanelLayout.headerToListGap),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             undoPill.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -436,6 +458,7 @@ final class TaskPanelView: NSView, PanelSurface {
         guard canAnimate, newRows != old else {
             table.reloadData()
             restoreSelection(selectedTask)
+            onContentSizeChange?()
             return
         }
 
@@ -461,6 +484,7 @@ final class TaskPanelView: NSView, PanelSurface {
             table.reloadData(forRowIndexes: survivors, columnIndexes: IndexSet(integer: 0))
         }
         restoreSelection(selectedTask)
+        onContentSizeChange?()
     }
 
     private func restoreSelection(_ taskIndex: Int?) {
@@ -710,6 +734,23 @@ final class TaskPanelView: NSView, PanelSurface {
         super.keyDown(with: event)
     }
 
+    override var acceptsFirstResponder: Bool { true }
+
+    override func cancelOperation(_ sender: Any?) {
+        if editingAddSection != nil {
+            cancelNewTask()
+        } else {
+            onClose?()
+        }
+    }
+
+    /// The floating owner gives the list the first key loop position. This is
+    /// what restores the docked inspector's Esc/Tab contract without stealing
+    /// focus from the quick-add field once editing has begun.
+    func focusForPresentation() {
+        window?.makeFirstResponder(table)
+    }
+
     // MARK: - Drag reorder
 
     /// The group a drag may move inside: same heading, same indent, same
@@ -864,13 +905,18 @@ extension TaskPanelView: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard rows.indices.contains(row) else { return TaskRowMetrics.minimumHeight }
+        return rowHeight(row, width: max(tableView.bounds.width, preferredWidth))
+    }
+
+    private func rowHeight(_ row: Int, width: CGFloat) -> CGFloat {
+        guard rows.indices.contains(row) else { return TaskRowMetrics.minimumHeight }
         switch rows[row] {
         case .section: return TaskRowMetrics.groupHeight
         case .pile: return TaskRowMetrics.groupHeight
         case .add: return TaskRowMetrics.minimumHeight
         case .task(let index):
             guard index < tasks.count else { return TaskRowMetrics.minimumHeight }
-            return taskHeight(for: index, width: tableView.bounds.width)
+            return taskHeight(for: index, width: width)
         }
     }
 
@@ -1516,7 +1562,9 @@ private final class TaskPileRowView: TaskRowSurfaceView {
         chevron.contentTintColor = warm
             ? styleSheet.textSecondary
             : styleSheet.text.panelAlpha(contrast ? 0.5 : 0.35, increaseContrast: contrast)
-        let surface = styleSheet.text.panelAlpha(warm ? 0.055 : 0, increaseContrast: contrast).cgColor
+        let surface = warm
+            ? styleSheet.text.panelAlpha(contrast ? 0.1 : 0.07, increaseContrast: contrast).cgColor
+            : CGColor.clear
         guard animated, !styleSheet.reduceMotion, window != nil else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -1628,7 +1676,9 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
             ? styleSheet.accent
             : styleSheet.text.panelAlpha(contrast ? 0.5 : 0.35, increaseContrast: contrast)
         textField.textColor = styleSheet.text
-        let surface = styleSheet.text.panelAlpha(warm ? 0.055 : 0, increaseContrast: contrast).cgColor
+        let surface = warm
+            ? styleSheet.text.panelAlpha(contrast ? 0.1 : 0.07, increaseContrast: contrast).cgColor
+            : CGColor.clear
         guard animated, !styleSheet.reduceMotion, window != nil else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -1704,7 +1754,7 @@ private final class TaskUndoPillView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = Self.height / 2
+        layer?.cornerRadius = PanelMetrics.capsuleRadius(forHeight: Self.height)
         layer?.shadowOpacity = 0.18
         layer?.shadowRadius = 5
         layer?.shadowOffset = NSSize(width: 0, height: -1)
@@ -1829,8 +1879,11 @@ private final class TaskUndoPillView: NSView {
     private func applyStyle() {
         let contrast = styleSheet.increaseContrast
         layer?.backgroundColor = styleSheet.text
-            .withAlphaComponent(contrast ? 0.98 : 0.92).cgColor
-        label.textColor = styleSheet.background
+            .withAlphaComponent(contrast ? 0.22 : 0.14).cgColor
+        layer?.borderWidth = contrast ? 1 : 0.5
+        layer?.borderColor = styleSheet.text
+            .panelAlpha(contrast ? 0.45 : 0.22, increaseContrast: false).cgColor
+        label.textColor = styleSheet.text
         undoButton.contentTintColor = styleSheet.accent
     }
 

@@ -19,10 +19,18 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         textLayoutFragmentFor location: NSTextLocation,
         in textElement: NSTextElement
     ) -> NSTextLayoutFragment {
-        // Any fragment being built means layout ran, so any cache holding
-        // absolute rects measured against the old layout is now suspect.
-        context.layoutGeneration &+= 1
-        let plain = { NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange) }
+        // Prose is a drawing fragment too.  Everything that belongs behind or
+        // among a paragraph's own glyphs — the inline-code pills, the
+        // invisibles — is painted by the pass that draws those glyphs, so it
+        // cannot be left behind at a position the layout has since moved on
+        // from.
+        let plain = {
+            ProseFragment(
+                textElement: textElement,
+                range: textElement.elementRange,
+                context: self.context
+            )
+        }
         guard let manager = textElement.textContentManager, let elementRange = textElement.elementRange else {
             return plain()
         }

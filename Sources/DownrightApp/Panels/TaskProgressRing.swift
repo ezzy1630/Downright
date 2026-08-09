@@ -80,7 +80,7 @@ final class TaskProgressRing: NSView {
         /// than drawn.
         static let control: CGFloat = 30
         static let lineWidth: CGFloat = 2.5
-        static let plateRadius: CGFloat = 7
+        static let plateRadius: CGFloat = PanelMetrics.controlRadius(forHeight: control)
         static let countSize: CGFloat = 9.5
     }
 
@@ -290,7 +290,10 @@ final class TaskProgressRing: NSView {
         let complete = isComplete
         let hasTasks = progress.total > 0
 
-        feedbackLayer.backgroundColor = NSColor.labelColor.cgColor
+        feedbackLayer.backgroundColor = styleSheet.text.cgColor
+        feedbackLayer.borderWidth = contrast ? 1 : 0.5
+        feedbackLayer.borderColor = styleSheet.text
+            .panelAlpha(contrast ? 0.55 : 0.18, increaseContrast: false).cgColor
 
         // Open panel: the whole glyph tints.  The core lights and the track
         // takes the accent instead of the rule, so "this is the button that is

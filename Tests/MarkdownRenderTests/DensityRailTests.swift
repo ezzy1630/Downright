@@ -33,6 +33,48 @@ struct DensityRailTests {
         #expect(DensityOutlineWindow.hideDuration == 0.09)
     }
 
+    @Test("Leading preview stays inside the page margin")
+    func previewWidthRespectsTextBoundary() {
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: 72,
+            maximumTrailingX: 412,
+            opensInward: false
+        ) == 320)
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: 72,
+            maximumTrailingX: 360,
+            opensInward: false
+        ) == 280)
+        // A ~1020pt window leaves ~166pt of margin beside the wall-pinned
+        // rail: the card shrinks into it rather than vanishing.
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: 72,
+            maximumTrailingX: 246,
+            opensInward: false
+        ) == 166)
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: 72,
+            maximumTrailingX: 220,
+            opensInward: false
+        ) == 140)
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: 72,
+            maximumTrailingX: 200,
+            opensInward: false
+        ) == nil)
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: 800,
+            maximumTrailingX: nil,
+            opensInward: true
+        ) == 320)
+        #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
+            anchorX: -40,
+            maximumTrailingX: 300,
+            minimumOriginX: 4,
+            opensInward: false
+        ) == 296)
+    }
+
     /// The integrator is the closed-form damped-harmonic solution, so where
     /// the state lands after any elapsed time is a pure function of that time
     /// — a dropped 33 ms frame lands exactly where the 120 Hz stream would

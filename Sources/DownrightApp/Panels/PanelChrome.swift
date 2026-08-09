@@ -46,7 +46,14 @@ enum PanelMetrics {
     static let reviewBarHeight: CGFloat = 30
     static let inset: CGFloat = 10
     static let headerTopPadding: CGFloat = 8
+    /// One radius family for detached glass and the surfaces nested inside it.
+    /// Controls derive their capsule radius from their height; they do not
+    /// invent a second shape vocabulary in each panel.
     static let cornerRadius: CGFloat = 6
+    /// Detached glass needs enough curvature to read as a soft body at panel
+    /// scale; 14pt made the same material look like a clipped card.
+    static let surfaceRadius: CGFloat = 20
+    static let nestedSurfaceRadius: CGFloat = 10
     static let hairline: CGFloat = 1
 
     /// The shape a row's own surface takes — selection, hover, a completion
@@ -56,7 +63,19 @@ enum PanelMetrics {
         bounds.insetBy(dx: 3, dy: 1)
     }
 
-    static let rowSurfaceRadius: CGFloat = 6
+    static let rowSurfaceRadius: CGFloat = 7
+
+    static func capsuleRadius(forHeight height: CGFloat) -> CGFloat {
+        // A capsule's radius is half its height, including for tiny controls.
+        // A fixed 4pt floor turns a 4pt-high shape into a rounded rectangle.
+        max(0, height / 2)
+    }
+
+    /// Small controls use the same inset capsule as the ring's hover plate
+    /// and the segmented switcher. Keep this policy out of individual views.
+    static func controlRadius(forHeight height: CGFloat) -> CGFloat {
+        min(nestedSurfaceRadius, capsuleRadius(forHeight: height))
+    }
 }
 
 /// A count in transient chrome is context, not another action.  Give it a
@@ -244,14 +263,70 @@ final class PanelBackdrop: NSView {
         styleSheet.reduceTransparency || styleSheet.increaseContrast
     }
 
+    /// This is topology state, not frame state. Resolving it during layout
+    /// made every row walk to the surface on every resize and changed hidden
+    /// state in the middle of AppKit's layout pass.
+    private var isInsideDetachedGlass = false
+
     private func applyStyle() {
-        let hidden = prefersOpaque || usesSurfaceFill
-        effect.isHidden = hidden
+        let hidden = prefersOpaque || usesSurfaceFill || isInsideDetachedGlass
+        // A hidden NSVisualEffectView can still participate in the window's
+        // compositor on macOS 26. Remove the child entirely while the parent
+        // surface owns the material; reinsert it when the backdrop becomes a
+        // standalone panel again.
+        if hidden {
+            effect.removeFromSuperview()
+        } else if effect.superview !== self {
+            effect.frame = bounds
+            addSubview(effect, positioned: .below, relativeTo: nil)
+        }
         // The veil only exists to calm vibrancy; over an opaque fill there is
         // nothing to ghost, so it should only muddy the colour.
         veilLayer.isHidden = hidden
         veilLayer.backgroundColor = styleSheet.background.cgColor
         needsDisplay = true
+    }
+
+    /// The floating surface owns the material and its content z-order. A child
+    /// panel backdrop must stand down whenever it is inside that surface;
+    /// keeping this decision here prevents every panel type from growing a
+    /// one-off hosting flag just to avoid a second material.
+    private func resolveDetachedGlassVisibility() {
+        var ancestor = superview
+        var resolved = false
+        while let view = ancestor {
+            if view is FloatingPanelSurface {
+                // The floating surface owns the one material that composites
+                // against the document. Nested panel backdrops are detached
+                // visual-effect siblings on macOS 26 and can blank the
+                // document even when the outer surface uses the fallback, so
+                // they stand down for both material modes.
+                resolved = true
+                break
+            }
+            ancestor = view.superview
+        }
+        isInsideDetachedGlass = resolved
+        applyStyle()
+    }
+
+    static func resolveDetachedGlass(in root: NSView) {
+        if let backdrop = root as? PanelBackdrop {
+            backdrop.resolveDetachedGlassVisibility()
+        }
+        for child in root.subviews {
+            resolveDetachedGlass(in: child)
+        }
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        resolveDetachedGlassVisibility()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        resolveDetachedGlassVisibility()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -780,7 +855,7 @@ final class PanelSegmentedControl: NSView {
     /// The track's radius follows its height, so the same control reads as one
     /// shape whether a header gives it 22pt or 26pt.
     private static func trackRadius(forHeight height: CGFloat) -> CGFloat {
-        max(5, min(8, (height / 3).rounded()))
+        max(5, min(8, PanelMetrics.capsuleRadius(forHeight: height) - 5))
     }
 
     private let backgroundLayer = CALayer()
@@ -835,10 +910,10 @@ final class PanelSegmentedControl: NSView {
         super.init(frame: .zero)
         wantsLayer = true
 
-        backgroundLayer.cornerRadius = Self.trackRadius(forHeight: Self.controlHeight)
+        backgroundLayer.cornerRadius = PanelMetrics.capsuleRadius(forHeight: Self.controlHeight)
         layer?.addSublayer(backgroundLayer)
 
-        thumbLayer.cornerRadius = Self.trackRadius(forHeight: Self.controlHeight) - 2
+        thumbLayer.cornerRadius = PanelMetrics.capsuleRadius(forHeight: Self.controlHeight) - 2
         layer?.addSublayer(thumbLayer)
 
         for item in items {

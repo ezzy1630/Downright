@@ -190,9 +190,8 @@ public final class MarkdownContainerView: NSView {
                                   height: max(0, bounds.height - topLaneHeight))
 
         // The text column is centred in the measure (§11.1). The document map
-        // lives in the quiet leading margin, optically tied to the page rather
-        // than stranded on the window edge where it reads as a second,
-        // unrelated scrollbar.
+        // stays on the window wall: moving it beside the reading measure makes
+        // it look detached and puts its hover card over the prose.
         // The inset is measured to where the *text* starts, not to where the
         // text view starts: the view carries `revealSlack` of its own lead-in
         // so a caret-anchored reveal can shift a line left (§6.1c).
@@ -273,15 +272,11 @@ public final class MarkdownContainerView: NSView {
                               width: gutterWidth, height: scrollView.frame.height)
 
         if let densityMap {
-            // Sticky full-height map in the selected margin. The mark stack is
+            // Sticky full-height map on the selected wall. The mark stack is
             // centred in the window, not the scrolled document — so the map
             // never rides with the text and never shrinks under the breadcrumb.
-            let leadingMapX = max(
-                0,
-                textOrigin - gutterWidth - leadingWidth - Metrics.densityMapGap
-            )
             densityMap.frame = NSRect(
-                x: hasLeadingDensityMap ? leadingMapX : bounds.width - trailingWidth,
+                x: hasLeadingDensityMap ? 0 : bounds.width - trailingWidth,
                 y: 0,
                 width: hasLeadingDensityMap ? leadingWidth : trailingWidth,
                 height: bounds.height
@@ -289,6 +284,7 @@ public final class MarkdownContainerView: NSView {
             // Keep the stick above the scroll view / marker rail so its hit
             // lane stays responsive.
             addSubview(densityMap, positioned: .above, relativeTo: nil)
+            densityMap.containerGeometryDidChange()
         }
 
         if !footnoteMargin.isHidden {
@@ -308,13 +304,6 @@ public final class MarkdownContainerView: NSView {
         scrollView.backgroundColor = textView.styleSheet.background
         gutter.reload()
         needsLayout = true
-    }
-
-    private enum Metrics {
-        /// Air between the block-marker rail and the document map. Close
-        /// enough to read as one navigation system; far enough to keep their
-        /// hit lanes distinct.
-        static let densityMapGap: CGFloat = 24
     }
 
 }

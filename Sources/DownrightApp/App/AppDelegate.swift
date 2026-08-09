@@ -701,6 +701,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .toggleLightDark:
             toggleLightDarkTheme()
             return true
+        case .taskPanel:
+            guard let window = activeDocumentWindow,
+                  let controller = window.windowController as? DocumentWindowController
+            else { return false }
+            controller.toggleTaskPanel()
+            return true
         case .goToLine:
             return false  // handled by the document window controller
         default: return false
@@ -937,7 +943,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: CommandResponder {
     @objc func performDownrightCommand(_ sender: Any?) {
         guard let item = sender as? NSMenuItem, let command = MainMenu.command(for: item) else { return }
-        _ = handleApplicationCommand(command)
+        guard !handleApplicationCommand(command) else { return }
+        guard let window = activeDocumentWindow,
+              let controller = window.windowController as? DocumentWindowController else { return }
+        _ = controller.perform(command)
     }
 }
 

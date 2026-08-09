@@ -45,15 +45,34 @@ final class DocumentWindowController: NSWindowController {
     /// The travelling glass body, kept while any trip is in flight and
     /// removed on settle.  One vessel serves every trip in the window.
     private var morphVessel: MorphVessel?
-    /// Where the vessel currently in flight is headed.  A resize or divider
-    /// drag re-aims the trip, and the two directions do not share a
-    /// destination: a dismissal is flying *to the ring*, so recomputing the
-    /// pane anchor for it would drag the glass back the way it came.
-    private enum MorphDestination { case pane, ring }
-    private var morphDestination: MorphDestination = .pane
-    /// Which section's control the current trip calls home, so a re-aim can
-    /// find the right seat — Find's button and `···` are not in the same place.
-    private var morphHomeSection: InspectorSection = .tasks
+    /// Where the vessel currently in flight is headed. A window resize can
+    /// re-aim the floating body without changing its direction.
+    private enum MorphDestination {
+        /// Floating arrival: down from the toolbar edge into the panel frame.
+        case floating
+        /// Floating dismissal: up into the sliver the pour came out of.
+        case toolTop
+    }
+    private var morphDestination: MorphDestination = .floating
+    /// The floating Tasks surface (§8.5's floating clause): the one panel
+    /// that pours out of the toolbar edge and hangs over the document
+    /// instead of docking in the split.  Kept for as long as it is on screen;
+    /// torn down on dismissal.
+    private(set) var floatingSurface: FloatingPanelSurface?
+    /// The transparent compositor boundary for the floating surface. It is a
+    /// child of the document window, so it follows the document while keeping
+    /// `NSGlassEffectView` outside the document window's own glass stage.
+    private var floatingPanelWindow: FloatingPanelWindow?
+    var isTaskPanelFloating: Bool {
+        floatingSurface != nil && inspectorHost?.selectedSection == .tasks
+    }
+    /// The surface's resting frame in window space, remembered so a retarget
+    /// can still aim after the dismissal hands the glass off early.
+    private var floatingSurfaceFrame = NSRect.zero
+    /// The responder that was active before a floating surface opened. It is
+    /// restored before the original outside click is delivered, so a dismiss
+    /// never costs the document caret.
+    private weak var floatingFocusRestoreView: NSView?
     /// Notification tokens that keep a flying trip aimed at the live pane.
     private var morphRetargetTokens: [NSObjectProtocol] = []
     var frontMatterEditor: FrontMatterEditorView?
@@ -64,10 +83,14 @@ final class DocumentWindowController: NSWindowController {
 
     // Layout containers
     private var rootView: NSView!
-    private var trailingPane: NSView!
     var barStack: NSStackView!
     private var windowSplitController: NSSplitViewController!
-    var inspectorItem: NSSplitViewItem!
+    /// A surface must never become an arbitrary child of the split view. On
+    /// macOS 26 that makes the glass compositor treat the panes as detached
+    /// siblings and the document can disappear behind the material. The
+    /// overlay is a separate lane above the split, still inside the window's
+    /// glass stage, so the split keeps ownership of its panes.
+    private var floatingOverlayHost: NSView!
 
     // State
     var scanner: SiblingScanner?
@@ -81,14 +104,10 @@ final class DocumentWindowController: NSWindowController {
     private var themeObservation: ThemeObservation?
     let progressRing = TaskProgressRing()
     private var isPinned = false
-    private var focusRestoreInspector = false
     private var focusModeApplied = false
     private var discardChangesOnClose = false
     private var focusDimmingViews: [FocusDimmingView] = []
     private var isSynchronizingPanes = false
-    private var hasAppliedInitialInspectorWidth = false
-    private var inspectorTransitionGeneration = 0
-    private var inspectorWantsCollapsed = true
     private var pendingInitialRestoreOffset: Int?
     private var deferredInitialRestoreOffset: Int?
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
@@ -141,7 +160,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     convenience init() {
-        let window = NSWindow(
+        let window = DocumentWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1020, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
@@ -318,7 +337,6 @@ final class DocumentWindowController: NSWindowController {
             "window       \(window?.frame ?? .zero)",
             "contentView  \(window?.contentView?.frame ?? .zero)",
             "rootView     \(rootView.frame)",
-            "trailingPane \(trailingPane.frame)",
             "barStack     \(barStack.frame)  arranged=\(barStack.arrangedSubviews.count)",
             "container    \(primaryContainer.frame)",
             "  scrollView \(primaryContainer.scrollView.frame)",
@@ -357,8 +375,8 @@ final class DocumentWindowController: NSWindowController {
         // toolbar or at zero height reads as dead space rather than as a bug.
         if let host = inspectorHost {
             var lines = [
-                "inspector    pane=\(trailingPane.frame) host=\(host.frame) "
-                + "safeArea=\(host.safeAreaInsets) collapsed=\(inspectorItem.isCollapsed)",
+                "inspector    host=\(host.frame) safeArea=\(host.safeAreaInsets) "
+                + "selected=\(String(describing: host.selectedSection))",
             ]
             for sub in host.subviews {
                 lines.append(
@@ -429,7 +447,6 @@ final class DocumentWindowController: NSWindowController {
         toolbarPresentationControl?.styleSheet = activeStyleSheet
 
         rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
-        trailingPane = NSView()
         barStack = NSStackView()
         barStack.orientation = .vertical
         barStack.spacing = 0
@@ -449,32 +466,18 @@ final class DocumentWindowController: NSWindowController {
 
         let documentController = NSViewController()
         documentController.view = rootView
-        let inspectorController = NSViewController()
-        inspectorController.view = trailingPane
 
-        // Document + inspector only.  The leading sidebar item went with the
-        // Contents panel: the density rail expands into the document's outline
-        // and the command palette opens headings and files, so a third
-        // navigator was the same list a third time (§8.6).
+        // The document is the only split pane. Inspector sections are floating
+        // surfaces now; retaining a collapsed inspector item would leave a
+        // second presentation system and keep resize state alive for dead UI.
         let split = NSSplitViewController()
         let document = NSSplitViewItem(viewController: documentController)
-        let inspector = NSSplitViewItem(inspectorWithViewController: inspectorController)
-        inspector.minimumThickness = InspectorWidth.minimum
-        inspector.maximumThickness = InspectorWidth.maximum
-        inspector.canCollapse = true
-        inspector.isCollapsed = true
         split.addSplitViewItem(document)
-        split.addSplitViewItem(inspector)
         windowSplitController = split
-        inspectorItem = inspector
         window?.contentViewController = split
-        // Layer 3: on macOS 26 the window's whole content lives inside one
-        // glass container, so the travelling vessel and the pane's backdrop
-        // merge as they get close instead of rendering as two surfaces that
-        // happen to overlap (§Morph.Layer3).
-        if #available(macOS 26.0, *) {
-            installMorphGlassContainerIfAvailable()
-        }
+        // Layer 3: the split and the floating lane share one window stage.
+        // The surface itself is never mounted on the split view.
+        installFloatingOverlayHost()
         installMorphRetargeting()
 
         NSLayoutConstraint.activate([
@@ -497,22 +500,49 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: Morph chip: Layer 3 container
 
-    /// Wraps the split — document and docked inspector — in an
-    /// `NSGlassEffectContainerView`.  The container merges descendant glass
-    /// views within a proximity, which is the Layer 3 clause of the morph
-    /// spec: the pane's backdrop and the travelling vessel are both `.regular`
-    /// glass with transparent tints, so when the vessel overlaps the pane on
-    /// landing they are rendered as one surface, not two that happen to
-    /// coincide.  The vessel stays a subview of the window's content view,
-    /// which *is* the container on macOS 26 — no change to where trips spawn.
-    @available(macOS 26.0, *)
-    private func installMorphGlassContainerIfAvailable() {
-        guard let hostWindow = window else { return }
-        let container = NSGlassEffectContainerView()
-        container.contentView = windowSplitController.splitView
+    /// Builds the window's two drawing lanes without putting glass on the split
+    /// view itself. The split controller remains a real child controller, so
+    /// AppKit still owns pane layout; the overlay is its sibling in this root.
+    private func installFloatingOverlayHost() {
+        guard let hostWindow = window, let split = windowSplitController else { return }
+
+        let stage = NSView()
+        stage.wantsLayer = false
+        let splitView = split.view
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        let overlay = NSView()
+        overlay.wantsLayer = false
+
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+
         let holder = NSViewController()
-        holder.view = container
-        hostWindow.contentViewController = holder
+        holder.view = stage
+        holder.addChild(split)
+        stage.addSubview(splitView)
+        stage.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            splitView.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+            splitView.topAnchor.constraint(equalTo: stage.topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+            overlay.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: stage.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+        ])
+        floatingOverlayHost = overlay
+
+        if #available(macOS 26.0, *) {
+            let container = NSGlassEffectContainerView(frame: stage.bounds)
+            container.autoresizingMask = [.width, .height]
+            container.contentView = stage
+            let glassRoot = NSViewController()
+            glassRoot.view = container
+            glassRoot.addChild(holder)
+            hostWindow.contentViewController = glassRoot
+        } else {
+            hostWindow.contentViewController = holder
+        }
     }
 
     /// Keep a flying trip aimed at the pane's true resting place.  A live
@@ -528,26 +558,24 @@ final class DocumentWindowController: NSWindowController {
                 self?.retargetMorphDestination()
             }
         }
-        let splitToken = center.addObserver(
-            forName: NSSplitView.didResizeSubviewsNotification,
-            object: windowSplitController?.splitView, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.retargetMorphDestination()
-            }
-        }
-        morphRetargetTokens = [windowToken, splitToken]
+        morphRetargetTokens = [windowToken]
     }
 
     private func retargetMorphDestination() {
-        guard let vessel = morphVessel, let window else { return }
+        guard let vessel = morphVessel, let window else {
+            // No flight to aim: the settled surface itself re-clamps to the
+            // window it now finds itself in (the cap lives on the window).
+            refitFloatingSurface()
+            return
+        }
         let anchor: Motion.MorphAnchor = switch morphDestination {
-        case .pane:
-            Motion.MorphAnchor(frame: destinationPaneAnchor(in: window), cornerRadius: 12)
-        case .ring:
-            morphSourceControl(for: morphHomeSection)
-                .map { controlMorphAnchor(for: $0, in: window) }
-                ?? ringMorphAnchor(in: window)
+        case .floating:
+            Motion.MorphAnchor(
+                frame: floatingDestinationAnchor(in: window),
+                cornerRadius: FloatingPanelSurface.Top.cornerRadius
+            )
+        case .toolTop:
+            floatingSourceAnchor(in: window)
         }
         vessel.retarget(to: anchor, window: window)
     }
@@ -596,6 +624,9 @@ final class DocumentWindowController: NSWindowController {
             for pane in self.documentPanes {
                 pane.textView.preserveViewportAcrossUndoRedo()
             }
+            // Undoing a tick or a drag reshapes the list the same way the
+            // forward edit did.
+            self.refitFloatingSurfaceAfterContentChange()
         }
         markdownDocument.onSaveFailure = { [weak self] error in
             self?.presentSaveError(error)
@@ -729,6 +760,7 @@ final class DocumentWindowController: NSWindowController {
         statusBarView.styleSheet = activeStyleSheet
         progressRing.styleSheet = activeStyleSheet
         taskPanel?.styleSheet = activeStyleSheet
+        floatingSurface?.styleSheet = activeStyleSheet
         findBar?.styleSheet = activeStyleSheet
         searchInspector?.styleSheet = activeStyleSheet
         historyInspector?.styleSheet = activeStyleSheet
@@ -903,6 +935,7 @@ final class DocumentWindowController: NSWindowController {
             taskPanel.tasks = parsed.tasks
             taskPanel.headings = parsed.headings
             taskPanel.reload()
+            refitFloatingSurface()
         }
         frontMatterEditor?.document = parsed
         if let assetDoctorPanel { configureAssetDoctor(assetDoctorPanel) }
@@ -1249,132 +1282,230 @@ final class DocumentWindowController: NSWindowController {
         return true
     }
 
-    /// A panel arrives *out of the control that summoned it*: the source is
-    /// that control's seat, the destination is the empty glass of the docked
-    /// pane.  One code path for every section — the only thing that varies is
-    /// which control the glass pours out of.
-    ///
-    /// The pane opens on its own animator rather than instantly.  A hard
-    /// uncollapse reflows every line of the document in one frame and *then*
-    /// plays a beautiful half-second glide into the space it made — the
-    /// reader's eye is dragged by the text jump and never sees the morph.
-    /// Widening under the vessel costs nothing and makes the two halves one
-    /// movement.
-    ///
-    /// Returns `false` when there is nothing honest to fly out of, so the
-    /// caller can fall back to the host's unfurl.
-    @discardableResult
-    private func presentViaMorph(_ view: NSView, section: InspectorSection) -> Bool {
-        guard canMorphInspector, let window, let host = inspectorHost,
-              let source = morphSourceControl(for: section)
-        else { return false }
+    /// The surface lane is deliberately not the split view. It sits above the
+    /// document in the shared stage, while the stage remains the glass
+    /// container's content on macOS 26.
+    private func floatingSurfaceHost(in window: NSWindow) -> NSView {
+        if let floatingOverlayHost, floatingOverlayHost.window === window {
+            return floatingOverlayHost
+        }
+        return window.contentView ?? NSView()
+    }
 
-        host.morphOwnsTransitions = true
-        morphDestination = .pane
-        morphHomeSection = section
-        setInspectorCollapsed(false, animated: true)
-        host.setContent(view, section: section)
-        applyPreferredInspectorWidth(for: view)
-        // The animator sets the model immediately, so a layout flush here
-        // resolves the pane's *resting* frame even while its presentation is
-        // still sliding open — which is exactly the anchor the vessel wants.
-        window.contentView?.layoutSubtreeIfNeeded()
-
-        var trip = MorphVessel.Trip(
-            from: controlMorphAnchor(for: source, in: window),
-            to: Motion.MorphAnchor(frame: destinationPaneAnchor(in: window), cornerRadius: 12),
-            incomingContent: view,
-            outgoingContent: nil
+    /// The Tasks panel pours out of the toolbar edge and hangs over the
+    /// document: the travelling glass aimed at a measured frame instead of at
+    /// the docked pane.  The height is content-driven with a ceiling — the
+    /// surface is measured once at the cap (60% of the window's content
+    /// height) at its full width, then fitted to the list's own document
+    /// height — and the arrival travels one axis, straight down from a sliver
+    /// of the surface's own top edge, so the reveal reads as a pour rather
+    /// than as a balloon.
+    ///
+    /// Dismissal rule for the floating surface — one panel, one way out, all
+    /// listed here so the contract lives in one place: Esc, the header close
+    /// button, a second press of the ring, or a click on the document outside
+    /// the glass. Ordinary app switching is deliberately not a dismissal;
+    /// the surface remains available when the window becomes key again.
+    private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
+        guard let window, let target = window.contentView else { return }
+        let width = min(surface.preferredWidth, max(200, target.bounds.width - 16))
+        let cap = floatingHeightCap(in: target)
+        let frame = floatingFrame(for: surface, in: target, width: width, cap: cap)
+        let resting = screenFrame(frame, in: target, window: window)
+        let sliver = NSRect(
+            x: resting.minX,
+            y: resting.maxY - FloatingPanelSurface.Top.pourSliverHeight,
+            width: resting.width,
+            height: FloatingPanelSurface.Top.pourSliverHeight
         )
-        trip.onSettle = { [weak self] in
-            guard let self else { return }
-            // The arrival belongs to the panel, not to the host: with the
-            // glass at rest the host's own unfurl rules the next change.
-            self.inspectorHost?.morphOwnsTransitions = false
-            self.morphVessel?.removeFromSuperview()
-            self.morphVessel = nil
-        }
-        let vessel = makeMorphVessel(in: window)
-        // `makeMorphVessel` already owns the reference.  Re-assigning it after
-        // the flight would resurrect a vessel that landed *during* `fly` — a
-        // trip with no display to fly on settles synchronously, and its
-        // `onSettle` has already torn the glass down and cleared this.
-        vessel.fly(trip, window: window)
-        // Belt and braces on the anchor: if the split view resolved an
-        // intermediate width above, re-aim once the pane's own animation has
-        // committed.  Retargeting a spring is continuous, so a correction the
-        // reader never sees costs nothing.
-        DispatchQueue.main.async { [weak self] in
-            self?.retargetMorphDestination()
-        }
-        return true
-    }
 
-    /// The arrival run backwards: the glass carries the panel home to the
-    /// control it came out of, and the pane closes behind it.
-    ///
-    /// Returns `false` when the section has no source control to dock into,
-    /// so the caller can fall back to fold-and-collapse.
-    @discardableResult
-    private func dismissViaMorph(_ view: NSView, section: InspectorSection) -> Bool {
-        guard canMorphInspector, let window,
-              let source = morphSourceControl(for: section)
-        else { return false }
+        let child = FloatingPanelWindow(frame: sliver)
+        let childContent = NSView(frame: NSRect(origin: .zero, size: sliver.size))
+        childContent.autoresizingMask = [.width, .height]
+        childContent.clipsToBounds = true
+        child.contentView = childContent
 
-        inspectorHost?.morphOwnsTransitions = true
-        morphDestination = .ring
-        morphHomeSection = section
-        let vessel = makeMorphVessel(in: window)
-        var trip = MorphVessel.Trip(
-            from: Motion.MorphAnchor(frame: destinationPaneAnchor(in: window), cornerRadius: 12),
-            to: controlMorphAnchor(for: source, in: window),
-            incomingContent: nil,
-            outgoingContent: view
+        surface.configureWindowFrames(
+            resting: resting,
+            sliver: sliver,
+            contentHeight: frame.height
         )
-        // The pane gives its width back at the content handoff, not on
-        // landing.  By that point the list has faded out and the vessel is
-        // empty glass, so nothing the reader was reading moves — and the
-        // document reclaims its column *while* the glass is still flying home
-        // rather than snapping shut a beat after it arrives.
-        trip.onHandoff = { [weak self] in
-            self?.collapseInspectorPane(animated: true)
+        surface.onWindowFrameChange = { [weak child, weak surface] frame in
+            child?.setFrame(frame, display: true)
+            guard let surface, let content = child?.contentView else { return }
+            surface.frame = content.bounds
+            surface.needsLayout = true
         }
-        trip.onSettle = { [weak self] in
-            guard let self else { return }
-            self.inspectorHost?.morphOwnsTransitions = false
-            self.inspectorHost?.removeContent(view, section: section)
-            // The collapse began at the handoff; this only guarantees the end
-            // state if that animation was pre-empted.
-            self.collapseInspectorPane(animated: false)
-            self.refreshToolbarSelectionState()
-            self.morphVessel?.removeFromSuperview()
-            self.morphVessel = nil
-        }
-        vessel.fly(trip, window: window)
-        return true
-    }
-
-    private func presentTaskPanelViaMorph(_ panel: TaskPanelView) {
-        if !presentViaMorph(panel, section: .tasks) {
-            showInInspectorFallback(panel)
-        }
-    }
-
-    private func presentTaskPanelDismissal(_ panel: TaskPanelView) {
-        if !dismissViaMorph(panel, section: .tasks) {
-            guard let host = inspectorHost else { return }
-            collapseInspectorPane(animated: true)
-            host.playDeparture { [weak self, weak panel] in
-                guard let self, let panel else { return }
-                self.inspectorHost?.removeContent(panel, section: .tasks)
+        surface.onFrameSpringSettled = { [weak self, weak surface] in
+            guard let self, let surface, self.floatingSurface === surface else { return }
+            if surface.isDismissing {
+                self.removeFloatingSurface()
+            } else {
+                self.focusFloatingSurface(surface)
                 self.refreshToolbarSelectionState()
             }
-            refreshToolbarSelectionState()
+        }
+        childContent.addSubview(surface)
+        surface.layoutSubtreeIfNeeded()
+        window.addChildWindow(child, ordered: .above)
+        child.orderFront(nil)
+
+        surface.setRestingFrame(sliver)
+        surface.layoutSubtreeIfNeeded()
+        floatingSurface = surface
+        floatingPanelWindow = child
+        if let documentWindow = window as? DocumentWindow {
+            documentWindow.floatingSurface = surface
+            documentWindow.onFloatingOutsideMouseDown = { [weak self] in
+                self?.restoreFloatingFocusAndClose()
+            }
+        }
+        floatingSurfaceFrame = resting
+        surface.presentFromSliver(animated: !activeStyleSheet.reduceMotion)
+        refreshToolbarSelectionState()
+        focusFloatingSurface(surface)
+    }
+
+    /// The same surface retreats into its sliver. There is no empty vessel and
+    /// no content cut: the child window and material body share one spring.
+    private func dismissFloatingSurface() {
+        guard let surface = floatingSurface else {
+            removeFloatingSurface()
+            return
+        }
+        surface.dismissToSliver(animated: !activeStyleSheet.reduceMotion)
+    }
+
+    private func removeFloatingSurface() {
+        if let documentWindow = window as? DocumentWindow {
+            documentWindow.floatingSurface = nil
+            documentWindow.onFloatingOutsideMouseDown = nil
+        }
+        floatingPanelWindow?.orderOut(nil)
+        if let parent = window, let child = floatingPanelWindow {
+            parent.removeChildWindow(child)
+        }
+        floatingSurface?.onWindowFrameChange = nil
+        floatingSurface?.onFrameSpringSettled = nil
+        floatingSurface?.removeFromSuperview()
+        floatingPanelWindow = nil
+        floatingSurface = nil
+    }
+
+    /// The pour's resting place in window space — the surface's own frame,
+    /// or the frame it last rested at once the dismissal hands it off.
+    private func floatingDestinationAnchor(in window: NSWindow) -> NSRect {
+        if let surface = floatingSurface, surface.window === window {
+            return surface.convert(surface.bounds, to: nil)
+        }
+        return floatingSurfaceFrame
+    }
+
+    /// Where the pour starts: a sliver of the surface's own width flush with
+    /// the content's top edge, under the ring's column.  The glass grows one
+    /// axis — down — so the reveal reads as pouring out of the toolbar edge,
+    /// not as a card swelling from a button.
+    private func floatingSourceAnchor(in window: NSWindow) -> Motion.MorphAnchor {
+        let destination = floatingDestinationAnchor(in: window)
+        return Motion.MorphAnchor(
+            frame: NSRect(
+                x: destination.minX,
+                y: destination.maxY - FloatingPanelSurface.Top.pourSliverHeight,
+                width: destination.width,
+                height: FloatingPanelSurface.Top.pourSliverHeight
+            ),
+            cornerRadius: FloatingPanelSurface.Top.cornerRadius
+        )
+    }
+
+    /// Re-fits a settled surface to its window: the cap lives on the window,
+    /// so a resize moves the ceiling and the body re-clamps (and the list
+    /// scrolls instead of overrunning it).  During a flight the retarget path
+    /// handles the re-aiming; this is the parked case.
+    private func floatingHeightCap(in target: NSView) -> CGFloat {
+        min(
+            FloatingPanelSurface.Top.windowHeightFraction * target.bounds.height,
+            max(40, target.bounds.height - 20)
+        )
+    }
+
+    /// One frame formula for presentation, content refits, and window resize.
+    /// `y` is derived from the target's flippedness once, so every path keeps
+    /// the top edge under the toolbar and the trailing edge flush.
+    func floatingFrame(
+        for surface: FloatingPanelSurface,
+        in target: NSView,
+        width: CGFloat,
+        cap: CGFloat
+    ) -> NSRect {
+        surface.prepareForMeasurement(width: width, height: cap)
+        let fitted = surface.fittedContentHeight
+        let desired = max(
+            fitted,
+            FloatingPanelSurface.Top.minimumContentHeight
+        )
+        let height = min(cap, desired)
+        let y = target.isFlipped ? 0 : target.bounds.height - height
+        return NSRect(
+            x: target.bounds.width - width,
+            y: y,
+            width: width,
+            height: height
+        )
+    }
+
+    private func screenFrame(_ frame: NSRect, in view: NSView, window: NSWindow) -> NSRect {
+        window.convertToScreen(view.convert(frame, to: nil))
+    }
+
+    private func refitFloatingSurface() {
+        guard let surface = floatingSurface, !surface.isDismissing,
+              morphVessel == nil, let window, let target = window.contentView
+        else { return }
+        let width = min(surface.preferredWidth, max(200, target.bounds.width - 16))
+        let frame = floatingFrame(
+            for: surface,
+            in: target,
+            width: width,
+            cap: floatingHeightCap(in: target)
+        )
+        let resting = screenFrame(frame, in: target, window: window)
+        let sliver = NSRect(
+            x: resting.minX,
+            y: resting.maxY - FloatingPanelSurface.Top.pourSliverHeight,
+            width: resting.width,
+            height: FloatingPanelSurface.Top.pourSliverHeight
+        )
+        surface.configureWindowFrames(
+            resting: resting,
+            sliver: sliver,
+            contentHeight: frame.height
+        )
+        surface.retargetFrame(resting, animated: true)
+        floatingSurfaceFrame = resting
+        surface.layoutSubtreeIfNeeded()
+    }
+
+    /// Task edits reshape the list's rows; a floating surface re-fits itself
+    /// to the new content next turn, once the parse has repopulated the panel.
+    /// Internal: the panel delegate lives in a sibling file.
+    func refitFloatingSurfaceAfterContentChange() {
+        refitFloatingSurface()
+    }
+
+    private func focusFloatingSurface(_ surface: FloatingPanelSurface) {
+        guard let panelWindow = surface.window else { return }
+        panelWindow.makeKey()
+        if let host = surface.content as? InspectorHostView {
+            host.focusForPresentation()
+        } else {
+            panelWindow.makeFirstResponder(surface.content)
         }
     }
 
-    private func showInInspectorFallback(_ panel: TaskPanelView) {
-        showInInspector(panel, section: .tasks)
+    private func restoreFloatingFocusAndClose() {
+        guard floatingSurface != nil else { return }
+        closeInspector()
     }
 
     /// The vessel is a child of the window's glass container's content view —
@@ -1390,83 +1521,15 @@ final class DocumentWindowController: NSWindowController {
         // rather than fly a body that is not in the hierarchy, which would
         // animate perfectly and draw nothing.
         guard vessel.superview == nil else { return vessel }
-        let target: NSView
-        if #available(macOS 26.0, *),
-           let container = window.contentView as? NSGlassEffectContainerView,
-           let inner = container.contentView {
-            target = inner
-        } else {
-            target = window.contentView ?? NSView()
-        }
+        let target = floatingSurfaceHost(in: window)
         target.addSubview(vessel)
         return vessel
     }
 
-    /// The ring's seat in window space — the pill this morph detaches from.
-    /// The ring itself lives in the toolbar, which this window's content
-    /// cannot cover, so the seat is the ring's visible sliver: the vessel
-    /// reads as pouring out of the button instead of popping in above it.
-    private func ringMorphAnchor(in window: NSWindow) -> Motion.MorphAnchor {
-        controlMorphAnchor(for: progressRing, in: window)
-    }
-
-    /// A toolbar control's seat in window space — the pill a morph detaches
-    /// from, or docks back into.
-    ///
-    /// Toolbar controls live above the window's content, which the vessel
-    /// cannot fly over, so the seat is clipped to the control's *visible*
-    /// sliver.  That is deliberate: the glass reads as pouring out of the
-    /// button rather than popping into existence above it.
-    private func controlMorphAnchor(for control: NSView, in window: NSWindow) -> Motion.MorphAnchor {
-        guard let content = window.contentView, control.window === window else {
-            return Motion.MorphAnchor(frame: .zero, cornerRadius: 12)
-        }
-        let controlFrame = control.convert(control.bounds, to: nil)
-        let seat = controlFrame.insetBy(dx: -4, dy: -4)
-        let visible = seat.intersection(content.convert(content.bounds, to: nil))
-        let frame = visible.isEmpty || visible.isNull ? seat : visible
-        let radius = max(3, min(30, frame.height / 2))
-        return Motion.MorphAnchor(frame: frame, cornerRadius: radius, tint: nil)
-    }
-
-    /// The control an inspector section flies out of, and docks back into.
-    ///
-    /// This is the whole of the "which control summoned this panel" contract.
-    /// A section with no visible source cannot morph honestly — there is no
-    /// body for the glass to come out of — so it returns `nil` and the caller
-    /// falls back to the host's own unfurl rather than inventing an origin.
-    private func morphSourceControl(for section: InspectorSection) -> NSView? {
-        let control: NSView? = switch section {
-        // Tasks is a long vertical work surface. Expanding it diagonally from
-        // the small ring made the panel read as a ballooning card; its own
-        // rounded top-edge reveal now pours straight down from the toolbar.
-        case .tasks: nil
-        case .search: toolbarFindButton
-        // Everything behind `···` genuinely comes out of that button.
-        default: toolbarOverflowButton
-        }
-        guard let control, control.window != nil, !control.isHiddenOrHasHiddenAncestor else {
-            return nil
-        }
-        return control
-    }
-
-    /// The docked pane once it is fully open: window space, pushed six points
-    /// past its edge so the vessel's glass overlaps the pane's own backdrop
-    /// and the two bodies merge on landing instead of meeting on a hairline
-    /// of document background.
-    private func destinationPaneAnchor(in window: NSWindow) -> NSRect {
-        guard let host = inspectorHost, host.window === window else {
-            return NSRect(x: window.contentView?.bounds.width ?? 400, y: -8, width: 40, height: 40)
-        }
-        return host.convert(host.bounds, to: nil).insetBy(dx: -6, dy: -6)
-    }
-
     func toggleTaskPanel() {
-        // The task list is a *docked* inspector (§8.5): opening it narrows the
-        // document column and the text reflows, so no content is ever left
-        // half-visible beneath the panel.
-        if inspectorHost?.selectedSection == .tasks, !inspectorItem.isCollapsed {
+        // One floating inspector body owns Tasks, History, Document, and
+        // Search. A second press closes only when Tasks is the active section.
+        if floatingSurface != nil, inspectorHost?.selectedSection == .tasks {
             closeTaskPanel()
             return
         }
@@ -1474,80 +1537,33 @@ final class DocumentWindowController: NSWindowController {
         if taskPanel == nil {
             panel.delegate = self
             panel.styleSheet = activeStyleSheet
+            panel.onContentSizeChange = { [weak self] in self?.refitFloatingSurface() }
             taskPanel = panel
         }
         panel.tasks = markdownDocument.parsed.tasks
         panel.headings = markdownDocument.parsed.headings
         panel.onClose = { [weak self] in self?.closeTaskPanel() }
-        // `showInInspector` flies the morph itself when there is a control to
-        // fly out of, and unfurls when there is not — one call, both paths.
+        // Build the final row model before the floating surface measures its
+        // target. Measuring while the empty model is still installed reserves
+        // the empty-state height and leaves dead space after the rows arrive.
+        panel.reload()
         showInInspector(panel, section: .tasks)
         progressRing.isActive = true
-        panel.reload()
     }
 
-    private func closeTaskPanel() {
-        guard let panel = taskPanel else { return }
-        progressRing.isActive = false
+    /// Closes the panel from any of its doors — Esc, the header close button,
+    /// a second ring press, or a click outside the glass.
+    /// Internal, like `closeInspector`, for the closures and tests that reach
+    /// for it.
+    func closeTaskPanel() {
+        guard taskPanel != nil else { return }
         // The ring settles first, so the glyph is already un-lit while the
-        // panel folds back toward it.
-        let takesThePaneWithIt = inspectorHost?.contentCount == 1
-        guard takesThePaneWithIt, let host = inspectorHost,
-              !inspectorItem.isCollapsed, !activeStyleSheet.reduceMotion else {
-            inspectorHost?.removeContent(panel, section: .tasks)
-            if inspectorHost?.hasContent != true { collapseInspectorPane(animated: false) }
-            refreshToolbarSelectionState()
-            return
-        }
-        if canMorphInspector {
-            // The glass flies home: the pane's contents dim out in the first
-            // progress window, the vessel shrinks through the empty gap, and
-            // only when it docks in the ring does the pane give its width back.
-            presentTaskPanelDismissal(panel)
-            refreshToolbarSelectionState()
-            return
-        }
-        // The pane starts giving its width back immediately; the list is only
-        // torn out once it has finished folding, so the panel is never seen to
-        // blink out of a pane that is still open.
-        collapseInspectorPane(animated: true)
-        host.playDeparture { [weak self, weak panel] in
-            guard let self, let panel else { return }
-            self.inspectorHost?.removeContent(panel, section: .tasks)
-            self.refreshToolbarSelectionState()
-        }
+        // glass pours back up toward the toolbar edge.
+        progressRing.isActive = false
+        closeInspector()
         refreshToolbarSelectionState()
     }
 
-
-    /// The band the inspector pane is allowed to occupy.  The floor keeps a
-    /// task row's text column usable; the ceiling leaves room for the table
-    /// editor's working surface.
-    enum InspectorWidth {
-        static let minimum: CGFloat = 300
-        static let maximum: CGFloat = 520
-        /// Most of the window a trailing panel may take when it opens.  The
-        /// panel is an accessory to the document, and at 300pt in a 620pt
-        /// window it was half the app — a four-row task list with most of its
-        /// height empty, sitting beside a document column squeezed under its
-        /// own minimum.  The reader can still drag past this; it only decides
-        /// where the panel *arrives*.
-        static let maximumWindowFraction: CGFloat = 0.4
-
-        static func clamp(_ width: CGFloat) -> CGFloat {
-            min(maximum, max(minimum, width))
-        }
-
-        /// The opening width in a window of `availableWidth`, or nil when the
-        /// window has no room to give — better to leave the divider where it is
-        /// than to shove the document off its own measure.
-        static func opening(_ preferred: CGFloat, availableWidth: CGFloat) -> CGFloat? {
-            guard availableWidth > 0 else { return nil }
-            let ceiling = availableWidth * maximumWindowFraction
-            guard ceiling >= minimum else { return nil }
-            return min(clamp(preferred), ceiling)
-        }
-    }
 
     /// `title` names the surface after the command that opened it; without one
     /// the header keeps the section's generic name.
@@ -1573,53 +1589,32 @@ final class DocumentWindowController: NSWindowController {
             // inspector header in the default one until something moved.
             created.styleSheet = activeStyleSheet
             created.onClose = { [weak self] in
-                guard let self else { return }
-                if self.inspectorHost?.selectedSection == .tasks {
-                    // The panel owns the toolbar ring's on-state; closing it
-                    // through the host header must settle the ring too (§8.5).
-                    self.closeTaskPanel()
-                } else {
-                    self.closeInspector()
-                }
+                self?.closeInspector()
             }
-            install(created, in: trailingPane)
             inspectorHost = created
             host = created
         }
-        // A panel that has a control to come out of flies out of it; the
-        // unfurl below is what a section with no honest origin gets, and what
-        // Reduce Motion gets in every case.  The host has to exist before the
-        // morph can aim at the pane, which is why this runs here rather than
-        // at the call site.
-        if presentViaMorph(view, section: section) {
-            refreshToolbarSelectionState()
-            return
+        if floatingSurface == nil {
+            floatingFocusRestoreView = window?.firstResponder as? NSView
+            // The floating body itself owns the arrival. The host must not
+            // run its legacy content unfurl or a section switch would stage
+            // rows separately from the glass.
+            host.morphOwnsTransitions = true
+            host.setContent(view, section: section)
+            let surface = FloatingPanelSurface(styleSheet: activeStyleSheet, content: host)
+            surface.onClose = { [weak self] in self?.closeInspector() }
+            presentFloatingSurface(surface)
+        } else {
+            // Switching sections reuses the same glass body and header. The
+            // document never enters a split-view resize path.
+            host.morphOwnsTransitions = true
+            host.setContent(view, section: section)
+            floatingSurface?.layoutSubtreeIfNeeded()
+            refitFloatingSurface()
+            focusFloatingSurface(floatingSurface!)
         }
-        // Uncollapse before the content goes in: the panel's arrival
-        // animation needs a window to play in, and a collapsed pane has none.
-        // The pane widens on the same clock the panel unfurls on, so the two
-        // halves of "the panel came out of the toolbar" land together.
-        setInspectorCollapsed(false, animated: true)
-        host.setContent(view, section: section)
-        applyPreferredInspectorWidth(for: view)
+        if section == .tasks { progressRing.isActive = true }
         refreshToolbarSelectionState()
-    }
-
-    /// Opens the pane at the width the panel asked for.  `PanelSurface` has
-    /// carried `preferredWidth` all along and nothing read it, so every panel
-    /// arrived at whatever width the previous one left behind.  The divider
-    /// stays draggable afterwards: this sets a position, not a constraint.
-    private func applyPreferredInspectorWidth(for view: NSView) {
-        guard !hasAppliedInitialInspectorWidth else { return }
-        guard let surface = view as? PanelSurface else { return }
-        let splitView = windowSplitController.splitView
-        let dividerIndex = splitView.arrangedSubviews.count - 2
-        guard let width = InspectorWidth.opening(
-            surface.preferredWidth, availableWidth: splitView.bounds.width
-        ) else { return }
-        guard dividerIndex >= 0, splitView.bounds.width > width + splitView.dividerThickness else { return }
-        splitView.setPosition(splitView.bounds.width - width, ofDividerAt: dividerIndex)
-        hasAppliedInitialInspectorWidth = true
     }
 
     /// Closing is the arrival run backwards: the panel folds up toward the
@@ -1628,53 +1623,20 @@ final class DocumentWindowController: NSWindowController {
     /// vanish and the text jump in the same frame, which is the snap this
     /// replaces.
     func closeInspector() {
-        guard !inspectorItem.isCollapsed else {
+        guard floatingSurface != nil else {
             refreshToolbarSelectionState()
             return
         }
-        // Closing is the arrival run backwards.  A section that flew out of a
-        // control flies back into it — the pane is only carrying one panel, so
-        // there is nothing left behind for the glass to abandon.
-        if let section = inspectorHost?.selectedSection,
-           let view = inspectorHost?.content(for: section),
-           inspectorHost?.contentCount == 1,
-           dismissViaMorph(view, section: section) {
-            refreshToolbarSelectionState()
-            return
+        progressRing.isActive = false
+        let restore = floatingFocusRestoreView
+        dismissFloatingSurface()
+        if let restore, restore.window === window {
+            window?.makeFirstResponder(restore)
+        } else {
+            window?.makeFirstResponder(primaryContainer.textView)
         }
-        // Fold and collapse run together, not one after the other.  Sequenced
-        // they would total half a second, and — more to the point — the pane's
-        // width is the larger of the two movements, so the fold has to happen
-        // *inside* it to read as one gesture rather than as two.
-        inspectorHost?.playDeparture {}
-        collapseInspectorPane(animated: true)
+        floatingFocusRestoreView = nil
         refreshToolbarSelectionState()
-    }
-
-    private func collapseInspectorPane(animated: Bool) {
-        setInspectorCollapsed(true, animated: animated)
-    }
-
-    private func setInspectorCollapsed(_ collapsed: Bool, animated: Bool) {
-        let previousTarget = inspectorWantsCollapsed
-        inspectorTransitionGeneration &+= 1
-        let generation = inspectorTransitionGeneration
-        inspectorWantsCollapsed = collapsed
-        guard inspectorItem.isCollapsed != collapsed || previousTarget != collapsed else { return }
-        guard animated, !activeStyleSheet.reduceMotion else {
-            inspectorItem.isCollapsed = collapsed
-            return
-        }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = Motion.standard
-            context.timingFunction = Motion.timing(.decelerate)
-            inspectorItem.animator().isCollapsed = collapsed
-        }, completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.inspectorTransitionGeneration == generation else { return }
-                self.inspectorItem.isCollapsed = self.inspectorWantsCollapsed
-            }
-        })
     }
 
     /// Keeps auxiliary windows (timeline, compare, lightbox) alive for as long
@@ -2089,6 +2051,7 @@ final class DocumentWindowController: NSWindowController {
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
         removeFocusDimmingViews(animated: false)
+        removeFloatingSurface()
         let selection = primaryContainer.textView.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
         markdownDocument.state.selectionLength = selection.length
@@ -2113,11 +2076,9 @@ final class DocumentWindowController: NSWindowController {
     func applyFocusMode(_ enabled: Bool, animated: Bool) {
         if enabled {
             if !focusModeApplied {
-                focusRestoreInspector = !inspectorItem.isCollapsed
                 focusModeApplied = true
             }
             closeTaskPanel()
-            inspectorItem.isCollapsed = true
             window?.toolbar?.isVisible = false
             densityGutterView.isHidden = true
             breadcrumbView.isHidden = true
@@ -2137,7 +2098,6 @@ final class DocumentWindowController: NSWindowController {
             densityGutterView.isHidden = false
             breadcrumbView.isHidden = false
             refreshChangeSummaryTopInset()
-            inspectorItem.isCollapsed = !focusRestoreInspector
             focusModeApplied = false
         }
         refreshToolbarSelectionState()
@@ -2149,7 +2109,16 @@ final class DocumentWindowController: NSWindowController {
 extension DocumentWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         restoreInitialReadingPositionIfReady()
+        if let surface = floatingSurface { focusFloatingSurface(surface) }
         refreshToolbarSelectionState()
+    }
+
+    /// Ordinary app switching is not dismissal. The surface keeps its state
+    /// while another document is active, and its responder is restored when
+    /// this window becomes key again.
+    func windowDidResignKey(_ notification: Notification) {
+        // Intentionally empty. Explicit close, Esc, the ring, or an outside
+        // click owns dismissal; Cmd-Tab must not destroy work-in-progress.
     }
 
     func windowDidBecomeVisible(_ notification: Notification) {
@@ -2162,6 +2131,7 @@ extension DocumentWindowController: NSWindowDelegate {
 
     func windowDidResize(_ notification: Notification) {
         updateFocusDimmingViews()
+        refitFloatingSurface()
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {

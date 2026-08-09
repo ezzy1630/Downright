@@ -134,6 +134,12 @@ public final class MarkdownTextView: NSTextView {
                 && configuration.largeFileThresholdMegabytes == oldValue.largeFileThresholdMegabytes
             if invisiblesOnly {
                 applyInvisibles()
+                // The marks are drawn by the fragments that draw the glyphs
+                // they sit among, so the toggle has to reach the elements those
+                // fragments lay out — an attribute-only edit does not, and the
+                // dots stayed on screen after the setting went off.
+                rebuildDisplayMap(fullRefresh: true)
+                invalidateAllFragments()
             } else {
                 rebuildEverything()
                 applyInvisibles()
@@ -151,8 +157,6 @@ public final class MarkdownTextView: NSTextView {
     public var styleSheet: StyleSheet {
         didSet {
             let anchor = captureViewportAnchor()
-            inlineCodeBandCache.removeAll(keepingCapacity: true)
-            invisibleGlyphCache.removeAll(keepingCapacity: true)
             engine.styleSheet = styleSheet
             fragmentContext.styleSheet = styleSheet
             fragmentContext.invalidateDerivedLayout()
@@ -397,34 +401,6 @@ public final class MarkdownTextView: NSTextView {
     private var fragmentAccessibilityElements: [NSAccessibilityElement] = []
     private var pathExistence: [PathToken: Bool] = [:]
     private var codeCollapseOverrides: [Int: Bool] = [:]
-    /// Inline-code backgrounds are geometry, not text attributes. Cache their
-    /// bands between background passes and discard them whenever layout can
-    /// move. The draw path only populates entries intersecting the dirty
-    /// viewport, so a long document does not measure every code span on every
-    /// repaint.
-    private var inlineCodeBandCache: [NSRange: [CGRect]] = [:]
-    private var invisibleGlyphCache: [Int: NSRect] = [:]
-    /// Fingerprint of the layout the cached rectangles were measured against.
-    ///
-    /// Those caches hold *absolute* rectangles, and TextKit 2 resolves layout
-    /// lazily: one measured while the content above it was still an estimate is
-    /// wrong the moment that content is really laid out.  Keyed by range alone,
-    /// such an entry survived forever — so an inline-code pill stayed painted
-    /// where the text used to be, and the pill belonging to the span actually on
-    /// screen was never drawn, because the stale entry answered for it.
-    ///
-    /// The document's usage height is the signal: it moves whenever an estimate
-    /// is replaced by real layout, which is precisely when the rectangles below
-    /// it shift.
-    private struct LayoutFingerprint: Equatable {
-        var height: CGFloat
-        var width: CGFloat
-        /// See `FragmentContext.layoutGeneration`.  Height and width alone
-        /// cannot see a reflow that preserves the document's total height, and
-        /// that reflow leaves every cached band a line away from its text.
-        var generation: Int
-    }
-    private var bandCacheFingerprint: LayoutFingerprint?
     private var invisiblesApplied = false
     private var hoverTracking: NSTrackingArea?
     private var scrollObserver: NSObjectProtocol?
@@ -609,8 +585,6 @@ public final class MarkdownTextView: NSTextView {
         let dirtyScopes = isWholesaleUpdate ? [] : sourceScopes(for: dirty)
         parsedDocument = document
         hoveredLinkRange = nil
-        inlineCodeBandCache.removeAll(keepingCapacity: true)
-        invisibleGlyphCache.removeAll(keepingCapacity: true)
         updateGeneration &+= 1
         if isWholesaleUpdate { pathExistence.removeAll(keepingCapacity: true) }
         fragmentContext.frontMatterFields = (document.frontMatter?.fields ?? []).map { ($0.key, $0.value) }
@@ -2551,46 +2525,17 @@ public final class MarkdownTextView: NSTextView {
         path.stroke()
     }
 
+    /// The page, and the chrome that belongs to the page rather than to any one
+    /// paragraph.
+    ///
+    /// Deliberately *not* where inline-code pills or invisibles are painted.
+    /// Both are per-glyph marks, and drawing them here meant looking their
+    /// geometry up by source range in absolute view coordinates — a lookup that
+    /// is only valid against the layout it was made in.  They belong to the
+    /// fragment that draws the glyphs; see `ProseFragment`.
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
-        guard let storage = textStorage, storage.length > 0 else { return }
-
-        discardBandCachesIfLayoutMoved()
         drawScopedSourceBackground(in: rect)
-        let whole = NSRange(location: 0, length: storage.length)
-        let visibleSourceRange = sourceRangeForDirtyRect(for: rect, storageLength: storage.length)
-        let visible = visibleSourceRange ?? whole
-        storage.enumerateAttribute(
-            .drInlineCode,
-            in: visible
-        ) { value, range, _ in
-            guard value != nil else { return }
-            let bands: [CGRect]
-            if let cached = self.inlineCodeBandCache[range] {
-                bands = cached
-            } else {
-                bands = self.inlineCodePillBands(forSourceRange: range, in: storage)
-                guard !bands.isEmpty else { return }
-                self.inlineCodeBandCache[range] = bands
-            }
-            // Fill plus a hair of edge.  On a dark ground the fill alone is a
-            // faint smudge that has to be pushed brighter to read at all, and
-            // pushed brighter it turns into a slab; a 1px edge lets the fill stay
-            // quiet and still bound the span.
-            self.styleSheet.inlineCodeBackground.setFill()
-            self.styleSheet.codeRule.withAlphaComponent(0.5).setStroke()
-            for band in bands where band.intersects(rect) {
-                let path = NSBezierPath(
-                    roundedRect: band.insetBy(dx: 0.5, dy: 0.5),
-                    xRadius: RenderMetrics.inlineCodeCornerRadius,
-                    yRadius: RenderMetrics.inlineCodeCornerRadius
-                )
-                path.fill()
-                path.lineWidth = 1
-                path.stroke()
-            }
-        }
-        drawInvisibles(in: visibleSourceRange ?? NSRange(location: 0, length: 0), dirtyRect: rect)
     }
 
     private func applyInvisibles(scopes: [NSRange]? = nil) {
@@ -2624,62 +2569,6 @@ public final class MarkdownTextView: NSTextView {
         }
         storage.endEditing()
         invisiblesApplied = true
-    }
-
-    private func drawInvisibles(in sourceRange: NSRange, dirtyRect: NSRect) {
-        guard configuration.showInvisibles, let storage = textStorage, sourceRange.length > 0 else { return }
-        let textKitRange = displayMap.textKitRange(forSource: sourceRange)
-        let origin = contentStorage.documentRange.location
-        if let start = contentStorage.location(origin, offsetBy: textKitRange.location),
-           let end = contentStorage.location(origin, offsetBy: textKitRange.upperBound),
-           let range = NSTextRange(location: start, end: end) {
-            markdownLayoutManager.ensureLayout(for: range)
-        }
-        let text = storage.string as NSString
-        storage.enumerateAttribute(.drInvisible, in: sourceRange) { value, range, _ in
-            guard value != nil else { return }
-            for offset in range.location..<range.upperBound {
-                guard offset < text.length,
-                      storage.attribute(.drHidden, at: offset, effectiveRange: nil) == nil else { continue }
-                let glyph: NSRect
-                if let cached = self.invisibleGlyphCache[offset] {
-                    glyph = cached
-                } else {
-                    guard let measured = self.rect(forOffset: offset) else { continue }
-                    self.invisibleGlyphCache[offset] = measured
-                    glyph = measured
-                }
-                guard glyph.intersects(dirtyRect) else { continue }
-                let point = NSPoint(x: glyph.midX, y: glyph.midY)
-                self.styleSheet.textFaint.setStroke()
-                if text.character(at: offset) == 0x09 {
-                    let arrow = NSBezierPath()
-                    arrow.move(to: NSPoint(x: glyph.minX, y: point.y))
-                    arrow.line(to: NSPoint(x: glyph.maxX, y: point.y))
-                    arrow.line(to: NSPoint(x: glyph.maxX - 3, y: point.y - 2))
-                    arrow.move(to: NSPoint(x: glyph.maxX, y: point.y))
-                    arrow.line(to: NSPoint(x: glyph.maxX - 3, y: point.y + 2))
-                    arrow.lineWidth = 1
-                    arrow.stroke()
-                } else {
-                    self.styleSheet.textFaint.setFill()
-                    NSBezierPath(ovalIn: NSRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)).fill()
-                }
-            }
-        }
-    }
-
-    private func sourceRangeForDirtyRect(for rect: NSRect, storageLength: Int) -> NSRange? {
-        guard rect.height > 0, storageLength > 0 else { return nil }
-        let x = textContainerOrigin.x
-        let top = characterIndexForInsertion(at: NSPoint(x: x, y: max(0, rect.minY)))
-        let bottom = characterIndexForInsertion(at: NSPoint(x: x, y: max(0, rect.maxY)))
-        let lower = min(displayMap.sourceOffset(forTextKit: top), displayMap.sourceOffset(forTextKit: bottom))
-        let upper = max(displayMap.sourceOffset(forTextKit: top), displayMap.sourceOffset(forTextKit: bottom))
-        guard upper > lower else { return nil }
-        let start = max(0, lower - 1)
-        let end = min(storageLength, upper + 1)
-        return NSRange(location: start, length: max(0, end - start))
     }
 
     private func drawScopedSourceBackground(in dirtyRect: NSRect) {
@@ -2731,73 +2620,6 @@ public final class MarkdownTextView: NSTextView {
         return NSRect(x: band.maxX - 56, y: band.minY, width: 56, height: 24)
     }
 
-    /// Throws away cached geometry once the layout it was measured against has
-    /// moved.  See `LayoutFingerprint`.
-    private func discardBandCachesIfLayoutMoved() {
-        let fingerprint = LayoutFingerprint(
-            height: markdownLayoutManager.usageBoundsForTextContainer.height.rounded(),
-            width: (textContainer?.size.width ?? 0).rounded(),
-            generation: fragmentContext.layoutGeneration
-        )
-        guard fingerprint != bandCacheFingerprint else { return }
-        bandCacheFingerprint = fingerprint
-        inlineCodeBandCache.removeAll(keepingCapacity: true)
-        invisibleGlyphCache.removeAll(keepingCapacity: true)
-    }
-
-    /// The pill geometry `drawBackground` paints for one `.drInlineCode` run:
-    /// its bands, restricted to the parts of it TextKit actually draws.
-    ///
-    /// A pill is a *behind the glyphs* effect, so it obeys the same rule `tint`
-    /// obeys.  A code span inside a table, a collapsed block, a diagram or an
-    /// image has no glyphs on screen — the fragment draws that element itself,
-    /// from its own cell layout — so asking TextKit for the span's segments
-    /// returns geometry from the hidden linear layout instead, and the pill
-    /// lands somewhere the reader can see but the text is not: a rounded
-    /// rectangle of tint with nothing in it.  Those are the same stray shaded
-    /// squares `glyphBearingRanges` was written for, one draw path further
-    /// down, and a table full of `code` in its cells scatters a dozen of them.
-    ///
-    /// Internal rather than private so that rule is testable without a
-    /// screenshot.
-    func inlineCodePillBands(forSourceRange range: NSRange, in storage: NSTextStorage) -> [CGRect] {
-        glyphBearingRanges(in: range, storage: storage)
-            .flatMap { inlineCodeBands(forSourceRange: $0) }
-    }
-
-    /// The tinted bands behind an inline code span, one per visual line.
-    ///
-    /// Asks TextKit for the span's own laid-out segments rather than rebuilding
-    /// them from two caret rects.  The old reconstruction could not tell a span
-    /// that merely *ended* a line from one that wrapped — the caret after the
-    /// last character has already moved to the next line — so a single-line
-    /// span ending at a wrap painted a slab across the whole measure.
-    private func inlineCodeBands(forSourceRange range: NSRange) -> [CGRect] {
-        let startOffset = displayMap.textKitOffset(forSource: range.location)
-        let endOffset = displayMap.textKitOffset(forSource: range.upperBound)
-        guard endOffset > startOffset,
-              let start = contentStorage.location(contentStorage.documentRange.location, offsetBy: startOffset),
-              let end = contentStorage.location(contentStorage.documentRange.location, offsetBy: endOffset),
-              let textRange = NSTextRange(location: start, end: end) else { return [] }
-        markdownLayoutManager.ensureLayout(for: textRange)
-        let origin = textContainerOrigin
-        let padX: CGFloat = 3
-        // No vertical padding: the segment is already a full line fragment tall,
-        // and growing it further made the pills on consecutive lines touch, so a
-        // paragraph carrying several code spans read as a column of joined tiles.
-        let padY: CGFloat = 0
-        var bands: [CGRect] = []
-        markdownLayoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, _, _ in
-            guard frame.width > 0.5 else { return true }
-            var rect = frame
-            rect.origin.x += origin.x
-            rect.origin.y += origin.y
-            bands.append(rect.insetBy(dx: -padX, dy: -padY))
-            return true
-        }
-        return bands
-    }
-
     /// The container is the reading measure plus a trailing bleed lane
     /// (§11.1).  Prose is held off it by a tail indent, so it still wraps at
     /// 68–72 characters; a fenced block, diagram, table, or display formula
@@ -2830,8 +2652,6 @@ public final class MarkdownTextView: NSTextView {
         maxSize = NSSize(width: width + RenderMetrics.revealSlack * 2,
                          height: CGFloat.greatestFiniteMagnitude)
         if abs(previousWidth - width) > 0.5 {
-            inlineCodeBandCache.removeAll(keepingCapacity: true)
-            invisibleGlyphCache.removeAll(keepingCapacity: true)
             // A responsive measure changes every fragment's wrapping and
             // object frame. Invalidate the old TextKit 2 layout before a
             // saved deep position asks it to paint lazily.
@@ -2868,8 +2688,6 @@ public final class MarkdownTextView: NSTextView {
     }
 
     func invalidateAllFragments() {
-        inlineCodeBandCache.removeAll(keepingCapacity: true)
-        invisibleGlyphCache.removeAll(keepingCapacity: true)
         invalidateFragments(in: nil)
     }
 
@@ -2878,8 +2696,6 @@ public final class MarkdownTextView: NSTextView {
     /// asterisks (§12).
     func invalidateFragments(in sourceRange: NSRange?) {
         lastFragmentInvalidationRangeForTesting = sourceRange
-        inlineCodeBandCache.removeAll(keepingCapacity: true)
-        invisibleGlyphCache.removeAll(keepingCapacity: true)
         guard let sourceRange else {
             markdownLayoutManager.invalidateLayout(for: markdownLayoutManager.documentRange)
             needsDisplay = true

@@ -113,17 +113,6 @@ public final class FragmentContext {
     /// Monotonic counter bumped every time the text storage changes, so the
     /// table geometry cache cannot serve a stale layout for the same offset.
     var textRevision: Int = 0
-    /// Monotonic counter bumped every time TextKit builds a layout fragment.
-    ///
-    /// The one honest "geometry may have moved" signal the view can get.  Caches
-    /// that hold *absolute* rects — the inline-code bands, the invisibles —
-    /// cannot be keyed on the text, because a reflow that leaves the text alone
-    /// still moves every rect in it; and they cannot be keyed on the document's
-    /// total height, because a reflow can preserve it (a line that leaves one
-    /// paragraph and joins the next) and then every cached rect is a line out of
-    /// place while the fingerprint says nothing happened.  A fragment being
-    /// *built* is exactly the event those caches need to hear about.
-    var layoutGeneration: Int = 0
 
     public init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
@@ -237,10 +226,18 @@ public class DownrightFragment: NSTextLayoutFragment {
         drawObject(at: point, in: context)
         guard !suppressesText else { return }
         let padding = verticalPadding
+        // Behind this fragment's own glyphs, and only its own: a fragment that
+        // replaces its text has already returned.
+        if let styleSheet {
+            drawInlineCodePills(at: point, textOffset: padding.top, styleSheet: styleSheet, in: context)
+        }
         if padding.top == 0 {
             super.draw(at: point, in: context)
         } else {
             super.draw(at: CGPoint(x: point.x, y: point.y + padding.top), in: context)
+        }
+        if let styleSheet {
+            drawInvisibleMarks(at: point, textOffset: padding.top, styleSheet: styleSheet, in: context)
         }
     }
 
@@ -284,6 +281,43 @@ public class DownrightFragment: NSTextLayoutFragment {
         guard let context else { return elementSourceRange.location <= payload.sourceRange.location }
         return context.paragraphIndex.index(containing: elementSourceRange.location)
             == context.paragraphIndex.index(containing: payload.sourceRange.location)
+    }
+}
+
+/// Ordinary prose: a paragraph TextKit lays out and draws itself.
+///
+/// It exists so that *every* fragment carrying glyphs has a place to paint the
+/// marks that belong behind and among them — inline-code pills, invisibles —
+/// in the same pass, in the same coordinate space, as the glyphs they annotate.
+/// The alternative is measuring absolute rectangles from the view and painting
+/// them separately, which is how those marks came to be drawn where the text
+/// used to be (see `NSTextLayoutFragment.inlineCodePillBands(at:textOffset:)`).
+public final class ProseFragment: NSTextLayoutFragment {
+    private weak var context: FragmentContext?
+
+    init(textElement: NSTextElement, range: NSTextRange?, context: FragmentContext?) {
+        self.context = context
+        super.init(textElement: textElement, range: range)
+    }
+
+    public required init?(coder: NSCoder) { nil }
+
+    /// A pill overhangs the code run it bounds, so the surface has to be wider
+    /// than the glyphs or the first and last few points of it are clipped away.
+    public override var renderingSurfaceBounds: CGRect {
+        super.renderingSurfaceBounds.insetBy(
+            dx: -(NSTextLayoutFragment.inlineCodePillPadX + 1), dy: 0
+        )
+    }
+
+    public override func draw(at point: CGPoint, in context: CGContext) {
+        if let styleSheet = self.context?.styleSheet {
+            drawInlineCodePills(at: point, styleSheet: styleSheet, in: context)
+            super.draw(at: point, in: context)
+            drawInvisibleMarks(at: point, styleSheet: styleSheet, in: context)
+        } else {
+            super.draw(at: point, in: context)
+        }
     }
 }
 

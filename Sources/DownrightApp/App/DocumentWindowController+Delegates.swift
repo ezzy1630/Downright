@@ -407,6 +407,7 @@ extension DocumentWindowController: TaskPanelDelegate {
         primaryContainer.textView.preserveViewportOnNextDocumentUpdate()
         splitContainer?.textView.preserveViewportOnNextDocumentUpdate()
         markdownDocument.toggleTask(atMarkOffset: markOffset)
+        refitFloatingSurfaceAfterContentChange()
     }
 
     func taskPanel(_ panel: TaskPanelView, didSelectTaskAt contentOffset: Int) {
@@ -435,6 +436,7 @@ extension DocumentWindowController: TaskPanelDelegate {
         markdownDocument.apply(edits, actionName: actionName)
         markdownDocument.reparseNow()
         if markdownDocument.url != nil { _ = markdownDocument.saveIfNeeded() }
+        refitFloatingSurfaceAfterContentChange()
     }
 }
 

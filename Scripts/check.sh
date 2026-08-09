@@ -49,6 +49,15 @@ else
 fi
 TEST_STATUS=$?
 grep -aE "Test run|✘|Suite .* (passed|failed)|error:|failed after" "$TEST_LOG" | tail -40
+if [ "$TEST_STATUS" -ne 0 ]; then
+    echo
+    echo "    Failure details"
+    # Suite summaries can push the actual assertion diagnostics out of the
+    # tail above once the test graph is large. Always preserve the actionable
+    # lines in CI output; the runner's temporary full log disappears with it.
+    grep -aE "✘|Expectation failed|Issue recorded|error:|failed after" "$TEST_LOG" \
+        | head -120
+fi
 
 echo
 echo "==> Version consistency (single source: Config/version.env)"

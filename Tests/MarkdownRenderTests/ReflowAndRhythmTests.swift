@@ -594,11 +594,14 @@ private func composite(_ color: NSColor, over background: NSColor) -> NSColor {
 /// The same rule, on the draw path that never got it.
 ///
 /// `tint` was taught to ask `glyphBearingRanges` first; the inline-code pill
-/// in `drawBackground` was not, so a table full of `code` in its cells still
-/// scattered rounded rectangles across the object at positions taken from the
-/// hidden linear layout — visible tint, no text under it, nowhere near the
-/// cell the span actually lives in.
-@Test @MainActor func anInlineCodePillNeverPaintsOverAGlyphReplacedFragment() {
+/// was not, so a table full of `code` in its cells scattered rounded rectangles
+/// across the object at positions taken from the hidden linear layout — visible
+/// tint, no text under it, nowhere near the cell the span actually lives in.
+///
+/// The pill is now drawn by the fragment that draws the glyphs, from its own
+/// line fragments, so the rule holds structurally: a fragment that replaces its
+/// text has no line to measure and never reaches the pill code at all.
+@Test @MainActor func anInlineCodePillNeverPaintsOverAGlyphReplacedFragment() throws {
     let source = """
     Prose with `inline code` in it.
 
@@ -617,12 +620,165 @@ private func composite(_ color: NSColor, over background: NSColor) -> NSColor {
         dirty: DirtySet(ranges: [NSRange(location: 0, length: text.length)], isWholesale: true))
     view.prepareForDisplay()
 
+    let bands = pillBandsByFragment(in: view)
+
     // The span in prose keeps its pill: TextKit draws those glyphs.
-    let prose = text.range(of: "inline code")
-    #expect(!view.inlineCodePillBands(forSourceRange: prose, in: storage).isEmpty)
+    let prose = bands.first { $0.text.contains("inline code") }
+    #expect(prose?.bands.isEmpty == false)
 
     // The span inside the table gets none — the table fragment replaces the
     // glyphs, so there is nothing on screen for a pill to sit behind.
-    let inTable = text.range(of: "⌘E")
-    #expect(view.inlineCodePillBands(forSourceRange: inTable, in: storage).isEmpty)
+    #expect(bands.filter { $0.text.contains("⌘E") }.allSatisfy { $0.bands.isEmpty })
+}
+
+/// The defect the pill was moved into the fragment for.
+///
+/// The pills used to be painted by the *view*, from absolute rectangles it
+/// measured by source range and remembered between passes.  Absolute geometry
+/// is only true of the layout it was measured in, and TextKit 2 relays out
+/// constantly, so the pill stayed where the text had been: rounded rectangles
+/// of tint stranded in the margin and over the heading below, while every code
+/// span on screen had none.  Guarding that with a "has the layout moved?"
+/// fingerprint is a guess, and the reflow that preserves the guess is the one
+/// that ships the bug.
+///
+/// Measured from the line fragment it belongs to, the pill cannot be stale:
+/// there is nothing remembered to go stale.  This reflows the document under
+/// the same view — which is what a window resize, a font change, an agent
+/// rewrite, or TextKit resolving an estimate all do — and asks where the pills
+/// are now.
+@Test @MainActor func anInlineCodePillIsMeasuredFromTheLineItSitsOn() throws {
+    var source = ""
+    for index in 1...40 {
+        source += "## Section \(index)\n\nProse for section \(index) that runs on long enough to wrap.\n\n"
+    }
+    source += "Then a paragraph with `a code span` in the middle of it.\n"
+    let text = source as NSString
+    let storage = NSTextStorage(string: source)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 620, height: 900), storage: storage, styleSheet: sheet())
+    view.mode = .read
+    view.update(
+        document: MarkdownParser.parse(source),
+        dirty: DirtySet(ranges: [NSRange(location: 0, length: text.length)], isWholesale: true))
+    view.prepareForDisplay()
+
+    func pillSitsOnItsText() throws {
+        let layout = try #require(view.textLayoutManager)
+        layout.ensureLayout(for: layout.documentRange)
+        var checked = false
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: []) { fragment in
+            let bands = fragment.inlineCodePillBands(at: .zero)
+            guard let band = bands.first else { return true }
+            let line = try? #require(fragment.textLineFragments.first { $0.typographicBounds.intersects(band) })
+            guard let line else { return true }
+            // Vertically the band *is* the line, and horizontally it bounds the
+            // run with a hair of air on each side — never the whole measure,
+            // and never a rectangle floating in a line of its own.
+            #expect(abs(band.minY - line.typographicBounds.minY) < 0.01)
+            #expect(abs(band.height - line.typographicBounds.height) < 0.01)
+            #expect(band.width > 8 && band.width < line.typographicBounds.width)
+            #expect(band.minX >= -NSTextLayoutFragment.inlineCodePillPadX)
+            checked = true
+            return true
+        }
+        #expect(checked, "the document has a code span, so some fragment must have a pill")
+    }
+
+    try pillSitsOnItsText()
+    // Reflow everything: every wrap, every fragment position, moves.
+    view.applyResponsiveMeasure(420)
+    try pillSitsOnItsText()
+    view.applyResponsiveMeasure(700)
+    try pillSitsOnItsText()
+}
+
+/// A span that ends its line still gets a pill.
+///
+/// Hidden syntax lives in the display string as zero-width joiners, and the
+/// last one on a line reports its location as the line's *left* edge — so a
+/// closing backtick at the end of a line measured the run as zero width and
+/// dropped it.  A one-item list whose whole content is a path, which is most of
+/// what an agent writes, lost every pill that way.
+@Test @MainActor func anInlineCodePillSurvivesEndingItsLine() throws {
+    let source = """
+    - `Scripts/bundle-app.sh`
+    - `Package.swift` — the package manifest
+
+    """
+    let text = source as NSString
+    let storage = NSTextStorage(string: source)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 620, height: 400), storage: storage, styleSheet: sheet())
+    view.mode = .read
+    view.update(
+        document: MarkdownParser.parse(source),
+        dirty: DirtySet(ranges: [NSRange(location: 0, length: text.length)], isWholesale: true))
+    view.prepareForDisplay()
+
+    let bands = pillBandsByFragment(in: view)
+    let ending = try #require(bands.first { $0.text.contains("bundle-app.sh") })
+    let middle = try #require(bands.first { $0.text.contains("package manifest") })
+    #expect(ending.bands.count == 1)
+    #expect(middle.bands.count == 1)
+    // The longer path gets the wider pill: the one that ends the line is
+    // measured, not defaulted to the whole line or to nothing.
+    #expect((ending.bands.first?.width ?? 0) > (middle.bands.first?.width ?? 0))
+}
+
+/// Invisibles moved onto the same path, and for the same reason: their marks
+/// were the second cache of absolute rectangles keyed on a layout fingerprint.
+@Test @MainActor func invisibleMarksAreMeasuredFromTheLineTheySitOn() throws {
+    let source = "Two words here.\n"
+    let text = source as NSString
+    let storage = NSTextStorage(string: source)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 620, height: 400), storage: storage, styleSheet: sheet())
+    view.mode = .source
+    view.configuration.showInvisibles = true
+    view.update(
+        document: MarkdownParser.parse(source),
+        dirty: DirtySet(ranges: [NSRange(location: 0, length: text.length)], isWholesale: true))
+    view.prepareForDisplay()
+
+    let layout = try #require(view.textLayoutManager)
+    layout.ensureLayout(for: layout.documentRange)
+    var boxes: [(box: CGRect, isTab: Bool)] = []
+    layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: []) { fragment in
+        boxes += fragment.invisibleMarkBoxes(at: .zero)
+        return true
+    }
+    // One mark per space, each sitting on the line it belongs to and no wider
+    // than the space it stands for.
+    #expect(boxes.count == 2)
+    #expect(boxes.allSatisfy { !$0.isTab && $0.box.width > 0 && $0.box.width < 20 })
+    #expect(boxes.allSatisfy { $0.box.minY == 0 })
+
+    view.configuration.showInvisibles = false
+    layout.ensureLayout(for: layout.documentRange)
+    var remaining = 0
+    layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: []) { fragment in
+        remaining += fragment.invisibleMarkBoxes(at: .zero).count
+        return true
+    }
+    #expect(remaining == 0)
+}
+
+/// Every fragment's pill geometry, paired with the text it lays out.
+@MainActor func pillBandsByFragment(
+    in view: MarkdownTextView
+) -> [(text: String, bands: [CGRect])] {
+    guard let layout = view.textLayoutManager else { return [] }
+    var out: [(String, [CGRect])] = []
+    layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: []) { fragment in
+        let text = fragment.textLineFragments
+            .map { $0.attributedString.string }
+            .joined()
+        let bands = (fragment as? DownrightFragment)?.suppressesText == true
+            ? []
+            : fragment.inlineCodePillBands(at: .zero)
+        out.append((text, bands))
+        return true
+    }
+    return out
 }

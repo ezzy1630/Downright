@@ -133,7 +133,7 @@ final class TaskSectionBarView: NSView {
         segmentLayers = segments.map { _ in
             let pair = SegmentLayers()
             for layer in [pair.track, pair.fill] {
-                layer.cornerRadius = Self.barHeight / 2
+                layer.cornerRadius = PanelMetrics.capsuleRadius(forHeight: Self.barHeight)
                 // Geometry animates through the transaction `placeSegments`
                 // wraps around each change — a glide when counts move, a quick
                 // swell under the pointer, nothing at all when it asks for a
@@ -169,8 +169,9 @@ guard segmentLayers.count == segments.count else { return }
             }
             // The caps stay perfectly round at whatever height the pointer
             // state gives the segment, so a swell never squares an end off.
-            pair.track.cornerRadius = frame.height / 2
-            pair.fill.cornerRadius = frame.height / 2
+            let radius = PanelMetrics.capsuleRadius(forHeight: frame.height)
+            pair.track.cornerRadius = radius
+            pair.fill.cornerRadius = radius
             pair.track.frame = frame
             // The fill keeps a minimum stub as soon as anything is done — a
             // full round cap, not a square sliver.  At zero the layer hides

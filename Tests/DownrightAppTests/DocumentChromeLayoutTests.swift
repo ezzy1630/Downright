@@ -102,9 +102,50 @@ struct DocumentChromeLayoutTests {
         #expect(container.topLaneHeight == 0)
     }
 
+    /// The document map is pinned to the window's leading wall.  It used to
+    /// ride `textOrigin - gutter - width - gap`, so anything that recentred
+    /// the measure — opening Tasks, closing it, a resize — slid the map
+    /// sideways and left it there.  Pin it at the window level, through the
+    /// actions that used to move it.
+    @Test("The document map never leaves the leading wall",
+          arguments: [1400.0, 1020.0, 760.0])
+    func documentMapStaysOnLeadingWall(_ width: Double) throws {
+        let (file, cleanup) = try makeDocument()
+        defer { cleanup() }
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.window?.setFrame(NSRect(x: 0, y: 0, width: width, height: 800), display: true)
+        controller.window?.layoutIfNeeded()
+        controller.primaryContainer.layoutSubtreeIfNeeded()
+
+        func railLeadingEdge() -> CGFloat {
+            let rail = controller.densityGutterView
+            return rail.convert(rail.bounds, to: nil).minX
+        }
+        #expect(abs(railLeadingEdge()) < 0.5)
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        controller.primaryContainer.layoutSubtreeIfNeeded()
+        #expect(abs(railLeadingEdge()) < 0.5)
+
+        controller.closeTaskPanel()
+        controller.window?.layoutIfNeeded()
+        controller.primaryContainer.layoutSubtreeIfNeeded()
+        #expect(abs(railLeadingEdge()) < 0.5)
+
+        controller.window?.setFrame(
+            NSRect(x: 0, y: 0, width: max(700, width - 240), height: 700), display: true)
+        controller.window?.layoutIfNeeded()
+        controller.primaryContainer.layoutSubtreeIfNeeded()
+        #expect(abs(railLeadingEdge()) < 0.5)
+    }
+
     /// A panel that opens to a sliver is indistinguishable from one that failed
-    /// to load, so the width it arrives at is worth holding.
-    @Test("The task panel opens at a usable width with its rows in place")
+    /// to load, so the surface it arrives at is worth holding.
+    @Test("The task panel opens as a usable floating surface with its rows in place")
     func taskPanelOpensUsable() throws {
         let (file, cleanup) = try makeDocument()
         defer { cleanup() }
@@ -118,15 +159,324 @@ struct DocumentChromeLayoutTests {
         controller.toggleTaskPanel()
         controller.window?.layoutIfNeeded()
 
-        #expect(!controller.inspectorItem.isCollapsed)
+        let surface = try #require(controller.floatingSurface)
+        #expect(surface.window != nil)
+        #expect(!surface.isHidden)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        #expect(surface.frame.width >= PanelMetrics.listWidth)
+        #expect(surface.frame.height > 100)
         let panel = try #require(controller.taskPanel)
         #expect(panel.window != nil)
-        #expect(panel.frame.width >= DocumentWindowController.InspectorWidth.minimum)
-        #expect(panel.frame.height > 100)
+        #expect(panel.frame.width >= PanelMetrics.listWidth)
         // Two open tasks and a pile for the finished one — the document's own
         // three tasks, reaching the panel.
         #expect(panel.visibleTaskCountForTesting == 2)
         #expect(panel.pileRowCountForTesting == 1)
+    }
+
+    @Test("The floating surface has a drawable body and one shared header")
+    func taskPanelRendersBodyAndHeader() throws {
+        let (file, cleanup) = try makeDocument()
+        defer { cleanup() }
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.window?.setFrame(NSRect(x: 0, y: 0, width: 1200, height: 800), display: true)
+        controller.window?.layoutIfNeeded()
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        #expect(surface.rendersBodyForTesting)
+        let allDescendants = surface.subviews.flatMap { [$0] + descendants(of: $0) }
+        #expect(allDescendants.contains { view in
+            (view as? NSTextField)?.stringValue == "Tasks"
+        })
+        #expect(allDescendants.filter { ($0 as? NSTextField)?.stringValue == "Tasks" }.count == 1)
+        #expect(!(surface.superview is NSSplitView))
+    }
+
+    @Test("The document still has rendered content under the floating surface")
+    func floatingSurfaceLeavesDocumentRendered() throws {
+        let (file, cleanup) = try makeDocument()
+        defer { cleanup() }
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.window?.setFrame(NSRect(x: 0, y: 0, width: 1200, height: 800), display: true)
+        controller.window?.layoutIfNeeded()
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        controller.primaryContainer.layoutSubtreeIfNeeded()
+
+        let layout = try #require(controller.primaryContainer.textView.textLayoutManager)
+        layout.ensureLayout(for: layout.documentRange)
+        #expect(controller.primaryContainer.frame.height > 0)
+        #expect(layout.usageBoundsForTextContainer.width > 0)
+        #expect(layout.usageBoundsForTextContainer.height > 0)
+    }
+
+    @Test("The View command and ring use the same floating entry point")
+    func menuAndRingOpenTasks() throws {
+        let (file, cleanup) = try makeDocument()
+        defer { cleanup() }
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.window?.layoutIfNeeded()
+
+        let menuItem = MainMenu.commandItem(.taskPanel)
+        menuItem.target = controller
+        controller.performDownrightCommand(menuItem)
+        #expect(controller.floatingSurface != nil)
+        controller.closeTaskPanel()
+
+        controller.progressRing.onActivate?()
+        #expect(controller.floatingSurface != nil)
+        #expect(controller.inspectorHost?.selectedSection == .tasks)
+    }
+
+    private func descendants(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + descendants(of: $0) }
+    }
+}
+
+/// The floating Tasks panel (§8.5's floating clause): it pours out of the
+/// toolbar edge and hangs over the document instead of docking in the split,
+/// so its geometry — fit-to-content height with a window-relative ceiling,
+/// one-axis descent, and dismissal — is the contract these tests hold.
+@Suite(.serialized)
+@MainActor
+struct FloatingTaskPanelTests {
+    private func makeDocument(tasks: Int = 3, windowHeight: CGFloat = 800)
+        throws -> (URL, () -> Void, DocumentWindowController)
+    {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-floating-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("plan.md")
+        var body = "# Plan\n\n"
+        for index in 0..<tasks {
+            body += index == 0 ? "- [ ] Task \(index)\n" : (index % 5 == 0 ? "- [x] Done \(index)\n" : "- [ ] Task \(index)\n")
+        }
+        try Data(body.utf8).write(to: file)
+
+        let controller = DocumentWindowController()
+        try controller.open(file, mode: .live)
+        controller.window?.setFrame(
+            NSRect(x: 0, y: 0, width: 1200, height: windowHeight), display: true
+        )
+        controller.window?.layoutIfNeeded()
+        return (file, { try? FileManager.default.removeItem(at: directory) }, controller)
+    }
+
+    private func surfaceRectInDocumentWindow(
+        _ surface: FloatingPanelSurface,
+        parent: NSWindow
+    ) -> NSRect {
+        guard let child = surface.window else { return .zero }
+        let childRect = surface.convert(surface.bounds, to: nil)
+        return parent.convertFromScreen(child.convertToScreen(childRect))
+    }
+
+    @Test("The floating surface hangs from the content's top edge at the trailing side")
+    func surfaceHangsFromTheTopEdge() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        let inWindow = surfaceRectInDocumentWindow(surface, parent: controller.window!)
+        let content = try #require(controller.window?.contentView)
+        let contentInWindow = content.convert(content.bounds, to: nil)
+        // Top-anchored: the surface's top edge sits flush with the content's,
+        // the place the pour came out from under the toolbar.
+        #expect(abs(inWindow.maxY - contentInWindow.maxY) < 0.5)
+        // Trailing side: flush with the window's own trailing edge.
+        #expect(abs(inWindow.maxX - contentInWindow.maxX) < 0.5)
+    }
+
+    @Test("The surface fits its content up to the window's ceiling")
+    func surfaceFitsItsContent() throws {
+        let (_, cleanup, controller) = try makeDocument(tasks: 3)
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        let contentHeight = try #require(controller.window?.contentView).bounds.height
+        let cap = contentHeight * FloatingPanelSurface.Top.windowHeightFraction
+        #expect(surface.frame.height > 100)
+        #expect(surface.frame.height < cap + 0.5)
+        #expect(surface.frame.height >= FloatingPanelSurface.Top.minimumContentHeight)
+    }
+
+    @Test("The floating height follows rows and caps only a long plan", arguments: [1, 3, 5, 40])
+    func surfaceMeasurementIncludesEveryTaskRow(_ taskCount: Int) throws {
+        let (_, cleanup, controller) = try makeDocument(tasks: taskCount)
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        let panel = try #require(controller.taskPanel)
+        let host = try #require(controller.inspectorHost)
+        let cap = try #require(controller.window?.contentView).bounds.height
+            * FloatingPanelSurface.Top.windowHeightFraction
+        if taskCount == 40 {
+            #expect(abs(surface.frame.height - cap) < 0.5)
+        } else {
+            let expected = max(
+                FloatingPanelSurface.Top.minimumContentHeight,
+                host.floatingFittingHeight
+            )
+            #expect(abs(surface.frame.height - expected) < 0.5)
+        }
+        #expect(surface.contentLayoutHeightForTesting >= min(host.floatingFittingHeight, cap))
+        #expect(panel.contentDocumentHeightForTesting > 0)
+        #expect(surface.rendersBodyForTesting)
+    }
+
+    @Test("Arrival starts with final content laid out under a clipped sliver")
+    func arrivalContentIsPresentBeforeTheBodyGrows() throws {
+        let (_, cleanup, controller) = try makeDocument(tasks: 3)
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        let panel = try #require(controller.taskPanel)
+        #expect(surface.frame.height == FloatingPanelSurface.Top.pourSliverHeight)
+        #expect(surface.contentLayoutHeightForTesting >= panel.fittedContentHeight)
+        #expect(surface.content.frame.height >= panel.fittedContentHeight)
+        #expect(surface.rendersBodyForTesting)
+    }
+
+    @Test("An in-panel click is not routed to floating dismissal")
+    func insideClickStaysInsideSurface() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        let content = try #require(controller.window?.contentView)
+        let childPoint = surface.convert(
+            NSPoint(x: surface.bounds.midX, y: surface.bounds.midY), to: nil
+        )
+        let childScreenPoint = surface.window!.convertToScreen(
+            NSRect(origin: childPoint, size: .zero)
+        ).origin
+        let point = controller.window!.convertFromScreen(
+            NSRect(origin: childScreenPoint, size: .zero)
+        ).origin
+
+        #expect(!DocumentWindow.shouldDismissFloatingClick(
+            at: point, content: content, surface: surface
+        ))
+    }
+
+    @Test("Refitting stays top-anchored and trailing-flush after both resize axes")
+    func refitTracksWindowWidthAndHeight() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+        controller.activeStyleSheet = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSApp.effectiveAppearance,
+            reduceMotionOverride: true
+        )
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        let window = try #require(controller.window)
+        let content = try #require(window.contentView)
+
+        window.setFrame(NSRect(x: 0, y: 0, width: 920, height: 680), display: true)
+        window.layoutIfNeeded()
+        controller.refitFloatingSurfaceAfterContentChange()
+        surface.settleForTesting()
+        surface.layoutSubtreeIfNeeded()
+
+        let surfaceInWindow = surfaceRectInDocumentWindow(surface, parent: window)
+        let contentInWindow = content.convert(content.bounds, to: nil)
+        #expect(abs(surfaceInWindow.maxY - contentInWindow.maxY) < 0.5)
+        #expect(abs(surfaceInWindow.maxX - contentInWindow.maxX) < 0.5)
+        #expect(surface.frame.width > 0)
+        #expect(surface.frame.height > 0)
+    }
+
+    @Test("A plan taller than the ceiling scrolls instead of overflowing")
+    func surfaceCapsItsHeightAtSixtyPercent() throws {
+        // Sixteen rows must not push the surface past the window's ceiling.
+        let (_, cleanup, controller) = try makeDocument(tasks: 30, windowHeight: 360)
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        let contentHeight = try #require(controller.window?.contentView).bounds.height
+        let cap = contentHeight * FloatingPanelSurface.Top.windowHeightFraction
+        #expect(surface.frame.height <= cap + 0.5)
+        #expect(surface.frame.height >= 40)
+    }
+
+    @Test("Closing pours the surface back and hands nothing to the docked pane")
+    func closeDismissesTheSurface() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        #expect(controller.floatingSurface != nil)
+        #expect(controller.progressRing.isActive)
+        let surface = try #require(controller.floatingSurface)
+
+        controller.closeTaskPanel()
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+
+        #expect(controller.floatingSurface == nil)
+        #expect(!controller.progressRing.isActive)
+    }
+
+    @Test("Reduce Motion presents the surface instantly, over no glass")
+    func reduceMotionPresentsInstantly() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.activeStyleSheet = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSApp.effectiveAppearance,
+            reduceMotionOverride: true
+        )
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        #expect(surface.window != nil)
+        #expect(!surface.isHidden)
+        controller.closeTaskPanel()
+        #expect(controller.floatingSurface == nil)
     }
 }
 

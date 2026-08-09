@@ -1486,15 +1486,40 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             return
         }
         let anchor = window.convertPoint(toScreen: convert(NSPoint(x: bounds.width, y: point.y), to: nil))
+        let maximumTrailingX: CGFloat? = {
+            guard let container = superview as? MarkdownContainerView,
+                  container.leadingAccessory === self else { return nil }
+            let textOrigin = container.scrollView.frame.minX
+                + container.scrollView.contentInsets.left
+                + RenderMetrics.revealSlack
+            let boundary = container.convert(
+                NSPoint(x: textOrigin - 12, y: container.bounds.minY),
+                to: nil
+            )
+            return window.convertPoint(toScreen: boundary).x
+        }()
         preview.show(
             title: content.title,
             snippet: showsSnippet ? content.snippet : "",
             footer: content.context.isEmpty ? metricsSummary : content.context,
             rightOf: anchor,
             over: window,
+            maximumTrailingX: maximumTrailingX,
             reduceMotion: styleSheet.reduceMotion,
             interactive: interactive
         )
+    }
+
+    /// A child-window preview does not participate in AppKit view layout.
+    /// Re-resolve it when its container moves or resizes so a card that was
+    /// valid in the old margin cannot remain over prose in the new geometry.
+    func containerGeometryDidChange() {
+        guard preview.isVisible else { return }
+        guard let point = pointerLocation, bounds.contains(point), hoveredBandIndex != nil else {
+            preview.hide()
+            return
+        }
+        showPreview(at: point, showsSnippet: true)
     }
 
     public override func viewDidMoveToWindow() {

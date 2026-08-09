@@ -33,15 +33,11 @@ final class InspectorHostView: NSView {
     /// left alone it tracks the current theme and appearance on its own.
     var styleSheet: StyleSheet = .current {
         didSet {
-            backdrop.styleSheet = styleSheet
             sectionControl.styleSheet = styleSheet
             applyStyle()
         }
     }
 
-    /// One glass column runs under the switcher and the panel alike, so the
-    /// header never reads as a matte lid on a vibrant surface (§11.4).
-    private let backdrop = PanelBackdrop(styleSheet: .current)
     private let titleLabel = NSTextField(labelWithString: "")
     private let closeButton: NSButton
     private let sectionControl: PanelSegmentedControl
@@ -110,21 +106,9 @@ final class InspectorHostView: NSView {
         }
         sectionControl.translatesAutoresizingMaskIntoConstraints = false
 
-        // Backdrop first, then content, then chrome: sibling views paint in
-        // subview order, so the header has to be *above* the panel it labels.
-        // With the header added first, the content view's backdrop painted
-        // straight over it and the inspector opened with 80pt of dead space
-        // where its title, its close button, and its section switcher should
-        // have been.  The shared backdrop underneath both is what lets the
-        // header and the panel read as one continuous glass column.  It blends
-        // with the window so the page ghosts through the whole column, and a
-        // themed veil keeps the chrome legible over a busy document (§11.4).
-        backdrop.blendsWithinWindow = true
-        // A whisper of veil: the column should read as the window's own glass,
-        // not as a slab laid over it.
-        backdrop.veilAlpha = 0.12
-        backdrop.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(backdrop)
+        // The floating surface owns the material. A second visual-effect view
+        // here becomes a detached compositor sibling on macOS 26 and can
+        // erase the document beneath the panel.
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         addSubview(titleLabel)
@@ -151,11 +135,6 @@ final class InspectorHostView: NSView {
             equalTo: sectionControl.bottomAnchor, constant: Metrics.topPadding
         )
         NSLayoutConstraint.activate([
-            backdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
-            backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
-            backdrop.topAnchor.constraint(equalTo: topAnchor),
-            backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
-
             leadingRule.leadingAnchor.constraint(equalTo: leadingAnchor),
             leadingRule.topAnchor.constraint(equalTo: topAnchor),
             leadingRule.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -221,6 +200,20 @@ final class InspectorHostView: NSView {
 
     /// The same close a panel's own Done button should perform.
     func requestClose() { onClose?() }
+
+    override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { true }
+
+    /// The selected panel is the first key-loop stop when the shared floating
+    /// body opens. Tasks forwards this to its table; other panels land on the
+    /// host so Esc and the section switcher remain reachable.
+    func focusForPresentation() {
+        if let task = views[.tasks] as? TaskPanelView {
+            task.focusForPresentation()
+        } else {
+            window?.makeFirstResponder(self)
+        }
+    }
 
     var hasContent: Bool { !views.isEmpty }
 
@@ -386,7 +379,9 @@ final class InspectorHostView: NSView {
         // it; leaving, the panel is already gone before it refolds.
         // `beginTime` uses the layer's media-time coordinate space. A bare
         // 0.12 is long in the past and produces no delay.
-        fade.beginTime = arriving ? CACurrentMediaTime() + Motion.quick : 0
+        fade.beginTime = arriving
+            ? CACurrentMediaTime() + Motion.floatingContentRevealLead
+            : 0
         layer.add(fade, forKey: "inspector-fade")
 
         CATransaction.commit()
@@ -395,6 +390,39 @@ final class InspectorHostView: NSView {
     /// How many surfaces the host is holding — a caller closing one needs to
     /// know whether the pane goes with it or another panel takes over.
     var contentCount: Int { views.count }
+
+    /// One measurement contract for every floating inspector. The header is
+    /// part of the host, not the selected panel, so measuring the child alone
+    /// clips the last task row and the add affordance as soon as Tasks is
+    /// routed through this shared host.
+    var floatingFittingHeight: CGFloat {
+        layoutSubtreeIfNeeded()
+        content.layoutSubtreeIfNeeded()
+        let contentHeight: CGFloat
+        if let task = views[.tasks] as? TaskPanelView, selectedSection == .tasks {
+            contentHeight = task.fittedContentHeight
+        } else if let section = selectedSection, let view = views[section] {
+            let fitted = view.fittingSize.height
+            contentHeight = fitted.isFinite && fitted > 0 ? fitted : view.frame.height
+        } else {
+            contentHeight = 0
+        }
+        return max(0, headerFittingHeight + contentHeight)
+    }
+
+    private var headerFittingHeight: CGFloat {
+        guard let section = selectedSection else { return 0 }
+        let switcherVisible = Self.switcherSections.filter { views[$0] != nil }.count > 1
+        let title = sectionTitles[section] ?? section.title
+        let titleVisible = !switcherVisible
+            || title != section.title
+            || !Self.switcherSections.contains(section)
+        let titleHeight = titleVisible ? Metrics.titleRowHeight : 0
+        let rowHeight = switcherVisible
+            ? PanelSegmentedControl.controlHeight + Metrics.topPadding
+            : Metrics.titleBottomGap
+        return Metrics.titleTopPadding + titleHeight + rowHeight + PanelMetrics.hairline
+    }
 
     /// The surface installed for a section, if any — so a caller that has to
     /// animate a panel out can name the view it is carrying.

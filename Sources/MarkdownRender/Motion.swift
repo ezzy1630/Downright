@@ -67,6 +67,19 @@ public enum Motion {
     /// cursor.
     public static let previewCrossfade: TimeInterval = 0.06
 
+    /// The empty-glass handoff has a deliberately short lead before incoming
+    /// panel content appears. It is not another animation duration: it is the
+    /// staging window inside `MorphCut`, long enough for the material to read
+    /// as continuous and short enough that the destination never feels late.
+    public static let floatingContentRevealLead: TimeInterval = 0.08
+
+    /// The visible sliver is never fully opaque: the first pixels of a child
+    /// window should arrive as a material edge, not as a hard rectangular cut.
+    /// Opacity then follows the floating surface's height spring, so arrival
+    /// and dismissal still have one interruptible clock and no content-only
+    /// staging animation.
+    public static let floatingSurfaceSliverOpacity: CGFloat = 0.18
+
     /// The density rail's impulse, and the only declared exception.
     ///
     /// Everything the rail does is now spring-governed, so its grow, shrink and

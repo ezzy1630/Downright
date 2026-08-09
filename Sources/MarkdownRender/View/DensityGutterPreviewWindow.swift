@@ -16,7 +16,27 @@ final class DensityGutterPreviewWindow: NSWindow {
     var onPointerPresence: ((Bool) -> Void)?
 
     private let content: PreviewContentView
-    private let maximumWidth: CGFloat = 320
+    static let preferredWidth: CGFloat = 320
+    /// Narrowest card worth showing.  With the rail pinned to the window wall
+    /// the margin between rail and prose is `(measure-centred) / 2` minus the
+    /// rail lane, which at a ~1020pt window is only ~166pt — an 180pt floor
+    /// meant the hover card *never appeared* at ordinary window widths.  140
+    /// still fits a title plus two wrapped snippet lines (9pt padding, 12pt
+    /// body) and only gives up when the margin is genuinely a sliver.
+    static let minimumUsefulWidth: CGFloat = 140
+    static let anchorGap: CGFloat = 8
+
+    static func resolvedMaximumWidth(
+        anchorX: CGFloat,
+        maximumTrailingX: CGFloat?,
+        minimumOriginX: CGFloat? = nil,
+        opensInward: Bool
+    ) -> CGFloat? {
+        guard !opensInward, let maximumTrailingX else { return preferredWidth }
+        let originX = max(anchorX + anchorGap, minimumOriginX ?? -.greatestFiniteMagnitude)
+        let available = min(preferredWidth, maximumTrailingX - originX)
+        return available >= minimumUsefulWidth ? available : nil
+    }
     private let entranceDuration: TimeInterval = 0.10
     private let exitDuration: TimeInterval = 0.08
     private var presentationGeneration = 0
@@ -25,7 +45,7 @@ final class DensityGutterPreviewWindow: NSWindow {
         self.styleSheet = styleSheet
         self.content = PreviewContentView(styleSheet: styleSheet)
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: maximumWidth, height: 40),
+            contentRect: NSRect(x: 0, y: 0, width: Self.preferredWidth, height: 40),
             styleMask: [.borderless], backing: .buffered, defer: true
         )
         isOpaque = false
@@ -50,6 +70,7 @@ final class DensityGutterPreviewWindow: NSWindow {
         footer: String,
         rightOf anchor: NSPoint,
         over parent: NSWindow,
+        maximumTrailingX: CGFloat? = nil,
         reduceMotion: Bool,
         interactive: Bool
     ) {
@@ -60,18 +81,40 @@ final class DensityGutterPreviewWindow: NSWindow {
         // Pointer movement should not trigger a new text measurement on every
         // event. Keep the card geometry stable within a section; reflow only
         // when a new heading arrives, where the change carries meaning.
-        let size = alreadyPresented && !titleChanged
+        let opensInward = anchor.x > parent.frame.midX
+        let visibleFrame = (parent.screen ?? NSScreen.main)?.visibleFrame
+        guard let maximumWidth = Self.resolvedMaximumWidth(
+            anchorX: anchor.x,
+            maximumTrailingX: maximumTrailingX,
+            minimumOriginX: visibleFrame.map { $0.minX + 4 },
+            opensInward: opensInward
+        ) else {
+            hide()
+            return
+        }
+        let size = alreadyPresented && !titleChanged && frame.width <= maximumWidth
             ? frame.size
             : content.fittingSize(maxWidth: maximumWidth)
 
-        let opensInward = anchor.x > parent.frame.midX
         var origin = NSPoint(
-            x: opensInward ? anchor.x - size.width - 8 : anchor.x + 8,
+            x: opensInward
+                ? anchor.x - size.width - Self.anchorGap
+                : max(anchor.x + Self.anchorGap, visibleFrame.map { $0.minX + 4 } ?? anchor.x + Self.anchorGap),
             y: anchor.y - size.height / 2
         )
-        if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
+        if !opensInward, let maximumTrailingX {
+            origin.x = min(origin.x, maximumTrailingX - size.width)
+        }
+        if let visible = visibleFrame {
             origin.x = min(max(visible.minX + 4, origin.x), visible.maxX - size.width - 4)
             origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
+        }
+        // The screen clamp above must not trade one invariant for another. If
+        // the card cannot fit both on-screen and before the text column, hide
+        // it; covering prose is never an acceptable fallback.
+        if !opensInward, let maximumTrailingX, origin.x + size.width > maximumTrailingX + 0.5 {
+            hide()
+            return
         }
         let finalFrame = NSRect(origin: origin, size: size)
 

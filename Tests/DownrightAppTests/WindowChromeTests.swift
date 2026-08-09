@@ -304,11 +304,23 @@ struct WindowChromeTests {
         let toolbar = try #require(controller.window?.toolbar)
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
 
-        controller.showInInspector(NSView(), section: .tasks)
-        #expect(!controller.inspectorItem.isCollapsed)
+        // History shares the same floating host as Tasks; switching sections
+        // must not resurrect the old width-reserving inspector lane.
+        controller.showInInspector(NSView(), section: .history)
+        #expect(controller.floatingSurface != nil)
+        #expect(controller.inspectorHost?.selectedSection == .history)
+
+        controller.showInInspector(NSView(), section: .context)
+        #expect(controller.floatingSurface != nil)
+        #expect(controller.inspectorHost?.selectedSection == .context)
+
+        controller.showInInspector(NSView(), section: .search)
+        #expect(controller.floatingSurface != nil)
+        #expect(controller.inspectorHost?.selectedSection == .search)
 
         controller.closeInspector()
-        #expect(controller.inspectorItem.isCollapsed)
+        controller.floatingSurface?.settleForTesting()
+        #expect(controller.floatingSurface == nil)
     }
 
     @Test
@@ -348,7 +360,6 @@ struct WindowChromeTests {
         controller.showFindBar(replace: false)
 
         #expect(controller.findBar?.superview === controller.barStack)
-        #expect(controller.inspectorItem.isCollapsed)
 
         controller.dismissFindBar()
         #expect(controller.findBar == nil)
@@ -462,24 +473,4 @@ struct WindowChromeTests {
         #expect(controller.statusBarView.intrinsicContentSize.height > 0)
     }
 
-    /// A trailing panel is an accessory to the document.  At its 300pt minimum
-    /// in a 620pt window it was half the app, so the opening width is capped
-    /// against the window as well as clamped to the panel's own range.  The
-    /// divider stays draggable past it either way.
-    @Test
-    func inspectorNeverOpensWiderThanItsShareOfTheWindow() {
-        typealias Width = DocumentWindowController.InspectorWidth
-
-        // Roomy window: the panel gets exactly what it asked for.
-        #expect(Width.opening(300, availableWidth: 1400) == 300)
-        #expect(Width.opening(300, availableWidth: 800) == 300)
-        // Tight window: capped at its share rather than taking half the app.
-        #expect(Width.opening(520, availableWidth: 800) == 320)
-        #expect(Width.opening(520, availableWidth: 1000) == 400)
-        // No room to give: leave the divider alone entirely.
-        #expect(Width.opening(300, availableWidth: 620) == nil)
-        #expect(Width.opening(300, availableWidth: 0) == nil)
-        // Still clamped to the panel's own range in a very wide window.
-        #expect(Width.opening(900, availableWidth: 4000) == Width.maximum)
-    }
 }

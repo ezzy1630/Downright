@@ -541,8 +541,11 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         MainMenu.refreshKeyEquivalents(in: menu)
         for item in menu.items {
             switch item.title {
-            case "Tasks": item.state = (inspectorHost?.selectedSection == .tasks && !inspectorItem.isCollapsed) ? .on : .off
-            case "History": item.state = inspectorHost?.selectedSection == .history && !inspectorItem.isCollapsed ? .on : .off
+            case "Tasks": item.state = self.isTaskPanelFloating ? .on : .off
+            case "History":
+                item.state = floatingSurface != nil && inspectorHost?.selectedSection == .history
+                    ? .on
+                    : .off
             default: break
             }
         }
