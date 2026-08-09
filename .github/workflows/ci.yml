@@ -15,7 +15,7 @@ jobs:
     # build graphs, so leave generous headroom.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The runner's default developer directory is not guaranteed to provide
       # the Swift 6.0 tools this package's manifest declares, and when it does
       # not, every step fails with a message that names neither the selected
