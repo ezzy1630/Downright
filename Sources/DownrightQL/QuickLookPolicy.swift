@@ -11,6 +11,11 @@ public enum QuickLookPolicy {
     /// Bounded head read for oversized files — enough bytes to render the first
     /// `prefixBlockCount` blocks without ever loading the whole file.
     public static let prefixReadLimitBytes = 8 * 1024 * 1024
+    /// Hard cap for the text handed to TextKit after the block prefix is found.
+    /// A single Markdown block can be arbitrarily large, so the block count is
+    /// not a sufficient memory bound on its own.
+    public static let prefixRenderLimitBytes = 512 * 1024
+    public static let prefixRenderLimitUTF16 = 512 * 1024
     /// Below this width the 72pt document map leaves too little useful measure.
     public static let minimumDensityGutterWidth: CGFloat = 520
 

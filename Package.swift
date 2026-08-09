@@ -163,6 +163,12 @@ let package = Package(
             linkerSettings: testLinkerSettings
         ),
         .testTarget(
+            name: "DownrightQLTests",
+            dependencies: ["DownrightQL"],
+            swiftSettings: testSwiftSettings,
+            linkerSettings: testLinkerSettings
+        ),
+        .testTarget(
             name: "MarkdownCLITests",
             dependencies: ["drdownright"],
             swiftSettings: testSwiftSettings,

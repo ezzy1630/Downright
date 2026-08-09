@@ -31,12 +31,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private let prefixBlockCount = QuickLookPolicy.prefixBlockCount
 
     private var memoryTimer: Timer?
+    private var previewTask: Task<Void, Never>?
+    private var previewGeneration: UInt = 0
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 800))
     }
 
     deinit {
+        previewTask?.cancel()
         memoryTimer?.invalidate()
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
@@ -54,7 +57,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         at url: URL,
         completionHandler handler: @escaping (Error?) -> Void
     ) {
-        Task { [weak self] in
+        previewTask?.cancel()
+        previewGeneration &+= 1
+        let generation = previewGeneration
+
+        let task = Task { [weak self] in
             guard let self else {
                 handler(CocoaError(.coderInvalidValue))
                 return
@@ -66,7 +73,17 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             let byteCount =
                 (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 
+            guard !Task.isCancelled else {
+                handler(CocoaError(.userCancelled))
+                return
+            }
+
             await MainActor.run {
+                guard !Task.isCancelled, self.previewGeneration == generation else {
+                    handler(CocoaError(.userCancelled))
+                    return
+                }
+
                 self.resetPreview()
                 switch QuickLookPolicy.presentation(forByteCount: byteCount) {
                 case .prefix:
@@ -81,10 +98,18 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                         handler(CocoaError(.fileReadCorruptFile))
                         return
                     }
+                    guard !Task.isCancelled, self.previewGeneration == generation else {
+                        handler(CocoaError(.userCancelled))
+                        return
+                    }
                     self.presentTruncated(head, url: url)
                 case .full:
                     guard let (text, _) = try? DocumentIO.read(contentsOf: url) else {
                         handler(CocoaError(.fileReadCorruptFile))
+                        return
+                    }
+                    guard !Task.isCancelled, self.previewGeneration == generation else {
+                        handler(CocoaError(.userCancelled))
                         return
                     }
                     self.present(text, url: url)
@@ -93,9 +118,13 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 if PreviewViewController.residentBytes() > self.memoryCeiling {
                     self.fallBackToPlainText()
                 }
+                if self.previewGeneration == generation {
+                    self.previewTask = nil
+                }
+                handler(nil)
             }
-            handler(nil)
         }
+        previewTask = task
     }
 
     // MARK: - Rendering
@@ -130,11 +159,38 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     @MainActor
     private func presentTruncated(_ text: String, url: URL) {
         let document = MarkdownParser.parse(text, options: .structureOnly)
-        let cutoff = document.root.children.prefix(prefixBlockCount).last?.range.upperBound ?? text.utf16.count
-        let prefix = (text as NSString).substring(to: min(cutoff, (text as NSString).length))
+        let cutoff = document.root.children.prefix(prefixBlockCount).last?.range.upperBound
+            ?? text.utf16.count
+        let prefix = Self.boundedPrefix(
+            text,
+            utf16Limit: min(cutoff, QuickLookPolicy.prefixRenderLimitUTF16),
+            byteLimit: QuickLookPolicy.prefixRenderLimitBytes
+        )
 
         present(prefix, url: url)
         installOpenInAppBar(for: url, note: "Showing the first \(prefixBlockCount) blocks")
+    }
+
+    /// Keep the rendered prefix bounded in both Foundation's UTF-16 coordinate
+    /// space and its UTF-8 storage size.  Walking character boundaries avoids
+    /// returning a string with a split surrogate when a limit lands mid-scalar.
+    static func boundedPrefix(_ text: String, utf16Limit: Int, byteLimit: Int) -> String {
+        guard utf16Limit > 0, byteLimit > 0 else { return "" }
+        var utf16Count = 0
+        var byteCount = 0
+        var end = text.startIndex
+        while end < text.endIndex {
+            let next = text.index(after: end)
+            let scalar = text[end..<next]
+            let scalarUTF16Count = scalar.utf16.count
+            let scalarByteCount = scalar.utf8.count
+            guard utf16Count + scalarUTF16Count <= utf16Limit,
+                  byteCount + scalarByteCount <= byteLimit else { break }
+            utf16Count += scalarUTF16Count
+            byteCount += scalarByteCount
+            end = next
+        }
+        return String(text[..<end])
     }
 
     /// Plain text is the floor, not a failure: a preview that renders nothing
