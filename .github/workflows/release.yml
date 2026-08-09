@@ -266,8 +266,15 @@ jobs:
           shasum -a 256 "Downright-$TAG.zip" > artifacts/Downright-$TAG.zip.sha256
           shasum -a 256 "Downright-$TAG.dmg" > artifacts/Downright-$TAG.dmg.sha256
           echo "SHA256: $(cat artifacts/Downright-$TAG.zip.sha256)"
-          # Retain dSYMs alongside the release.
-          cp -R ".build-release/Downright.xcarchive/dSYMs" artifacts/dSYMs 2>/dev/null || true
+          # A GitHub Release asset must be a file, not a directory. Preserve
+          # the complete symbol bundle in one deterministic archive and fail
+          # instead of silently publishing a crash build with no symbols.
+          DSYMS=".build-release/Downright.xcarchive/dSYMs"
+          test -d "$DSYMS"
+          ditto -c -k --keepParent --sequesterRsrc \
+            "$DSYMS" "artifacts/Downright-$TAG-dSYMs.zip"
+          shasum -a 256 "artifacts/Downright-$TAG-dSYMs.zip" \
+            > "artifacts/Downright-$TAG-dSYMs.zip.sha256"
           # Auto-assemble release notes from the commits since the previous
           # SemVer tag; the GitHub release keeps the full history.
           PREV_TAG="$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')"
@@ -373,7 +380,8 @@ jobs:
             Downright-${{ env.TAG }}.dmg
             artifacts/Downright-${{ env.TAG }}.zip.sha256
             artifacts/Downright-${{ env.TAG }}.dmg.sha256
-            artifacts/dSYMs
+            artifacts/Downright-${{ env.TAG }}-dSYMs.zip
+            artifacts/Downright-${{ env.TAG }}-dSYMs.zip.sha256
             artifacts/*.delta
           body_path: artifacts/RELEASE-NOTES.md
 
