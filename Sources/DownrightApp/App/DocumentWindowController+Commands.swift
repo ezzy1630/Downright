@@ -490,12 +490,11 @@ extension DocumentWindowController: CommandResponder {
     }
 
     private func useSelectionForFind() {
-        let range = selectionRange()
+        let range = containerTextView.sourceSelectedRange
         guard range.length > 0 else { return }
         var query = FindQuery()
         query.text = (markdownDocument.text as NSString).substring(with: range)
-        showFindBar(replace: false)
-        applyFindQuery(query)
+        showFindBar(replace: false, queryAfterFocus: query)
     }
 
     // MARK: - Text size

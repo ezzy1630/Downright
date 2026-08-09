@@ -1703,7 +1703,7 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: - Find (§9.4)
 
-    func showFindBar(replace: Bool) {
+    func showFindBar(replace: Bool, queryAfterFocus: FindQuery? = nil) {
         if searchInspector != nil {
             dismissFindBar()
         }
@@ -1736,15 +1736,26 @@ final class DocumentWindowController: NSWindowController {
         }
 
         bar.showsReplace = replace
-        // Keep ⌘F and ⌘E distinct, as on macOS: Find opens the previous query;
-        // Use Selection for Find explicitly replaces it. Auto-seeding from a
-        // restored multi-line document selection can otherwise fill the field
-        // with a whole paragraph before the reader types a character.
-        if !findSession.query.isEmpty {
-            bar.setQueryText(findSession.query.text)
-            runFind(findSession.query)
+        // Keep ⌘F and ⌘E distinct: Find opens a clean search field, while Use
+        // Selection for Find explicitly supplies the selected query. AppKit
+        // can seed a newly focused field from the document selection, so the
+        // normal path must not inherit either selection or a stale query.
+        let requestedQuery = queryAfterFocus ?? FindQuery()
+        bar.setQueryText(requestedQuery.text)
+        if !requestedQuery.isEmpty {
+            runFind(requestedQuery)
         }
-        bar.focusSearchField()
+        bar.focusSearchField(selectAll: false)
+        // AppKit may seed the field once more as first responder activation
+        // settles. Reassert the command's query on the next main-queue turn;
+        // otherwise ⌘F becomes "find the selection" again in a live window.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak bar] in
+            guard let bar, bar.window != nil else { return }
+            bar.setQueryText(requestedQuery.text)
+            if let self, !requestedQuery.isEmpty, self.findBar === bar {
+                self.runFind(requestedQuery)
+            }
+        }
         refreshToolbarSelectionState()
     }
 

@@ -375,7 +375,28 @@ struct WindowChromeTests {
 
         controller.showFindBar(replace: false)
 
-        #expect(controller.findBar?.currentQuery.text == "beta")
+        #expect(controller.findBar?.currentQuery.text.isEmpty == true)
+    }
+
+    @Test
+    func selectionFindIgnoresAnEmptySelection() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-find-empty-selection-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        try Data("alpha beta alpha\n".utf8).write(to: file)
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.primaryContainer.textView.setSourceSelectedRanges([
+            NSRange(location: 0, length: 0),
+        ])
+
+        _ = controller.perform(.useSelectionForFind)
+
+        #expect(controller.findBar == nil)
     }
 
     /// The find bar's exit used to call `removeFromSuperview()` and *then*

@@ -471,9 +471,11 @@ final class FindBarView: NSView {
         }
     }
 
-    func focusSearchField() {
+    func focusSearchField(selectAll: Bool = true) {
         window?.makeFirstResponder(searchField)
-        searchField.currentEditor()?.selectAll(nil)
+        if selectAll {
+            searchField.currentEditor()?.selectAll(nil)
+        }
     }
 
     /// Used by "Use Selection for Find" (§7.2) — the host pushes text in and

@@ -443,6 +443,7 @@ struct AppLayerTests {
     @Test func defaultBindingsMatchTheSpecTable() {
         let store = KeybindingStore.shared
         #expect(store.primaryBinding(for: .sourceMode) == KeyBinding("e", [.command, .shift]))
+        #expect(store.primaryBinding(for: .find) == KeyBinding("f", .command))
         #expect(store.primaryBinding(for: .useSelectionForFind) == KeyBinding("e", .command))
         #expect(store.primaryBinding(for: .copyAsMarkdown) == KeyBinding("c", [.command, .option, .shift]))
         // ⌘0 is Actual Size on macOS, ⌘⇧V is Paste and Match Style, and ⌥↑/⌥↓
