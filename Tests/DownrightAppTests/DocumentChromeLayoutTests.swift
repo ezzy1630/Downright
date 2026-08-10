@@ -350,6 +350,33 @@ struct FloatingTaskPanelTests {
         #expect(surface.rendersBodyForTesting)
     }
 
+    /// The surface fits its height to the measured content, so the last row
+    /// must land inside the body — never below its bottom edge. This is the
+    /// guarantee the row-sum measurement exists for.
+    @Test("The fitted surface leaves its last row fully inside", arguments: [1, 3, 5])
+    func fittedSurfaceNeverCutsItsLastRow(_ taskCount: Int) throws {
+        let (_, cleanup, controller) = try makeDocument(tasks: taskCount)
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        surface.layoutSubtreeIfNeeded()
+        controller.window?.layoutIfNeeded()
+        let panel = try #require(controller.taskPanel)
+        let scroll = try #require(panel.subviews.compactMap { $0 as? NSScrollView }.first)
+        let table = try #require(scroll.documentView as? NSTableView)
+        let last = table.numberOfRows - 1
+        #expect(last >= 0)
+        let rect = table.rect(ofRow: last)
+        let bottom = table.convert(NSPoint(x: 0, y: rect.maxY), to: surface).y
+        // Surface coordinates are bottom-up: the bottom edge is y == 0, so a
+        // negative landing y means the row is cut off below the body.
+        #expect(bottom >= -0.5)
+        #expect(bottom <= surface.bounds.height + 0.5)
+    }
+
     @Test("Arrival starts with final content laid out under a clipped sliver")
     func arrivalContentIsPresentBeforeTheBodyGrows() throws {
         let (_, cleanup, controller) = try makeDocument(tasks: 3)
