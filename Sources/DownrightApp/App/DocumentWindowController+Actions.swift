@@ -330,7 +330,8 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             let findButton = ToolbarActionButton(
                 symbol: "magnifyingglass", label: "Find",
                 help: "Find in this document",
-                target: self, action: #selector(toolbarShowFind(_:))
+                target: self, action: #selector(toolbarShowFind(_:)),
+                usesGlassSurface: true
             )
             findButton.styleSheet = activeStyleSheet
             toolbarFindButton = findButton
@@ -450,7 +451,11 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     }
 
     @objc private func toolbarShowFind(_ sender: Any?) {
-        perform(.find)
+        if findBar != nil, searchInspector == nil {
+            dismissFindBar()
+        } else {
+            perform(.find)
+        }
     }
 
     @objc private func toolbarCheckForUpdates(_ sender: Any?) {

@@ -60,6 +60,9 @@ enum PanelMetrics {
     /// Space reserved by the transparent child window for the body's shadow.
     static let floatingShadowMargin: CGFloat = 40
     static let nestedSurfaceRadius: CGFloat = 10
+    static let chromePillRadius: CGFloat = 16
+    static let bandCornerRadius: CGFloat = 12
+    static let toolbarControlSide: CGFloat = 34
     static let hairline: CGFloat = 1
 
     /// The shape a row's own surface takes — selection, hover, a completion
@@ -167,7 +170,7 @@ enum PanelFont {
     static var header: NSFont { .systemFont(ofSize: size(12), weight: .semibold) }
     static var group: NSFont { .systemFont(ofSize: size(11.5), weight: .semibold) }
     static var title: NSFont { .systemFont(ofSize: size(13), weight: .semibold) }
-    static var floatingTitle: NSFont { .systemFont(ofSize: size(13), weight: .medium) }
+    static var floatingTitle: NSFont { .systemFont(ofSize: size(13), weight: .regular) }
 }
 
 // MARK: - Motion
@@ -343,7 +346,7 @@ final class PanelBackdrop: NSView {
         var ancestor = superview
         var resolved = false
         while let view = ancestor {
-            if view is FloatingPanelSurface {
+            if view is FloatingPanelSurface || view is ChromeGlass {
                 // The floating surface owns the one material that composites
                 // against the document. Nested panel backdrops are detached
                 // visual-effect siblings on macOS 26 and can blank the
@@ -542,8 +545,14 @@ enum PanelButton {
     static func symbol(
         _ name: String,
         label: String,
-        action: ButtonAction
+        action: ButtonAction,
+        pointSize: CGFloat = 13,
+        weight: NSFont.Weight = .medium
     ) -> NSButton {
+        let symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: pointSize,
+            weight: weight
+        )
         let image = NSImage(systemSymbolName: name, accessibilityDescription: label)?
             .withSymbolConfiguration(symbolConfiguration)
         let button = PanelSymbolButton(image: image ?? NSImage(), target: action, action: #selector(ButtonAction.fire(_:)))

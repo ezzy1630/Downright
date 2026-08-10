@@ -23,6 +23,7 @@ import MarkdownRender
 /// The arc travels rather than jumps, the count crossfades, and the panel-open
 /// state lights the disc, so the icon never silently stops meaning "Tasks".
 final class TaskProgressRing: NSView {
+    static let morphSide: CGFloat = 22
     var progress: (done: Int, total: Int) = (0, 0) {
         didSet {
             guard progress.done != oldValue.done || progress.total != oldValue.total else { return }
@@ -78,7 +79,7 @@ final class TaskProgressRing: NSView {
         /// plate two points smaller than the one beside it, which is exactly
         /// the kind of near-miss that makes a toolbar look assembled rather
         /// than drawn.
-        static let control: CGFloat = 30
+        static let control: CGFloat = PanelMetrics.toolbarControlSide
         static let lineWidth: CGFloat = 2.5
         /// The trigger carries the same surface curvature as the body. AppKit
         /// clamps it to the 30pt control's capsule bounds, so the ring stays a

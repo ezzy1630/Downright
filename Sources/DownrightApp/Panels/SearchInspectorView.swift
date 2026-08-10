@@ -28,9 +28,9 @@ final class SearchInspectorView: NSView {
     /// sat below — the void the empty state used to float under.
     private enum Metrics {
         /// 8 top + one 28pt field row + 8 bottom above the hairline.
-        static let findBarHeight: CGFloat = 44
+        static let findBarHeight: CGFloat = 52
         /// Adds 8 spacing + a 24pt replace row.
-        static let replaceBarHeight: CGFloat = 76
+        static let replaceBarHeight: CGFloat = 88
     }
 
     private let backdrop: PanelBackdrop

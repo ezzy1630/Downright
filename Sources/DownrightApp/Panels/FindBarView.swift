@@ -21,7 +21,9 @@ protocol FindBarDelegate: AnyObject {
 /// The find bar's typographic span. The document stack compresses this with a
 /// high-priority cap so a narrow window shrinks the pill instead of clipping it.
 enum FindBarDensity {
-    static let barWidth: CGFloat = 440
+    static let barWidth: CGFloat = 480
+    static let barHeight: CGFloat = 42
+    static let replaceHeight: CGFloat = 80
 }
 
 // MARK: - Focus ring
@@ -73,24 +75,7 @@ private enum FindFieldRing {
 /// The find field itself.  Its bezel is a capsule, so the ring's radius comes
 /// from the ring rect's own height — the stroke and the bezel can never
 /// drift apart.
-private final class FindBarSearchField: NSSearchField {
-    var ringColor: NSColor = .controlAccentColor { didSet { needsDisplay = true } }
-    private var keyObservers: [NSObjectProtocol] = []
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard FindFieldRing.isVisible(in: self) else { return }
-        let ring = bounds.insetBy(dx: FindFieldRing.inset, dy: FindFieldRing.inset)
-        FindFieldRing.stroke(in: self, cornerRadius: ring.height / 2, color: ringColor)
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        keyObservers = FindFieldRing.reinstallKeyStatusRedraw(on: self, replacing: keyObservers)
-    }
-
-    deinit { keyObservers.forEach(NotificationCenter.default.removeObserver) }
-}
+private final class FindBarSearchField: NSSearchField {}
 
 /// The replace row's field draws the same ring so the two rows never
 /// disagree; its bezel is the standard rounded rect rather than a capsule.
@@ -123,6 +108,7 @@ final class FindBarView: NSView {
     var styleSheet: StyleSheet {
         didSet {
             backdrop.styleSheet = styleSheet
+            glass?.styleSheet = styleSheet
             applyStyle()
         }
     }
@@ -171,11 +157,15 @@ final class FindBarView: NSView {
     // MARK: - Views
 
     private let backdrop: PanelBackdrop
+    private var glass: ChromeGlass?
+    private let inspectorWell = NSView()
     private let searchField = FindBarSearchField()
     private let replaceField = FindBarReplaceField()
+    private let leadingGlyph = NSImageView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let warningImage = NSImageView()
     private let trailerDivider = NSView()
+    private let optionsDivider = NSView()
     private let regexToggle: NSButton
     private let caseToggle: NSButton
     private let wordToggle: NSButton
@@ -219,7 +209,28 @@ final class FindBarView: NSView {
 
         super.init(frame: .zero)
 
-        installBackdrop(backdrop)
+        let contentHost: NSView
+        if presentation == .bar {
+            let glass = ChromeGlass(
+                styleSheet: styleSheet,
+                cornerRadius: PanelMetrics.chromePillRadius,
+                tint: .panel
+            )
+            glass.autoresizingMask = [.width, .height]
+            glass.frame = bounds
+            glass.shadowRadius = 18
+            glass.shadowOffset = NSSize(width: 0, height: -4)
+            addSubview(glass)
+            self.glass = glass
+            contentHost = glass.contentView
+        } else {
+            installBackdrop(backdrop)
+            inspectorWell.wantsLayer = true
+            inspectorWell.layer?.cornerCurve = .continuous
+            inspectorWell.layer?.cornerRadius = PanelMetrics.nestedSurfaceRadius
+            addSubview(inspectorWell, positioned: .above, relativeTo: backdrop)
+            contentHost = self
+        }
 
         buildFindRow()
         buildReplaceRow()
@@ -231,12 +242,12 @@ final class FindBarView: NSView {
         rows.addArrangedSubview(findRow)
         rows.addArrangedSubview(replaceRow)
         replaceRow.isHidden = true
-        addSubview(rows)
+        contentHost.addSubview(rows)
 
         NSLayoutConstraint.activate([
-            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            rows.topAnchor.constraint(equalTo: topAnchor, constant: presentation == .inspector ? 8 : 6),
+            rows.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor, constant: PanelMetrics.inset),
+            rows.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor, constant: -PanelMetrics.inset),
+            rows.topAnchor.constraint(equalTo: contentHost.topAnchor, constant: presentation == .inspector ? 10 : 7),
             findRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
             replaceRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
         ])
@@ -260,40 +271,43 @@ final class FindBarView: NSView {
         setAccessibilityRole(.group)
         setAccessibilityLabel("Find")
 
-        // The .bar form floats over the document as a card rather than a
-        // full-width strip. Rounded corners let the material read as its own
-        // surface; `masksToBounds` clips the vibrancy to the card, and the
-        // layer border draws the polished outline on top of it. (A layer
-        // shadow cannot survive `masksToBounds`, so the outline stays flat;
-        // the pill's own height separates it from the page underneath.)
-        if presentation == .bar {
-            wantsLayer = true
-            layer?.cornerRadius = PanelMetrics.cornerRadius
-            layer?.masksToBounds = true
-            layer?.borderWidth = 1
-        } else {
-            // Inspector content is animated by its layer-backed host. Keep the
-            // find surface in that layer tree explicitly; without its own
-            // backing layer AppKit exposes and focuses the controls but never
-            // composites them above the nested material surface.
-            wantsLayer = true
-        }
+        wantsLayer = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    override func layout() {
+        super.layout()
+        glass?.frame = bounds
+        if presentation == .inspector {
+            let rowFrame = convert(findRow.bounds, from: findRow)
+            inspectorWell.frame = rowFrame.insetBy(dx: -2, dy: -3)
+        }
+    }
+
     private func buildFindRow() {
-        searchField.placeholderString = "Find"
+        searchField.placeholderString = "Find…"
         searchField.sendsWholeSearchString = false
         searchField.sendsSearchStringImmediately = true
         searchField.delegate = self
-        searchField.font = PanelFont.row
+        searchField.font = PanelFont.system(13.5)
         searchField.controlSize = .small
-        // The system ring is retired in favour of the field's own thin stroke
-        // (see FindFieldRing above).
+        searchField.isBezeled = false
+        searchField.drawsBackground = false
+        searchField.backgroundColor = .clear
+        searchField.cell?.isBezeled = false
+        (searchField.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         searchField.focusRingType = .none
         searchField.setAccessibilityLabel("Find")
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        leadingGlyph.image = NSImage(
+            systemSymbolName: "magnifyingglass",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .medium))
+        leadingGlyph.imageScaling = .scaleProportionallyDown
+        leadingGlyph.setAccessibilityElement(false)
+        leadingGlyph.widthAnchor.constraint(equalToConstant: 22).isActive = true
 
         warningImage.image = NSImage(
             systemSymbolName: "exclamationmark.triangle.fill",
@@ -323,8 +337,14 @@ final class FindBarView: NSView {
         }
         actions.append(contentsOf: [previous, next])
 
-        let previousButton = PanelButton.symbol("chevron.up", label: "Previous match", action: previous)
-        let nextButton = PanelButton.symbol("chevron.down", label: "Next match", action: next)
+        let previousButton = PanelButton.symbol(
+            "chevron.up", label: "Previous match", action: previous,
+            pointSize: 14, weight: .regular
+        )
+        let nextButton = PanelButton.symbol(
+            "chevron.down", label: "Next match", action: next,
+            pointSize: 14, weight: .regular
+        )
         self.previousButton = previousButton
         self.nextButton = nextButton
         findRow.translatesAutoresizingMaskIntoConstraints = false
@@ -339,26 +359,33 @@ final class FindBarView: NSView {
         findRow.orientation = .horizontal
         findRow.spacing = 6
         findRow.alignment = .centerY
-        let trailer = NSStackView()
-        trailer.orientation = .horizontal
-        trailer.spacing = 2
-        trailer.alignment = .centerY
-        for view in [statusLabel, previousButton, nextButton] {
-            trailer.addArrangedSubview(view)
-        }
         trailerDivider.wantsLayer = true
         trailerDivider.layer?.cornerRadius = 1
         trailerDivider.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        trailerDivider.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        trailerDivider.identifier = NSUserInterfaceItemIdentifier("find-divider")
+        trailerDivider.heightAnchor.constraint(equalToConstant: 18).isActive = true
 
-        var rowViews: [NSView] = [searchField, warningImage, trailerDivider, trailer, optionsButton]
+        optionsDivider.wantsLayer = true
+        optionsDivider.layer?.cornerRadius = 1
+        optionsDivider.identifier = NSUserInterfaceItemIdentifier("find-divider")
+        optionsDivider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        optionsDivider.heightAnchor.constraint(equalToConstant: 18).isActive = true
+
+        var rowViews: [NSView] = [
+            leadingGlyph, searchField, warningImage, statusLabel,
+            trailerDivider, previousButton, nextButton,
+            optionsDivider, optionsButton,
+        ]
         if presentation == .bar {
             let close = ButtonAction { [weak self] in
                 guard let self else { return }
                 self.delegate?.findBarDidRequestClose(self)
             }
             actions.append(close)
-            let closeButton = PanelButton.symbol("xmark", label: "Close find bar", action: close)
+            let closeButton = PanelButton.symbol(
+                "xmark", label: "Close find bar", action: close,
+                pointSize: 14, weight: .regular
+            )
             self.closeButton = closeButton
             rowViews.append(closeButton)
         }
@@ -465,7 +492,10 @@ final class FindBarView: NSView {
     override var intrinsicContentSize: NSSize {
         switch presentation {
         case .bar:
-            NSSize(width: NSView.noIntrinsicMetric, height: showsReplace ? 66 : 34)
+            NSSize(
+                width: NSView.noIntrinsicMetric,
+                height: showsReplace ? FindBarDensity.replaceHeight : FindBarDensity.barHeight
+            )
         case .inspector:
             NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
         }
@@ -503,6 +533,20 @@ final class FindBarView: NSView {
 
     private func applyStyle() {
         trailerDivider.layer?.backgroundColor = styleSheet.rule.cgColor
+        optionsDivider.layer?.backgroundColor = styleSheet.rule.cgColor
+        leadingGlyph.contentTintColor = styleSheet.accent
+        searchField.placeholderAttributedString = NSAttributedString(
+            string: "Find…",
+            attributes: [
+                .font: PanelFont.system(13.5),
+                .foregroundColor: styleSheet.textSecondary,
+            ]
+        )
+        inspectorWell.layer?.backgroundColor = styleSheet.surface
+            .panelAlpha(0.85, increaseContrast: styleSheet.increaseContrast).cgColor
+        inspectorWell.layer?.borderColor = styleSheet.rule
+            .panelAlpha(0.9, increaseContrast: styleSheet.increaseContrast).cgColor
+        inspectorWell.layer?.borderWidth = PanelMetrics.hairline
         // Chrome glyphs share the quiet text tint; AppKit's default is a
         // full-strength white that shouts over a dark themed surface.
         for button in [optionsButton, previousButton, nextButton, closeButton].compactMap({ $0 }) {
@@ -510,14 +554,7 @@ final class FindBarView: NSView {
         }
         // The focus ring echoes the theme's accent — the same "here" as the
         // pinned match count below.
-        searchField.ringColor = styleSheet.accent
         replaceField.ringColor = styleSheet.accent
-        // The bar's outline follows the theme so it stays legible in both
-        // appearances (the inspector form has no border width, so this is a
-        // no-op there).
-        if presentation == .bar {
-            layer?.borderColor = styleSheet.rule.cgColor
-        }
         applyStatusColor()
         warningImage.contentTintColor = styleSheet.changeColor(.deleted)
         applyValidity()
@@ -548,23 +585,6 @@ final class FindBarView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard presentation == .inspector else { return }
-        // A themed well under the field's native capsule.  Over the
-        // inspector's glass the system bezel alone is nearly invisible, and a
-        // field you cannot see is the first thing people report as broken.
-        let fieldFrame = convert(searchField.bounds, from: searchField)
-        if !fieldFrame.isEmpty {
-            let well = fieldFrame.insetBy(dx: -1, dy: -1.5)
-            let capsule = NSBezierPath(
-                roundedRect: well, xRadius: well.height / 2, yRadius: well.height / 2
-            )
-            styleSheet.surface
-                .panelAlpha(0.85, increaseContrast: styleSheet.increaseContrast).setFill()
-            capsule.fill()
-            styleSheet.rule
-                .panelAlpha(0.9, increaseContrast: styleSheet.increaseContrast).setStroke()
-            capsule.lineWidth = PanelMetrics.hairline
-            capsule.stroke()
-        }
         styleSheet.rule.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: PanelMetrics.hairline).fill()
     }
@@ -573,6 +593,16 @@ final class FindBarView: NSView {
         super.viewDidChangeEffectiveAppearance()
         applyStyle()
     }
+
+    var dividerCountForTesting: Int {
+        findRow.arrangedSubviews.count {
+            $0.identifier?.rawValue == "find-divider"
+        }
+    }
+
+    var hasCloseButtonForTesting: Bool { closeButton != nil }
+    var leadingGlyphIsAccessibleForTesting: Bool { leadingGlyph.isAccessibilityElement() }
+    var searchFieldIsBezeledForTesting: Bool { searchField.isBezeled }
 }
 
 // MARK: - Field editing
@@ -587,10 +617,16 @@ extension FindBarView: NSSearchFieldDelegate {
     /// field editor comes and goes.
     func controlTextDidBeginEditing(_ notification: Notification) {
         (notification.object as? NSControl)?.needsDisplay = true
+        if (notification.object as? NSSearchField) === searchField {
+            glass?.showsFocus = true
+        }
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
         (notification.object as? NSControl)?.needsDisplay = true
+        if (notification.object as? NSSearchField) === searchField {
+            glass?.showsFocus = false
+        }
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {

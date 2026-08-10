@@ -119,6 +119,13 @@ struct PanelAccessibilityTests {
     }
 
     @Test
+    func findAccentGlyphDoesNotDuplicateTheSearchFieldAnnouncement() {
+        let bar = FindBarView()
+        #expect(!bar.leadingGlyphIsAccessibleForTesting)
+        #expect(bar.accessibilityRole() == .group)
+    }
+
+    @Test
     func inspectorSectionNavigationStaysInSync() {
         let host = InspectorHostView()
         host.setContent(NSView(), section: .search)

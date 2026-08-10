@@ -31,6 +31,8 @@ PALETTE_PAIRS = [
     ("changeAdded", "background", 3.0, "changeAdded"),
     ("changeRemoved", "background", 3.0, "changeRemoved"),
     ("changeModified", "background", 3.0, "changeModified"),
+    ("textSecondary", "surface", 3.0, "placeholderOnGlass"),
+    ("textSecondary", "surface", 3.0, "secondaryGlyphOnBand"),
 ]
 
 CODE_PAIRS = [
@@ -126,7 +128,7 @@ def check_theme(name, data, results):
 
     for key, bg_key, threshold, label in PALETTE_PAIRS:
         fg_raw = palette.get(key)
-        bg_raw = background
+        bg_raw = palette.get(bg_key, background)
         if fg_raw is None or bg_raw is None:
             rows.append((label, color_label(fg_raw) if fg_raw else "MISSING", "-", "-", "SKIP"))
             continue

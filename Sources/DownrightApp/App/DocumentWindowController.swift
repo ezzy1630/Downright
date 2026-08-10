@@ -121,6 +121,7 @@ final class DocumentWindowController: NSWindowController {
     /// the toolbar item owns its view; the controller only needs them to keep
     /// their lit state in step with the panels they open.
     weak var toolbarFindButton: ToolbarActionButton?
+    var toolbarGlassBand: ToolbarGlassBand?
     /// The `···` button. Sections that live behind it morph out of it.
     weak var toolbarOverflowButton: ToolbarMenuButton?
     /// One update pill per window; created lazily by the toolbar and owned by
@@ -165,16 +166,19 @@ final class DocumentWindowController: NSWindowController {
     convenience init() {
         let window = DocumentWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1020, height: 780),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
-        window.titlebarAppearsTransparent = false
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.tabbingMode = .preferred
         // Session restoration is owned by DocumentStateStore. AppKit window
         // archives can resurrect obsolete toolbar item views across releases.
         window.isRestorable = false
         window.minSize = NSSize(width: 520, height: 400)
         self.init(window: window)
+        applyWindowAppearance(for: ThemeStore.shared.current)
+        window.backgroundColor = activeStyleSheet.background
         window.delegate = self
         buildInterface()
         window.setContentSize(NSSize(width: 1020, height: 728))
@@ -331,6 +335,15 @@ final class DocumentWindowController: NSWindowController {
     /// this chain has no height — and guessing which is slower than printing.
     func dumpLayoutIfRequested() {
         guard ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] != nil else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_FIND"] != nil,
+           findBar == nil
+        {
+            showFindBar(replace: false)
+            findBar?.alphaValue = 1
+            findBar?.layer?.setAffineTransform(.identity)
+        }
         if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_PANELS"] != nil {
             if taskPanel == nil { toggleTaskPanel() }
         }
@@ -450,6 +463,8 @@ final class DocumentWindowController: NSWindowController {
         toolbarPresentationControl?.styleSheet = activeStyleSheet
 
         rootView = DocumentRootView(backgroundColor: activeStyleSheet.background)
+        let toolbarGlassBand = ToolbarGlassBand(styleSheet: activeStyleSheet)
+        self.toolbarGlassBand = toolbarGlassBand
         barStack = NSStackView()
         barStack.orientation = .vertical
         barStack.spacing = 0
@@ -459,13 +474,13 @@ final class DocumentWindowController: NSWindowController {
         statusBarView = DocumentStatusBarView(styleSheet: activeStyleSheet)
         statusBarView.isVisible = Preferences.shared.values.showStatusBar
 
-        for view in [primaryContainer, barStack, statusBarView] as [NSView] {
+        for view in [toolbarGlassBand, primaryContainer, barStack, statusBarView] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
         // Keep transient bars (conflict, find) off the very top edge so a
         // centred find bar does not feel nailed to the toolbar.
-        barStack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+        barStack.edgeInsets = NSEdgeInsets(top: 14, left: 0, bottom: 0, right: 0)
 
         let documentController = NSViewController()
         documentController.view = rootView
@@ -495,7 +510,12 @@ final class DocumentWindowController: NSWindowController {
 
             barStack.leadingAnchor.constraint(equalTo: primaryContainer!.leadingAnchor),
             barStack.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
-            barStack.topAnchor.constraint(equalTo: rootView.topAnchor),
+            barStack.topAnchor.constraint(equalTo: rootView.safeAreaLayoutGuide.topAnchor),
+
+            toolbarGlassBand.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            toolbarGlassBand.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            toolbarGlassBand.topAnchor.constraint(equalTo: rootView.topAnchor),
+            toolbarGlassBand.bottomAnchor.constraint(equalTo: rootView.safeAreaLayoutGuide.topAnchor),
         ])
 
         buildToolbar()
@@ -776,6 +796,8 @@ final class DocumentWindowController: NSWindowController {
         // followed the theme before because nothing assigned it one.
         inspectorHost?.styleSheet = activeStyleSheet
         (rootView as? DocumentRootView)?.backgroundColor = activeStyleSheet.background
+        toolbarGlassBand?.styleSheet = activeStyleSheet
+        window?.backgroundColor = activeStyleSheet.background
         applyRenderConfiguration()
     }
 
@@ -1466,11 +1488,12 @@ final class DocumentWindowController: NSWindowController {
     /// scrolls instead of overrunning it).  During a flight the retarget path
     /// handles the re-aiming; this is the parked case.
     private func floatingHeightCap(in target: NSView) -> CGFloat {
-        max(
+        let availableHeight = max(0, target.bounds.height - target.safeAreaInsets.top)
+        return max(
             40,
             min(
-                FloatingPanelSurface.Top.windowHeightFraction * target.bounds.height,
-                target.bounds.height
+                FloatingPanelSurface.Top.windowHeightFraction * availableHeight,
+                availableHeight
             ) - 2 * PanelMetrics.floatingMargin
         )
     }
@@ -1492,7 +1515,10 @@ final class DocumentWindowController: NSWindowController {
         )
         let height = min(cap, desired)
         let margin = PanelMetrics.floatingMargin
-        let y = target.isFlipped ? margin : target.bounds.height - height - margin
+        let topInset = target.safeAreaInsets.top
+        let y = target.isFlipped
+            ? topInset + margin
+            : target.bounds.height - topInset - height - margin
         return NSRect(
             x: target.bounds.width - width - margin,
             y: y,
@@ -1771,11 +1797,16 @@ final class DocumentWindowController: NSWindowController {
                 constant: -2 * PanelMetrics.inset
             ).isActive = true
             bar = created
-            // #3 entrance: settle the pill in after the stack has laid it out.
+            // Settle the pill into the shared surface vocabulary.
+            created.wantsLayer = true
             created.alphaValue = 0
+            created.layer?.setAffineTransform(
+                CGAffineTransform(translationX: 0, y: 6).scaledBy(x: 0.97, y: 0.97)
+            )
             barStack.layoutSubtreeIfNeeded()
-            Motion.run(reduceMotion: activeStyleSheet.reduceMotion, duration: Motion.quick) { _ in
+            Motion.run(reduceMotion: activeStyleSheet.reduceMotion, duration: Motion.hover) { _ in
                 created.animator().alphaValue = 1
+                created.layer?.setAffineTransform(.identity)
             }
         }
 
@@ -1844,15 +1875,17 @@ final class DocumentWindowController: NSWindowController {
         if inspectorHost?.hasContent != true { closeInspector() }
         else { refreshToolbarSelectionState() }
 
-        // Exit: fade the pill out, then drop it from the stack. The stack keeps
-        // its space during the fade so the collapse happens after the pill is
-        // gone; Reduce Motion skips straight to removal.
+        // Exit reverses the same short settle. The stack keeps its space until
+        // the material has left; Reduce Motion skips straight to removal.
         guard let leaving, leaving.superview != nil else { return }
         if activeStyleSheet.reduceMotion {
             retire(leaving)
         } else {
-            Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+            Motion.run(reduceMotion: false, duration: Motion.hover) { _ in
                 leaving.animator().alphaValue = 0
+                leaving.layer?.setAffineTransform(
+                    CGAffineTransform(translationX: 0, y: 6).scaledBy(x: 0.97, y: 0.97)
+                )
             } completion: { [weak self] in
                 self?.retire(leaving)
             }
@@ -1875,6 +1908,7 @@ final class DocumentWindowController: NSWindowController {
         }
         bar.removeFromSuperview()
         bar.alphaValue = 1
+        bar.layer?.setAffineTransform(.identity)
     }
 
     var currentFindQuery: FindQuery { findSession.query }
@@ -2143,6 +2177,7 @@ final class DocumentWindowController: NSWindowController {
             }
             closeTaskPanel()
             window?.toolbar?.isVisible = false
+            toolbarGlassBand?.isHidden = true
             densityGutterView.isHidden = true
             breadcrumbView.isHidden = true
             refreshChangeSummaryTopInset()
@@ -2151,6 +2186,7 @@ final class DocumentWindowController: NSWindowController {
         } else {
             guard focusModeApplied else {
                 window?.toolbar?.isVisible = true
+                toolbarGlassBand?.isHidden = false
                 densityGutterView.isHidden = false
                 breadcrumbView.isHidden = false
                 refreshChangeSummaryTopInset()
@@ -2158,6 +2194,7 @@ final class DocumentWindowController: NSWindowController {
             }
             removeFocusDimmingViews(animated: animated)
             window?.toolbar?.isVisible = true
+            toolbarGlassBand?.isHidden = false
             densityGutterView.isHidden = false
             breadcrumbView.isHidden = false
             refreshChangeSummaryTopInset()

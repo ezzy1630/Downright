@@ -31,6 +31,9 @@ and drag the density gutter.
 - Use a single document column with generous side space.
 - Keep the toolbar unified and quiet. Show Source Focus chrome only while it
   is active.
+- Treat the titlebar band, find bar, and emphasized toolbar capsules as one
+  chrome-glass material family. Focus belongs to the containing surface, not
+  to a second field bezel nested inside it.
 - Use summonable panels for outline, tasks, find, history, and siblings.
 - Align breadcrumb, gutter, and document text to the same text column.
 - Use a folder workspace only when the user opens or asks for it. Do not show

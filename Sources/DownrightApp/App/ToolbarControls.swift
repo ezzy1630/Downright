@@ -84,10 +84,10 @@ enum ToolbarScrubPhase {
 final class ToolbarDocumentIdentityView: NSView {
     private enum Metrics {
         static let width: CGFloat = 220
-        static let height: CGFloat = 32
+        static let height: CGFloat = 36
         static let proxySize: CGFloat = 16
         static let dirtySize: CGFloat = 6
-        static let titleSize: CGFloat = 12
+        static let titleSize: CGFloat = 12.5
         static let contextSize: CGFloat = 10
         static let lineGap: CGFloat = 1
     }
@@ -402,18 +402,21 @@ extension ToolbarDocumentIdentityView: NSDraggingSource {
 final class ToolbarPresentationControl: NSView {
     var styleSheet: StyleSheet = .current {
         didSet {
+            glass.styleSheet = styleSheet
             documentButton.styleSheet = styleSheet
             sourceButton.styleSheet = styleSheet
+            selectionIndicator.backgroundColor = styleSheet.accent.cgColor
         }
     }
     private enum Metrics {
-        static let width: CGFloat = 176
-        static let height: CGFloat = 32
-        static let segmentWidth: CGFloat = 88
-        static let indicatorWidth: CGFloat = 30
-        static let indicatorHeight: CGFloat = 1.5
+        static let width: CGFloat = 184
+        static let height: CGFloat = 34
+        static let segmentWidth: CGFloat = 91
+        static let indicatorWidth: CGFloat = 34
+        static let indicatorHeight: CGFloat = 2
     }
 
+    private let glass: ChromeGlass
     private let documentButton: ToolbarModeButton
     private let sourceButton: ToolbarModeButton
     private let selectionIndicator = CALayer()
@@ -439,6 +442,11 @@ final class ToolbarPresentationControl: NSView {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
     ) {
+        glass = ChromeGlass(
+            styleSheet: .current,
+            cornerRadius: 12,
+            tint: .control
+        )
         documentButton = ToolbarModeButton(
             title: "Document",
             typography: .document,
@@ -454,8 +462,15 @@ final class ToolbarPresentationControl: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
+        glass.shadowRadius = 8
+        glass.shadowOffset = NSSize(width: 0, height: -2)
+        glass.shadowOpacity = 0.08
+        glass.autoresizingMask = [.width, .height]
+        glass.frame = bounds
+        addSubview(glass)
+        glass.contentView.wantsLayer = true
         selectionIndicator.cornerRadius = Metrics.indicatorHeight / 2
-        layer?.addSublayer(selectionIndicator)
+        glass.contentView.layer?.addSublayer(selectionIndicator)
 
         documentButton.tag = 0
         sourceButton.tag = 1
@@ -469,7 +484,7 @@ final class ToolbarPresentationControl: NSView {
 
         for button in [documentButton, sourceButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(button)
+            glass.contentView.addSubview(button)
         }
 
         NSLayoutConstraint.activate([
@@ -524,6 +539,7 @@ final class ToolbarPresentationControl: NSView {
 
     override func layout() {
         super.layout()
+        glass.frame = bounds
         if scrubbedSegment == nil {
             updateSelectionIndicator(animated: false)
         }
@@ -531,7 +547,7 @@ final class ToolbarPresentationControl: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        selectionIndicator.backgroundColor = NSColor.labelColor.cgColor
+        selectionIndicator.backgroundColor = styleSheet.accent.cgColor
         refreshWindowEmphasis(animated: false)
     }
 
@@ -621,7 +637,7 @@ final class ToolbarPresentationControl: NSView {
         CATransaction.setDisableActions(true)
         selectionIndicator.frame = NSRect(
             x: centerX - (Metrics.indicatorWidth / 2),
-            y: 2,
+            y: 4,
             width: Metrics.indicatorWidth,
             height: Metrics.indicatorHeight
         )
@@ -633,11 +649,11 @@ final class ToolbarPresentationControl: NSView {
         let selectedFrame = selectedSegment == 0 ? documentButton.frame : sourceButton.frame
         let frame = NSRect(
             x: selectedFrame.midX - (Metrics.indicatorWidth / 2),
-            y: 2,
+            y: 4,
             width: Metrics.indicatorWidth,
             height: Metrics.indicatorHeight
         )
-        selectionIndicator.backgroundColor = NSColor.labelColor.cgColor
+        selectionIndicator.backgroundColor = styleSheet.accent.cgColor
         guard animated, !styleSheet.reduceMotion else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -921,8 +937,8 @@ private final class ToolbarModeButton: ToolbarInteractiveButton {
 @MainActor
 final class ToolbarMenuButton: ToolbarInteractiveButton {
     private enum Metrics {
-        static let width: CGFloat = 30
-        static let height: CGFloat = 30
+        static let width: CGFloat = PanelMetrics.toolbarControlSide
+        static let height: CGFloat = PanelMetrics.toolbarControlSide
         static let cornerRadius: CGFloat = 7
     }
 
@@ -996,9 +1012,12 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
 /// cluster reads as one row of controls rather than as a row of near-misses.
 final class ToolbarActionButton: ToolbarInteractiveButton {
     private enum Metrics {
-        static let side: CGFloat = 30
+        static let side: CGFloat = PanelMetrics.toolbarControlSide
         static let cornerRadius: CGFloat = 7
     }
+
+    private var glass: ChromeGlass?
+    private let symbolView = NSImageView()
 
     /// Lit the way the task ring lights when its panel is open, so "this panel
     /// is showing" is said the same way by every control that owns one.
@@ -1006,19 +1025,31 @@ final class ToolbarActionButton: ToolbarInteractiveButton {
         didSet {
             guard isOn != oldValue else { return }
             refreshInteractionFeedback(animated: window != nil)
+            applyTint()
             needsDisplay = true
         }
     }
 
     override func styleSheetDidChange() { applyTint() }
 
-    init(symbol: String, label: String, help: String, target: AnyObject?, action: Selector) {
+    init(
+        symbol: String,
+        label: String,
+        help: String,
+        target: AnyObject?,
+        action: Selector,
+        usesGlassSurface: Bool = false
+    ) {
         super.init(frame: .zero)
         feedbackInsetX = 1
         feedbackInsetY = 1
         feedbackCornerRadius = Metrics.cornerRadius
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+        let configuredImage = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(
+                pointSize: usesGlassSurface ? 15 : 13,
+                weight: .medium
+            ))
+        image = usesGlassSurface ? nil : configuredImage
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
         bezelStyle = .accessoryBarAction
@@ -1030,6 +1061,24 @@ final class ToolbarActionButton: ToolbarInteractiveButton {
         setAccessibilityLabel(label)
         setAccessibilityHelp(help)
         toolTip = help
+        if usesGlassSurface {
+            let glass = ChromeGlass(
+                styleSheet: styleSheet,
+                cornerRadius: PanelMetrics.toolbarControlSide / 2,
+                tint: .control
+            )
+            glass.passesThroughHits = true
+            glass.shadowRadius = 8
+            glass.shadowOffset = NSSize(width: 0, height: -2)
+            glass.shadowOpacity = 0.10
+            glass.autoresizingMask = [.width, .height]
+            addSubview(glass)
+            symbolView.image = configuredImage
+            symbolView.imageScaling = .scaleProportionallyDown
+            symbolView.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
+            glass.contentView.addSubview(symbolView)
+            self.glass = glass
+        }
         applyTint()
     }
 
@@ -1039,14 +1088,25 @@ final class ToolbarActionButton: ToolbarInteractiveButton {
         NSSize(width: Metrics.side, height: Metrics.side)
     }
 
+    override func layout() {
+        super.layout()
+        glass?.frame = bounds
+        symbolView.frame = bounds.insetBy(dx: 8, dy: 8)
+    }
+
     private func applyTint() {
-        contentTintColor = isOn ? styleSheet.accent : nil
+        let tint = isOn ? styleSheet.accent : styleSheet.text
+        contentTintColor = tint
+        symbolView.contentTintColor = tint
+        glass?.styleSheet = styleSheet
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyTint()
     }
+
+    var usesGlassSurfaceForTesting: Bool { glass != nil }
 }
 
 /// The trailing cluster as one toolbar item: activity, Find, the task ring,
@@ -1066,7 +1126,7 @@ final class ToolbarTrailingCluster: NSStackView {
         /// Edge-to-edge gap between neighbours.  Tight enough that the row
         /// reads as one cluster against the trailing edge, wide enough that
         /// two adjacent hover plates never touch.
-        static let spacing: CGFloat = 6
+        static let spacing: CGFloat = 8
     }
 
     init(views: [NSView]) {

@@ -140,7 +140,10 @@ struct WindowChromeTests {
 
         #expect(controller.window?.isRestorable == false)
         #expect(controller.window?.delegate === controller)
-        #expect(controller.window?.titlebarAppearsTransparent == false)
+        #expect(controller.window?.titlebarAppearsTransparent == true)
+        #expect(controller.window?.styleMask.contains(.fullSizeContentView) == true)
+        #expect(controller.window?.titlebarSeparatorStyle == NSTitlebarSeparatorStyle.none)
+        #expect(controller.toolbarGlassBand != nil)
         #expect(controller.window?.toolbarStyle == .unified)
         #expect(controller.primaryContainer.leadingAccessory === controller.densityGutterView)
         #expect(controller.primaryContainer.trailingAccessory == nil)
@@ -159,7 +162,7 @@ struct WindowChromeTests {
                 as? ToolbarDocumentIdentityView
         )
         #expect(identity.intrinsicContentSize.width == 220)
-        #expect(identity.intrinsicContentSize.height == 32)
+        #expect(identity.intrinsicContentSize.height == 36)
         #expect(controller.window?.titleVisibility == .hidden)
 
         let modeItem = try #require(
@@ -169,8 +172,8 @@ struct WindowChromeTests {
         #expect(!mode.isHidden)
         #expect(mode.segmentTitles == ["Document", "Source"])
         #expect(mode.selectedSegment == 0)
-        #expect(mode.intrinsicContentSize.width == 176)
-        #expect(mode.intrinsicContentSize.height == 32)
+        #expect(mode.intrinsicContentSize.width == 184)
+        #expect(mode.intrinsicContentSize.height == 34)
 
         controller.primaryContainer.textView.focusEntireSource()
         controller.refreshSourceFocusToolbar()
@@ -190,7 +193,7 @@ struct WindowChromeTests {
                 as? ToolbarTrailingCluster,
             "the trailing cluster is not a toolbar item"
         )
-        #expect(cluster.spacing == 6)
+        #expect(cluster.spacing == 8)
         #expect(cluster.alignment == .centerY)
         // Find is in the cluster, not inside the `···` overflow.  The overflow
         // used to be the only interactive control on the trailing edge, which
@@ -200,8 +203,9 @@ struct WindowChromeTests {
             cluster.arrangedSubviews.first { $0 is ToolbarActionButton } as? ToolbarActionButton,
             "find is not in the trailing cluster"
         )
-        #expect(find.intrinsicContentSize.width == 30)
-        #expect(find.intrinsicContentSize.height == 30)
+        #expect(find.intrinsicContentSize.width == 34)
+        #expect(find.intrinsicContentSize.height == 34)
+        #expect(find.usesGlassSurfaceForTesting)
         #expect(!find.isOn, "find should rest unlit with its panel closed")
         #expect(cluster.arrangedSubviews.contains { $0 is ActivityIndicatorView })
         #expect(cluster.arrangedSubviews.contains { $0 is TaskProgressRing })
@@ -212,8 +216,8 @@ struct WindowChromeTests {
             cluster.arrangedSubviews.first { $0 is ToolbarMenuButton } as? ToolbarMenuButton,
             "the overflow menu is not in the trailing cluster"
         )
-        #expect(overflow.intrinsicContentSize.width == 30)
-        #expect(overflow.intrinsicContentSize.height == 30)
+        #expect(overflow.intrinsicContentSize.width == 34)
+        #expect(overflow.intrinsicContentSize.height == 34)
         #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })
         #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
         // The cluster leads with the spinner and ends at the menu: activity,
@@ -251,6 +255,14 @@ struct WindowChromeTests {
         #expect(controller.changeSummaryBar?.superview !== controller.barStack)
         #expect(controller.barStack.frame.height > 0)
         #expect(controller.primaryContainer.frame.minY >= controller.barStack.frame.maxY - 0.5)
+        let root = try #require(controller.barStack.superview)
+        let stackTop = root.isFlipped
+            ? controller.barStack.frame.minY
+            : controller.barStack.frame.maxY
+        let safeTop = root.isFlipped
+            ? root.bounds.minY + root.safeAreaInsets.top
+            : root.bounds.maxY - root.safeAreaInsets.top
+        #expect(abs(stackTop - safeTop) < 0.5)
     }
 
     @Test
@@ -360,9 +372,45 @@ struct WindowChromeTests {
         controller.showFindBar(replace: false)
 
         #expect(controller.findBar?.superview === controller.barStack)
+        #expect(controller.findBar?.intrinsicContentSize.height == FindBarDensity.barHeight)
+        #expect(controller.findBar?.dividerCountForTesting == 2)
+        #expect(controller.findBar?.hasCloseButtonForTesting == true)
+        #expect(controller.findBar?.searchFieldIsBezeledForTesting == false)
+
+        controller.toolbarFindButton?.performClick(nil)
+        #expect(controller.findBar == nil)
+        controller.toolbarFindButton?.performClick(nil)
+        #expect(controller.findBar != nil)
 
         controller.dismissFindBar()
         #expect(controller.findBar == nil)
+    }
+
+    @Test
+    func inspectorFindKeepsTheSameRhythmWithoutADuplicateClose() {
+        let bar = FindBarView(styleSheet: .current, presentation: .inspector)
+        #expect(bar.dividerCountForTesting == 2)
+        #expect(!bar.hasCloseButtonForTesting)
+        #expect(!bar.searchFieldIsBezeledForTesting)
+    }
+
+    @Test
+    func chromeGlassAccessibilityFallbackPolicyIsExplicit() {
+        #expect(!ChromeGlass.supportsGlass(
+            osSupportsGlass: true,
+            reduceTransparency: true,
+            increaseContrast: false
+        ))
+        #expect(!ChromeGlass.supportsGlass(
+            osSupportsGlass: true,
+            reduceTransparency: false,
+            increaseContrast: true
+        ))
+        #expect(!ChromeGlass.supportsGlass(
+            osSupportsGlass: false,
+            reduceTransparency: false,
+            increaseContrast: false
+        ))
     }
 
     @Test

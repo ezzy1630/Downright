@@ -296,7 +296,8 @@ struct FloatingTaskPanelTests {
         let inWindow = surfaceRectInDocumentWindow(surface, parent: controller.window!)
         let content = try #require(controller.window?.contentView)
         let contentInWindow = content.convert(content.bounds, to: nil)
-        #expect(abs(contentInWindow.maxY - inWindow.maxY - PanelMetrics.floatingMargin) < 0.5)
+        let safeTop = contentInWindow.maxY - content.safeAreaInsets.top
+        #expect(abs(safeTop - inWindow.maxY - PanelMetrics.floatingMargin) < 0.5)
         #expect(abs(contentInWindow.maxX - inWindow.maxX - PanelMetrics.floatingMargin) < 0.5)
     }
 
@@ -332,7 +333,8 @@ struct FloatingTaskPanelTests {
         controller.window?.layoutIfNeeded()
         let panel = try #require(controller.taskPanel)
         let host = try #require(controller.inspectorHost)
-        let cap = try #require(controller.window?.contentView).bounds.height
+        let content = try #require(controller.window?.contentView)
+        let cap = (content.bounds.height - content.safeAreaInsets.top)
             * FloatingPanelSurface.Top.windowHeightFraction
             - 2 * PanelMetrics.floatingMargin
         if taskCount == 40 {
@@ -506,7 +508,8 @@ struct FloatingTaskPanelTests {
 
         let surfaceInWindow = surfaceRectInDocumentWindow(surface, parent: window)
         let contentInWindow = content.convert(content.bounds, to: nil)
-        #expect(abs(contentInWindow.maxY - surfaceInWindow.maxY - PanelMetrics.floatingMargin) < 0.5)
+        let safeTop = contentInWindow.maxY - content.safeAreaInsets.top
+        #expect(abs(safeTop - surfaceInWindow.maxY - PanelMetrics.floatingMargin) < 0.5)
         #expect(abs(contentInWindow.maxX - surfaceInWindow.maxX - PanelMetrics.floatingMargin) < 0.5)
         #expect(surface.frame.width > 0)
         #expect(surface.frame.height > 0)
