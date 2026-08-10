@@ -553,6 +553,30 @@ struct FloatingTaskPanelTests {
         #expect(!controller.progressRing.isActive)
     }
 
+    @Test("A rapid open-close reversal lands cleanly and remains reusable")
+    func rapidTaskPanelToggleRetargetsOneMorph() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+        let window = try #require(controller.window)
+        window.makeKeyAndOrderFront(nil)
+
+        controller.toggleTaskPanel()
+        #expect(controller.floatingSurface != nil)
+        #expect(controller.hasMorphVesselForTesting)
+
+        controller.closeTaskPanel()
+        controller.settleMorphForTesting()
+        #expect(controller.floatingSurface == nil)
+        #expect(!controller.hasMorphVesselForTesting)
+        #expect(!controller.progressRing.isActive)
+
+        controller.toggleTaskPanel()
+        controller.settleMorphForTesting()
+        #expect(controller.floatingSurface != nil)
+        #expect(!controller.hasMorphVesselForTesting)
+        #expect(controller.progressRing.isActive)
+    }
+
     @Test("A resign-key and become-key cycle preserves the floating panel")
     func panelSurvivesWindowActivationCycle() throws {
         let (_, cleanup, controller) = try makeDocument()

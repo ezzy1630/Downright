@@ -45,6 +45,8 @@ final class DocumentWindowController: NSWindowController {
     /// The travelling glass body, kept while any trip is in flight and
     /// removed on settle.  One vessel serves every trip in the window.
     private var morphVessel: MorphVessel?
+    var hasMorphVesselForTesting: Bool { morphVessel != nil }
+    func settleMorphForTesting() { morphVessel?.springsSettleImmediately() }
     /// Where the vessel currently in flight is headed. A window resize can
     /// re-aim the floating body without changing its direction.
     private enum MorphDestination {
@@ -595,7 +597,8 @@ final class DocumentWindowController: NSWindowController {
         case .floating:
             Motion.MorphAnchor(
                 frame: floatingDestinationAnchor(in: window),
-                cornerRadius: FloatingPanelSurface.Top.cornerRadius
+                cornerRadius: FloatingPanelSurface.Top.cornerRadius,
+                tint: FloatingPanelSurface.glassTint(activeStyleSheet)
             )
         case .toolTop:
             floatingSourceAnchor(in: window)
@@ -1299,11 +1302,12 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: Morphing arrivals
 
-    /// Whether this window can fly a travelling glass vessel.  Reduce Motion
-    /// keeps the existing unfurl so a reader who asked for less motion still
-    /// gets exactly the animation they accepted.
+    /// Whether this window can fly a travelling glass vessel. Reduce Motion
+    /// takes the instant presentation path: no vessel, unfurl, or scale.
     private var canMorphInspector: Bool {
-        guard window != nil, !activeStyleSheet.reduceMotion else { return false }
+        guard let window, window.isVisible, window.screen != nil,
+              !activeStyleSheet.reduceMotion
+        else { return false }
         return true
     }
 
@@ -1317,14 +1321,13 @@ final class DocumentWindowController: NSWindowController {
         return window.contentView ?? NSView()
     }
 
-    /// The Tasks panel pours out of the toolbar edge and hangs over the
-    /// document: the travelling glass aimed at a measured frame instead of at
-    /// the docked pane.  The height is content-driven with a ceiling — the
+    /// The Tasks panel morphs from the toolbar ring and hangs over the
+    /// document: travelling glass is aimed at a measured frame instead of a
+    /// docked pane. The height is content-driven with a ceiling — the
     /// surface is measured once at the cap (60% of the window's content
     /// height) at its full width, then fitted to the list's own document
-    /// height — and the arrival travels one axis, straight down from a sliver
-    /// of the surface's own top edge, so the reveal reads as a pour rather
-    /// than as a balloon.
+    /// height. Offscreen and Reduce Motion presentations use the deterministic
+    /// sliver path; visible windows use the ring-to-card vessel.
     ///
     /// Dismissal rule for the floating surface — one panel, one way out, all
     /// listed here so the contract lives in one place: Esc, the header close
@@ -1333,6 +1336,7 @@ final class DocumentWindowController: NSWindowController {
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
         guard let window, let target = window.contentView else { return }
+        let morphs = canMorphInspector
         let width = min(
             surface.preferredWidth,
             max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
@@ -1353,6 +1357,7 @@ final class DocumentWindowController: NSWindowController {
         let shadowMargin = PanelMetrics.floatingShadowMargin
         let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
         let child = FloatingPanelWindow(frame: childFrame)
+        child.appearance = ChromeGlass.materialAppearance(activeStyleSheet)
         child.floatingSurface = surface
         child.onOutsideMouseDown = { [weak self] in
             self?.restoreFloatingFocusAndClose()
@@ -1367,6 +1372,10 @@ final class DocumentWindowController: NSWindowController {
             width: resting.width,
             height: resting.height
         )
+        if morphs {
+            surface.alphaValue = 0
+            surface.prepareForMorphArrival()
+        }
 
         surface.configureWindowFrames(
             resting: resting,
@@ -1422,16 +1431,78 @@ final class DocumentWindowController: NSWindowController {
             }
         }
         floatingSurfaceFrame = resting
-        surface.presentFromSliver(animated: !activeStyleSheet.reduceMotion)
+        if morphs {
+            morphDestination = .floating
+            let vessel = makeMorphVessel(in: window)
+            let destination = Motion.MorphAnchor(
+                frame: floatingDestinationAnchor(in: window),
+                cornerRadius: FloatingPanelSurface.Top.cornerRadius,
+                tint: FloatingPanelSurface.glassTint(activeStyleSheet)
+            )
+            vessel.fly(
+                MorphVessel.Trip(
+                    from: floatingSourceAnchor(in: window),
+                    to: destination,
+                    incomingContent: surface,
+                    outgoingContent: progressRing,
+                    onHandoff: { [weak surface] in
+                        surface?.playMorphArrivalDetails()
+                    },
+                    onSettle: { [weak self, weak vessel, weak surface] in
+                        surface?.alphaValue = 1
+                        vessel?.removeFromSuperview()
+                        guard let self else { return }
+                        if self.morphVessel === vessel { self.morphVessel = nil }
+                        guard let surface, self.floatingSurface === surface else { return }
+                        self.refitFloatingSurface()
+                        self.focusFloatingSurface(surface)
+                        (surface.content as? InspectorHostView)?.syncCloseVisibilityWithPointer()
+                        self.refreshToolbarSelectionState()
+                    }
+                ),
+                window: window
+            )
+        } else {
+            surface.presentFromSliver(animated: !activeStyleSheet.reduceMotion)
+            focusFloatingSurface(surface)
+        }
         refreshToolbarSelectionState()
-        focusFloatingSurface(surface)
     }
 
-    /// The same surface retreats into its sliver. There is no empty vessel and
-    /// no content cut: the child window and material body share one spring.
+    /// The same surface retreats into the toolbar ring. Offscreen and Reduce
+    /// Motion dismissals use the deterministic sliver path.
     private func dismissFloatingSurface() {
         guard let surface = floatingSurface else {
             removeFloatingSurface()
+            return
+        }
+        if canMorphInspector, let window {
+            surface.prepareForMorphDismissal()
+            morphDestination = .toolTop
+            let vessel = makeMorphVessel(in: window)
+            vessel.fly(
+                MorphVessel.Trip(
+                    from: Motion.MorphAnchor(
+                        frame: floatingDestinationAnchor(in: window),
+                        cornerRadius: FloatingPanelSurface.Top.cornerRadius,
+                        tint: FloatingPanelSurface.glassTint(activeStyleSheet)
+                    ),
+                    to: floatingSourceAnchor(in: window),
+                    incomingContent: nil,
+                    outgoingContent: surface,
+                    onHandoff: { [weak self, weak surface] in
+                        guard let self, self.floatingSurface === surface else { return }
+                        self.removeFloatingSurface()
+                    },
+                    onSettle: { [weak self, weak vessel] in
+                        vessel?.removeFromSuperview()
+                        guard let self else { return }
+                        if self.morphVessel === vessel { self.morphVessel = nil }
+                        self.refreshToolbarSelectionState()
+                    }
+                ),
+                window: window
+            )
             return
         }
         surface.dismissToSliver(animated: !activeStyleSheet.reduceMotion)
@@ -1457,29 +1528,54 @@ final class DocumentWindowController: NSWindowController {
         floatingSurface = nil
     }
 
-    /// The pour's resting place in window space — the surface's own frame,
+    /// The morph's resting place in window space — the surface's own frame,
     /// or the frame it last rested at once the dismissal hands it off.
     private func floatingDestinationAnchor(in window: NSWindow) -> NSRect {
-        if let surface = floatingSurface, surface.window === window {
-            return surface.convert(surface.bounds, to: nil)
+        if let surface = floatingSurface, let target = window.contentView {
+            let width = min(
+                surface.preferredWidth,
+                max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
+            )
+            let frame = floatingFrame(
+                for: surface,
+                in: target,
+                width: width,
+                cap: floatingHeightCap(in: target)
+            )
+            floatingSurfaceFrame = screenFrame(frame, in: target, window: window)
+            return target.convert(frame, to: nil)
         }
-        return floatingSurfaceFrame
+        return window.convertFromScreen(floatingSurfaceFrame)
     }
 
-    /// Where the pour starts: a sliver of the surface's own width flush with
-    /// the content's top edge, under the ring's column.  The glass grows one
-    /// axis — down — so the reveal reads as pouring out of the toolbar edge,
-    /// not as a card swelling from a button.
+    /// The ring-sized source anchor at the document's safe top edge.
     private func floatingSourceAnchor(in window: NSWindow) -> Motion.MorphAnchor {
         let destination = floatingDestinationAnchor(in: window)
+        let side = TaskProgressRing.morphSide
+        if progressRing.window === window {
+            let ring = progressRing.convert(progressRing.bounds, to: nil)
+            let contentTop = window.contentView.map { $0.convert($0.bounds, to: nil).maxY }
+                ?? destination.maxY
+            return Motion.MorphAnchor(
+                frame: NSRect(
+                    x: ring.midX - side / 2,
+                    y: contentTop - side,
+                    width: side,
+                    height: side
+                ),
+                cornerRadius: side / 2,
+                tint: activeStyleSheet.accent.withAlphaComponent(0.10)
+            )
+        }
         return Motion.MorphAnchor(
             frame: NSRect(
-                x: destination.minX,
-                y: destination.maxY - FloatingPanelSurface.Top.pourSliverHeight,
-                width: destination.width,
-                height: FloatingPanelSurface.Top.pourSliverHeight
+                x: destination.maxX - side,
+                y: destination.maxY - side,
+                width: side,
+                height: side
             ),
-            cornerRadius: FloatingPanelSurface.Top.cornerRadius
+            cornerRadius: side / 2,
+            tint: activeStyleSheet.accent.withAlphaComponent(0.10)
         )
     }
 
