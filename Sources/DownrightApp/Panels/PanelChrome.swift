@@ -53,6 +53,12 @@ enum PanelMetrics {
     /// Detached glass needs enough curvature to read as a soft body at panel
     /// scale; 14pt made the same material look like a clipped card.
     static let surfaceRadius: CGFloat = 20
+    /// Detached inspectors float inside the document rather than sharing the
+    /// tighter radius used by compact toolbar plates.
+    static let floatingSurfaceRadius: CGFloat = 26
+    static let floatingMargin: CGFloat = 22
+    /// Space reserved by the transparent child window for the body's shadow.
+    static let floatingShadowMargin: CGFloat = 40
     static let nestedSurfaceRadius: CGFloat = 10
     static let hairline: CGFloat = 1
 
@@ -63,7 +69,44 @@ enum PanelMetrics {
         bounds.insetBy(dx: 3, dy: 1)
     }
 
-    static let rowSurfaceRadius: CGFloat = 7
+    static let rowSurfaceRadius: CGFloat = 10
+
+    /// A cubic superellipse approximation for masks that must match a
+    /// `.continuous` layer corner. `CGPath(roundedRect:)` is circular and
+    /// leaves a visible mismatch between the glass edge and its reveal mask.
+    static func continuousRoundedPath(rect: CGRect, radius: CGFloat) -> CGPath {
+        let r = min(max(0, radius), min(rect.width, rect.height) / 2)
+        guard r > 0 else { return CGPath(rect: rect, transform: nil) }
+        let control = r * 0.447_715
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX + r, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + r),
+            control1: CGPoint(x: rect.maxX - control, y: rect.minY),
+            control2: CGPoint(x: rect.maxX, y: rect.minY + control)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX - r, y: rect.maxY),
+            control1: CGPoint(x: rect.maxX, y: rect.maxY - control),
+            control2: CGPoint(x: rect.maxX - control, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - r),
+            control1: CGPoint(x: rect.minX + control, y: rect.maxY),
+            control2: CGPoint(x: rect.minX, y: rect.maxY - control)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addCurve(
+            to: CGPoint(x: rect.minX + r, y: rect.minY),
+            control1: CGPoint(x: rect.minX, y: rect.minY + control),
+            control2: CGPoint(x: rect.minX + control, y: rect.minY)
+        )
+        path.closeSubpath()
+        return path
+    }
 
     static func capsuleRadius(forHeight height: CGFloat) -> CGFloat {
         // A capsule's radius is half its height, including for tiny controls.
@@ -118,11 +161,13 @@ enum PanelFont {
         .monospacedSystemFont(ofSize: size(base), weight: weight)
     }
     static var row: NSFont { .systemFont(ofSize: size(12.5)) }
+    static var taskRow: NSFont { .systemFont(ofSize: size(13.5)) }
     static var rowEmphasised: NSFont { .systemFont(ofSize: size(12.5), weight: .semibold) }
     static var secondary: NSFont { .systemFont(ofSize: size(11.5)) }
     static var header: NSFont { .systemFont(ofSize: size(12), weight: .semibold) }
     static var group: NSFont { .systemFont(ofSize: size(11.5), weight: .semibold) }
     static var title: NSFont { .systemFont(ofSize: size(13), weight: .semibold) }
+    static var floatingTitle: NSFont { .systemFont(ofSize: size(13), weight: .medium) }
 }
 
 // MARK: - Motion
@@ -196,6 +241,9 @@ enum RelativeTime {
 /// `NSColor` re-resolves when the effective appearance changes.
 final class PanelBackdrop: NSView {
     var styleSheet: StyleSheet { didSet { applyStyle() } }
+    /// Optional opaque replacement used when Reduce Transparency is on. It
+    /// keeps an accessibility-safe panel visually distinct from the page.
+    var opaqueSurfaceColor: NSColor? { didSet { applyStyle() } }
     /// When true, draws the theme's `surface` colour instead of the material —
     /// for panels that must read as a distinct card against the page rather
     /// than chrome that dissolves into it (§11.4).
@@ -331,7 +379,7 @@ final class PanelBackdrop: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard prefersOpaque || usesSurfaceFill else { return }
-        (usesSurfaceFill ? styleSheet.surface : styleSheet.background).setFill()
+        (opaqueSurfaceColor ?? (usesSurfaceFill ? styleSheet.surface : styleSheet.background)).setFill()
         dirtyRect.fill()
     }
 
@@ -1355,11 +1403,13 @@ final class PanelCheckbox: NSView {
     private var isHovering = false
     private var isPressed = false
     private let side: CGFloat
+    private let cornerRatio: CGFloat
 
     override var intrinsicContentSize: NSSize { NSSize(width: side, height: side) }
 
-    init(side: CGFloat = Geometry.panelSide) {
+    init(side: CGFloat = Geometry.panelSide, cornerRatio: CGFloat = Geometry.cornerRatio) {
         self.side = side
+        self.cornerRatio = cornerRatio
         super.init(frame: NSRect(x: 0, y: 0, width: side, height: side))
         wantsLayer = true
         for layer in [fillLayer, borderLayer, rippleLayer, checkLayer, dashLayer] {
@@ -1406,7 +1456,7 @@ final class PanelCheckbox: NSView {
         // The ring traces the box's own shape one step out, so focus reads as
         // "this checkbox" rather than as a rectangle near it.
         let rect = bounds.insetBy(dx: -2.5, dy: -2.5)
-        let radius = side * Geometry.cornerRatio + 2.5
+        let radius = side * cornerRatio + 2.5
         NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
     }
 
@@ -1454,7 +1504,7 @@ final class PanelCheckbox: NSView {
         // instead of straddling its edge and reading a hair too large.
         let inset = side * Geometry.openStrokeRatio / 2
         let rect = bounds.insetBy(dx: inset, dy: inset)
-        let radius = side * Geometry.cornerRatio
+        let radius = side * cornerRatio
         let box = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
         for layer in [fillLayer, borderLayer, checkLayer, dashLayer, rippleLayer] {

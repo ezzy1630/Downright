@@ -75,6 +75,9 @@ final class DocumentWindowController: NSWindowController {
     private weak var floatingFocusRestoreView: NSView?
     /// Notification tokens that keep a flying trip aimed at the live pane.
     private var morphRetargetTokens: [NSObjectProtocol] = []
+    /// Re-order the detached panel after app activation without rebuilding its
+    /// content or stealing an in-progress quick-add field.
+    private var floatingActivationObserver: NSObjectProtocol?
     var frontMatterEditor: FrontMatterEditorView?
     var assetDoctorPanel: AssetDoctorView?
     var tidySheetWindow: NSWindow?
@@ -1308,7 +1311,10 @@ final class DocumentWindowController: NSWindowController {
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
         guard let window, let target = window.contentView else { return }
-        let width = min(surface.preferredWidth, max(200, target.bounds.width - 16))
+        let width = min(
+            surface.preferredWidth,
+            max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
+        )
         let cap = floatingHeightCap(in: target)
         let frame = floatingFrame(for: surface, in: target, width: width, cap: cap)
         let resting = screenFrame(frame, in: target, window: window)
@@ -1319,11 +1325,26 @@ final class DocumentWindowController: NSWindowController {
             height: FloatingPanelSurface.Top.pourSliverHeight
         )
 
-        let child = FloatingPanelWindow(frame: sliver)
-        let childContent = NSView(frame: NSRect(origin: .zero, size: sliver.size))
+        // The child window is transparent, so it owns the final bounds from
+        // the first frame. The surface pours inside those bounds; resizing a
+        // real window on every display-link tick makes arrival step.
+        let shadowMargin = PanelMetrics.floatingShadowMargin
+        let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
+        let child = FloatingPanelWindow(frame: childFrame)
+        child.floatingSurface = surface
+        child.onOutsideMouseDown = { [weak self] in
+            self?.restoreFloatingFocusAndClose()
+        }
+        let childContent = NSView(frame: NSRect(origin: .zero, size: childFrame.size))
         childContent.autoresizingMask = [.width, .height]
-        childContent.clipsToBounds = true
+        childContent.clipsToBounds = false
         child.contentView = childContent
+        surface.frame = NSRect(
+            x: shadowMargin,
+            y: shadowMargin,
+            width: resting.width,
+            height: resting.height
+        )
 
         surface.configureWindowFrames(
             resting: resting,
@@ -1331,9 +1352,17 @@ final class DocumentWindowController: NSWindowController {
             contentHeight: frame.height
         )
         surface.onWindowFrameChange = { [weak child, weak surface] frame in
-            child?.setFrame(frame, display: true)
-            guard let surface, let content = child?.contentView else { return }
-            surface.frame = content.bounds
+            guard let child, let surface else { return }
+            child.setFrame(
+                frame.insetBy(dx: -shadowMargin, dy: -shadowMargin),
+                display: true
+            )
+            surface.frame = NSRect(
+                x: shadowMargin,
+                y: shadowMargin,
+                width: frame.width,
+                height: frame.height
+            )
             surface.needsLayout = true
         }
         surface.onFrameSpringSettled = { [weak self, weak surface] in
@@ -1349,8 +1378,9 @@ final class DocumentWindowController: NSWindowController {
         surface.layoutSubtreeIfNeeded()
         window.addChildWindow(child, ordered: .above)
         child.orderFront(nil)
+        surface.refreshGlassAfterWindowAttach()
 
-        surface.setRestingFrame(sliver)
+        surface.setRestingFrame(resting)
         surface.layoutSubtreeIfNeeded()
         floatingSurface = surface
         floatingPanelWindow = child
@@ -1358,6 +1388,15 @@ final class DocumentWindowController: NSWindowController {
             documentWindow.floatingSurface = surface
             documentWindow.onFloatingOutsideMouseDown = { [weak self] in
                 self?.restoreFloatingFocusAndClose()
+            }
+        }
+        floatingActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.restoreFloatingPanelWindow()
             }
         }
         floatingSurfaceFrame = resting
@@ -1380,6 +1419,10 @@ final class DocumentWindowController: NSWindowController {
         if let documentWindow = window as? DocumentWindow {
             documentWindow.floatingSurface = nil
             documentWindow.onFloatingOutsideMouseDown = nil
+        }
+        if let floatingActivationObserver {
+            NotificationCenter.default.removeObserver(floatingActivationObserver)
+            self.floatingActivationObserver = nil
         }
         floatingPanelWindow?.orderOut(nil)
         if let parent = window, let child = floatingPanelWindow {
@@ -1423,9 +1466,12 @@ final class DocumentWindowController: NSWindowController {
     /// scrolls instead of overrunning it).  During a flight the retarget path
     /// handles the re-aiming; this is the parked case.
     private func floatingHeightCap(in target: NSView) -> CGFloat {
-        min(
-            FloatingPanelSurface.Top.windowHeightFraction * target.bounds.height,
-            max(40, target.bounds.height - 20)
+        max(
+            40,
+            min(
+                FloatingPanelSurface.Top.windowHeightFraction * target.bounds.height,
+                target.bounds.height
+            ) - 2 * PanelMetrics.floatingMargin
         )
     }
 
@@ -1445,9 +1491,10 @@ final class DocumentWindowController: NSWindowController {
             FloatingPanelSurface.Top.minimumContentHeight
         )
         let height = min(cap, desired)
-        let y = target.isFlipped ? 0 : target.bounds.height - height
+        let margin = PanelMetrics.floatingMargin
+        let y = target.isFlipped ? margin : target.bounds.height - height - margin
         return NSRect(
-            x: target.bounds.width - width,
+            x: target.bounds.width - width - margin,
             y: y,
             width: width,
             height: height
@@ -1458,11 +1505,14 @@ final class DocumentWindowController: NSWindowController {
         window.convertToScreen(view.convert(frame, to: nil))
     }
 
-    private func refitFloatingSurface() {
+    private func refitFloatingSurface(animated: Bool = true) {
         guard let surface = floatingSurface, !surface.isDismissing,
               morphVessel == nil, let window, let target = window.contentView
         else { return }
-        let width = min(surface.preferredWidth, max(200, target.bounds.width - 16))
+        let width = min(
+            surface.preferredWidth,
+            max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
+        )
         let frame = floatingFrame(
             for: surface,
             in: target,
@@ -1481,7 +1531,7 @@ final class DocumentWindowController: NSWindowController {
             sliver: sliver,
             contentHeight: frame.height
         )
-        surface.retargetFrame(resting, animated: true)
+        surface.retargetFrame(resting, animated: animated)
         floatingSurfaceFrame = resting
         surface.layoutSubtreeIfNeeded()
     }
@@ -1501,6 +1551,16 @@ final class DocumentWindowController: NSWindowController {
         } else {
             panelWindow.makeFirstResponder(surface.content)
         }
+    }
+
+    private func restoreFloatingPanelWindow() {
+        guard let surface = floatingSurface,
+              let panelWindow = floatingPanelWindow,
+              panelWindow.parent === window,
+              surface.window === panelWindow
+        else { return }
+        panelWindow.orderFrontRegardless()
+        if !panelWindow.isKeyWindow { panelWindow.makeKey() }
     }
 
     private func restoreFloatingFocusAndClose() {
@@ -1538,6 +1598,9 @@ final class DocumentWindowController: NSWindowController {
             panel.delegate = self
             panel.styleSheet = activeStyleSheet
             panel.onContentSizeChange = { [weak self] in self?.refitFloatingSurface() }
+            panel.onImmediateContentSizeChange = { [weak self] in
+                self?.refitFloatingSurface(animated: false)
+            }
             taskPanel = panel
         }
         panel.tasks = markdownDocument.parsed.tasks
@@ -2109,7 +2172,7 @@ final class DocumentWindowController: NSWindowController {
 extension DocumentWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         restoreInitialReadingPositionIfReady()
-        if let surface = floatingSurface { focusFloatingSurface(surface) }
+        restoreFloatingPanelWindow()
         refreshToolbarSelectionState()
     }
 

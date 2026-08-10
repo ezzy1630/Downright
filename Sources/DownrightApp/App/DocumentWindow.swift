@@ -28,7 +28,9 @@ final class DocumentWindow: NSWindow {
         } else {
             return false
         }
-        return content.bounds.contains(contentPoint) && !surface.bounds.contains(surfacePoint)
+        let visibleBounds = (surface as? FloatingPanelSurface)?.visibleBodyBoundsForHitTesting
+            ?? surface.bounds
+        return content.bounds.contains(contentPoint) && !visibleBounds.contains(surfacePoint)
     }
 
     override func sendEvent(_ event: NSEvent) {

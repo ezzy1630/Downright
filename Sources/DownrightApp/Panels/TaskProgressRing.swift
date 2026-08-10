@@ -80,7 +80,10 @@ final class TaskProgressRing: NSView {
         /// than drawn.
         static let control: CGFloat = 30
         static let lineWidth: CGFloat = 2.5
-        static let plateRadius: CGFloat = PanelMetrics.controlRadius(forHeight: control)
+        /// The trigger carries the same surface curvature as the body. AppKit
+        /// clamps it to the 30pt control's capsule bounds, so the ring stays a
+        /// capsule while sharing the panel's radius family.
+        static let plateRadius: CGFloat = PanelMetrics.surfaceRadius
         static let countSize: CGFloat = 9.5
     }
 
@@ -290,7 +293,7 @@ final class TaskProgressRing: NSView {
         let complete = isComplete
         let hasTasks = progress.total > 0
 
-        feedbackLayer.backgroundColor = styleSheet.text.cgColor
+        feedbackLayer.backgroundColor = FloatingPanelSurface.glassTint(styleSheet).cgColor
         feedbackLayer.borderWidth = contrast ? 1 : 0.5
         feedbackLayer.borderColor = styleSheet.text
             .panelAlpha(contrast ? 0.55 : 0.18, increaseContrast: false).cgColor
@@ -451,8 +454,9 @@ final class TaskProgressRing: NSView {
 
         let pop = Motion.pop(
             from: ToolbarChromePolicy.ringPressedScale,
-            overshoot: 1.12,
-            travelAxis: CGVector(dx: 0, dy: 1)
+            overshoot: 1.08,
+            travelAxis: CGVector(dx: 0, dy: 1),
+            cornerRadius: Metrics.plateRadius
         )
         glyphLayer.removeAnimation(forKey: "press-transform")
         glyphLayer.add(pop, forKey: "press-transform")

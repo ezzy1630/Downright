@@ -8,6 +8,9 @@ import MarkdownRender
 /// boundary of the visible body while its height is being poured out.
 @MainActor
 final class FloatingPanelWindow: NSWindow {
+    weak var floatingSurface: FloatingPanelSurface?
+    var onOutsideMouseDown: (() -> Void)?
+
     init(frame: NSRect) {
         super.init(
             contentRect: frame,
@@ -18,14 +21,31 @@ final class FloatingPanelWindow: NSWindow {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        // A floating child keeps the glass surface above the document while
+        // the child relationship still lets AppKit sample the document below.
         level = .floating
         collectionBehavior = [.moveToActiveSpace]
         ignoresMouseEvents = false
         isReleasedWhenClosed = false
+        setAccessibilityRole(.window)
+        setAccessibilityLabel("Floating panel")
     }
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown,
+           let floatingSurface
+        {
+            let point = floatingSurface.convert(event.locationInWindow, from: nil)
+            if !floatingSurface.visibleBodyBoundsForHitTesting.contains(point) {
+                onOutsideMouseDown?()
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
 }
 
 /// A detached panel body. The body owns the material and geometry; the
@@ -39,12 +59,13 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         static let windowHeightFraction: CGFloat = 0.6
         static let minimumContentHeight: CGFloat = 132
         static let pourSliverHeight: CGFloat = 22
-        static let cornerRadius: CGFloat = PanelMetrics.surfaceRadius
+        static let cornerRadius: CGFloat = PanelMetrics.floatingSurfaceRadius
     }
 
     var styleSheet: StyleSheet {
         didSet {
             fallback.styleSheet = styleSheet
+            fallback.opaqueSurfaceColor = Self.opaqueFallbackColor(styleSheet)
             if let host = content as? InspectorHostView { host.styleSheet = styleSheet }
             updateMaterial()
             applySurfaceStyle()
@@ -63,6 +84,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private let fallback: PanelBackdrop
     private let rimGradient = CAGradientLayer()
     private let rimMask = CAShapeLayer()
+    private let revealMask = CAShapeLayer()
     private var glass: NSView?
     private var glassContent: NSView?
     private var glassLayoutContent: NSView?
@@ -72,7 +94,14 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         perceptualDuration: Motion.springDeliberate,
         bounce: 0.04
     )
+    private var revealSpring = Motion.SpringScalar(
+        value: 0,
+        perceptualDuration: Motion.springDeliberate,
+        bounce: 0.04
+    )
     private var hasSpringFrame = false
+    private var hasRevealSpring = false
+    private var frameSpringMoving = false
     private var springMoving = false
     private var restingWindowFrame = NSRect.zero
     private var sliverWindowFrame = NSRect.zero
@@ -111,8 +140,17 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         rimGradient.zPosition = 100
         layer?.addSublayer(rimGradient)
 
+        revealMask.fillColor = NSColor.black.cgColor
+        revealMask.actions = ["path": NSNull(), "frame": NSNull()]
+        layer?.mask = revealMask
+
         fallback.blendsWithinWindow = false
-        fallback.veilAlpha = 0.06
+        // Reduce Transparency is an explicit user choice. The fallback stays
+        // opaque, but it must read as a panel surface rather than borrowing
+        // the document's paper colour and disappearing into the page.
+        fallback.usesSurfaceFill = true
+        fallback.opaqueSurfaceColor = Self.opaqueFallbackColor(styleSheet)
+        fallback.veilAlpha = 0
         fallback.autoresizingMask = [.width, .height]
         fallback.frame = bounds
         addSubview(fallback, positioned: .below, relativeTo: nil)
@@ -132,11 +170,16 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         frameSpring.snap(to: frame)
         hasSpringFrame = true
         applyFrame(frame)
+        if !hasRevealSpring {
+            revealSpring.snap(to: frame.height)
+            hasRevealSpring = true
+            applyReveal()
+        }
     }
 
-    /// A child window keeps the body clipped to its visible frame. The panel's
-    /// content is still laid out at this final height while the body is a
-    /// sliver, with its top edge pinned to the body's top edge.
+    /// The child window stays at the final frame. The panel's content is laid
+    /// out at that height while the body is a sliver clipped by the reveal
+    /// mask, with its top edge pinned to the body's top edge.
     func configureWindowFrames(
         resting: NSRect,
         sliver: NSRect,
@@ -145,30 +188,34 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         restingWindowFrame = resting
         sliverWindowFrame = sliver
         contentLayoutHeight = max(0, contentHeight)
+        guard hasRevealSpring else { return }
+        revealSpring.target(isDismissing ? sliver.height : resting.height)
     }
 
     func presentFromSliver(animated: Bool) {
         isDismissing = false
         if !hasSpringFrame { setRestingFrame(sliverWindowFrame) }
+        revealSpring.snap(to: sliverWindowFrame.height)
+        applyReveal()
         guard animated, !styleSheet.reduceMotion else {
-            frameSpring.snap(to: restingWindowFrame)
-            applyFrame(frameSpring.rect)
+            revealSpring.snap(to: restingWindowFrame.height)
+            applyReveal()
             onFrameSpringSettled?()
             return
         }
-        frameSpring.target(restingWindowFrame)
+        revealSpring.target(restingWindowFrame.height)
         armSprings()
     }
 
     func dismissToSliver(animated: Bool) {
         isDismissing = true
         guard animated, !styleSheet.reduceMotion else {
-            frameSpring.snap(to: sliverWindowFrame)
-            applyFrame(frameSpring.rect)
+            revealSpring.snap(to: sliverWindowFrame.height)
+            applyReveal()
             onFrameSpringSettled?()
             return
         }
-        frameSpring.target(sliverWindowFrame)
+        revealSpring.target(sliverWindowFrame.height)
         armSprings()
     }
 
@@ -207,7 +254,9 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         if !hasSpringFrame { setRestingFrame(self.frame) }
         guard animated, !styleSheet.reduceMotion, window != nil, !inLiveResize else {
             frameSpring.snap(to: frame)
+            revealSpring.snap(to: isDismissing ? sliverWindowFrame.height : frame.height)
             applyFrame(frame)
+            applyReveal()
             return
         }
         frameSpring.target(frame)
@@ -215,21 +264,26 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     override func springTick(dt: CGFloat) -> Bool {
-        let moving = frameSpring.advance(dt: dt)
-        springMoving = moving
-        return moving
+        frameSpringMoving = frameSpring.advance(dt: dt)
+        let revealMoving = revealSpring.advance(dt: dt)
+        springMoving = frameSpringMoving || revealMoving
+        return springMoving
     }
 
     override func springApply() {
-        applyFrame(frameSpring.rect)
+        if frameSpringMoving { applyFrame(frameSpring.rect) }
+        applyReveal()
         guard !springMoving else { return }
         onFrameSpringSettled?()
     }
 
     override func springsSettleImmediately() {
         frameSpring.snap(to: frameSpring.target)
+        revealSpring.snap(to: revealSpring.target)
+        frameSpringMoving = false
         springMoving = false
         applyFrame(frameSpring.rect)
+        applyReveal()
         onFrameSpringSettled?()
     }
 
@@ -253,7 +307,51 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         let span = restingWindowFrame.height - sliverWindowFrame.height
         let progress = min(1, max(0, (frame.height - sliverWindowFrame.height) / span))
         let sliverOpacity = Motion.floatingSurfaceSliverOpacity
-        alphaValue = sliverOpacity + (1 - sliverOpacity) * progress
+        alphaValue = min(
+            1,
+            sliverOpacity + (1 - sliverOpacity) * progress
+                / Motion.floatingSurfacePresenceFraction
+        )
+    }
+
+    private func applyReveal() {
+        guard bounds.height > 0 else { return }
+        let height = min(bounds.height, max(0, revealSpring.value))
+        let progress = restingWindowFrame.height > sliverWindowFrame.height
+            ? min(1, max(0, (height - sliverWindowFrame.height)
+                / (restingWindowFrame.height - sliverWindowFrame.height)))
+            : 1
+        let radius = min(
+            Top.cornerRadius * (0.55 + 0.45 * progress),
+            min(bounds.width, max(1, height)) / 2
+        )
+        let visibleRect = NSRect(
+            x: bounds.minX,
+            y: bounds.maxY - height,
+            width: bounds.width,
+            height: height
+        )
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        revealMask.frame = bounds
+        revealMask.path = PanelMetrics.continuousRoundedPath(rect: visibleRect, radius: radius)
+        layer?.mask = height >= bounds.height - 0.5 ? nil : revealMask
+        layer?.shadowPath = revealMask.path
+        rimMask.frame = bounds
+        rimMask.path = PanelMetrics.continuousRoundedPath(
+            rect: visibleRect.insetBy(dx: 0.75, dy: 0.75),
+            radius: max(0, radius - 0.75)
+        )
+        let scale = 0.97 + 0.03 * progress
+        layer?.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
+        CATransaction.commit()
+        updateSurfaceOpacity(for: NSRect(
+            x: restingWindowFrame.minX,
+            y: restingWindowFrame.minY,
+            width: restingWindowFrame.width,
+            height: height
+        ))
+        needsLayout = true
     }
 
     override func layout() {
@@ -280,20 +378,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         }
         if !isHostingContentInGlass { content.frame = contentFrame }
 
-        layer?.shadowPath = CGPath(
-            roundedRect: bounds,
-            cornerWidth: Top.cornerRadius,
-            cornerHeight: Top.cornerRadius,
-            transform: nil
-        )
         rimGradient.frame = bounds
-        rimMask.frame = bounds
-        rimMask.path = CGPath(
-            roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
-            cornerWidth: max(0, Top.cornerRadius - 0.75),
-            cornerHeight: max(0, Top.cornerRadius - 0.75),
-            transform: nil
-        )
+        applyReveal()
     }
 
     var fittedContentHeight: CGFloat {
@@ -319,9 +405,28 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     static func glassTint(_ styleSheet: StyleSheet) -> NSColor {
-        styleSheet.background.withAlphaComponent(
-            styleSheet.increaseContrast ? 0.18 : 0.10
+        let isDark = Self.isDarkBackground(styleSheet.background)
+        if isDark {
+            return NSColor(
+                calibratedRed: 0.04, green: 0.08, blue: 0.14,
+                alpha: styleSheet.increaseContrast ? 0.30 : 0.18
+            )
+        }
+        return styleSheet.background.withAlphaComponent(
+            styleSheet.increaseContrast ? 0.12 : 0.06
         )
+    }
+
+    private static func opaqueFallbackColor(_ styleSheet: StyleSheet) -> NSColor {
+        styleSheet.surface.withAlphaComponent(1)
+    }
+
+    private static func isDarkBackground(_ color: NSColor) -> Bool {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return false }
+        let luminance = 0.2126 * rgb.redComponent
+            + 0.7152 * rgb.greenComponent
+            + 0.0722 * rgb.blueComponent
+        return luminance < 0.5
     }
 
     private func updateMaterial() {
@@ -331,13 +436,16 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             if isHostingContentInGlass || content.superview !== self { mountContentOnSelf() }
         case (false, true):
             usesGlass = true
-            if #available(macOS 26.0, *) { mountContentOnGlass() }
+            if #available(macOS 26.0, *) {
+                mountContentOnGlass()
+            }
         case (true, false):
             usesGlass = false
             mountContentOnSelf()
         case (true, true):
             if #available(macOS 26.0, *) {
                 glassEffect?.tintColor = Self.glassTint(styleSheet)
+                glassEffect?.alphaValue = 1
             }
         }
         applySurfaceStyle()
@@ -349,24 +457,34 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     /// glass-container content view.
     @available(macOS 26.0, *)
     private func mountContentOnGlass() {
+        // AppKit's glass must own the content view. Do not put a visual-effect
+        // sibling underneath it: that makes the glass sample the wash instead
+        // of the document window and turns Liquid Glass into a flat card.
         fallback.isHidden = true
         glass?.removeFromSuperview()
         let material = NSGlassEffectView()
-        // Clear keeps the document's texture legible through the body; the
-        // system still supplies the blur, refraction, and specular edge.
-        material.style = .clear
+        // Regular is Apple's frosted Liquid Glass treatment. The material
+        // supplies the adaptive light response and samples the document
+        // directly. Keep the tint low enough that the sampled scene remains
+        // visible as colour and light rather than becoming a painted card.
+        material.style = .regular
         material.tintColor = Self.glassTint(styleSheet)
+        material.alphaValue = 1
+        if material.responds(to: Selector(("setEffectIsInteractive:"))) {
+            material.setValue(true, forKey: "effectIsInteractive")
+        }
         material.cornerRadius = Top.cornerRadius
+        material.wantsLayer = true
+        material.layer?.cornerCurve = .continuous
         material.autoresizingMask = [.width, .height]
         material.frame = bounds
         material.clipsToBounds = true
-        addSubview(material, positioned: .below, relativeTo: nil)
+        addSubview(material, positioned: .above, relativeTo: nil)
         glass = material
 
         content.removeFromSuperview()
         let contentContainer = NSView(frame: bounds)
         contentContainer.autoresizingMask = [.width, .height]
-        contentContainer.wantsLayer = false
         contentContainer.clipsToBounds = true
         material.contentView = contentContainer
         let layoutContent = NSView(frame: bounds)
@@ -381,6 +499,32 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         content.frame = contentContainer.bounds
         isHostingContentInGlass = true
         PanelBackdrop.resolveDetachedGlass(in: content)
+    }
+
+    /// Glass is created before the child window exists so measurement can run
+    /// without a window. Rebuild it once after attachment so AppKit binds the
+    /// material to the document window it is meant to sample.
+    func refreshGlassAfterWindowAttach() {
+        guard usesGlass, #available(macOS 26.0, *) else { return }
+        mountContentOnGlass()
+        applySurfaceStyle()
+    }
+
+    var visibleBodyBoundsForHitTesting: NSRect {
+        let height = min(bounds.height, max(0, revealSpring.value))
+        return NSRect(
+            x: bounds.minX,
+            y: bounds.maxY - height,
+            width: bounds.width,
+            height: height
+        )
+    }
+
+    var visibleBodyHeightForTesting: CGFloat { visibleBodyBoundsForHitTesting.height }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard visibleBodyBoundsForHitTesting.contains(point) else { return nil }
+        return super.hitTest(point)
     }
 
     private func mountContentOnSelf() {
@@ -399,24 +543,30 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     private func applySurfaceStyle() {
-        layer?.shadowOpacity = Float(styleSheet.increaseContrast ? 0.34 : 0.22)
-        let rimAlpha = styleSheet.increaseContrast ? 0.68 : 0.46
-        let mutedAlpha = styleSheet.increaseContrast ? 0.24 : 0.10
+        layer?.shadowRadius = styleSheet.increaseContrast ? 42 : 40
+        layer?.shadowOffset = NSSize(width: 0, height: -10)
+        layer?.shadowOpacity = Float(styleSheet.increaseContrast ? 0.28 : 0.18)
+        let isDark = Self.isDarkBackground(styleSheet.background)
+        let specular = NSColor.white
+        let rimAlpha = styleSheet.increaseContrast ? 0.92 : (isDark ? 0.72 : 0.85)
+        let mutedAlpha = styleSheet.increaseContrast ? 0.24 : 0.08
         rimGradient.colors = [
-            styleSheet.text.withAlphaComponent(rimAlpha).cgColor,
-            styleSheet.text.withAlphaComponent(rimAlpha * 0.82).cgColor,
-            styleSheet.text.withAlphaComponent(mutedAlpha).cgColor,
-            styleSheet.text.withAlphaComponent(mutedAlpha * 0.55).cgColor,
+            specular.withAlphaComponent(rimAlpha).cgColor,
+            specular.withAlphaComponent(rimAlpha * 0.44).cgColor,
+            specular.withAlphaComponent(mutedAlpha).cgColor,
+            specular.withAlphaComponent(mutedAlpha * 0.35).cgColor,
         ]
-        rimGradient.startPoint = CGPoint(x: 0.02, y: 1.0)
-        rimGradient.endPoint = CGPoint(x: 0.98, y: 0.0)
-        rimMask.lineWidth = styleSheet.increaseContrast ? 1.5 : 1.15
+        rimGradient.startPoint = CGPoint(x: 0.08, y: 0.98)
+        rimGradient.endPoint = CGPoint(x: 0.92, y: 0.02)
+        rimMask.lineWidth = styleSheet.increaseContrast ? 1.5 : 1.0
 
         layer?.cornerRadius = usesGlass ? 0 : Top.cornerRadius
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = false
         if !usesGlass {
             fallback.wantsLayer = true
             fallback.layer?.cornerRadius = Top.cornerRadius
+            fallback.layer?.cornerCurve = .continuous
             fallback.layer?.masksToBounds = true
         }
         needsDisplay = true

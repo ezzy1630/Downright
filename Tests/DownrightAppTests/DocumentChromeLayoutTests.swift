@@ -282,8 +282,8 @@ struct FloatingTaskPanelTests {
         return parent.convertFromScreen(child.convertToScreen(childRect))
     }
 
-    @Test("The floating surface hangs from the content's top edge at the trailing side")
-    func surfaceHangsFromTheTopEdge() throws {
+    @Test("The floating surface sits inside the content margins")
+    func surfaceFloatsInsideTheContentMargins() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -296,11 +296,8 @@ struct FloatingTaskPanelTests {
         let inWindow = surfaceRectInDocumentWindow(surface, parent: controller.window!)
         let content = try #require(controller.window?.contentView)
         let contentInWindow = content.convert(content.bounds, to: nil)
-        // Top-anchored: the surface's top edge sits flush with the content's,
-        // the place the pour came out from under the toolbar.
-        #expect(abs(inWindow.maxY - contentInWindow.maxY) < 0.5)
-        // Trailing side: flush with the window's own trailing edge.
-        #expect(abs(inWindow.maxX - contentInWindow.maxX) < 0.5)
+        #expect(abs(contentInWindow.maxY - inWindow.maxY - PanelMetrics.floatingMargin) < 0.5)
+        #expect(abs(contentInWindow.maxX - inWindow.maxX - PanelMetrics.floatingMargin) < 0.5)
     }
 
     @Test("The surface fits its content up to the window's ceiling")
@@ -316,6 +313,7 @@ struct FloatingTaskPanelTests {
         controller.window?.layoutIfNeeded()
         let contentHeight = try #require(controller.window?.contentView).bounds.height
         let cap = contentHeight * FloatingPanelSurface.Top.windowHeightFraction
+            - 2 * PanelMetrics.floatingMargin
         #expect(surface.frame.height > 100)
         #expect(surface.frame.height < cap + 0.5)
         #expect(surface.frame.height >= FloatingPanelSurface.Top.minimumContentHeight)
@@ -336,6 +334,7 @@ struct FloatingTaskPanelTests {
         let host = try #require(controller.inspectorHost)
         let cap = try #require(controller.window?.contentView).bounds.height
             * FloatingPanelSurface.Top.windowHeightFraction
+            - 2 * PanelMetrics.floatingMargin
         if taskCount == 40 {
             #expect(abs(surface.frame.height - cap) < 0.5)
         } else {
@@ -348,6 +347,23 @@ struct FloatingTaskPanelTests {
         #expect(surface.contentLayoutHeightForTesting >= min(host.floatingFittingHeight, cap))
         #expect(panel.contentDocumentHeightForTesting > 0)
         #expect(surface.rendersBodyForTesting)
+    }
+
+    @Test("The child window reserves room for the complete shadow")
+    func childWindowContainsSurfaceAndShadowMargin() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        let child = try #require(surface.window)
+        let content = try #require(child.contentView)
+        #expect(content.bounds.width >= surface.bounds.width + 2 * PanelMetrics.floatingShadowMargin)
+        #expect(content.bounds.height >= surface.bounds.height + 2 * PanelMetrics.floatingShadowMargin)
+        #expect(surface.frame.minX >= PanelMetrics.floatingShadowMargin - 0.5)
+        #expect(surface.frame.minY >= PanelMetrics.floatingShadowMargin - 0.5)
     }
 
     /// The surface fits its height to the measured content, so the last row
@@ -387,10 +403,57 @@ struct FloatingTaskPanelTests {
 
         let surface = try #require(controller.floatingSurface)
         let panel = try #require(controller.taskPanel)
-        #expect(surface.frame.height == FloatingPanelSurface.Top.pourSliverHeight)
+        #expect(surface.frame.height > FloatingPanelSurface.Top.pourSliverHeight)
+        #expect(surface.visibleBodyHeightForTesting == FloatingPanelSurface.Top.pourSliverHeight)
         #expect(surface.contentLayoutHeightForTesting >= panel.fittedContentHeight)
         #expect(surface.content.frame.height >= panel.fittedContentHeight)
         #expect(surface.rendersBodyForTesting)
+    }
+
+    @Test("Arrival keeps the child window at its final frame")
+    func arrivalDoesNotResizeTheChildWindow() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+
+        let surface = try #require(controller.floatingSurface)
+        let child = try #require(surface.window)
+        let finalFrame = child.frame
+        for _ in 0..<8 {
+            _ = surface.springTick(dt: 1.0 / 120.0)
+            surface.springApply()
+        }
+
+        #expect(child.frame == finalFrame)
+        #expect(surface.visibleBodyHeightForTesting > FloatingPanelSurface.Top.pourSliverHeight)
+        #expect(surface.visibleBodyHeightForTesting < finalFrame.height)
+    }
+
+    @Test("Undo pill stays inside the body and below the last row")
+    func undoPillDoesNotCoverLastRow() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+
+        let panel = try #require(controller.taskPanel)
+        panel.presentUndoForTesting(title: "First open task")
+        controller.window?.layoutIfNeeded()
+        surface.settleForTesting()
+        surface.layoutSubtreeIfNeeded()
+        panel.layoutSubtreeIfNeeded()
+
+        let pill = surface.convert(panel.undoPillFrameForTesting, from: panel)
+        let lastRow = try #require(panel.lastRowFrameForTesting)
+        let lastRowInSurface = surface.convert(lastRow, from: panel)
+        #expect(surface.visibleBodyBoundsForHitTesting.contains(pill))
+        #expect(!pill.intersects(lastRowInSurface))
     }
 
     @Test("An in-panel click is not routed to floating dismissal")
@@ -443,8 +506,8 @@ struct FloatingTaskPanelTests {
 
         let surfaceInWindow = surfaceRectInDocumentWindow(surface, parent: window)
         let contentInWindow = content.convert(content.bounds, to: nil)
-        #expect(abs(surfaceInWindow.maxY - contentInWindow.maxY) < 0.5)
-        #expect(abs(surfaceInWindow.maxX - contentInWindow.maxX) < 0.5)
+        #expect(abs(contentInWindow.maxY - surfaceInWindow.maxY - PanelMetrics.floatingMargin) < 0.5)
+        #expect(abs(contentInWindow.maxX - surfaceInWindow.maxX - PanelMetrics.floatingMargin) < 0.5)
         #expect(surface.frame.width > 0)
         #expect(surface.frame.height > 0)
     }
@@ -463,6 +526,7 @@ struct FloatingTaskPanelTests {
         controller.window?.layoutIfNeeded()
         let contentHeight = try #require(controller.window?.contentView).bounds.height
         let cap = contentHeight * FloatingPanelSurface.Top.windowHeightFraction
+            - 2 * PanelMetrics.floatingMargin
         #expect(surface.frame.height <= cap + 0.5)
         #expect(surface.frame.height >= 40)
     }
@@ -484,6 +548,29 @@ struct FloatingTaskPanelTests {
 
         #expect(controller.floatingSurface == nil)
         #expect(!controller.progressRing.isActive)
+    }
+
+    @Test("A resign-key and become-key cycle preserves the floating panel")
+    func panelSurvivesWindowActivationCycle() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        let child = try #require(surface.window)
+
+        controller.windowDidResignKey(
+            Notification(name: NSWindow.didResignKeyNotification, object: controller.window)
+        )
+        controller.windowDidBecomeKey(
+            Notification(name: NSWindow.didBecomeKeyNotification, object: controller.window)
+        )
+
+        #expect(controller.floatingSurface === surface)
+        #expect(controller.progressRing.isActive)
+        #expect(child.parent === controller.window)
+        #expect(child.isVisible)
     }
 
     @Test("Reduce Motion presents the surface instantly, over no glass")

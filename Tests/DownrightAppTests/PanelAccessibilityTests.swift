@@ -96,6 +96,19 @@ struct PanelAccessibilityTests {
         #expect(view.undoBottomInsetForTesting == baseInset)
     }
 
+    @Test("Undo pill exposes a named action")
+    func undoPillNamesItsAction() {
+        let view = TaskPanelView()
+        view.presentUndoForTesting(title: "Done")
+
+        func descendants(of parent: NSView) -> [NSView] {
+            parent.subviews.flatMap { [$0] + descendants(of: $0) }
+        }
+        let undo = descendants(of: view).compactMap { $0 as? NSButton }
+            .first { $0.title == "Undo" }
+        #expect(undo?.accessibilityLabel() == "Undo")
+    }
+
     @Test
     func searchResultsExposeSearchingAndEmptyStates() {
         let view = SearchResultsPanelView()
@@ -114,5 +127,17 @@ struct PanelAccessibilityTests {
         host.select(.search)
         #expect(host.selectedSection == .search)
         #expect((host.accessibilityValue() as? String) == "Search section")
+    }
+
+    @Test("The resting close control remains available to assistive technology")
+    func inspectorCloseIsAccessibleWhileVisuallyQuiet() {
+        let host = InspectorHostView()
+        host.setContent(NSView(), section: .tasks)
+
+        let close = host.closeButtonForTesting
+        #expect(close.alphaValue == 0)
+        #expect(!close.isHidden)
+        #expect(close.accessibilityRole() == .button)
+        #expect(close.accessibilityLabel() == "Close inspector")
     }
 }

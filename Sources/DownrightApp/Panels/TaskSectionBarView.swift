@@ -35,10 +35,10 @@ final class TaskSectionBarView: NSView {
     var onSelectSegment: ((Int) -> Void)?
 
     /// Tall enough to round its own ends and to read as a bar rather than as a
-    /// rule that happens to be orange.
-    static let barHeight: CGFloat = 4
+    /// rule that happens to use the accent colour.
+    static let barHeight: CGFloat = 3
     /// The band a pointer can actually hit; the bar draws centred inside it.
-    static let hitHeight: CGFloat = 28
+    static let hitHeight: CGFloat = 12
     /// A sliver of backdrop between two segments, so sections read as separate
     /// blocks of work rather than as one gradient.
     static let gap: CGFloat = 2
@@ -197,7 +197,7 @@ guard segmentLayers.count == segments.count else { return }
         for (index, pair) in segmentLayers.enumerated() {
             let hovered = index == hoveredIndex
             pair.track.backgroundColor = styleSheet.text
-                .panelAlpha(hovered ? 0.2 : 0.1, increaseContrast: contrast).cgColor
+                .panelAlpha(hovered ? 0.26 : 0.16, increaseContrast: contrast).cgColor
             pair.fill.backgroundColor = styleSheet.accent.cgColor
             pair.fill.opacity = 1
         }

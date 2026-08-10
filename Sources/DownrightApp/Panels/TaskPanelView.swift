@@ -50,6 +50,10 @@ final class TaskPanelView: NSView, PanelSurface {
     /// from this signal; a queued frame was both late and prone to racing a
     /// second document parse.
     var onContentSizeChange: (() -> Void)?
+    /// The undo pill changes the panel's measured height immediately. It must
+    /// not wait for a height spring while its old viewport could still cover a
+    /// row.
+    var onImmediateContentSizeChange: (() -> Void)?
 
     var styleSheet: StyleSheet {
         didSet {
@@ -81,9 +85,10 @@ final class TaskPanelView: NSView, PanelSurface {
                 total + rowHeight(row, width: width)
             }
         let insets = scroll.contentInsets
-        return PanelLayout.headerTop
-            + sectionBar.intrinsicContentSize.height
-            + PanelLayout.headerToListGap
+        let sectionMapHeight = showsSectionHeaders
+            ? sectionBar.intrinsicContentSize.height
+            : 0
+        return sectionMapHeight
             + insets.top + listHeight + insets.bottom
     }
 
@@ -111,6 +116,11 @@ final class TaskPanelView: NSView, PanelSurface {
     var emptyAddButtonForTesting: NSButton { emptyAddButton }
     var quickAddEditingForTesting: Bool { editingAddSection != nil }
     var undoBottomInsetForTesting: CGFloat { scroll.contentInsets.bottom }
+    var undoPillFrameForTesting: NSRect { undoPill.frame }
+    var lastRowFrameForTesting: NSRect? {
+        guard table.numberOfRows > 0 else { return nil }
+        return table.convert(table.rect(ofRow: table.numberOfRows - 1), to: self)
+    }
     func presentUndoForTesting(title: String = "Task") {
         undoPill.present(title: title)
         updateScrollInsetsForUndoPill()
@@ -128,6 +138,9 @@ final class TaskPanelView: NSView, PanelSurface {
 
     private let sectionBar: TaskSectionBarView
     private let captionLabel = NSTextField(labelWithString: "")
+    private let bottomFade = CAGradientLayer()
+    private var scrollBelowSectionBar: NSLayoutConstraint!
+    private var scrollAtTop: NSLayoutConstraint!
     private let table = PanelList.makeTableView(identifier: "tasks")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private let emptyState = PanelEmptyStateView()
@@ -173,7 +186,7 @@ final class TaskPanelView: NSView, PanelSurface {
     private var pendingCompletionMark: Int?
     private var deferredRebuild: DispatchWorkItem?
     private var undoMarkOffset: Int?
-    private let baseScrollBottomInset: CGFloat = 10
+    private let baseScrollBottomInset: CGFloat = 18
     /// Menu actions are target/action pairs; the menu holds no strong
     /// reference, so the panel does for the menu's lifetime.
     private var menuActions: [ButtonAction] = []
@@ -234,6 +247,16 @@ final class TaskPanelView: NSView, PanelSurface {
         scroll.contentInsets = .init(
             top: 0, left: 0, bottom: baseScrollBottomInset, right: 0
         )
+        scroll.contentView.wantsLayer = true
+        bottomFade.colors = [
+            NSColor.black.cgColor,
+            NSColor.black.cgColor,
+            NSColor.clear.cgColor,
+        ]
+        bottomFade.locations = [0, 0.86, 1]
+        bottomFade.startPoint = CGPoint(x: 0.5, y: 0)
+        bottomFade.endPoint = CGPoint(x: 0.5, y: 1)
+        bottomFade.actions = ["bounds": NSNull(), "position": NSNull()]
     }
 
     private func buildUndoPill() {
@@ -244,33 +267,33 @@ final class TaskPanelView: NSView, PanelSurface {
 
     private func updateScrollInsetsForUndoPill() {
         var insets = scroll.contentInsets
-        insets.bottom = baseScrollBottomInset + (undoPill.isHidden
+        let bottom = baseScrollBottomInset + (undoPill.isHidden
             ? 0
             : TaskUndoPillView.height + 12)
+        guard insets.bottom != bottom else { return }
+        insets.bottom = bottom
         scroll.contentInsets = insets
+        onImmediateContentSizeChange?()
     }
 
     private func installChrome() {
         sectionBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(sectionBar)
-        addSubview(captionLabel)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scroll)
         undoPill.translatesAutoresizingMaskIntoConstraints = false
         addSubview(undoPill)
 
         let rail = TaskRowMetrics.contentInset
+        scrollBelowSectionBar = scroll.topAnchor.constraint(equalTo: sectionBar.bottomAnchor)
+        scrollAtTop = scroll.topAnchor.constraint(equalTo: topAnchor)
         NSLayoutConstraint.activate([
             sectionBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rail),
-            sectionBar.topAnchor.constraint(equalTo: topAnchor, constant: PanelLayout.headerTop),
-
-            captionLabel.leadingAnchor.constraint(equalTo: sectionBar.trailingAnchor, constant: 8),
-            captionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -rail),
-            captionLabel.centerYAnchor.constraint(equalTo: sectionBar.centerYAnchor),
+            sectionBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -rail),
+            sectionBar.topAnchor.constraint(equalTo: topAnchor),
 
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: sectionBar.bottomAnchor, constant: PanelLayout.headerToListGap),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             undoPill.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -279,6 +302,7 @@ final class TaskPanelView: NSView, PanelSurface {
             undoPill.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
             undoPill.heightAnchor.constraint(equalToConstant: TaskUndoPillView.height),
         ])
+        updateSectionChromeVisibility()
 
         // Installed last so "nothing here yet" floats over the (empty) list in
         // the same place every panel puts it.
@@ -327,8 +351,28 @@ final class TaskPanelView: NSView, PanelSurface {
         worklist = TaskWorklist(tasks: tasks, headings: headings)
         heightCache.removeAll()
         updateSummary()
+        updateSectionChromeVisibility()
         scheduleRowRebuild()
         updateAccessibility()
+    }
+
+    private func updateSectionChromeVisibility() {
+        let visible = showsSectionHeaders
+        sectionBar.isHidden = !visible
+        scrollBelowSectionBar.isActive = visible
+        scrollAtTop.isActive = !visible
+    }
+
+    override func layout() {
+        super.layout()
+        let clip = scroll.contentView
+        let overflows = (scroll.documentView?.bounds.height ?? 0) > clip.bounds.height + 0.5
+        if overflows {
+            bottomFade.frame = clip.bounds
+            clip.layer?.mask = bottomFade
+        } else if clip.layer?.mask === bottomFade {
+            clip.layer?.mask = nil
+        }
     }
 
     private func updateSummary() {
@@ -988,21 +1032,24 @@ enum TaskRowMetrics {
     /// One left rail for the whole panel: the section bar, the section
     /// headers, and the checkboxes all start here — and it is the *host's*
     /// rail, so the section switcher above the panel starts on it too.
-    static let contentInset = PanelMetrics.inset
+    static let contentInset: CGFloat = 18
     static let checkboxInset = contentInset
-    static let boxSide = PanelCheckbox.Geometry.panelSide
+    static let boxSide: CGFloat = 17
     /// A child's box begins exactly where its parent's box ended, so nesting
     /// is one box-width per level — readable at four levels inside 336pt.
     static let indentStep = boxSide
     static let maximumIndent = 4
     /// Checkbox → label gap, label → chevron gap, chevron, chevron → edge.
-    static let labelGap: CGFloat = 9
+    static let labelGap: CGFloat = 12
     static let glyphGap: CGFloat = 6
     static let glyphWidth: CGFloat = 8
     static let glyphInset: CGFloat = 10
     /// Air above and below a single line of task text.
-    static let verticalPadding: CGFloat = 7
-    static let minimumHeight: CGFloat = 30
+    /// Five-point air keeps a single-line row at the native list rhythm while
+    /// letting the 60% ceiling land between complete rows instead of cutting
+    /// the next label at the bottom of the glass.
+    static let verticalPadding: CGFloat = 11
+    static let minimumHeight: CGFloat = 38
     /// Section headers and pile rows carry their air above the label, which is
     /// where the break between two groups belongs.
     static let groupHeight: CGFloat = 26
@@ -1022,7 +1069,7 @@ enum TaskRowMetrics {
     /// x-height centre — `baseline - xHeight / 2`, the same rule the document
     /// renderer uses for the ornament column.
     static var firstLineBoxTop: CGFloat {
-        let font = PanelFont.row
+        let font = PanelFont.taskRow
         let opticalCentre = verticalPadding + font.ascender - font.xHeight / 2
         return (opticalCentre - boxSide / 2).rounded()
     }
@@ -1093,7 +1140,7 @@ private class TaskRowSurfaceView: NSView {
 private final class TaskRowView: TaskRowSurfaceView {
     var onToggle: ((TaskItem) -> Void)?
 
-    private let checkbox = PanelCheckbox()
+    private let checkbox = PanelCheckbox(side: TaskRowMetrics.boxSide, cornerRatio: 0.5)
     private let label = NSTextField(labelWithString: "")
     private let jumpGlyph = NSImageView()
     /// The completion strike, drawn only while the moment plays.
@@ -1122,9 +1169,9 @@ private final class TaskRowView: TaskRowSurfaceView {
         let rect = (task.text as NSString).boundingRect(
             with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: PanelFont.row]
+            attributes: [.font: PanelFont.taskRow]
         )
-        let font = PanelFont.row
+        let font = PanelFont.taskRow
         let lineHeight = ceil(font.ascender - font.descender + font.leading)
         let capped = min(ceil(rect.height), lineHeight * CGFloat(TaskRowMetrics.maximumLines))
         return max(TaskRowMetrics.minimumHeight, TaskRowMetrics.verticalPadding * 2 + capped)
@@ -1150,7 +1197,7 @@ private final class TaskRowView: TaskRowSurfaceView {
         }
         addSubview(checkbox)
 
-        label.font = PanelFont.row
+        label.font = PanelFont.taskRow
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = TaskRowMetrics.maximumLines
         label.cell?.wraps = true
@@ -1214,8 +1261,8 @@ private final class TaskRowView: TaskRowSurfaceView {
         // through at rest.  The strike exists only as the completion moment.
         let text = task.text.trimmingCharacters(in: .whitespaces)
         label.attributedStringValue = NSAttributedString(string: text, attributes: [
-            .font: PanelFont.row,
-            .foregroundColor: task.isChecked ? styleSheet.textSecondary : styleSheet.text,
+            .font: PanelFont.taskRow,
+            .foregroundColor: styleSheet.text,
         ])
         setAccessibilityRole(.row)
         setAccessibilityLabel("\(task.isChecked ? "Completed" : "Incomplete") task: \(text), in \(sectionTitle)")
@@ -1237,7 +1284,7 @@ private final class TaskRowView: TaskRowSurfaceView {
     func playCompletionMoment() {
         guard !styleSheet.reduceMotion, window != nil else { return }
         layoutSubtreeIfNeeded()
-        let font = PanelFont.row
+        let font = PanelFont.taskRow
         let labelFrame = label.frame
         let strikeY = labelFrame.minY + font.ascender - font.xHeight / 2
         strikeLayer.removeAllAnimations()
@@ -1433,7 +1480,7 @@ private final class TaskSectionRowView: TaskRowSurfaceView {
         // Both states speak in the same voice.  "All done" used to be drawn in
         // the accent while "3 left" sat in the faint tier, so one section's
         // status read as a button and its neighbour's read as a caption —
-        // orange in this panel means *progress*, and the section bar and the
+        // accent in this panel means *progress*, and the section bar and the
         // checkboxes already own it.  Status is status: one colour, whatever
         // it says.
         statusLabel.stringValue = openCount > 0 ? "\(openCount) left" : "All done"
@@ -1772,8 +1819,12 @@ private final class TaskUndoPillView: NSView {
         undoAction = action
         undoButton.target = action
         undoButton.action = #selector(ButtonAction.fire(_:))
+        undoButton.title = "Undo"
         undoButton.isBordered = false
         undoButton.font = PanelFont.system(11.5, weight: .semibold)
+        undoButton.setAccessibilityRole(.button)
+        undoButton.setAccessibilityLabel("Undo")
+        undoButton.toolTip = "Undo completing this task"
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setContentHuggingPriority(.required, for: .horizontal)
         addSubview(undoButton)

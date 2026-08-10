@@ -63,12 +63,14 @@ final class InspectorHostView: NSView {
     private var ruleBelowTitle: NSLayoutConstraint!
     private var ruleBelowSwitcher: NSLayoutConstraint!
     private var closeAction: ButtonAction?
+    private var closeTrackingArea: NSTrackingArea?
     private var views: [InspectorSection: NSView] = [:]
     /// Overrides for the header text, so the surface a command opened is named
     /// after that command rather than after its slot.
     private var sectionTitles: [InspectorSection: String] = [:]
 
     private(set) var selectedSection: InspectorSection?
+    var closeButtonForTesting: NSButton { closeButton }
 
     override init(frame frameRect: NSRect) {
         closeButton = PanelButton.symbol("xmark", label: "Close inspector", action: ButtonAction({}))
@@ -81,7 +83,7 @@ final class InspectorHostView: NSView {
         // The slim title row is the surface's name, not a caption — it takes
         // the panel-title font and full text colour so it can carry the pane
         // on its own (the switcher carries it for multi-surface panes).
-        titleLabel.font = PanelFont.title
+        titleLabel.font = PanelFont.floatingTitle
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -91,6 +93,7 @@ final class InspectorHostView: NSView {
         closeButton.target = action
         closeButton.action = #selector(ButtonAction.fire(_:))
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.alphaValue = 0
 
         rule.wantsLayer = true
         rule.translatesAutoresizingMaskIntoConstraints = false
@@ -172,23 +175,47 @@ final class InspectorHostView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let closeTrackingArea { removeTrackingArea(closeTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        closeTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { setCloseVisible(true) }
+    override func mouseExited(with event: NSEvent) { setCloseVisible(false) }
+
+    private func setCloseVisible(_ visible: Bool) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = styleSheet.reduceMotion ? 0 : Motion.quick
+            context.timingFunction = Motion.timing(.easeOut)
+            closeButton.animator().alphaValue = visible ? 1 : 0
+        }
+    }
+
     private enum Metrics {
         /// Air above the switcher and between it and the rule.
         static let topPadding: CGFloat = 10
         /// Air above the slim title row — two points more than the switcher's,
         /// so the header's first line never feels nailed to the toolbar rule.
-        static let titleTopPadding: CGFloat = 12
+        static let titleTopPadding: CGFloat = 20
         /// Air between the slim title row and the rule under it.
-        static let titleBottomGap: CGFloat = 8
+        static let titleBottomGap: CGFloat = 18
         /// Title row: one line of `PanelFont.header` plus the gap under it.
-        static let titleRowHeight: CGFloat = 24
+        static let titleRowHeight: CGFloat = 22
     }
 
     private func applyStyle() {
-        titleLabel.textColor = styleSheet.text
+        titleLabel.textColor = styleSheet.textSecondary
         closeButton.contentTintColor = styleSheet.textSecondary
         rule.layer?.backgroundColor = styleSheet.rule
-            .panelAlpha(styleSheet.increaseContrast ? 0.9 : 0.55, increaseContrast: false).cgColor
+            .panelAlpha(styleSheet.increaseContrast ? 0.9 : 0.30, increaseContrast: false).cgColor
         leadingRule.layer?.backgroundColor = styleSheet.rule
             .panelAlpha(styleSheet.increaseContrast ? 1 : 0.82, increaseContrast: false).cgColor
     }

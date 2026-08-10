@@ -73,12 +73,14 @@ public enum Motion {
     /// as continuous and short enough that the destination never feels late.
     public static let floatingContentRevealLead: TimeInterval = 0.08
 
-    /// The visible sliver is never fully opaque: the first pixels of a child
-    /// window should arrive as a material edge, not as a hard rectangular cut.
-    /// Opacity then follows the floating surface's height spring, so arrival
-    /// and dismissal still have one interruptible clock and no content-only
-    /// staging animation.
-    public static let floatingSurfaceSliverOpacity: CGFloat = 0.18
+    /// The visible sliver is already a real material edge, so it starts close
+    /// to full presence. The surface reaches 1.0 during the first quarter of
+    /// its height travel; the rest of the arrival is a pour, not a fade.
+    public static let floatingSurfaceSliverOpacity: CGFloat = 0.82
+    /// Presence is settled by the first quarter of the structural spring. This
+    /// is the smallest useful staging window: below it the material still
+    /// looks absent, above it the arrival reads as a fade-plus-grow.
+    public static let floatingSurfacePresenceFraction: CGFloat = 0.25
 
     /// The density rail's impulse, and the only declared exception.
     ///
