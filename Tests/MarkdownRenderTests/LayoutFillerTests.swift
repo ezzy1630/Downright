@@ -77,6 +77,34 @@ func layoutFillersMatchStorageAttributes() {
 }
 
 @MainActor
+@Test("A colour-only theme swap rebuilds displayed paragraph attributes")
+func themeSwapRebuildsDisplayedParagraphAttributes() throws {
+    let themes = ThemeStore().themes
+    let light = try #require(themes.first { $0.name == "Paper Light" })
+    let dark = try #require(themes.first { $0.name == "Warm Dark" })
+    let lightSheet = StyleSheet(theme: light, appearance: NSAppearance(named: .aqua)!)
+    let darkSheet = StyleSheet(theme: dark, appearance: NSAppearance(named: .darkAqua)!)
+    let storage = NSTextStorage(string: markerRichText)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 720, height: 420),
+        storage: storage,
+        styleSheet: lightSheet
+    )
+    view.update(document: MarkdownParser.parse(markerRichText), dirty: .wholesale)
+
+    view.styleSheet = darkSheet
+
+    let hidden = view.currentDisplayMap.substitutions.filter { $0.isHidden }
+    #expect(!hidden.isEmpty)
+    for substitution in hidden {
+        #expect(
+            fillerMatchesStorage(substitution, storage: storage),
+            "theme swap left a cached light-theme filler at \(substitution.sourceRange)"
+        )
+    }
+}
+
+@MainActor
 @Test("Hidden-marker layout fillers are source-length runs of word joiners")
 func layoutFillersPreserveSourceLength() {
     let (view, _) = decoratedView()

@@ -1065,7 +1065,12 @@ public final class MarkdownTextView: NSTextView {
         applySourcePresentation()
         applyOverlays()
         applyPathExistence()
-        refreshBaseLayoutMap()
+        // Substitution strings and cached NSTextParagraph elements carry the
+        // attributes from the theme that created them. Rebuilding only the
+        // storage leaves those cached paragraphs drawing the old foreground
+        // colour over the new background after a Light/Dark switch.
+        rebuildBaseDisplayMap(document: parsedDocument)
+        rebuildDisplayMap(fullRefresh: true)
         invalidateAllFragments()
         if exceedsEagerLayoutBudget {
             markdownLayoutManager.textViewportLayoutController.layoutViewport()

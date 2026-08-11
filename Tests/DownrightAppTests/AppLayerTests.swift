@@ -284,6 +284,19 @@ struct AppLayerTests {
         #expect(decoded == values)
     }
 
+    @Test
+    func choosingAThemeDoesNotChangeTheAppearanceMode() {
+        var values = Preferences.Values()
+        values.followsSystemAppearance = true
+
+        values.selectTheme(named: "Solarized Light", for: .light)
+        values.selectTheme(named: "Nord", for: .dark)
+
+        #expect(values.themeName == "Solarized Light")
+        #expect(values.darkThemeName == "Nord")
+        #expect(values.followsSystemAppearance)
+    }
+
     // MARK: - Find (§9.4)
 
     @Test func findLiteralRegexAndWholeWord() {

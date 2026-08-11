@@ -39,6 +39,10 @@ every release; Sparkle orders updates by it.
 
 ### Changed
 
+- **Appearance now follows macOS reliably.** Theme selection no longer
+  silently disables system following, the View menu exposes separate light
+  and dark palettes, and Light/Dark transitions rebuild cached TextKit
+  paragraphs so old foreground colours cannot survive over the new page.
 - **Find bar and Tasks panel motion pass.** The find pill now claims and
   releases its space above the document with a glide instead of a one-frame
   jump, arrives at the state-change duration rather than the hover duration,

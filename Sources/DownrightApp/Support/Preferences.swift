@@ -247,3 +247,19 @@ final class Preferences {
         return isDark ? values.darkThemeName : values.themeName
     }
 }
+
+enum ThemePreferenceSlot: Equatable {
+    case light
+    case dark
+}
+
+extension Preferences.Values {
+    /// Theme choice and appearance mode are separate decisions. A palette
+    /// selection must never silently stop the app following macOS.
+    mutating func selectTheme(named name: String, for slot: ThemePreferenceSlot) {
+        switch slot {
+        case .light: themeName = name
+        case .dark: darkThemeName = name
+        }
+    }
+}

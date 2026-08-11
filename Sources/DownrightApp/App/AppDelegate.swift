@@ -587,26 +587,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startWindow?.reloadRecents([])
     }
 
-    @objc func selectTheme(_ sender: NSMenuItem) {
+    @objc func selectLightTheme(_ sender: NSMenuItem) {
+        selectTheme(sender, for: .light)
+    }
+
+    @objc func selectDarkTheme(_ sender: NSMenuItem) {
+        selectTheme(sender, for: .dark)
+    }
+
+    private func selectTheme(_ sender: NSMenuItem, for slot: ThemePreferenceSlot) {
         guard let name = sender.representedObject as? String else { return }
-        let pickedIsDark = ThemeStore.shared.themes.first { $0.name == name }?.appearance == .dark
-        let systemIsDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        Preferences.shared.update { values in
-            if pickedIsDark == systemIsDark {
-                // The pick agrees with the current system appearance, so it is
-                // a choice about that half of the pair.  Following stays on:
-                // the user never asked to stop.
-                if pickedIsDark { values.darkThemeName = name } else { values.themeName = name }
-            } else {
-                // Picking against the system appearance only makes sense as a
-                // decision to stop following it — otherwise the next flip would
-                // undo the choice that was just made.
-                values.themeName = name
-                values.followsSystemAppearance = false
-            }
-        }
-        // `update` posts the change, and `preferencesDidChange` is the single
-        // place that decides which theme is current.
+        Preferences.shared.update { $0.selectTheme(named: name, for: slot) }
+    }
+
+    @objc func toggleFollowSystemAppearance(_ sender: Any?) {
+        Preferences.shared.update { $0.followsSystemAppearance.toggle() }
     }
 
     @objc func importTheme(_ sender: Any?) {
@@ -616,7 +611,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let theme = try ThemeStore.shared.importVSCodeTheme(at: url)
-            ThemeStore.shared.select(named: theme.name)
+            Preferences.shared.update { values in
+                switch theme.appearance {
+                case .light:
+                    values.selectTheme(named: theme.name, for: .light)
+                case .dark:
+                    values.selectTheme(named: theme.name, for: .dark)
+                case .auto:
+                    values.selectTheme(named: theme.name, for: .light)
+                    values.selectTheme(named: theme.name, for: .dark)
+                }
+            }
         } catch {
             let alert = NSAlert(error: error)
             alert.messageText = "Couldn't import that theme"

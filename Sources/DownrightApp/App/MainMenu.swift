@@ -531,14 +531,48 @@ final class ThemeMenuDelegate: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        for theme in ThemeStore.shared.themes {
-            let item = NSMenuItem(title: theme.name, action: #selector(AppDelegate.selectTheme(_:)), keyEquivalent: "")
-            item.representedObject = theme.name
-            item.state = theme.name == ThemeStore.shared.current.name ? .on : .off
-            menu.addItem(item)
-        }
+
+        let follow = NSMenuItem(
+            title: "Follow macOS Appearance",
+            action: #selector(AppDelegate.toggleFollowSystemAppearance(_:)),
+            keyEquivalent: ""
+        )
+        follow.state = Preferences.shared.values.followsSystemAppearance ? .on : .off
+        menu.addItem(follow)
+        menu.addItem(.separator())
+
+        menu.addItem(themePicker(
+            title: "Light Theme",
+            themes: ThemeStore.shared.themes.filter { $0.appearance != .dark },
+            selectedName: Preferences.shared.values.themeName,
+            action: #selector(AppDelegate.selectLightTheme(_:))
+        ))
+        menu.addItem(themePicker(
+            title: "Dark Theme",
+            themes: ThemeStore.shared.themes.filter { $0.appearance != .light },
+            selectedName: Preferences.shared.values.darkThemeName,
+            action: #selector(AppDelegate.selectDarkTheme(_:))
+        ))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Import VS Code Theme…", action: #selector(AppDelegate.importTheme(_:)), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Reveal Themes Folder", action: #selector(AppDelegate.revealThemesFolder(_:)), keyEquivalent: ""))
+    }
+
+    private func themePicker(
+        title: String,
+        themes: [Theme],
+        selectedName: String,
+        action: Selector
+    ) -> NSMenuItem {
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: title)
+        for theme in themes {
+            let item = NSMenuItem(title: theme.name, action: action, keyEquivalent: "")
+            item.representedObject = theme.name
+            item.state = theme.name == selectedName ? .on : .off
+            submenu.addItem(item)
+        }
+        parent.submenu = submenu
+        return parent
     }
 }
