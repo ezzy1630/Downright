@@ -90,6 +90,7 @@ final class CodeBlockFragment: DownrightFragment {
             cg.fillRect(band, color: style.codeBackground,
                         radius: RenderMetrics.codeCornerRadius,
                         corners: [.topLeft, .topRight])
+            drawHorizontalEdge(band, atTop: true, style: style, in: cg)
             drawRule(band, style: style, in: cg)
             drawChip(band, style: style, in: cg)
         case .closeChrome:
@@ -99,6 +100,7 @@ final class CodeBlockFragment: DownrightFragment {
             cg.fillRect(band, color: style.codeBackground,
                         radius: RenderMetrics.codeCornerRadius,
                         corners: [.bottomLeft, .bottomRight])
+            drawHorizontalEdge(band, atTop: false, style: style, in: cg)
             drawRule(band, style: style, in: cg)
             // A long block scrolls its opening chrome off the top, taking the
             // only copy control with it.  The closing fence carries a second
@@ -108,6 +110,28 @@ final class CodeBlockFragment: DownrightFragment {
             cg.fillRect(band, color: style.codeBackground)
             drawRule(band, style: style, in: cg)
         }
+    }
+
+    /// A one-pixel optical edge gives the tinted band depth against both paper
+    /// and dark canvas. Only the outer fragments draw it, so lazy TextKit
+    /// surfaces never produce seams between code rows.
+    private func drawHorizontalEdge(
+        _ band: CGRect,
+        atTop: Bool,
+        style: StyleSheet,
+        in cg: CGContext
+    ) {
+        let y = atTop ? band.minY + 0.5 : band.maxY - 1
+        let edge = atTop
+            ? style.surface.withAlphaComponent(0.72)
+            : style.text.withAlphaComponent(0.10)
+        cg.fillRect(
+            CGRect(x: band.minX + RenderMetrics.codeCornerRadius,
+                   y: y,
+                   width: max(0, band.width - RenderMetrics.codeCornerRadius * 2),
+                   height: 1),
+            color: edge
+        )
     }
 
     private func drawRule(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
@@ -178,14 +202,12 @@ final class CodeBlockFragment: DownrightFragment {
         let indent = max(0, (paragraphStyle?.firstLineHeadIndent ?? 0) - RenderMetrics.codeInsetX)
         let gap = outerGap
         let frame = layoutFragmentFrame
-        // TextKit bakes the paragraph head indent into the fragment origin, so
-        // `point.x` already sits `codeInsetX` right of the column edge — adding
-        // `indent` again shifted the whole band (and its chip) 22pt right of
-        // the text.  Start the band at the glyph edge minus the inset, flush
-        // with the column; the `contentWidth - indent` width keeps the right
-        // edge on the measure.
-        let textEdge = point.x + (textLineFragments.first?.typographicBounds.minX ?? 0)
-        return CGRect(x: textEdge - RenderMetrics.codeInsetX,
+        // TextKit draws into a rendering surface widened by `revealSlack`.
+        // That local draw point already includes one code inset, while the
+        // paragraph fragment carries the other. Back both out, then restore
+        // only the block's structural indent. Otherwise top-level bands land
+        // 22pt right of prose and nested bands lose their list edge.
+        return CGRect(x: point.x + indent - RenderMetrics.codeInsetX * 2,
                       y: point.y + gap.top,
                       width: max(1, contentWidth - indent),
                       height: max(1, frame.height - gap.top - gap.bottom))

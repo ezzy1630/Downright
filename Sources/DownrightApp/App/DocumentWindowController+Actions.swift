@@ -2,6 +2,10 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+private final class PresentationSnapshotView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// Small actions the context menus and delegates reach for.
 extension DocumentWindowController {
 
@@ -414,21 +418,84 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     private func toolbarModeChanged(_ selectedSegment: Int) {
         let showSource = selectedSegment == 1
         for pane in documentPanes {
-            pane.wantsLayer = true
-            if !activeStyleSheet.reduceMotion {
-                let transition = CATransition()
-                transition.type = .fade
-                transition.duration = Motion.quick
-                transition.timingFunction = Motion.timing(.decelerate)
-                pane.layer?.add(transition, forKey: "document-source-transition")
-            }
+            let outgoing = activeStyleSheet.reduceMotion ? nil : snapshot(of: pane)
             if showSource {
                 pane.textView.focusEntireSource()
             } else {
                 pane.textView.clearSourceFocus()
             }
+            animatePresentationChange(in: pane, outgoing: outgoing, showSource: showSource)
         }
         refreshSourceFocusToolbar()
+        // The mode control should change presentation, then return the user to
+        // the editor. Leaving first responder on the toolbar makes an editable
+        // Document mode feel inert until a second click.
+        window?.makeFirstResponder(primaryContainer.textView)
+    }
+
+    private func snapshot(of view: NSView) -> NSImageView? {
+        guard !view.bounds.isEmpty,
+              let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else { return nil }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(representation)
+        let snapshot = PresentationSnapshotView(frame: view.bounds)
+        snapshot.image = image
+        snapshot.imageScaling = .scaleAxesIndependently
+        snapshot.autoresizingMask = [.width, .height]
+        snapshot.wantsLayer = true
+        snapshot.layer?.masksToBounds = true
+        view.addSubview(snapshot, positioned: .above, relativeTo: nil)
+        return snapshot
+    }
+
+    /// Keep the viewport fixed while the two presentations pass each other.
+    /// The direction communicates the state change; the short overlap hides
+    /// TextKit's synchronous fragment rebuild without turning it into a flash.
+    private func animatePresentationChange(
+        in pane: MarkdownContainerView,
+        outgoing: NSImageView?,
+        showSource: Bool
+    ) {
+        guard !activeStyleSheet.reduceMotion, let outgoing,
+              let incomingLayer = pane.textView.layer,
+              let outgoingLayer = outgoing.layer
+        else {
+            outgoing?.removeFromSuperview()
+            return
+        }
+        let direction: CGFloat = showSource ? 1 : -1
+        pane.textView.wantsLayer = true
+        let incomingTransform = CABasicAnimation(keyPath: "transform")
+        incomingTransform.fromValue = CATransform3DMakeTranslation(12 * direction, 0, 0)
+        incomingTransform.toValue = CATransform3DIdentity
+        let incomingOpacity = CABasicAnimation(keyPath: "opacity")
+        incomingOpacity.fromValue = 0
+        incomingOpacity.toValue = 1
+        let incoming = CAAnimationGroup()
+        incoming.animations = [incomingTransform, incomingOpacity]
+        incoming.duration = Motion.liquidSettle
+        incoming.timingFunction = Motion.timing(.decelerate)
+        incomingLayer.opacity = 1
+        incomingLayer.transform = CATransform3DIdentity
+        incomingLayer.add(incoming, forKey: "presentation-in")
+
+        let outgoingTransform = CABasicAnimation(keyPath: "transform")
+        outgoingTransform.fromValue = CATransform3DIdentity
+        outgoingTransform.toValue = CATransform3DMakeTranslation(-9 * direction, 0, 0)
+        let outgoingOpacity = CABasicAnimation(keyPath: "opacity")
+        outgoingOpacity.fromValue = 1
+        outgoingOpacity.toValue = 0
+        let leaving = CAAnimationGroup()
+        leaving.animations = [outgoingTransform, outgoingOpacity]
+        leaving.duration = Motion.deliberate
+        leaving.timingFunction = Motion.timing(.structural)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak outgoing] in outgoing?.removeFromSuperview() }
+        outgoingLayer.opacity = 0
+        outgoingLayer.add(leaving, forKey: "presentation-out")
+        CATransaction.commit()
     }
 
     func refreshSourceFocusToolbar() {

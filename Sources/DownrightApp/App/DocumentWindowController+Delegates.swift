@@ -490,9 +490,13 @@ extension DocumentWindowController: BreadcrumbDelegate {
 extension DocumentWindowController: FindBarDelegate {
     func findBar(_ bar: FindBarView, didChange query: FindQuery) { scheduleFindQuery(query) }
 
-    func findBar(_ bar: FindBarView, didRequestAdvance forward: Bool) { advanceFind(forward: forward) }
+    func findBar(_ bar: FindBarView, didRequestAdvance forward: Bool) {
+        flushFindQueryIfNeeded(bar.currentQuery)
+        advanceFind(forward: forward)
+    }
 
     func findBar(_ bar: FindBarView, didRequestReplace replacement: String, all: Bool) {
+        flushFindQueryIfNeeded(bar.currentQuery)
         if all {
             let edits = FindEngine.replaceAllEdits(in: markdownDocument.text, query: currentFindQuery, template: replacement)
             markdownDocument.apply(edits, actionName: "Replace All")
@@ -513,6 +517,13 @@ extension DocumentWindowController: FindBarDelegate {
     }
 
     func findBarDidRequestClose(_ bar: FindBarView) { dismissFindBar() }
+
+    /// A button or Return must act on the text the reader can see, even when
+    /// it lands inside the find-as-you-type debounce window.
+    private func flushFindQueryIfNeeded(_ query: FindQuery) {
+        guard query != currentFindQuery else { return }
+        runFind(query, scrollToMatch: false)
+    }
 
     /// A short-lived row confirmation after a replace, so the reader sees the
     /// result instead of a stale "N of M" count.

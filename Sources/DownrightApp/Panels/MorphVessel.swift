@@ -25,13 +25,33 @@ final class MorphVessel: Motion.SpringSurfaceView {
         /// the outgoing content is gone and the vessel is empty glass, so the
         /// container may rearrange without any read text moving under the eye.
         var onHandoff: (() -> Void)?
+        /// Fired once, when the flight first crosses the middle of the
+        /// incoming cut — the destination is roughly half visible, so the
+        /// landing details (content settling, the ring taking its substance
+        /// back) visibly arrive with the card instead of playing on empty
+        /// glass or after it has stopped.
+        var onReveal: (() -> Void)?
+        /// The character of the frame spring for this trip.  A landing
+        /// (small→large) seats the card with a soft undershoot past the
+        /// target; a departure (large→small) stays critically damped so the
+        /// body never floats past the ring.  Every other spring keeps its
+        /// critical character either way.
+        var landingBounce: CGFloat = 0
         /// Fired once, on the frame the vessel settles.
         var onSettle: (() -> Void)?
     }
 
     private var trip: Trip?
+    private var flightID = UUID()
     private var settled = false
     private var handedOff = false
+    private var revealed = false
+    /// Opacity already on screen when a flight is reversed. Content and
+    /// material continue from these values instead of jumping back to a
+    /// pristine first frame.
+    private var incomingStartAlpha: CGFloat = 0
+    private var outgoingStartAlpha: CGFloat = 1
+    private var vesselStartAlpha: CGFloat = 1
     /// What `springTick` last reported, so `springApply` can settle on "every
     /// spring has stopped" rather than on progress alone.  Progress and
     /// geometry no longer co-settle — the geometry springs cap their settle
@@ -48,6 +68,10 @@ final class MorphVessel: Motion.SpringSurfaceView {
 
     private var materialView: NSView?
 
+    /// The progress that counts as "the card is becoming legible": the
+    /// midpoint of `Motion.MorphCut`'s incoming band (0.35…0.75).
+    static let revealProgress: CGFloat = 0.55
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -63,7 +87,7 @@ final class MorphVessel: Motion.SpringSurfaceView {
         guard materialView == nil else { return }
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
-            glass.style = .regular
+            glass.style = .clear
             glass.cornerRadius = 0
             glass.tintColor = nil
             addMaterial(glass)
@@ -93,8 +117,14 @@ final class MorphVessel: Motion.SpringSurfaceView {
         // toggling the panel twice quickly would teleport the glass to the
         // pane and then fly it home from there.  Interruption is retargeting.
         let wasFlying = self.trip != nil && springsAreRunning
+        let interruptedVesselAlpha = wasFlying ? alphaValue : 1
         releaseContent(of: self.trip, excluding: trip)
         self.trip = trip
+        incomingStartAlpha = trip.incomingContent?.alphaValue ?? 0
+        outgoingStartAlpha = trip.outgoingContent?.alphaValue ?? 1
+        vesselStartAlpha = interruptedVesselAlpha
+        flightID = UUID()
+        let launchedFlight = flightID
         installMaterial()
 
         let host = superview ?? window.contentView ?? self
@@ -118,7 +148,14 @@ final class MorphVessel: Motion.SpringSurfaceView {
 
         settled = false
         handedOff = false
+        revealed = false
         isMoving = true
+        // A landing trip seats the card with a soft overshoot; everything
+        // else (departures, reversals) travels critically damped.  The frame
+        // spring keeps its velocity across the retune, so a rapid reversal
+        // never stops and restarts — it only changes the character of where
+        // it is headed.
+        rect.retune(perceptualDuration: Motion.springDeliberate, bounce: trip.landingBounce)
         // Apply the p = 0 cut *now*, not on the first tick.  The destination
         // panel is installed and laid out before the trip launches, so a frame
         // can be drawn between here and the display link's first callback —
@@ -138,6 +175,14 @@ final class MorphVessel: Motion.SpringSurfaceView {
         guard window.isVisible, window.screen != nil, armSprings() else {
             springsSettleImmediately()
             return
+        }
+        // A display link may park when AppKit reparents the child window in
+        // the same turn as launch. The visual trip is only 0.32 seconds; by
+        // one second it must have landed. Never let a missed final callback
+        // strand the destination at its pre-measurement frame.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.flightID == launchedFlight, self.trip != nil else { return }
+            self.springsSettleImmediately()
         }
     }
 
@@ -163,6 +208,15 @@ final class MorphVessel: Motion.SpringSurfaceView {
 
     override func springApply() {
         frame = rect.rect
+        let p = min(1, max(0, progress.value))
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowRadius = 8 + 22 * p
+        layer?.shadowOffset = NSSize(width: 0, height: -2 - 7 * p)
+        layer?.shadowOpacity = Float(0.05 + 0.10 * p)
+        layer?.shadowPath = PanelMetrics.continuousRoundedPath(
+            rect: bounds,
+            radius: min(radius.value, min(bounds.width, bounds.height) / 2)
+        )
         if let materialView {
             if #available(macOS 26.0, *) {
                 (materialView as? NSGlassEffectView)?.cornerRadius = radius.value
@@ -173,11 +227,19 @@ final class MorphVessel: Motion.SpringSurfaceView {
         }
 
         guard trip != nil else { return }
-        applyContentCut(at: progress.value)
+        applyContentCut(at: p)
 
         if !handedOff, progress.value >= Motion.MorphCut.handoff {
             handedOff = true
             trip?.onHandoff?()
+        }
+        // The destination details arrive once its material is legible —
+        // halfway up the incoming ramp — not on the one frame the incoming
+        // cut first opens (where they would play on glass still empty) and
+        // not after the landing (where they would stack on a finished card).
+        if !revealed, progress.value >= MorphVessel.revealProgress {
+            revealed = true
+            trip?.onReveal?()
         }
         // Land on "everything has stopped", never on progress alone.
         guard !settled, !isMoving else { return }
@@ -208,8 +270,20 @@ final class MorphVessel: Motion.SpringSurfaceView {
     }
 
     private func applyContentCut(at p: CGFloat) {
-        trip?.incomingContent?.alphaValue = Motion.MorphCut.incoming(p)
-        trip?.outgoingContent?.alphaValue = Motion.MorphCut.outgoing(p)
+        let incomingCurve = Motion.MorphCut.incoming(p)
+        let outgoingCurve = Motion.MorphCut.outgoing(p)
+        trip?.incomingContent?.alphaValue = incomingStartAlpha
+            + (1 - incomingStartAlpha) * incomingCurve
+        // Once the arrival details are revealed, the outgoing copy is owned by
+        // its own fade (the ring taking its substance back) — the cut has
+        // already handed it off at 0 and must not keep writing over it.
+        if !revealed, let outgoing = trip?.outgoingContent {
+            outgoing.alphaValue = outgoingStartAlpha * outgoingCurve
+        }
+        // As the destination material takes over, retire the travelling copy.
+        // Without this, two live glass effects overlap for the last half of
+        // the trip and flash as a brighter card immediately before landing.
+        alphaValue = vesselStartAlpha * (1 - incomingCurve)
     }
 
     /// Hand a finished (or abandoned) trip's views back at full opacity.
@@ -223,5 +297,6 @@ final class MorphVessel: Motion.SpringSurfaceView {
             }
             view.alphaValue = 1
         }
+        alphaValue = 1
     }
 }

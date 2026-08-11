@@ -83,11 +83,18 @@ final class ImageFragment: DownrightFragment {
     /// message, so it lives in the mono line and wraps; a fixed 64pt box just
     /// clipped anything longer than the measure.
     private var missing: FailedObject {
-        FailedObject(label: "Missing image", source: payload.detail)
+        FailedObject(label: compactFailureLabel("Missing image"), source: "")
     }
 
     private var blocked: FailedObject {
-        FailedObject(label: "Blocked image", source: payload.detail)
+        FailedObject(label: compactFailureLabel("Blocked image"), source: "")
+    }
+
+    /// A missing image is usually one short path, not diagnostic source code.
+    /// Keep that fact in one compact row so a failed asset does not take more
+    /// vertical space than the prose around it. Long paths still wrap.
+    private func compactFailureLabel(_ label: String) -> String {
+        payload.detail.isEmpty ? label : "\(label)  ·  \(payload.detail)"
     }
 
     /// What the image is composited over.

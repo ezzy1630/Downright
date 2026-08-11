@@ -282,6 +282,33 @@ struct FloatingTaskPanelTests {
         return parent.convertFromScreen(child.convertToScreen(childRect))
     }
 
+    @Test("Attaching the floating panel keeps one continuous glass view")
+    func attachmentDoesNotReplaceGlass() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        let surface = try #require(controller.floatingSurface)
+        guard let identity = surface.glassIdentityForTesting else { return }
+
+        surface.refreshGlassAfterWindowAttach()
+
+        #expect(surface.glassIdentityForTesting == identity)
+    }
+
+    @Test("Native task glass never mounts the opaque fallback")
+    func nativeGlassHasNoOpaqueFirstFrame() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        let surface = try #require(controller.floatingSurface)
+        guard surface.glassIdentityForTesting != nil else { return }
+
+        #expect(!surface.opaqueFallbackIsMountedForTesting)
+    }
+
+
     @Test("The floating surface sits inside the content margins")
     func surfaceFloatsInsideTheContentMargins() throws {
         let (_, cleanup, controller) = try makeDocument()
@@ -554,25 +581,26 @@ struct FloatingTaskPanelTests {
     }
 
     @Test("A rapid open-close reversal lands cleanly and remains reusable")
-    func rapidTaskPanelToggleRetargetsOneMorph() throws {
+    func rapidTaskPanelToggleRetargetsOneSurface() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
         let window = try #require(controller.window)
         window.makeKeyAndOrderFront(nil)
 
         controller.toggleTaskPanel()
-        #expect(controller.floatingSurface != nil)
-        #expect(controller.hasMorphVesselForTesting)
+        let firstSurface = try #require(controller.floatingSurface)
+        #expect(!controller.hasMorphVesselForTesting)
 
         controller.closeTaskPanel()
-        controller.settleMorphForTesting()
+        firstSurface.settleForTesting()
         #expect(controller.floatingSurface == nil)
         #expect(!controller.hasMorphVesselForTesting)
         #expect(!controller.progressRing.isActive)
 
         controller.toggleTaskPanel()
-        controller.settleMorphForTesting()
-        #expect(controller.floatingSurface != nil)
+        let reopened = try #require(controller.floatingSurface)
+        reopened.settleForTesting()
+        #expect(reopened.visibleBodyHeightForTesting == reopened.bounds.height)
         #expect(!controller.hasMorphVesselForTesting)
         #expect(controller.progressRing.isActive)
     }

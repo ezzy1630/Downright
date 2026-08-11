@@ -50,6 +50,9 @@ levels, code, tables, tasks, search hits, changed regions, and progress.
 - Use a fixed baseline grid and optical hanging punctuation.
 - Use a warm paper light theme and a warm dark theme. Do not invert light
   colours into dark mode.
+- Native accent is blue (`#307afe` light / `#6ea8ff` dark). Warm paper is the
+  surface; blue is the brand signal for selection, links, progress, warning,
+  modified, and search-current states — and for all chrome emphasis. No orange.
 - Use semantic theme tokens. Do not place raw colour literals in render code.
 - Use subtle code tint and a left rule, open tables, coloured quote rules, and
   restrained image shadows. Avoid heavy cards and decoration.

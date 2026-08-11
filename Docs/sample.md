@@ -57,11 +57,11 @@ files that aren't there says so on its face.
 
 ## Tasks
 
-- [x] Prove the no-mutation decoration model
+- [ ] Prove the no-mutation decoration model
 - [x] Render core and Read mode
 - [x] Ship the Quick Look extension
 - [x] Notarise and publish
-  - [ ] Sparkle appcast
+  - [x] Sparkle appcast
   - [x] Ad-hoc signing for local runs
 
 ## Code

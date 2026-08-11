@@ -223,11 +223,16 @@ final class TaskProgressRing: NSView {
 
         // A `CATextLayer` draws from the top of its bounds, so the count is
         // centred by giving the layer exactly one line and centring that —
-        // not by nudging a taller box half a point at a time.
+        // not by nudging a taller box half a point at a time.  The frame spans
+        // the glyph's full width so the centred numeral shares the arc's axis.
         let font = Self.countFont
         let lineHeight = ceil(font.ascender - font.descender)
-        countLayer.frame = NSRect(x: 0, y: (centre.y - lineHeight / 2).rounded(),
-                                  width: bounds.width, height: lineHeight)
+        countLayer.frame = NSRect(
+            x: 0,
+            y: (centre.y - lineHeight / 2).rounded(),
+            width: glyphLayer.bounds.width,
+            height: lineHeight
+        )
     }
 
     /// The check is drawn in the view's (unflipped) coordinates from the same

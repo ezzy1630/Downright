@@ -499,18 +499,19 @@ struct DensityRailTests {
         #expect(DensityGutterView.pips(for: overlays, on: marks)[0].change == .modified)
     }
 
-    /// One or two sections is not an index, and propping it up with end-caps
-    /// only made the rail look broken in a different way.
-    @Test("Too few marks suppress the stack entirely")
-    func stackSuppressedBelowMinimum() {
+    /// Sparse documents still need a hover target for their available
+    /// headings. Only a rail that is physically too short suppresses its
+    /// stack.
+    @Test("Sparse documents keep their available heading anchors")
+    func sparseDocumentsKeepHeadingAnchors() {
         let two = (0..<2).map { heading(1, CGFloat($0) / 2) }
-        #expect(DensityGutterView.selection(for: two, capacity: 20).marks.isEmpty)
+        #expect(DensityGutterView.selection(for: two, capacity: 20).marks.count == 2)
 
         let three = (0..<3).map { heading(1, CGFloat($0) / 3) }
         #expect(DensityGutterView.selection(for: three, capacity: 20).marks.count == 3)
 
-        // A tiny rail suppresses the stack too, rather than packing marks in
-        // below the legible pitch.
+        // A tiny rail suppresses the stack rather than packing marks into an
+        // unreadable bar.
         let many = (0..<40).map { heading(1, CGFloat($0) / 40) }
         let tinyCapacity = DensityGutterView.stackCapacity(track: 20)
         #expect(DensityGutterView.selection(for: many, capacity: tinyCapacity).marks.isEmpty)
@@ -552,5 +553,16 @@ struct DensityRailTests {
         ]
         #expect(DensityGutterView.currentHeadingFraction(in: bands, at: 0.35...0.6) == 0.3)
         #expect(DensityGutterView.currentHeadingFraction(in: bands, at: 0...0.05) == 0.1)
+    }
+
+    @Test("Pointer wobble remains a smooth click; deliberate travel becomes scrubbing")
+    func scrubActivationHasARealThreshold() {
+        let origin = NSPoint(x: 20, y: 100)
+        #expect(!DensityGutterView.shouldBeginScrub(
+            from: origin, to: NSPoint(x: 21, y: 102)
+        ))
+        #expect(DensityGutterView.shouldBeginScrub(
+            from: origin, to: NSPoint(x: 20, y: 104)
+        ))
     }
 }

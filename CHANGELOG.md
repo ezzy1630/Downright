@@ -39,6 +39,30 @@ every release; Sparkle orders updates by it.
 
 ### Changed
 
+- **Find bar and Tasks panel motion pass.** The find pill now claims and
+  releases its space above the document with a glide instead of a one-frame
+  jump, arrives at the state-change duration rather than the hover duration,
+  and grows around the replace row as it expands. The match count crossfades
+  and its tray glides open and closed, and the invalid-regex glyph pops in on
+  a small spring instead of hard-appearing. In the Tasks panel, the empty
+  state dissolves as a plan's first rows slide in, and the quick-add row
+  crossfades its hint into the editing field instead of swapping them.
+- The find bar's **previous/next and Replace buttons park themselves** while
+  there is nothing to act on — an empty query or a settled "No matches" — and
+  re-arm the moment the text changes, so a control that cannot do anything no
+  longer offers a click that lands nowhere.
+- Right-clicking a Tasks panel **"N completed" pile** offers Show/Collapse
+  Completed and Copy Status Report — the same fold the row's click performs,
+  plus the report every other section surface already had.
+- The floating Tasks panel's empty state was **clipped at the bottom** — the
+  card was sized to a fixed minimum taller than its content, and the centered
+  "Add task" button rode past the rounded lower edge. The panel now measures
+  the empty chrome's full height (state, gap, button, and the bottom margin)
+  so the card fits the whole thing.
+- The morph flight now lands on the surface's **actual resting frame** instead
+  of a freshly re-derived one, which could be a few points off and left the
+  travelling glass resting slightly beside the card it was becoming — the
+  "oversized grey slab" that read as a second panel behind the glass.
 - The start window's headline adapts: returning users get "Pick up where you
   left off" rather than "Open a Markdown file", which restated the button
   directly beneath it and kept instructing people who had long since learned.

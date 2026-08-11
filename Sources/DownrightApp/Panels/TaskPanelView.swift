@@ -18,8 +18,8 @@ protocol TaskPanelDelegate: AnyObject {
 ///
 /// "Agent plans are `- [ ]` all the way down."  The panel answers the two
 /// questions a reader actually has, in one glance: *how is the plan going*
-/// (the section-map bar, one segment per heading, with the count riding at its
-/// end) and *let me work it* (the list — open tasks first, tick, quick-add,
+/// (the section-map bar, one segment per heading) and *let me work it* (the
+/// list — open tasks first, tick, quick-add,
 /// drag to reorder — every one of them a source edit through the delegate, so
 /// the document remains the only source of truth).  *What do I do next* needs
 /// no chrome of its own: the list is open-first, so the next task is simply
@@ -78,18 +78,48 @@ final class TaskPanelView: NSView, PanelSurface {
     /// chrome. The floating host applies the ceiling after this honest read.
     var fittedContentHeight: CGFloat {
         layoutSubtreeIfNeeded()
-        let width = max(table.bounds.width, preferredWidth)
+        // Presentation can measure in the same run-loop turn that a parse
+        // replaces the worklist. A deferred visual diff must not make layout
+        // believe a forty-row plan is still the previous one-row list.
+        let measuredRows = buildRows()
+        if rows != measuredRows {
+            rows = measuredRows
+            table.reloadData()
+        }
+        let width = measurementWidth(tableWidth: table.bounds.width)
+        // The empty state is centered over the (empty) list with breathing
+        // room above and below, so its add button never rides the card's
+        // lower edge. Report the full chrome — state, gap, button, and the
+        // bottom margin the layout gives it — instead of the bare stack, so
+        // the card fits the whole thing rather than clipping the button.
         let listHeight = rows.isEmpty
-            ? emptyState.fittingSize.height + 12 + 26
+            ? TaskPanelView.emptyStateContentHeight(emptyState: emptyState)
             : rows.indices.reduce(CGFloat.zero) { total, row in
                 total + rowHeight(row, width: width)
             }
         let insets = scroll.contentInsets
+        // AppKit can report a zero bottom content inset while the detached
+        // scroll view is being measured, then restore the configured inset
+        // after the child panel joins a window. Measuring that transient zero
+        // makes the final add row land under the rounded lower edge. Keep the
+        // authored footer clearance as the floor, plus a small optical gap so
+        // the row never touches the glass rim at fractional backing scales.
+        let footerClearance = max(baseScrollBottomInset, insets.bottom) + 4
         let sectionMapHeight = showsSectionHeaders
             ? sectionBar.intrinsicContentSize.height
             : 0
         return sectionMapHeight
-            + insets.top + listHeight + insets.bottom
+            + insets.top + listHeight + footerClearance
+    }
+
+    /// The vertical space the empty state occupies: its state block, the gap
+    /// to the add button, the button, and the margin that keeps the button
+    /// clear of the card's rounded lower edge.
+    static func emptyStateContentHeight(emptyState: PanelEmptyStateView) -> CGFloat {
+        emptyState.fittingSize.height
+            + 10  // gap: state → button
+            + 28  // add-task button
+            + 20  // optical clearance from the rounded lower edge
     }
 
     var visibleTaskCountForTesting: Int {
@@ -103,18 +133,33 @@ final class TaskPanelView: NSView, PanelSurface {
         }
     }
     var statusLineForTesting: String { worklist.statusLine }
-    var captionForTesting: String { captionLabel.stringValue }
+    var captionForTesting: String { worklist.countLine }
     var rowCountForTesting: Int { rows.count }
     var contentDocumentHeightForTesting: CGFloat { scroll.documentView?.bounds.height ?? 0 }
     var contentViewportHeightForTesting: CGFloat { scroll.contentView.bounds.height }
     var measuredListHeightForTesting: CGFloat {
-        let width = max(table.bounds.width, preferredWidth)
+        let width = measurementWidth(tableWidth: table.bounds.width)
         return rows.isEmpty
-            ? emptyState.fittingSize.height + 12 + 26
+            ? TaskPanelView.emptyStateContentHeight(emptyState: emptyState)
             : rows.indices.reduce(CGFloat.zero) { $0 + rowHeight($1, width: width) }
+    }
+
+    private func measurementWidth(tableWidth: CGFloat) -> CGFloat {
+        if tableWidth > 1 { return tableWidth }
+        if bounds.width > 1 { return bounds.width }
+        return preferredWidth
     }
     var emptyAddButtonForTesting: NSButton { emptyAddButton }
     var quickAddEditingForTesting: Bool { editingAddSection != nil }
+    func performAddRowAccessibilityPressForTesting() -> Bool {
+        guard let row = rows.firstIndex(where: {
+            if case .add = $0 { return true }
+            return false
+        }) else { return false }
+        return (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? TaskAddRowView)?
+            .accessibilityPerformPress() ?? false
+    }
+    func commitNewTaskForTesting(_ text: String) { commitNewTask(text) }
     var undoBottomInsetForTesting: CGFloat { scroll.contentInsets.bottom }
     var undoPillFrameForTesting: NSRect { undoPill.frame }
     var lastRowFrameForTesting: NSRect? {
@@ -137,14 +182,15 @@ final class TaskPanelView: NSView, PanelSurface {
     // MARK: - Views
 
     private let sectionBar: TaskSectionBarView
-    private let captionLabel = NSTextField(labelWithString: "")
     private let bottomFade = CAGradientLayer()
     private var scrollBelowSectionBar: NSLayoutConstraint!
     private var scrollAtTop: NSLayoutConstraint!
     private let table = PanelList.makeTableView(identifier: "tasks")
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private let emptyState = PanelEmptyStateView()
-    private let emptyAddButton = NSButton(title: "Add task", target: nil, action: nil)
+    private let emptyAddButton = TaskImmediateActionButton(
+        title: "Add Markdown task", target: nil, action: nil
+    )
     private let undoPill = TaskUndoPillView()
 
     private enum Row: Equatable {
@@ -156,14 +202,6 @@ final class TaskPanelView: NSView, PanelSurface {
         case pile(Int)
         /// Quick-add row of a section; -1 is the whole document (empty plan).
         case add(Int)
-    }
-
-    /// The panel's own vertical rhythm: air above the section map, air
-    /// between the map and the list.  Named so the fitted-height measurement
-    /// below reads the same numbers the constraints install.
-    private enum PanelLayout {
-        static let headerTop: CGFloat = 12
-        static let headerToListGap: CGFloat = 8
     }
 
     private var worklist = TaskWorklist(tasks: [], headings: [])
@@ -217,20 +255,8 @@ final class TaskPanelView: NSView, PanelSurface {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     private func buildHeader() {
-        // The inspector host owns the panel title and the close affordance, so
-        // the panel's own header is one line: the section map with the tally
-        // riding at its trailing end.  One header per surface, never two
-        // (§11.4).  Counts read as figures, not words: monospaced digits keep
-        // the tally from shimmying as it changes — a meter, not a sentence.
-        captionLabel.font = NSFont.monospacedDigitSystemFont(
-            ofSize: PanelFont.secondary.pointSize, weight: .regular
-        )
-        captionLabel.alignment = .right
-        captionLabel.lineBreakMode = .byTruncatingTail
-        captionLabel.translatesAutoresizingMaskIntoConstraints = false
-        captionLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        captionLabel.setAccessibilityRole(.staticText)
-
+        // The toolbar ring owns the whole-plan count. Multi-section documents
+        // keep only this map, so the panel never repeats the same meter in text.
         sectionBar.onSelectSegment = { [weak self] index in self?.revealSection(index) }
     }
 
@@ -306,7 +332,9 @@ final class TaskPanelView: NSView, PanelSurface {
 
         // Installed last so "nothing here yet" floats over the (empty) list in
         // the same place every panel puts it.
-        emptyState.install(in: self, over: scroll)
+        // The button belongs to the same visual group. Lift the state so the
+        // combined state + action, not the text block alone, is centred.
+        emptyState.install(in: self, over: scroll, verticalBias: 0.88)
 
         emptyAddButton.bezelStyle = .rounded
         emptyAddButton.controlSize = .small
@@ -319,16 +347,16 @@ final class TaskPanelView: NSView, PanelSurface {
         emptyAddButton.target = self
         emptyAddButton.action = #selector(addTaskFromEmptyState(_:))
         emptyAddButton.setAccessibilityRole(.button)
-        emptyAddButton.setAccessibilityLabel("Add task")
-        emptyAddButton.toolTip = "Add task"
+        emptyAddButton.setAccessibilityLabel("Add Markdown task")
+        emptyAddButton.toolTip = "Insert a - [ ] checkbox into this document"
         emptyAddButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyAddButton)
         NSLayoutConstraint.activate([
-            emptyAddButton.topAnchor.constraint(equalTo: emptyState.bottomAnchor, constant: 12),
+            emptyAddButton.topAnchor.constraint(equalTo: emptyState.bottomAnchor, constant: 10),
             emptyAddButton.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyAddButton.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
             emptyAddButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-            emptyAddButton.heightAnchor.constraint(equalToConstant: 26),
+            emptyAddButton.heightAnchor.constraint(equalToConstant: 28),
         ])
         emptyAddButton.isHidden = true
     }
@@ -336,8 +364,20 @@ final class TaskPanelView: NSView, PanelSurface {
     // MARK: - Style
 
     private func applyStyle() {
-        captionLabel.textColor = styleSheet.textFaint
         if !emptyState.isHidden { configureEmptyState() }
+        // Cell views own their theme colours. A live theme switch must
+        // reconfigure the visible cells; updating only the panel chrome left
+        // task labels and checkbox rings painted in the previous theme until
+        // the next parse happened to rebuild the table.
+        guard table.numberOfRows > 0 else { return }
+        let visible = table.rows(in: table.visibleRect)
+        guard visible.location != NSNotFound, visible.length > 0 else { return }
+        table.reloadData(
+            forRowIndexes: IndexSet(
+                integersIn: visible.location..<min(NSMaxRange(visible), table.numberOfRows)
+            ),
+            columnIndexes: IndexSet(integer: 0)
+        )
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -366,7 +406,22 @@ final class TaskPanelView: NSView, PanelSurface {
     override func layout() {
         super.layout()
         let clip = scroll.contentView
-        let overflows = (scroll.documentView?.bounds.height ?? 0) > clip.bounds.height + 0.5
+        // NSTableView expands its document view to the viewport when the list
+        // is short, and NSScrollView folds content insets into that geometry.
+        // Comparing those two frames therefore reports a false overflow at
+        // the exact fit and paints the bottom fade over “Add task.” Compare the
+        // authored row model with the usable viewport instead; the fade now
+        // appears only when there is real offscreen work to reveal.
+        let width = measurementWidth(tableWidth: table.bounds.width)
+        let rowsHeight = rows.indices.reduce(CGFloat.zero) { total, row in
+            total + rowHeight(row, width: width)
+        }
+        // `NSClipView.bounds` is already the usable content viewport. Xcode's
+        // app bundle applies `contentInsets` before exposing these bounds;
+        // subtracting them again made only the installed build think an exact
+        // fit overflowed, so its fade erased the footer while SwiftPM QA did
+        // not. One coordinate space, one comparison.
+        let overflows = rowsHeight > clip.bounds.height + 0.5
         if overflows {
             bottomFade.frame = clip.bounds
             clip.layer?.mask = bottomFade
@@ -382,22 +437,61 @@ final class TaskPanelView: NSView, PanelSurface {
         // same spot, so the header appeared to react while saying nothing new.
         // The meter holds still under the pointer now; a click still scrolls
         // to the section.
-        captionLabel.stringValue = worklist.countLine
         updateEmptyState()
     }
 
     private func updateEmptyState() {
         let empty = worklist.totalCount == 0 && editingAddSection == nil
-        emptyState.isHidden = !empty
-        emptyAddButton.isHidden = !empty
         if empty { configureEmptyState() }
+        setEmptyChromeVisible(empty, animated: window != nil && !styleSheet.reduceMotion)
+    }
+
+    /// What the empty chrome should be, tracked apart from `isHidden` so a
+    /// state change during a fade wins over the fade's completion.
+    private var emptyChromeVisible = false
+
+    /// The empty state crossfades rather than popping: a plan's first task
+    /// usually arrives while the reader is watching, and the checklist
+    /// dissolving as the rows slide in reads as one surface changing state,
+    /// not two panels swapping places.
+    private func setEmptyChromeVisible(_ visible: Bool, animated: Bool) {
+        guard visible != emptyChromeVisible else { return }
+        emptyChromeVisible = visible
+        let chrome: [NSView] = [emptyState, emptyAddButton]
+        if visible {
+            for view in chrome {
+                view.alphaValue = animated ? 0 : 1
+                view.isHidden = false
+            }
+            guard animated else { return }
+            Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
+                for view in chrome { view.animator().alphaValue = 1 }
+            }
+        } else {
+            guard animated else {
+                for view in chrome {
+                    view.isHidden = true
+                    view.alphaValue = 1
+                }
+                return
+            }
+            Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
+                for view in chrome { view.animator().alphaValue = 0 }
+            } completion: { [weak self] in
+                guard let self, !self.emptyChromeVisible else { return }
+                for view in chrome {
+                    view.isHidden = true
+                    view.alphaValue = 1
+                }
+            }
+        }
     }
 
     private func configureEmptyState() {
         emptyState.configure(
             symbol: "checklist",
             title: "No tasks yet",
-            subtitle: "Add a task here, or type “- [ ]” in the document.",
+            subtitle: "Tasks are Markdown checkboxes. Add one here or type “- [ ]”.",
             styleSheet: styleSheet
         )
     }
@@ -609,6 +703,9 @@ final class TaskPanelView: NSView, PanelSurface {
     // MARK: - Quick add
 
     @objc private func addTaskFromEmptyState(_ sender: Any?) {
+        // The field is the immediate result of the click. Do not leave it
+        // hidden beneath the empty-state crossfade.
+        setEmptyChromeVisible(false, animated: false)
         beginNewTask()
     }
 
@@ -701,6 +798,23 @@ final class TaskPanelView: NSView, PanelSurface {
             return menu
         case .section:
             let menu = NSMenu()
+            menu.addItem(item("Copy Status Report") { [weak self] in self?.copyStatusReport() })
+            return menu
+        case .pile(let section):
+            // The pile is a disclosure control; its menu is the same fold,
+            // plus the report every other section surface already offers.
+            let key = sectionKey(for: section)
+            let expanded = expandedPiles.contains(key)
+            let menu = NSMenu()
+            menu.addItem(item(expanded ? "Collapse Completed" : "Show Completed") { [weak self] in
+                guard let self else { return }
+                if expanded {
+                    self.expandedPiles.remove(key)
+                } else {
+                    self.expandedPiles.insert(key)
+                }
+                self.rebuildRows(animated: true)
+            })
             menu.addItem(item("Copy Status Report") { [weak self] in self?.copyStatusReport() })
             return menu
         default:
@@ -949,7 +1063,7 @@ extension TaskPanelView: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard rows.indices.contains(row) else { return TaskRowMetrics.minimumHeight }
-        return rowHeight(row, width: max(tableView.bounds.width, preferredWidth))
+        return rowHeight(row, width: measurementWidth(tableWidth: tableView.bounds.width))
     }
 
     private func rowHeight(_ row: Int, width: CGFloat) -> CGFloat {
@@ -1257,8 +1371,8 @@ private final class TaskRowView: TaskRowSurfaceView {
 
         jumpGlyph.contentTintColor = styleSheet.textFaint
 
-        // Done reads as quieter text and a filled box; nothing is struck
-        // through at rest.  The strike exists only as the completion moment.
+        // Both states keep full-primary text; the filled circle carries done.
+        // The strike exists only as the completion moment.
         let text = task.text.trimmingCharacters(in: .whitespaces)
         label.attributedStringValue = NSAttributedString(string: text, attributes: [
             .font: PanelFont.taskRow,
@@ -1705,14 +1819,43 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
 
     func configure(editing: Bool, styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
+        let wasEditing = self.editing
         self.editing = editing
         cancelled = false
-        hintLabel.isHidden = editing
-        textField.isHidden = !editing
+        swapEditorChrome(editing: editing, animated: wasEditing != editing)
         if !editing { textField.stringValue = "" }
         setAccessibilityRole(editing ? nil : .button)
         setAccessibilityLabel(editing ? "New task title" : "Add task")
         applyStyle(animated: false)
+    }
+
+    /// Hint and field trade places with a crossfade — the row the reader
+    /// clicked becomes the field they type into, not a different row swapped
+    /// into its place.
+    private func swapEditorChrome(editing: Bool, animated: Bool) {
+        let incoming: NSView = editing ? textField : hintLabel
+        let outgoing: NSView = editing ? hintLabel : textField
+        guard animated, window != nil, !styleSheet.reduceMotion else {
+            outgoing.isHidden = true
+            outgoing.alphaValue = 1
+            incoming.isHidden = false
+            incoming.alphaValue = 1
+            return
+        }
+        incoming.alphaValue = 0
+        incoming.isHidden = false
+        outgoing.isHidden = false
+        Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+            incoming.animator().alphaValue = 1
+            outgoing.animator().alphaValue = 0
+        } completion: { [weak self] in
+            guard let self else { return }
+            // Re-resolve at completion: a re-configure mid-fade has already
+            // swapped the pair the other way.
+            let settled: NSView = self.editing ? self.hintLabel : self.textField
+            settled.isHidden = true
+            settled.alphaValue = 1
+        }
     }
 
     private func applyStyle(animated: Bool) {
@@ -1767,13 +1910,36 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
 
     // MARK: - Pointer
 
-    /// Claiming the press keeps the table's own tracking from swallowing the
-    /// release, so the click pair always lands on the row.
-    override func mouseDown(with event: NSEvent) {}
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func mouseUp(with event: NSEvent) {
+    /// Begin editing on press. NSTableView may recycle or select the row
+    /// between down and up; waiting for release made Add task intermittent.
+    override func mouseDown(with event: NSEvent) {
         guard !editing, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         onBeginEdit?()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard !editing else { return false }
+        onBeginEdit?()
+        return true
+    }
+}
+
+private final class TaskImmediateActionButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        highlight(true)
+        _ = sendAction(action, to: target)
+        DispatchQueue.main.async { [weak self] in self?.highlight(false) }
+    }
+
+
+    override func accessibilityPerformPress() -> Bool {
+        guard isEnabled else { return false }
+        return sendAction(action, to: target)
     }
 }
 

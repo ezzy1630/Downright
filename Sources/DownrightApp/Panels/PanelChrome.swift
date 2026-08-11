@@ -381,7 +381,10 @@ final class PanelBackdrop: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard prefersOpaque || usesSurfaceFill else { return }
+        // The owning FloatingPanelSurface / ChromeGlass is the material.
+        // Painting this nested backdrop as well creates the opaque rectangle
+        // users perceive as a second panel behind Liquid Glass.
+        guard !isInsideDetachedGlass, prefersOpaque || usesSurfaceFill else { return }
         (opaqueSurfaceColor ?? (usesSurfaceFill ? styleSheet.surface : styleSheet.background)).setFill()
         dirtyRect.fill()
     }
@@ -547,7 +550,8 @@ enum PanelButton {
         label: String,
         action: ButtonAction,
         pointSize: CGFloat = 13,
-        weight: NSFont.Weight = .medium
+        weight: NSFont.Weight = .medium,
+        firesOnMouseDown: Bool = false
     ) -> NSButton {
         let symbolConfiguration = NSImage.SymbolConfiguration(
             pointSize: pointSize,
@@ -556,6 +560,7 @@ enum PanelButton {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: label)?
             .withSymbolConfiguration(symbolConfiguration)
         let button = PanelSymbolButton(image: image ?? NSImage(), target: action, action: #selector(ButtonAction.fire(_:)))
+        button.firesOnMouseDown = firesOnMouseDown
         button.isBordered = false
         button.bezelStyle = .accessoryBarAction
         button.imagePosition = .imageOnly
@@ -577,6 +582,13 @@ enum PanelButton {
         button.setAccessibilityLabel(title)
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
+    }
+
+    static func setImmediatePressHandler(
+        on button: NSButton,
+        _ handler: @escaping () -> Void
+    ) {
+        (button as? PanelSymbolButton)?.immediatePressHandler = handler
     }
 
     /// On/off pill for the find bar's regex, case, whole-word and in-selection
@@ -610,6 +622,10 @@ private final class PanelSymbolButton: NSButton {
     /// animated control here takes one: only the style sheet knows that a
     /// Reader Profile has forced Reduce Motion on (§11.4).
     var styleSheet: StyleSheet = .current
+    var firesOnMouseDown = false
+    var immediatePressHandler: (() -> Void)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override var intrinsicContentSize: NSSize {
         let size = super.intrinsicContentSize
@@ -655,6 +671,46 @@ private final class PanelSymbolButton: NSButton {
     override func mouseExited(with event: NSEvent) {
         isHovered = false
         retargetWash()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        animatePress(scale: 0.90, duration: Motion.pressIn)
+        if firesOnMouseDown {
+            guard isEnabled else { return }
+            if let immediatePressHandler { immediatePressHandler() }
+            else { _ = sendAction(action, to: target) }
+            DispatchQueue.main.async { [weak self] in
+                self?.animatePress(scale: 1, duration: Motion.pressOut)
+            }
+            return
+        }
+        defer { animatePress(scale: 1, duration: Motion.pressOut) }
+        super.mouseDown(with: event)
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard isEnabled else { return false }
+        if let immediatePressHandler {
+            immediatePressHandler()
+            return true
+        }
+        return super.accessibilityPerformPress()
+    }
+
+    private func animatePress(scale: CGFloat, duration: TimeInterval) {
+        wantsLayer = true
+        let transform = CATransform3DMakeScale(scale, scale, 1)
+        guard !styleSheet.reduceMotion else {
+            layer?.transform = transform
+            return
+        }
+        let animation = CABasicAnimation(keyPath: "transform")
+        animation.fromValue = layer?.presentation()?.transform ?? layer?.transform
+        animation.toValue = transform
+        animation.duration = duration
+        animation.timingFunction = Motion.timing(.decelerate)
+        layer?.transform = transform
+        layer?.add(animation, forKey: "panel-button-press")
     }
 
     /// Press and enablement are the cell's state, not this view's, and the
@@ -1443,6 +1499,10 @@ final class PanelCheckbox: NSView {
     /// A view whose frame is the drawn box can still claim the slack around it:
     /// the superview hands every subview the point and lets each decide.  The
     /// gap to the label is wider than the inset, so nothing is stolen from it.
+    /// `hitTest` reports the point in the *superview's* space (AppKit feeds
+    /// the chain unconverted), and the box sits at an inset inside the row —
+    /// testing it against `hitBounds` without the conversion would leave the
+    /// actual drawn box unclickable and hand the whole row to selection.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let superview else { return nil }
         return hitBounds.contains(convert(point, from: superview)) ? self : nil
@@ -1891,9 +1951,9 @@ final class PanelEmptyStateView: NSView {
         NSLayoutConstraint.activate([
             symbolView.topAnchor.constraint(equalTo: topAnchor),
             symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            symbolView.widthAnchor.constraint(equalToConstant: 40),
-            symbolView.heightAnchor.constraint(equalToConstant: 40),
-            titleLabel.topAnchor.constraint(equalTo: symbolView.bottomAnchor, constant: 12),
+            symbolView.widthAnchor.constraint(equalToConstant: 36),
+            symbolView.heightAnchor.constraint(equalToConstant: 36),
+            titleLabel.topAnchor.constraint(equalTo: symbolView.bottomAnchor, constant: 10),
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
@@ -1913,7 +1973,7 @@ final class PanelEmptyStateView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        discLayer.frame = symbolView.frame.insetBy(dx: -6, dy: -6)
+        discLayer.frame = symbolView.frame.insetBy(dx: -5, dy: -5)
         discLayer.cornerRadius = discLayer.bounds.width / 2
         CATransaction.commit()
     }
@@ -1930,7 +1990,7 @@ final class PanelEmptyStateView: NSView {
         symbolView.image = NSImage(
             systemSymbolName: symbol,
             accessibilityDescription: title
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 19, weight: .medium))
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 17, weight: .medium))
         symbolView.contentTintColor = styleSheet.textSecondary
 
         titleLabel.stringValue = title

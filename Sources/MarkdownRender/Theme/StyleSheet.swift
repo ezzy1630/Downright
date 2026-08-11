@@ -371,10 +371,10 @@ public struct StyleSheet {
     ///
     /// It used to be `background` everywhere, which assumes the page is always
     /// the far side of the accent.  A warm light theme has a near-white page
-    /// and a mid-amber accent, and a white tick on amber is the one state in
-    /// the app a reader could not see.  Picking whichever of the page and its
-    /// text stands further from the accent keeps the mark legible in every
-    /// theme without a per-theme token (§11.2).
+    /// and a mid-value accent, and a white tick on a light accent is the one
+    /// state in the app a reader could not see.  Picking whichever of the page
+    /// and its text stands further from the accent keeps the mark legible in
+    /// every theme without a per-theme token (§11.2).
     public var onAccent: NSColor {
         let distance = { (color: NSColor) in
             abs(StyleSheet.relativeLuminance(color) - StyleSheet.relativeLuminance(accent))

@@ -7,7 +7,7 @@ import MarkdownRender
 /// stage instead of the document. A child window is also exactly the hit-test
 /// boundary of the visible body while its height is being poured out.
 @MainActor
-final class FloatingPanelWindow: NSWindow {
+final class FloatingPanelWindow: NSPanel {
     weak var floatingSurface: FloatingPanelSurface?
     var onOutsideMouseDown: (() -> Void)?
 
@@ -21,6 +21,9 @@ final class FloatingPanelWindow: NSWindow {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        isFloatingPanel = true
+        becomesKeyOnlyIfNeeded = true
+        hidesOnDeactivate = false
         // A floating child keeps the glass surface above the document while
         // the child relationship still lets AppKit sample the document below.
         level = .floating
@@ -84,6 +87,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private let fallback: PanelBackdrop
     private let rimGradient = CAGradientLayer()
     private let rimMask = CAShapeLayer()
+    private let arrivalGlint = CAShapeLayer()
     private let revealMask = CAShapeLayer()
     private var glass: NSView?
     private var glassContent: NSView?
@@ -91,13 +95,13 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private var isHostingContentInGlass = false
     private var contentLayoutHeight: CGFloat = 0
     private var frameSpring = Motion.SpringRect(
-        perceptualDuration: Motion.springDeliberate,
-        bounce: 0.04
+        perceptualDuration: Motion.liquidSettle,
+        bounce: 0.055
     )
     private var revealSpring = Motion.SpringScalar(
         value: 0,
-        perceptualDuration: Motion.springDeliberate,
-        bounce: 0.04
+        perceptualDuration: Motion.liquidSettle,
+        bounce: 0.07
     )
     private var hasSpringFrame = false
     private var hasRevealSpring = false
@@ -105,6 +109,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private var springMoving = false
     private var restingWindowFrame = NSRect.zero
     private var sliverWindowFrame = NSRect.zero
+    private var anchorWindowFrame = NSRect.zero
+    private var isAnchorMorphing = false
     private(set) var isDismissing = false
     private(set) var usesGlass = false
 
@@ -140,6 +146,18 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         rimGradient.zPosition = 100
         layer?.addSublayer(rimGradient)
 
+        arrivalGlint.fillColor = NSColor.clear.cgColor
+        arrivalGlint.strokeColor = NSColor.white.withAlphaComponent(0.62).cgColor
+        arrivalGlint.lineWidth = 1.15
+        arrivalGlint.lineCap = .round
+        arrivalGlint.opacity = 0
+        arrivalGlint.zPosition = 101
+        arrivalGlint.actions = [
+            "path": NSNull(), "frame": NSNull(), "opacity": NSNull(),
+            "strokeStart": NSNull(), "strokeEnd": NSNull(),
+        ]
+        layer?.addSublayer(arrivalGlint)
+
         revealMask.fillColor = NSColor.black.cgColor
         revealMask.actions = ["path": NSNull(), "frame": NSNull()]
         layer?.mask = revealMask
@@ -153,7 +171,12 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         fallback.veilAlpha = 0
         fallback.autoresizingMask = [.width, .height]
         fallback.frame = bounds
-        addSubview(fallback, positioned: .below, relativeTo: nil)
+        // Native glass must be the first material the compositor ever sees.
+        // Installing the opaque fallback and removing it later still exposes
+        // one painted frame while NSGlassEffectView attaches to its window.
+        if !Self.supportsGlass(styleSheet) {
+            addSubview(fallback, positioned: .below, relativeTo: nil)
+        }
         mountContentOnSelf()
         setAccessibilityRole(.group)
         setAccessibilityLabel(content.accessibilityLabel() ?? "Floating panel")
@@ -219,6 +242,64 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         armSprings()
     }
 
+    /// Prime the actual panel at the invoking control's screen-space frame.
+    /// No surrogate glass is involved: the child window, native material,
+    /// rounded shape, and eventual panel are one object for the whole trip.
+    func prepareAnchorPresentation(from anchor: NSRect) {
+        guard Self.isUsableAnchor(anchor) else {
+            isAnchorMorphing = false
+            setRestingFrame(restingWindowFrame)
+            return
+        }
+        isDismissing = false
+        isAnchorMorphing = true
+        anchorWindowFrame = anchor
+        frameSpring.snap(to: anchor)
+        revealSpring.snap(to: anchor.height)
+        hasSpringFrame = true
+        hasRevealSpring = true
+        content.alphaValue = 0
+        applyFrame(anchor)
+        applyReveal()
+    }
+
+    func startAnchorPresentation(animated: Bool) {
+        guard isAnchorMorphing else { return }
+        guard animated, !styleSheet.reduceMotion else {
+            frameSpring.snap(to: restingWindowFrame)
+            revealSpring.snap(to: restingWindowFrame.height)
+            applyFrame(restingWindowFrame)
+            applyReveal()
+            finishAnchorMorph()
+            onFrameSpringSettled?()
+            return
+        }
+        frameSpring.target(restingWindowFrame)
+        revealSpring.target(restingWindowFrame.height)
+        armSprings()
+    }
+
+    func dismissToAnchor(_ anchor: NSRect, animated: Bool) {
+        guard Self.isUsableAnchor(anchor) else {
+            dismissToSliver(animated: animated)
+            return
+        }
+        isDismissing = true
+        isAnchorMorphing = true
+        anchorWindowFrame = anchor
+        guard animated, !styleSheet.reduceMotion else {
+            frameSpring.snap(to: anchor)
+            revealSpring.snap(to: anchor.height)
+            applyFrame(anchor)
+            applyReveal()
+            onFrameSpringSettled?()
+            return
+        }
+        frameSpring.target(anchor)
+        revealSpring.target(anchor.height)
+        armSprings()
+    }
+
     /// Deterministic landing hook for geometry tests. Production motion still
     /// uses the display-link spring; tests should inspect both the sliver
     /// first frame and the settled target without sleeping the main run loop.
@@ -274,6 +355,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         if frameSpringMoving { applyFrame(frameSpring.rect) }
         applyReveal()
         guard !springMoving else { return }
+        if isAnchorMorphing, !isDismissing { finishAnchorMorph() }
         onFrameSpringSettled?()
     }
 
@@ -293,8 +375,53 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         } else {
             self.frame = frame
         }
-        updateSurfaceOpacity(for: frame)
+        if isAnchorMorphing {
+            updateAnchorMorphVisuals(for: frame)
+        } else {
+            updateSurfaceOpacity(for: frame)
+        }
         needsLayout = true
+    }
+
+    private func updateAnchorMorphVisuals(for frame: NSRect) {
+        let widthSpan = restingWindowFrame.width - anchorWindowFrame.width
+        let raw = abs(widthSpan) > 0.5
+            ? (frame.width - anchorWindowFrame.width) / widthSpan
+            : 1
+        let progress = Self.clampedUnit(raw)
+        // Keep type out of the elastic phase. It resolves only once the glass
+        // has enough area to carry a stable layout, then arrives quickly.
+        let contentProgress = Self.clampedUnit((progress - 0.56) / 0.28)
+        let smooth = contentProgress * contentProgress * (3 - 2 * contentProgress)
+        content.alphaValue = smooth
+        alphaValue = 1
+        let radius = anchorWindowFrame.height / 2
+            + (Top.cornerRadius - anchorWindowFrame.height / 2) * progress
+        if #available(macOS 26.0, *) { glassEffect?.cornerRadius = radius }
+        layer?.shadowOpacity = Float((styleSheet.increaseContrast ? 0.28 : 0.14) * progress)
+        rimGradient.opacity = Float(progress)
+    }
+
+    private func finishAnchorMorph() {
+        isAnchorMorphing = false
+        content.alphaValue = 1
+        if #available(macOS 26.0, *) { glassEffect?.cornerRadius = Top.cornerRadius }
+        rimGradient.opacity = 1
+        applySurfaceStyle()
+    }
+
+    private static func clampedUnit(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return 0 }
+        return min(1, max(0, value))
+    }
+
+    private static func isUsableAnchor(_ rect: NSRect) -> Bool {
+        rect.origin.x.isFinite
+            && rect.origin.y.isFinite
+            && rect.width.isFinite
+            && rect.height.isFinite
+            && rect.width > 1
+            && rect.height > 1
     }
 
     private func updateSurfaceOpacity(for frame: NSRect) {
@@ -316,6 +443,21 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
 
     private func applyReveal() {
         guard bounds.height > 0 else { return }
+        if isAnchorMorphing {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.mask = nil
+            let radius = min(Top.cornerRadius, min(bounds.width, bounds.height) / 2)
+            rimMask.frame = bounds
+            rimMask.path = Self.topRimPath(
+                rect: bounds.insetBy(dx: 0.75, dy: 0.75),
+                radius: max(0, radius - 0.75)
+            )
+            arrivalGlint.frame = bounds
+            arrivalGlint.path = rimMask.path
+            CATransaction.commit()
+            return
+        }
         let height = min(bounds.height, max(0, revealSpring.value))
         let progress = restingWindowFrame.height > sliverWindowFrame.height
             ? min(1, max(0, (height - sliverWindowFrame.height)
@@ -325,10 +467,17 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             Top.cornerRadius * (0.55 + 0.45 * progress),
             min(bounds.width, max(1, height)) / 2
         )
+        // Inflate from the toolbar-facing corner. Exposing a full-width strip
+        // on frame one looked like a backing panel arriving before the glass.
+        let seedWidth = min(44, bounds.width)
+        // The top edge spreads before the body finishes dropping, like a
+        // liquid sheet finding its container rather than a box scaling up.
+        let widthProgress = 1 - pow(1 - progress, 1.65)
+        let visibleWidth = seedWidth + (bounds.width - seedWidth) * widthProgress
         let visibleRect = NSRect(
-            x: bounds.minX,
+            x: bounds.maxX - visibleWidth,
             y: bounds.maxY - height,
-            width: bounds.width,
+            width: visibleWidth,
             height: height
         )
         CATransaction.begin()
@@ -338,12 +487,18 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         layer?.mask = height >= bounds.height - 0.5 ? nil : revealMask
         layer?.shadowPath = revealMask.path
         rimMask.frame = bounds
-        rimMask.path = PanelMetrics.continuousRoundedPath(
-            rect: visibleRect.insetBy(dx: 0.75, dy: 0.75),
-            radius: max(0, radius - 0.75)
-        )
-        let scale = 0.97 + 0.03 * progress
-        layer?.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
+        let rimRect = visibleRect.insetBy(dx: 0.75, dy: 0.75)
+        rimMask.path = usesGlass
+            ? Self.topRimPath(rect: rimRect, radius: max(0, radius - 0.75))
+            : PanelMetrics.continuousRoundedPath(
+                rect: rimRect,
+                radius: max(0, radius - 0.75)
+            )
+        arrivalGlint.frame = bounds
+        arrivalGlint.path = rimMask.path
+        // The mask owns geometry. Scaling the full layer around its centre
+        // made the visible body drift away from its toolbar anchor.
+        layer?.setAffineTransform(.identity)
         CATransaction.commit()
         updateSurfaceOpacity(for: NSRect(
             x: restingWindowFrame.minX,
@@ -360,10 +515,13 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         glass?.frame = bounds
 
         let layoutHeight = max(bounds.height, contentLayoutHeight)
+        let layoutWidth = isAnchorMorphing
+            ? max(restingWindowFrame.width, bounds.width)
+            : bounds.width
         let contentFrame = NSRect(
-            x: 0,
+            x: bounds.width - layoutWidth,
             y: bounds.height - layoutHeight,
-            width: bounds.width,
+            width: layoutWidth,
             height: layoutHeight
         )
         if glass != nil, let glassContent, let glassLayoutContent {
@@ -394,39 +552,32 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         (content as? PanelSurface)?.preferredWidth ?? PanelMetrics.detailWidth
     }
 
+    /// The frame the child window is actually resting at — the single source
+    /// of truth for where a morph flight should land.  The floating host's
+    /// re-derivation of this frame can drift a few points from it (minimum
+    /// heights, clamp order), which is exactly the drift that leaves a glass
+    /// slab resting slightly off the card it is about to become.
+    var restingWindowFrameForMorph: NSRect { restingWindowFrame }
+
     var currentWindowFrameForTesting: NSRect { frameSpring.rect }
     var contentLayoutHeightForTesting: CGFloat { contentLayoutHeight }
 
     // MARK: - Material
 
     static func supportsGlass(_ styleSheet: StyleSheet) -> Bool {
-        guard #available(macOS 26.0, *) else { return false }
-        return !styleSheet.reduceTransparency && !styleSheet.increaseContrast
+        ChromeGlass.supportsGlass(styleSheet)
     }
 
     static func glassTint(_ styleSheet: StyleSheet) -> NSColor {
-        let isDark = Self.isDarkBackground(styleSheet.background)
-        if isDark {
-            return NSColor(
-                calibratedRed: 0.04, green: 0.08, blue: 0.14,
-                alpha: styleSheet.increaseContrast ? 0.30 : 0.18
-            )
-        }
-        return styleSheet.background.withAlphaComponent(
-            styleSheet.increaseContrast ? 0.12 : 0.06
-        )
+        ChromeGlass.glassTint(styleSheet, tint: .panel)
     }
 
     private static func opaqueFallbackColor(_ styleSheet: StyleSheet) -> NSColor {
-        styleSheet.surface.withAlphaComponent(1)
+        ChromeGlass.opaqueFallbackColor(styleSheet, tint: .panel)
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {
-        guard let rgb = color.usingColorSpace(.sRGB) else { return false }
-        let luminance = 0.2126 * rgb.redComponent
-            + 0.7152 * rgb.greenComponent
-            + 0.0722 * rgb.blueComponent
-        return luminance < 0.5
+        ChromeGlass.isDarkBackground(color)
     }
 
     private func updateMaterial() {
@@ -444,7 +595,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             mountContentOnSelf()
         case (true, true):
             if #available(macOS 26.0, *) {
-                glassEffect?.tintColor = Self.glassTint(styleSheet)
+                glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
+                glassEffect?.tintColor = nil
                 glassEffect?.alphaValue = 1
             }
         }
@@ -460,15 +612,20 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         // AppKit's glass must own the content view. Do not put a visual-effect
         // sibling underneath it: that makes the glass sample the wash instead
         // of the document window and turns Liquid Glass into a flat card.
-        fallback.isHidden = true
+        // A hidden visual-effect view can still take part in AppKit's
+        // compositor. Remove the fallback completely while native glass owns
+        // the material or it reads as a flat card behind the glass.
+        fallback.removeFromSuperview()
         glass?.removeFromSuperview()
         let material = NSGlassEffectView()
-        // Regular is Apple's frosted Liquid Glass treatment. The material
-        // supplies the adaptive light response and samples the document
-        // directly. Keep the tint low enough that the sampled scene remains
-        // visible as colour and light rather than becoming a painted card.
-        material.style = .regular
-        material.tintColor = Self.glassTint(styleSheet)
+        // The document supplies the panel's colour; regular glass adds the
+        // adaptive blur and optical edge. Its tint remains page-derived and
+        // deliberately low so the body does not become a painted card.
+        // Clear glass preserves the document as visible context. Regular glass
+        // on a detached dark child window resolves close to an opaque card.
+        material.style = .clear
+        material.appearance = ChromeGlass.materialAppearance(styleSheet)
+        material.tintColor = nil
         material.alphaValue = 1
         if material.responds(to: Selector(("setEffectIsInteractive:"))) {
             material.setValue(true, forKey: "effectIsInteractive")
@@ -502,15 +659,24 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     /// Glass is created before the child window exists so measurement can run
-    /// without a window. Rebuild it once after attachment so AppKit binds the
-    /// material to the document window it is meant to sample.
+    /// without a window. Moving that same view into the attached child keeps
+    /// its material continuous. Replacing it after `orderFront` produces a
+    /// visible flat-card frame before the new compositor surface resolves.
     func refreshGlassAfterWindowAttach() {
         guard usesGlass, #available(macOS 26.0, *) else { return }
-        mountContentOnGlass()
+        glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
+        glassEffect?.tintColor = nil
+        glassEffect?.alphaValue = 1
         applySurfaceStyle()
     }
 
+    var glassIdentityForTesting: ObjectIdentifier? {
+        glass.map(ObjectIdentifier.init)
+    }
+    var opaqueFallbackIsMountedForTesting: Bool { fallback.superview != nil }
+
     var visibleBodyBoundsForHitTesting: NSRect {
+        if isAnchorMorphing { return bounds }
         let height = min(bounds.height, max(0, revealSpring.value))
         return NSRect(
             x: bounds.minX,
@@ -530,7 +696,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private func mountContentOnSelf() {
         glass?.removeFromSuperview()
         glass = nil
-        fallback.isHidden = false
+        if fallback.superview !== self {
+            fallback.frame = bounds
+            addSubview(fallback, positioned: .below, relativeTo: nil)
+        }
         if isHostingContentInGlass { content.removeFromSuperview() }
         glassContent = nil
         glassLayoutContent = nil
@@ -545,10 +714,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private func applySurfaceStyle() {
         layer?.shadowRadius = styleSheet.increaseContrast ? 42 : 40
         layer?.shadowOffset = NSSize(width: 0, height: -10)
-        layer?.shadowOpacity = Float(styleSheet.increaseContrast ? 0.28 : 0.18)
+        layer?.shadowOpacity = Float(styleSheet.increaseContrast ? 0.28 : 0.14)
         let isDark = Self.isDarkBackground(styleSheet.background)
         let specular = NSColor.white
-        let rimAlpha = styleSheet.increaseContrast ? 0.92 : (isDark ? 0.72 : 0.85)
+        let rimAlpha = styleSheet.increaseContrast ? 0.92 : (isDark ? 0.58 : 0.72)
         let mutedAlpha = styleSheet.increaseContrast ? 0.24 : 0.08
         rimGradient.colors = [
             specular.withAlphaComponent(rimAlpha).cgColor,
@@ -559,6 +728,9 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         rimGradient.startPoint = CGPoint(x: 0.08, y: 0.98)
         rimGradient.endPoint = CGPoint(x: 0.92, y: 0.02)
         rimMask.lineWidth = styleSheet.increaseContrast ? 1.5 : 1.0
+        // Native glass already draws its adaptive optical edge. The custom
+        // path adds only the bright top specular, never a second perimeter.
+        rimGradient.isHidden = false
 
         layer?.cornerRadius = usesGlass ? 0 : Top.cornerRadius
         layer?.cornerCurve = .continuous
@@ -570,6 +742,84 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             fallback.layer?.masksToBounds = true
         }
         needsDisplay = true
+    }
+
+    /// Native glass supplies the body edge. This path adds only the reference
+    /// card's top specular, avoiding a second full perimeter stroke.
+    private static func topRimPath(rect: NSRect, radius: CGFloat) -> CGPath {
+        let radius = min(radius, min(rect.width, rect.height) / 2)
+        let path = CGMutablePath()
+        let kappa: CGFloat = 0.552_284_75
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
+        path.addCurve(
+            to: CGPoint(x: rect.minX + radius, y: rect.maxY),
+            control1: CGPoint(x: rect.minX, y: rect.maxY - radius + radius * kappa),
+            control2: CGPoint(x: rect.minX + radius - radius * kappa, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.maxY))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY - radius),
+            control1: CGPoint(x: rect.maxX - radius + radius * kappa, y: rect.maxY),
+            control2: CGPoint(x: rect.maxX, y: rect.maxY - radius + radius * kappa)
+        )
+        return path
+    }
+
+    /// Prime content while the travelling glass is still the visible body.
+    /// The six-point lift is small enough to keep text rasterised at its final
+    /// size; it only gives the handoff a direction when content condenses in.
+    func prepareForMorphArrival() {
+        isDismissing = false
+        content.wantsLayer = true
+        content.layer?.removeAnimation(forKey: "floating-content-arrival")
+        content.layer?.transform = CATransform3DMakeTranslation(0, -6, 0)
+    }
+
+    func prepareForMorphDismissal() {
+        isDismissing = true
+        arrivalGlint.removeAllAnimations()
+        content.layer?.removeAnimation(forKey: "floating-content-arrival")
+    }
+
+    /// The vessel calls this at the empty-glass handoff. Content and the
+    /// system material then land together instead of the list appearing only
+    /// after the card has stopped moving.
+    func playMorphArrivalDetails() {
+        guard !styleSheet.reduceMotion, window != nil else {
+            content.layer?.transform = CATransform3DIdentity
+            return
+        }
+        let settle = CAKeyframeAnimation(keyPath: "transform")
+        settle.values = [
+            CATransform3DMakeTranslation(0, -6, 0),
+            CATransform3DMakeTranslation(0, 1, 0),
+            CATransform3DIdentity,
+        ]
+        settle.keyTimes = [0, 0.76, 1]
+        settle.duration = Motion.liquidSettle
+        settle.timingFunctions = [
+            Motion.timing(.structural), Motion.timing(.decelerate),
+        ]
+        content.layer?.transform = CATransform3DIdentity
+        content.layer?.add(settle, forKey: "floating-content-arrival")
+
+        arrivalGlint.removeAllAnimations()
+        arrivalGlint.strokeStart = 0
+        arrivalGlint.strokeEnd = 1
+        let start = CABasicAnimation(keyPath: "strokeStart")
+        start.fromValue = 0
+        start.toValue = 0.82
+        let end = CABasicAnimation(keyPath: "strokeEnd")
+        end.fromValue = 0.08
+        end.toValue = 1
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [0, 0.42, 0]
+        opacity.keyTimes = [0, 0.38, 1]
+        let group = CAAnimationGroup()
+        group.animations = [start, end, opacity]
+        group.duration = Motion.liquidSettle
+        group.timingFunction = Motion.timing(.structural)
+        arrivalGlint.add(group, forKey: "floating-arrival-glint")
     }
 
     // MARK: - Keyboard

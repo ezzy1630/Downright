@@ -29,6 +29,11 @@ public enum Motion {
     /// A structural change: a panel's contents arriving, an arc travelling.
     public static let deliberate: TimeInterval = 0.32
 
+    /// Perceptual settle for native glass changing topology. Glass needs one
+    /// extra breath for refraction, geometry, and content to land as one body;
+    /// ordinary structural UI continues to use `deliberate`.
+    public static let liquidSettle: TimeInterval = 0.38
+
     /// Pointer feedback, the tier below `quick`.
     ///
     /// These live here rather than beside the controls that use them because
@@ -167,16 +172,19 @@ public enum Motion {
         }
 
         /// Re-launch the same state at a new perceptual duration — used when a
-        /// mark upgrades from pointer tracking to a structural settle.
-        public mutating func retune(perceptualDuration: TimeInterval) {
+        /// mark upgrades from pointer tracking to a structural settle.  A
+        /// non-nil `bounce` re-tunes the character of the spring with it (the
+        /// morph vessel rises to a soft underdamped landing); nil keeps the
+        /// current character.
+        public mutating func retune(perceptualDuration: TimeInterval, bounce: CGFloat? = nil) {
             guard perceptualDuration > 0.02 else { return }
             let heldTarget = targetValue
-            let bounce = dampingRatio < 1 ? (1 - dampingRatio) / 0.7 : 0
+            let heldBounce = bounce ?? (dampingRatio < 1 ? (1 - dampingRatio) / 0.7 : 0)
             let newSpring = Self(
                 value: value,
                 velocity: velocity,
                 perceptualDuration: perceptualDuration,
-                bounce: bounce
+                bounce: heldBounce
             )
             self = newSpring
             targetValue = heldTarget
@@ -292,6 +300,11 @@ public enum Motion {
             y.retune(perceptualDuration: perceptualDuration)
         }
 
+        public mutating func retune(perceptualDuration: TimeInterval, bounce: CGFloat?) {
+            x.retune(perceptualDuration: perceptualDuration, bounce: bounce)
+            y.retune(perceptualDuration: perceptualDuration, bounce: bounce)
+        }
+
         @discardableResult
         public mutating func advance(dt: CGFloat) -> Bool {
             var moving = false
@@ -327,6 +340,11 @@ public enum Motion {
         public mutating func retune(perceptualDuration: TimeInterval) {
             width.retune(perceptualDuration: perceptualDuration)
             height.retune(perceptualDuration: perceptualDuration)
+        }
+
+        public mutating func retune(perceptualDuration: TimeInterval, bounce: CGFloat?) {
+            width.retune(perceptualDuration: perceptualDuration, bounce: bounce)
+            height.retune(perceptualDuration: perceptualDuration, bounce: bounce)
         }
 
         @discardableResult
@@ -394,6 +412,11 @@ public enum Motion {
         public mutating func retune(perceptualDuration: TimeInterval) {
             centre.retune(perceptualDuration: perceptualDuration)
             size.retune(perceptualDuration: perceptualDuration)
+        }
+
+        public mutating func retune(perceptualDuration: TimeInterval, bounce: CGFloat?) {
+            centre.retune(perceptualDuration: perceptualDuration, bounce: bounce)
+            size.retune(perceptualDuration: perceptualDuration, bounce: bounce)
         }
 
         @discardableResult

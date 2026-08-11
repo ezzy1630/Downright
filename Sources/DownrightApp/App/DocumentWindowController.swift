@@ -71,6 +71,10 @@ final class DocumentWindowController: NSWindowController {
     /// The surface's resting frame in window space, remembered so a retarget
     /// can still aim after the dismissal hands the glass off early.
     private var floatingSurfaceFrame = NSRect.zero
+    /// Toolbar-space origin captured before the child window becomes key.
+    /// Dismissal uses this same geometry, so an in-flight toolbar relayout can
+    /// never redirect the panel sideways.
+    private var floatingControlAnchorFrame = NSRect.zero
     /// The responder that was active before a floating surface opened. It is
     /// restored before the original outside click is delivered, so a dismiss
     /// never costs the document caret.
@@ -1336,7 +1340,7 @@ final class DocumentWindowController: NSWindowController {
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
         guard let window, let target = window.contentView else { return }
-        let morphs = canMorphInspector
+        let morphsFromControl = usesFloatingControlMorph
         let width = min(
             surface.preferredWidth,
             max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
@@ -1357,6 +1361,10 @@ final class DocumentWindowController: NSWindowController {
         let shadowMargin = PanelMetrics.floatingShadowMargin
         let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
         let child = FloatingPanelWindow(frame: childFrame)
+        // Keep the child invisible for its attachment frame. Native glass
+        // resolves against the parent window only after that relationship
+        // exists; exposing the attachment frame is the solid-card flash.
+        child.alphaValue = morphsFromControl ? 0 : 1
         child.appearance = ChromeGlass.materialAppearance(activeStyleSheet)
         child.floatingSurface = surface
         child.onOutsideMouseDown = { [weak self] in
@@ -1372,11 +1380,6 @@ final class DocumentWindowController: NSWindowController {
             width: resting.width,
             height: resting.height
         )
-        if morphs {
-            surface.alphaValue = 0
-            surface.prepareForMorphArrival()
-        }
-
         surface.configureWindowFrames(
             resting: resting,
             sliver: sliver,
@@ -1405,13 +1408,20 @@ final class DocumentWindowController: NSWindowController {
                 self.refreshToolbarSelectionState()
             }
         }
+        let sourceAnchor = floatingSourceAnchor(in: window)
+        floatingControlAnchorFrame = sourceAnchor.frame
+        let sourceFrame = window.convertToScreen(sourceAnchor.frame)
+        if morphsFromControl {
+            progressRing.alphaValue = 0
+            surface.prepareAnchorPresentation(from: sourceFrame)
+        }
         childContent.addSubview(surface)
         surface.layoutSubtreeIfNeeded()
         window.addChildWindow(child, ordered: .above)
         child.orderFront(nil)
         surface.refreshGlassAfterWindowAttach()
 
-        surface.setRestingFrame(resting)
+        if !morphsFromControl { surface.setRestingFrame(resting) }
         surface.layoutSubtreeIfNeeded()
         floatingSurface = surface
         floatingPanelWindow = child
@@ -1431,39 +1441,32 @@ final class DocumentWindowController: NSWindowController {
             }
         }
         floatingSurfaceFrame = resting
-        if morphs {
-            morphDestination = .floating
-            let vessel = makeMorphVessel(in: window)
-            let destination = Motion.MorphAnchor(
-                frame: floatingDestinationAnchor(in: window),
-                cornerRadius: FloatingPanelSurface.Top.cornerRadius,
-                tint: FloatingPanelSurface.glassTint(activeStyleSheet)
-            )
-            vessel.fly(
-                MorphVessel.Trip(
-                    from: floatingSourceAnchor(in: window),
-                    to: destination,
-                    incomingContent: surface,
-                    outgoingContent: progressRing,
-                    onHandoff: { [weak surface] in
-                        surface?.playMorphArrivalDetails()
-                    },
-                    onSettle: { [weak self, weak vessel, weak surface] in
-                        surface?.alphaValue = 1
-                        vessel?.removeFromSuperview()
-                        guard let self else { return }
-                        if self.morphVessel === vessel { self.morphVessel = nil }
-                        guard let surface, self.floatingSurface === surface else { return }
-                        self.refitFloatingSurface()
-                        self.focusFloatingSurface(surface)
-                        (surface.content as? InspectorHostView)?.syncCloseVisibilityWithPointer()
-                        self.refreshToolbarSelectionState()
-                    }
-                ),
-                window: window
-            )
+        if morphsFromControl {
+            // One run-loop turn lets NSGlassEffectView establish its sampling
+            // topology. The first visible pixel is then the refracting seed at
+            // the toolbar control, never an opaque surrogate panel.
+            DispatchQueue.main.async { [weak self, weak child, weak surface] in
+                guard let self, let child, let surface,
+                      self.floatingSurface === surface else { return }
+                child.alphaValue = 1
+                surface.startAnchorPresentation(animated: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + Motion.deliberate * 0.58) {
+                    [weak self, weak surface] in
+                    guard let self, let surface, self.floatingSurface === surface else { return }
+                    self.revealProgressRing()
+                    surface.playMorphArrivalDetails()
+                }
+            }
         } else {
             surface.presentFromSliver(animated: !activeStyleSheet.reduceMotion)
+            if !activeStyleSheet.reduceMotion {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + Motion.floatingContentRevealLead
+                ) { [weak self, weak surface] in
+                    guard let self, let surface, self.floatingSurface === surface else { return }
+                    surface.playMorphArrivalDetails()
+                }
+            }
             focusFloatingSurface(surface)
         }
         refreshToolbarSelectionState()
@@ -1476,36 +1479,35 @@ final class DocumentWindowController: NSWindowController {
             removeFloatingSurface()
             return
         }
-        if canMorphInspector, let window {
-            surface.prepareForMorphDismissal()
-            morphDestination = .toolTop
-            let vessel = makeMorphVessel(in: window)
-            vessel.fly(
-                MorphVessel.Trip(
-                    from: Motion.MorphAnchor(
-                        frame: floatingDestinationAnchor(in: window),
-                        cornerRadius: FloatingPanelSurface.Top.cornerRadius,
-                        tint: FloatingPanelSurface.glassTint(activeStyleSheet)
-                    ),
-                    to: floatingSourceAnchor(in: window),
-                    incomingContent: nil,
-                    outgoingContent: surface,
-                    onHandoff: { [weak self, weak surface] in
-                        guard let self, self.floatingSurface === surface else { return }
-                        self.removeFloatingSurface()
-                    },
-                    onSettle: { [weak self, weak vessel] in
-                        vessel?.removeFromSuperview()
-                        guard let self else { return }
-                        if self.morphVessel === vessel { self.morphVessel = nil }
-                        self.refreshToolbarSelectionState()
-                    }
-                ),
-                window: window
-            )
+        if usesFloatingControlMorph, let window, floatingControlAnchorFrame.width > 1,
+           floatingControlAnchorFrame.height > 1 {
+            let source = window.convertToScreen(floatingControlAnchorFrame)
+            surface.dismissToAnchor(source, animated: true)
             return
         }
         surface.dismissToSliver(animated: !activeStyleSheet.reduceMotion)
+    }
+
+    /// Floating panels own their material transition. Kept as a named policy
+    /// while docked inspector morphing remains available elsewhere.
+    private var usesFloatingControlMorph: Bool {
+        guard let window else { return false }
+        return !activeStyleSheet.reduceMotion && window.isVisible && window.screen != nil
+    }
+
+    /// The ring lends its substance to the outbound flight; as the card's
+    /// material becomes legible it takes that substance back — a fade, not
+    /// the instant pop a vessel teardown would leave behind.
+    private func revealProgressRing() {
+        guard !activeStyleSheet.reduceMotion else {
+            progressRing.alphaValue = 1
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.quick
+            context.timingFunction = Motion.timing(.easeOut)
+            progressRing.animator().alphaValue = 1
+        }
     }
 
     private func removeFloatingSurface() {
@@ -1526,12 +1528,22 @@ final class DocumentWindowController: NSWindowController {
         floatingSurface?.removeFromSuperview()
         floatingPanelWindow = nil
         floatingSurface = nil
+        floatingControlAnchorFrame = .zero
     }
 
     /// The morph's resting place in window space — the surface's own frame,
     /// or the frame it last rested at once the dismissal hands it off.
     private func floatingDestinationAnchor(in window: NSWindow) -> NSRect {
         if let surface = floatingSurface, let target = window.contentView {
+            // Once the child window is resting, its frame is the authoritative
+            // landing: it is what the surface will actually occupy after the
+            // spring settles.  Flying the vessel to a freshly re-derived frame
+            // can leave it a few points off the card it hands the glass to.
+            if surface.window != nil, surface.restingWindowFrameForMorph != .zero {
+                let frame = window.convertFromScreen(surface.restingWindowFrameForMorph)
+                floatingSurfaceFrame = surface.restingWindowFrameForMorph
+                return frame
+            }
             let width = min(
                 surface.preferredWidth,
                 max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
@@ -1548,18 +1560,21 @@ final class DocumentWindowController: NSWindowController {
         return window.convertFromScreen(floatingSurfaceFrame)
     }
 
-    /// The ring-sized source anchor at the document's safe top edge.
+    /// The ring-sized source anchor, exactly where the toolbar ring sits.
+    /// `progressRing.convert(to: nil)` is already in window coordinates (it
+    /// includes the toolbar), so the anchor is the ring's own frame — using
+    /// the content view's top instead puts the flight's origin ~a toolbar
+    /// height too low, which is why the card appeared to fly in and out of
+    /// empty space below the toolbar rather than out of the ring itself.
     private func floatingSourceAnchor(in window: NSWindow) -> Motion.MorphAnchor {
         let destination = floatingDestinationAnchor(in: window)
         let side = TaskProgressRing.morphSide
         if progressRing.window === window {
             let ring = progressRing.convert(progressRing.bounds, to: nil)
-            let contentTop = window.contentView.map { $0.convert($0.bounds, to: nil).maxY }
-                ?? destination.maxY
             return Motion.MorphAnchor(
                 frame: NSRect(
                     x: ring.midX - side / 2,
-                    y: contentTop - side,
+                    y: ring.midY - side / 2,
                     width: side,
                     height: side
                 ),
@@ -1893,17 +1908,17 @@ final class DocumentWindowController: NSWindowController {
                 constant: -2 * PanelMetrics.inset
             ).isActive = true
             bar = created
-            // Settle the pill into the shared surface vocabulary.
+            // Settle the pill into the shared surface vocabulary.  The stack
+            // claims its space with a glide so the document rides the same
+            // layout pass down, and the pill itself rises and fades at
+            // `Motion.standard` — an arrival the reader is watching earns the
+            // state-change duration, not the hover duration.
             created.wantsLayer = true
-            created.alphaValue = 0
-            created.layer?.setAffineTransform(
-                CGAffineTransform(translationX: 0, y: 6).scaledBy(x: 0.97, y: 0.97)
-            )
-            barStack.layoutSubtreeIfNeeded()
-            Motion.run(reduceMotion: activeStyleSheet.reduceMotion, duration: Motion.hover) { _ in
-                created.animator().alphaValue = 1
-                created.layer?.setAffineTransform(.identity)
-            }
+            // Reserve the row promptly. The material's compositor-only morph
+            // carries the longer visual settle; stretching live document
+            // layout for the same 380 ms made the entrance feel frame-bound.
+            animateChromeLayoutIfLive(duration: Motion.deliberate, curve: .decelerate)
+            animateFindBarEntrance(created)
         }
 
         bar.showsReplace = replace
@@ -1971,20 +1986,153 @@ final class DocumentWindowController: NSWindowController {
         if inspectorHost?.hasContent != true { closeInspector() }
         else { refreshToolbarSelectionState() }
 
-        // Exit reverses the same short settle. The stack keeps its space until
-        // the material has left; Reduce Motion skips straight to removal.
+        // Exit reverses the same short settle, one step quicker — leaving is
+        // shorter than arriving. The stack keeps its space until the material
+        // has left; Reduce Motion skips straight to removal.
         guard let leaving, leaving.superview != nil else { return }
         if activeStyleSheet.reduceMotion {
             retire(leaving)
         } else {
-            Motion.run(reduceMotion: false, duration: Motion.hover) { _ in
-                leaving.animator().alphaValue = 0
-                leaving.layer?.setAffineTransform(
-                    CGAffineTransform(translationX: 0, y: 6).scaledBy(x: 0.97, y: 0.97)
-                )
-            } completion: { [weak self] in
-                self?.retire(leaving)
-            }
+            animateFindBarExit(leaving) { [weak self] in self?.retire(leaving) }
+        }
+    }
+
+    /// The compact glass grows from the control that summoned it. Geometry is
+    /// measured in window space so the first frame sits on the actual button,
+    /// including when toolbar spacing or window width changes.
+    private func animateFindBarEntrance(_ bar: FindBarView) {
+        guard !activeStyleSheet.reduceMotion, bar.window != nil, let layer = bar.layer else {
+            bar.alphaValue = 1
+            bar.layer?.setAffineTransform(.identity)
+            return
+        }
+        bar.alphaValue = 1
+        layer.setAffineTransform(.identity)
+        let source = findBarSourceTransform(for: bar)
+        let transform = CAKeyframeAnimation(keyPath: "transform")
+        transform.values = [
+            source,
+            interpolatedFindBarTransform(source, progress: 0.82, scaleX: 1.008, scaleY: 1.014),
+            CATransform3DIdentity,
+        ]
+        transform.keyTimes = [0, 0.72, 1]
+        transform.timingFunctions = [
+            Motion.timing(.structural), Motion.timing(.decelerate),
+        ]
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [0.62, 0.96, 1]
+        opacity.keyTimes = [0, 0.70, 1]
+        opacity.timingFunctions = [
+            Motion.timing(.easeOut), Motion.timing(.decelerate),
+        ]
+        let group = CAAnimationGroup()
+        group.animations = [transform, opacity]
+        group.duration = Motion.deliberate
+        layer.add(group, forKey: "find-bar-entrance")
+    }
+
+    private func animateFindBarExit(_ bar: FindBarView, completion: @escaping () -> Void) {
+        guard let layer = bar.layer else {
+            completion()
+            return
+        }
+        let transform = CAKeyframeAnimation(keyPath: "transform")
+        let destination = findBarSourceTransform(for: bar)
+        transform.values = [
+            layer.presentation()?.transform ?? CATransform3DIdentity,
+            CATransform3DConcat(
+                CATransform3DMakeTranslation(0, 2, 0),
+                CATransform3DMakeScale(0.985, 0.98, 1)
+            ),
+            destination,
+        ]
+        transform.keyTimes = [0, 0.24, 1]
+        transform.timingFunctions = [Motion.timing(.easeOut), Motion.timing(.structural)]
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [layer.presentation()?.opacity ?? 1, 0.8, 0]
+        opacity.keyTimes = [0, 0.28, 1]
+        opacity.timingFunctions = [Motion.timing(.easeOut), Motion.timing(.structural)]
+        let group = CAAnimationGroup()
+        group.animations = [transform, opacity]
+        group.duration = Motion.deliberate
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
+        layer.opacity = 0
+        layer.add(group, forKey: "find-bar-exit")
+        CATransaction.commit()
+    }
+
+    private func findBarSourceTransform(for bar: FindBarView) -> CATransform3D {
+        guard let button = toolbarFindButton,
+              button.window === bar.window,
+              bar.bounds.width > 1,
+              bar.bounds.height > 1
+        else {
+            return CATransform3DConcat(
+                CATransform3DMakeTranslation(0, 9, 0),
+                CATransform3DMakeScale(0.93, 0.84, 1)
+            )
+        }
+        let source = button.convert(
+            NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil
+        )
+        let destination = bar.convert(
+            NSPoint(x: bar.bounds.midX, y: bar.bounds.midY), to: nil
+        )
+        // Avoid a 10-12x backdrop stretch. It looks viscous at first, then
+        // forces the glass compositor to catch up. The button still supplies
+        // the exact origin while the lens begins at a stable optical width.
+        // Native glass lags when stretched sixfold in one frame. Begin as a
+        // compact lens, still centred on the invoking button, then let the
+        // material travel and widen together.
+        let scaleX = max(0.36, min(0.46, button.bounds.width / bar.bounds.width))
+        let scaleY = max(0.78, min(0.94, button.bounds.height / bar.bounds.height))
+        return CATransform3DConcat(
+            CATransform3DMakeTranslation(
+                source.x - destination.x,
+                source.y - destination.y,
+                0
+            ),
+            CATransform3DMakeScale(scaleX, scaleY, 1)
+        )
+    }
+
+    private func interpolatedFindBarTransform(
+        _ source: CATransform3D,
+        progress: CGFloat,
+        scaleX: CGFloat,
+        scaleY: CGFloat
+    ) -> CATransform3D {
+        CATransform3DConcat(
+            CATransform3DMakeTranslation(
+                source.m41 * (1 - progress),
+                source.m42 * (1 - progress),
+                0
+            ),
+            CATransform3DMakeScale(scaleX, scaleY, 1)
+        )
+    }
+
+    /// The bar stack claims and releases space with a glide, not a jump: the
+    /// document rides the same layout pass, so the window's contents move as
+    /// one surface instead of snapping in a single frame.  Offscreen and
+    /// Reduce Motion paths keep the synchronous settle that tests — and
+    /// nobody's retinas — ever have to wait on.
+    private func animateChromeLayoutIfLive(
+        duration: TimeInterval,
+        curve: Motion.Curve = .decelerate
+    ) {
+        guard let window, window.isVisible, let content = window.contentView,
+              !activeStyleSheet.reduceMotion
+        else {
+            window?.contentView?.layoutSubtreeIfNeeded()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = Motion.timing(curve)
+            context.allowsImplicitAnimation = true
+            content.layoutSubtreeIfNeeded()
         }
     }
 
@@ -2005,6 +2153,8 @@ final class DocumentWindowController: NSWindowController {
         bar.removeFromSuperview()
         bar.alphaValue = 1
         bar.layer?.setAffineTransform(.identity)
+        // The space the pill held glides closed behind it.
+        animateChromeLayoutIfLive(duration: Motion.standard, curve: .structural)
     }
 
     var currentFindQuery: FindQuery { findSession.query }

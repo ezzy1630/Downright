@@ -116,21 +116,130 @@ final class FindBarView: NSView {
     var showsReplace: Bool = false {
         didSet {
             guard showsReplace != oldValue else { return }
-            replaceRow.isHidden = !showsReplace
+            setReplaceRowVisible(showsReplace)
+        }
+    }
+
+    /// Animates the replace row into and out of the bar.
+    ///
+    /// The row is a stack member, so its height collapse is the stack's own
+    /// business; what this owns is that the *content* never snaps like the old
+    /// bare `isHidden` flip did.  It fades and slides up on its way in and
+    /// slips down and fades on the way out, then only leaves the stack once it
+    /// is invisible — the same retire-after-material has gone that the floating
+    /// pill uses on dismissal.  The pill's own height rides alongside as a
+    /// glide (`glideBarHeight`), so the bar grows around the arriving row
+    /// instead of jumping to its new size and filling in afterwards.  Outside
+    /// a window (measurement during tests) and under Reduce Motion the row
+    /// simply appears or disappears, so no timing code ever runs on a surface
+    /// nobody is looking at.
+    private func setReplaceRowVisible(_ visible: Bool) {
+        guard window != nil, !styleSheet.reduceMotion else {
+            replaceRow.isHidden = !visible
             invalidateIntrinsicContentSize()
+            return
+        }
+        if visible {
+            replaceRow.isHidden = false
+            replaceRow.alphaValue = 0
+            replaceRow.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -5))
+            glideBarHeight()
+            Motion.run(reduceMotion: false, duration: Motion.standard, curve: .easeOut) { _ in
+                self.replaceRow.animator().alphaValue = 1
+                self.replaceRow.layer?.setAffineTransform(.identity)
+            }
+        } else {
+            Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in
+                self.replaceRow.animator().alphaValue = 0
+                self.replaceRow.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -5))
+            } completion: { [weak self] in
+                guard let self, !self.showsReplace else { return }
+                self.replaceRow.isHidden = true
+                self.replaceRow.alphaValue = 1
+                self.replaceRow.layer?.setAffineTransform(.identity)
+                self.glideBarHeight()
+            }
+        }
+    }
+
+    /// The pill's height follows its rows with a glide, not a jump.  The
+    /// intrinsic size answers immediately — it is the layout pass that
+    /// animates — so the bar and the document below it resize as one surface.
+    /// The inspector presentation carries no intrinsic height; its host owns
+    /// the equivalent animation (`SearchInspectorView.showsReplace`).
+    private func glideBarHeight() {
+        invalidateIntrinsicContentSize()
+        guard presentation == .bar, let content = window?.contentView else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.standard
+            context.timingFunction = Motion.timing(.structural)
+            context.allowsImplicitAnimation = true
+            content.layoutSubtreeIfNeeded()
         }
     }
 
     var statusText: String = "" {
         didSet {
             guard statusText != oldValue else { return }
-            statusLabel.stringValue = statusText
-            // Collapse out of the tray when there is no count to report: a
-            // hidden stack member takes no width, so the field stretches to
-            // fill the row instead of leaving a measured gap of dead air.
-            statusLabel.isHidden = statusText.isEmpty
+            setStatusLabelText(statusText)
             statusLabel.setAccessibilityLabel(statusText.isEmpty ? "No search" : statusText)
             applyStatusColor()
+            updateControlEnablement()
+        }
+    }
+
+    /// The count crossfades rather than swapping mid-read, and the tray it
+    /// lives in glides open and closed through the stack's own member
+    /// animation: a hidden stack member takes no width, so the field
+    /// stretches to fill the row instead of leaving a measured gap of dead
+    /// air — but it *stretches*, it never snaps sideways.
+    private func setStatusLabelText(_ text: String) {
+        let becomingHidden = text.isEmpty
+        let live = window != nil && !styleSheet.reduceMotion
+        guard live, becomingHidden != statusLabel.isHidden else {
+            // A count arriving while its own fade-out is still running wins:
+            // the fade is retired before it can park the label at alpha 0.
+            if live {
+                statusLabel.layer?.removeAllAnimations()
+                if !becomingHidden, statusLabel.stringValue != text {
+                    let fade = CATransition()
+                    fade.type = .fade
+                    fade.duration = Motion.quick
+                    fade.timingFunction = Motion.timing(.easeOut)
+                    statusLabel.layer?.add(fade, forKey: "find-status")
+                }
+            }
+            statusLabel.stringValue = text
+            statusLabel.isHidden = becomingHidden
+            statusLabel.alphaValue = 1
+            return
+        }
+        if becomingHidden {
+            Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+                self.statusLabel.animator().alphaValue = 0
+            } completion: { [weak self] in
+                guard let self else { return }
+                guard self.statusText.isEmpty else {
+                    self.statusLabel.layer?.removeAllAnimations()
+                    self.statusLabel.alphaValue = 1
+                    return
+                }
+                self.statusLabel.stringValue = ""
+                Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+                    self.statusLabel.animator().isHidden = true
+                    self.layoutSubtreeIfNeeded()
+                }
+                self.statusLabel.alphaValue = 1
+            }
+        } else {
+            statusLabel.layer?.removeAllAnimations()
+            statusLabel.stringValue = text
+            statusLabel.alphaValue = 0
+            statusLabel.isHidden = false
+            Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+                self.statusLabel.animator().alphaValue = 1
+                self.layoutSubtreeIfNeeded()
+            }
         }
     }
 
@@ -175,6 +284,10 @@ final class FindBarView: NSView {
     /// glyph on the same quiet tint instead of AppKit's default white.
     private var previousButton: NSButton!
     private var nextButton: NSButton!
+    /// Assigned in `buildReplaceRow()` so `updateControlEnablement()` can park
+    /// them when there is nothing to replace.
+    private var replaceButton: NSButton!
+    private var replaceAllButton: NSButton!
     private var closeButton: NSButton?
     private let findRow = NSStackView()
     private let replaceRow = NSStackView()
@@ -268,6 +381,7 @@ final class FindBarView: NSView {
 
         applyStyle()
         applyValidity()
+        updateControlEnablement()
         setAccessibilityRole(.group)
         setAccessibilityLabel("Find")
 
@@ -315,9 +429,14 @@ final class FindBarView: NSView {
         )
         warningImage.toolTip = "Invalid regular expression"
         warningImage.isHidden = true
+        // Layer-backed so the invalid-pattern glyph can pop in rather than
+        // appear (`setWarningVisible`).
+        warningImage.wantsLayer = true
 
         statusLabel.font = PanelFont.secondary
         statusLabel.alignment = .right
+        // Layer-backed so a changing count can crossfade (`setStatusLabelText`).
+        statusLabel.wantsLayer = true
         // Starts hidden: no count is pinned until a session reports one, and
         // a hidden stack member leaves no gap in the tray.
         statusLabel.isHidden = true
@@ -348,6 +467,7 @@ final class FindBarView: NSView {
         self.previousButton = previousButton
         self.nextButton = nextButton
         findRow.translatesAutoresizingMaskIntoConstraints = false
+        findRow.wantsLayer = true
         findRow.setHuggingPriority(.defaultLow, for: .horizontal)
 
         // One row for both presentations: the field stretches; the count and
@@ -478,13 +598,19 @@ final class FindBarView: NSView {
         }
         actions.append(contentsOf: [replace, replaceAll])
 
+        let replaceButton = PanelButton.text("Replace", action: replace)
+        let replaceAllButton = PanelButton.text("All", action: replaceAll)
+        self.replaceButton = replaceButton
+        self.replaceAllButton = replaceAllButton
+
         replaceRow.orientation = .horizontal
         replaceRow.spacing = 6
         replaceRow.alignment = .centerY
         replaceRow.translatesAutoresizingMaskIntoConstraints = false
+        replaceRow.wantsLayer = true
         replaceRow.addArrangedSubview(replaceField)
-        replaceRow.addArrangedSubview(PanelButton.text("Replace", action: replace))
-        replaceRow.addArrangedSubview(PanelButton.text("All", action: replaceAll))
+        replaceRow.addArrangedSubview(replaceButton)
+        replaceRow.addArrangedSubview(replaceAllButton)
     }
 
     // MARK: - API
@@ -512,7 +638,22 @@ final class FindBarView: NSView {
     /// the bar behaves exactly as if it had been typed.
     func setQueryText(_ text: String) {
         searchField.stringValue = text
+        updateControlEnablement()
         emitQuery()
+    }
+
+    /// Buttons that walk or rewrite matches only mean something while there is
+    /// a query to walk.  An empty field parks them, and a settled "No matches"
+    /// keeps them parked — a button that cannot act must say so with its state,
+    /// not with a click that lands nowhere.  Editing the text re-arms them
+    /// immediately, so the find-as-you-type debounce never locks the reader
+    /// out of the walk.
+    private func updateControlEnablement() {
+        let canNavigate = !searchField.stringValue.isEmpty && statusText != "No matches"
+        previousButton?.isEnabled = canNavigate
+        nextButton?.isEnabled = canNavigate
+        replaceButton?.isEnabled = canNavigate
+        replaceAllButton?.isEnabled = canNavigate
     }
 
     var currentQuery: FindQuery {
@@ -577,10 +718,43 @@ final class FindBarView: NSView {
     }
 
     /// Subtle by design: an invalid pattern while you are still typing one is
-    /// the normal case, not a failure state.
+    /// the normal case, not a failure state.  The glyph's entrance is a small
+    /// springy pop rather than a hard appear, and it fades out just as
+    /// quietly; the row glides to make room for it.
     private func applyValidity() {
-        warningImage.isHidden = isQueryValid
+        let show = !isQueryValid
+        if show == warningImage.isHidden { setWarningVisible(show) }
         searchField.textColor = isQueryValid ? styleSheet.text : styleSheet.changeColor(.deleted)
+    }
+
+    private func setWarningVisible(_ visible: Bool) {
+        let live = window != nil && !styleSheet.reduceMotion
+        if visible {
+            warningImage.layer?.removeAllAnimations()
+            warningImage.isHidden = false
+            guard live else { return }
+            warningImage.alphaValue = 0
+            warningImage.layer?.setAffineTransform(CGAffineTransform(scaleX: 0.6, y: 0.6))
+            Motion.run(reduceMotion: false, duration: Motion.standard, curve: .snap) { _ in
+                self.warningImage.animator().alphaValue = 1
+                self.warningImage.layer?.setAffineTransform(.identity)
+                self.layoutSubtreeIfNeeded()
+            }
+        } else {
+            guard live else {
+                warningImage.isHidden = true
+                return
+            }
+            Motion.run(reduceMotion: false, duration: Motion.quick) { _ in
+                self.warningImage.animator().alphaValue = 0
+            } completion: { [weak self] in
+                guard let self, self.isQueryValid else { return }
+                self.warningImage.layer?.removeAllAnimations()
+                self.warningImage.isHidden = true
+                self.warningImage.alphaValue = 1
+                self.warningImage.layer?.setAffineTransform(.identity)
+            }
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -610,6 +784,7 @@ final class FindBarView: NSView {
 extension FindBarView: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         guard (notification.object as? NSSearchField) === searchField else { return }
+        updateControlEnablement()
         emitQuery()
     }
 

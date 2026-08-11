@@ -8,9 +8,9 @@ import QuartzCore
 /// A whole-plan bar answers "how much is left"; this one answers "where is it
 /// left".  One segment per document section, width proportional to its task
 /// count, fill for its completion — the shape of the remaining work is visible
-/// as geography before a single row is read.  Hovering a segment lights it and
-/// hands its summary to the panel's caption; clicking scrolls the list to the
-/// section, so the bar is a map rather than a meter.
+/// as geography before a single row is read. Hovering lights a segment;
+/// clicking scrolls the list to its section, so the bar is a map rather than a
+/// second whole-plan meter.
 ///
 /// The bar replaces the old header's percent figure, count caption, and plain
 /// progress bar — three chrome elements that between them said one thing.
@@ -28,9 +28,6 @@ final class TaskSectionBarView: NSView {
         didSet { applyStyle() }
     }
 
-    /// The segment under the pointer, or nil as it leaves — the panel swaps
-    /// its one-line caption for the hovered section's own count.
-    var onHoverSegment: ((Int?) -> Void)?
     /// A click on a segment: the panel scrolls the matching section into view.
     var onSelectSegment: ((Int) -> Void)?
 
@@ -223,12 +220,10 @@ guard segmentLayers.count == segments.count else { return }
         let index = hitSegment(at: convert(event.locationInWindow, from: nil))
         guard index != hoveredIndex else { return }
         hoveredIndex = index
-        onHoverSegment?(index)
     }
 
     override func mouseExited(with event: NSEvent) {
         hoveredIndex = nil
-        onHoverSegment?(nil)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -258,7 +253,6 @@ guard segmentLayers.count == segments.count else { return }
             onSelectSegment?(keyboardIndex)
         default: super.keyDown(with: event); return
         }
-        onHoverSegment?(keyboardIndex)
         setNeedsDisplay(bounds)
     }
 

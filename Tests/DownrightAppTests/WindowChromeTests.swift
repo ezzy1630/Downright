@@ -52,7 +52,7 @@ struct WindowChromeTests {
             onChange: { changes.append($0) },
             performHapticFeedback: { hapticCount += 1 }
         )
-        control.frame = NSRect(x: 0, y: 0, width: 176, height: 32)
+        control.frame = NSRect(x: 0, y: 0, width: 184, height: 34)
         control.layoutSubtreeIfNeeded()
 
         control.updateScrub(at: 44, phase: .began)
@@ -64,6 +64,27 @@ struct WindowChromeTests {
         control.updateScrub(at: 132, phase: .ended)
         #expect(control.selectedSegment == 1)
         #expect(changes == [1])
+    }
+
+    @Test
+    func toolbarIndicatorIsCenteredUnderTheSelectedLabelAfterLayout() {
+        let control = ToolbarPresentationControl(onChange: { _ in })
+        control.frame = NSRect(x: 0, y: 0, width: 184, height: 34)
+        control.layoutSubtreeIfNeeded()
+
+        #expect(abs(
+            control.selectionIndicatorFrameForTesting.midX
+                - control.selectedSegmentCenterForTesting
+        ) < 0.01)
+        #expect(control.selectionIndicatorFrameForTesting.width == 34)
+        #expect(control.selectionIndicatorFrameForTesting.minX > 1)
+
+        control.setSelectedSegment(1)
+        #expect(abs(
+            control.selectionIndicatorFrameForTesting.midX
+                - control.selectedSegmentCenterForTesting
+        ) < 0.01)
+        #expect(control.selectionIndicatorFrameForTesting.maxX < 183)
     }
 
     @Test
@@ -310,6 +331,30 @@ struct WindowChromeTests {
     }
 
     @Test
+    func floatingTaskPanelFitsItsFooterRow() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-task-fit-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("plan.md")
+        try Data("# Plan\n\n- [ ] First\n- [ ] Second\n- [x] Done\n".utf8).write(to: file)
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.toggleTaskPanel()
+        controller.floatingSurface?.settleForTesting()
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+
+        let panel = try #require(controller.taskPanel)
+        let surface = try #require(controller.floatingSurface)
+        let footer = try #require(panel.lastRowFrameForTesting)
+        let visibleFooter = surface.convert(footer, from: panel)
+        let visibleBody = surface.visibleBodyBoundsForHitTesting
+        #expect(visibleBody.contains(visibleFooter))
+    }
+
+    @Test
     func inspectorSelectionAndCloseStayInSyncWithToolbar() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }
@@ -499,6 +544,114 @@ struct WindowChromeTests {
         #expect(menu.items.last?.isEnabled == false)
     }
 
+    @Test
+    func everyFindBarControlDispatchesItsDocumentAction() throws {
+        let bar = FindBarView()
+        let delegate = FindBarDelegateRecorder()
+        bar.delegate = delegate
+        bar.statusText = "1 of 2"
+        bar.showsReplace = true
+
+        bar.setQueryText("alpha")
+        try findButton("Previous match", in: bar).performClick(nil)
+        try findButton("Next match", in: bar).performClick(nil)
+
+        let replacement = try findTextField("Replace with", in: bar)
+        replacement.stringValue = "omega"
+        try findButton("Replace", in: bar).performClick(nil)
+        try findButton("All", in: bar).performClick(nil)
+
+        #expect(delegate.queries.last?.text == "alpha")
+        #expect(delegate.advances == [false, true])
+        #expect(delegate.replacements.count == 2)
+        #expect(delegate.replacements[0].text == "omega")
+        #expect(delegate.replacements[0].all == false)
+        #expect(delegate.replacements[1].all == true)
+
+        let options = bar.makeOptionsMenuForTesting()
+        let regex = try #require(options.item(withTitle: "Regular Expression"))
+        let regexAction = try #require(regex.action)
+        _ = NSApp.sendAction(regexAction, to: regex.target, from: regex)
+        #expect(bar.currentQuery.isRegex)
+
+        bar.selectionScope = NSRange(location: 0, length: 5)
+        let scopedOptions = bar.makeOptionsMenuForTesting()
+        let inSelection = try #require(scopedOptions.item(withTitle: "In Selection"))
+        #expect(inSelection.isEnabled)
+        let scopeAction = try #require(inSelection.action)
+        _ = NSApp.sendAction(scopeAction, to: inSelection.target, from: inSelection)
+        #expect(bar.currentQuery.scope == NSRange(location: 0, length: 5))
+
+        try findButton("Close find bar", in: bar).performClick(nil)
+        #expect(delegate.closeCount == 1)
+    }
+
+    @Test
+    func findBarParksItsMatchActionsUntilThereIsSomethingToWalk() throws {
+        let bar = FindBarView()
+        let previous = try findButton("Previous match", in: bar)
+        let next = try findButton("Next match", in: bar)
+
+        // An empty field parks the walk — a click there could only land nowhere.
+        #expect(!previous.isEnabled)
+        #expect(!next.isEnabled)
+
+        bar.setQueryText("alpha")
+        #expect(previous.isEnabled)
+        #expect(next.isEnabled)
+
+        // A settled "No matches" parks them again; editing re-arms at once.
+        bar.statusText = "No matches"
+        #expect(!previous.isEnabled)
+        #expect(!next.isEnabled)
+        bar.statusText = "2 of 4"
+        #expect(previous.isEnabled)
+        #expect(next.isEnabled)
+
+        bar.showsReplace = true
+        let replace = try findButton("Replace", in: bar)
+        let replaceAll = try findButton("All", in: bar)
+        #expect(replace.isEnabled)
+        #expect(replaceAll.isEnabled)
+        bar.setQueryText("")
+        #expect(!replace.isEnabled)
+        #expect(!replaceAll.isEnabled)
+    }
+
+    @Test
+    func findActionFlushesTheVisibleQueryBeforeTheDebounceFires() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-find-action-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        try Data("alpha beta alpha\n".utf8).write(to: file)
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.showFindBar(replace: false)
+        let bar = try #require(controller.findBar)
+
+        bar.setQueryText("alpha")
+        try findButton("Next match", in: bar).performClick(nil)
+
+        #expect(controller.currentFindQuery.text == "alpha")
+        #expect(bar.statusText == "2 of 2")
+
+        bar.showsReplace = true
+        let replacement = try findTextField("Replace with", in: bar)
+        bar.setQueryText("beta")
+        replacement.stringValue = "gamma"
+        try findButton("Replace", in: bar).performClick(nil)
+        #expect(controller.markdownDocument.text == "alpha gamma alpha\n")
+
+        bar.setQueryText("alpha")
+        replacement.stringValue = "omega"
+        try findButton("All", in: bar).performClick(nil)
+        #expect(controller.markdownDocument.text == "omega gamma omega\n")
+    }
+
     /// DESIGN.md's "Avoid" list names a permanent status bar outright, so the
     /// bar ships hidden and costs no height until View ▸ Status Bar asks for
     /// it.  It shipped visible and unconditional, with no toggle anywhere.
@@ -521,4 +674,52 @@ struct WindowChromeTests {
         #expect(controller.statusBarView.intrinsicContentSize.height > 0)
     }
 
+}
+
+@MainActor
+private final class FindBarDelegateRecorder: FindBarDelegate {
+    struct Replacement: Equatable {
+        let text: String
+        let all: Bool
+    }
+
+    var queries: [FindQuery] = []
+    var advances: [Bool] = []
+    var replacements: [Replacement] = []
+    var closeCount = 0
+
+    func findBar(_ bar: FindBarView, didChange query: FindQuery) {
+        queries.append(query)
+    }
+
+    func findBar(_ bar: FindBarView, didRequestAdvance forward: Bool) {
+        advances.append(forward)
+    }
+
+    func findBar(_ bar: FindBarView, didRequestReplace replacement: String, all: Bool) {
+        replacements.append(Replacement(text: replacement, all: all))
+    }
+
+    func findBarDidRequestClose(_ bar: FindBarView) {
+        closeCount += 1
+    }
+}
+
+@MainActor
+private func findButton(_ label: String, in root: NSView) throws -> NSButton {
+    try #require(descendants(of: root).compactMap { $0 as? NSButton }.first {
+        $0.accessibilityLabel() == label
+    })
+}
+
+@MainActor
+private func findTextField(_ label: String, in root: NSView) throws -> NSTextField {
+    try #require(descendants(of: root).compactMap { $0 as? NSTextField }.first {
+        $0.accessibilityLabel() == label
+    })
+}
+
+@MainActor
+private func descendants(of root: NSView) -> [NSView] {
+    root.subviews.flatMap { [$0] + descendants(of: $0) }
 }

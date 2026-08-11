@@ -579,7 +579,12 @@ final class TableRowFragment: DownrightFragment {
         let rowHeight = rowIndex < layout.rowHeights.count ? layout.rowHeights[rowIndex] : style.lineHeight
         let frame = CGRect(x: point.x, y: point.y, width: max(contentWidth, layout.totalWidth), height: rowHeight)
 
-        if !row.isHeader, context?.hoveredTableRow == row.range {
+        if row.isHeader {
+            // A quiet header wash groups labels with their columns without
+            // boxing every cell. It also gives tables the same shallow surface
+            // hierarchy as code and failed-object blocks.
+            cg.fillRect(frame, color: style.surface.withAlphaComponent(0.62))
+        } else if context?.hoveredTableRow == row.range {
             cg.fillRect(frame, color: style.text.withAlphaComponent(0.04))
         }
 

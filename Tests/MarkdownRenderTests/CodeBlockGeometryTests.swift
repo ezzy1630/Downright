@@ -42,10 +42,15 @@ struct CodeBlockGeometryTests {
         layout.enumerateTextLayoutFragments(from: layout.documentRange.location,
                                             options: [.ensuresLayout]) { fragment in
             guard let code = fragment as? CodeBlockFragment else { return true }
+            // TextKit calls `draw(at:in:)` in rendering-surface coordinates,
+            // not at the layout frame's document origin. Recreate that local
+            // point so this probe tests the same geometry the live app draws.
+            let surface = code.renderingSurfaceBounds
+            let drawPoint = CGPoint(x: -surface.minX, y: -surface.minY)
             result.append((
                 code.elementSourceRange,
                 code.role,
-                code.bandRect(at: fragment.layoutFragmentFrame.origin),
+                code.bandRect(at: drawPoint),
                 code.paragraphStyle?.firstLineHeadIndent ?? -1
             ))
             return true

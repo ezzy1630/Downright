@@ -171,8 +171,10 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     /// place for detail.  Rises as the pitch tightens, so a full stack still
     /// spans the same share of a tall window.
     static let stackCapacityCeiling: Int = 18
-    /// Below this the document has no shape worth indexing, so the rail draws
-    /// the quiet spine instead of a stack pretending to be one.
+    /// Below this the rail itself is too short to hold a readable stack.
+    /// Sparse documents still keep their available heading anchors; otherwise
+    /// the entire hover target disappears just because a document has one or
+    /// two sections.
     static let minimumStackMarks: Int = 3
 
     /// Overlay dot on a mark's leading edge (§2.3 "coloured pips").
@@ -408,6 +410,12 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     private var pipLayers: [CALayer] = []
     private var hoveredBandIndex: Int?
     private var didDrag = false
+    private var mouseDownLocation: NSPoint?
+    private static let scrubActivationDistance: CGFloat = 4
+
+    static func shouldBeginScrub(from start: NSPoint, to current: NSPoint) -> Bool {
+        hypot(current.x - start.x, current.y - start.y) >= scrubActivationDistance
+    }
 
     // MARK: - Init
 
@@ -647,12 +655,12 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         // overlays become the stack rather than vanishing along with it.
         guard !headings.isEmpty else {
             let marks = strideSampled(overlays, limit: capacity)
-            guard marks.count >= minimumStackMarks else { return Selection(marks: [], pips: []) }
+            guard capacity >= minimumStackMarks else { return Selection(marks: [], pips: []) }
             return Selection(marks: marks, pips: Array(repeating: Pip(), count: marks.count))
         }
 
         let marks = selectHeadings(headings, capacity: capacity)
-        guard marks.count >= minimumStackMarks else { return Selection(marks: [], pips: []) }
+        guard capacity >= minimumStackMarks else { return Selection(marks: [], pips: []) }
         return Selection(marks: marks, pips: pips(for: overlays, on: marks))
     }
 
@@ -1304,9 +1312,14 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         pointerVelocityY = 0
         lastPointerSample = nil
         let point = convert(event.locationInWindow, from: nil)
+        mouseDownLocation = point
         pointerLocation = point
         samplePointerVelocity(at: point.y)
-        scrub(to: event, showsSnippet: true, interactive: false)
+        // Mouse-down only previews. Navigation starts on mouse-up, which
+        // gives an ordinary click one smooth spring instead of a first jump
+        // followed by a second retarget.
+        updateHoveredBand(at: point, animated: true)
+        showPreview(at: point, showsSnippet: true, interactive: false)
     }
 
     public override func mouseDragged(with event: NSEvent) {
@@ -1315,9 +1328,15 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         pointerIsInPreview = false
         pointerIsInOutline = false
         if outline.isVisible { outline.dismiss() }
+        let point = convert(event.locationInWindow, from: nil)
+        guard didDrag || mouseDownLocation.map({ Self.shouldBeginScrub(from: $0, to: point) }) == true else {
+            pointerLocation = point
+            updateHoveredBand(at: point, animated: true)
+            showPreview(at: point, showsSnippet: true, interactive: false)
+            return
+        }
         didDrag = true
         isScrubbing = true
-        let point = convert(event.locationInWindow, from: nil)
         pointerLocation = point
         samplePointerVelocity(at: point.y)
         scrub(to: event, showsSnippet: true, interactive: false)
@@ -1325,6 +1344,7 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
 
     public override func mouseUp(with event: NSEvent) {
         let wasDragging = didDrag
+        mouseDownLocation = nil
         isScrubbing = false
         didDrag = false
         let point = convert(event.locationInWindow, from: nil)

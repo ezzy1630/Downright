@@ -219,10 +219,10 @@ extension Theme {
             codeRule: ThemeColor("system:separator"),
             railTick: ThemeColor("system:tertiaryLabel"), railTickCurrent: ThemeColor("system:label"),
             quoteRule: ThemeColor("system:quaternaryLabel"), changeAdded: ThemeColor("system:systemGreen"),
-            changeRemoved: ThemeColor("system:systemRed"), changeModified: ThemeColor("system:systemOrange"),
-            pathMissing: ThemeColor("system:systemRed"), searchHit: ThemeColor("system:systemYellow"),
-            searchHitCurrent: ThemeColor("system:systemOrange"), calloutNote: ThemeColor("system:systemBlue"),
-            calloutWarning: ThemeColor("system:systemOrange"), calloutSuccess: ThemeColor("system:systemGreen"),
+            changeRemoved: ThemeColor("system:systemRed"), changeModified: ThemeColor("system:systemBlue"),
+            pathMissing: ThemeColor("system:systemRed"), searchHit: ThemeColor("system:systemBlue"),
+            searchHitCurrent: ThemeColor("system:systemBlue"), calloutNote: ThemeColor("system:systemBlue"),
+            calloutWarning: ThemeColor("system:systemBlue"), calloutSuccess: ThemeColor("system:systemGreen"),
             calloutDanger: ThemeColor("system:systemRed")
         ),
         code: CodeTheme(
@@ -231,7 +231,7 @@ extension Theme {
             type: ThemeColor("system:systemTeal"), function: ThemeColor("system:systemBlue"),
             variable: ThemeColor("system:label"), constant: ThemeColor("system:systemPurple"),
             operator: ThemeColor("system:secondaryLabel"), punctuation: ThemeColor("system:tertiaryLabel"),
-            attribute: ThemeColor("system:systemOrange"), diffAdded: ThemeColor("system:systemGreen"),
+            attribute: ThemeColor("system:systemBlue"), diffAdded: ThemeColor("system:systemGreen"),
             diffRemoved: ThemeColor("system:systemRed"), diffHeader: ThemeColor("system:secondaryLabel")
         ),
         typography: .default

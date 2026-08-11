@@ -149,7 +149,9 @@ final class ToolbarDocumentIdentityView: NSView {
         proxyButton.action = #selector(showPathMenu(_:))
 
         dirtyDot.wantsLayer = true
-        dirtyDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        // Theme accent, not controlAccentColor: Paper Light / Warm Dark are
+        // blue-native, and the system accent can still be orange on the Mac.
+        dirtyDot.layer?.backgroundColor = StyleSheet.current.accent.cgColor
         dirtyDot.layer?.cornerRadius = Metrics.dirtySize / 2
         dirtyDot.isHidden = true
         dirtyDot.setContentHuggingPriority(.required, for: .horizontal)
@@ -157,7 +159,7 @@ final class ToolbarDocumentIdentityView: NSView {
 
         externalDot.wantsLayer = true
         externalDot.layer?.backgroundColor = NSColor.clear.cgColor
-        externalDot.layer?.borderColor = NSColor.systemBlue.cgColor
+        externalDot.layer?.borderColor = StyleSheet.current.accent.cgColor
         externalDot.layer?.borderWidth = 1.5
         externalDot.layer?.cornerRadius = Metrics.dirtySize / 2
         externalDot.isHidden = true
@@ -381,9 +383,15 @@ final class ToolbarDocumentIdentityView: NSView {
     private func refreshEmphasis() {
         titleLabel.textColor = hostWindow?.isKeyWindow == true ? .labelColor : .secondaryLabelColor
         contextLabel.textColor = .tertiaryLabelColor
-        dirtyDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        externalDot.layer?.borderColor = NSColor.systemBlue.cgColor
+        let accent = StyleSheet.current.accent
+        dirtyDot.layer?.backgroundColor = accent.cgColor
+        externalDot.layer?.borderColor = accent.cgColor
         updateProxyIcon(for: hostWindow?.representedURL)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshEmphasis()
     }
 }
 
@@ -399,7 +407,7 @@ extension ToolbarDocumentIdentityView: NSDraggingSource {
 /// A two-state titlebar rail for the document surface. Selection is expressed
 /// by typography and one baseline, not a capsule competing with the document.
 @MainActor
-final class ToolbarPresentationControl: NSView {
+final class ToolbarPresentationControl: Motion.SpringSurfaceView {
     var styleSheet: StyleSheet = .current {
         didSet {
             glass.styleSheet = styleSheet
@@ -420,9 +428,15 @@ final class ToolbarPresentationControl: NSView {
     private let documentButton: ToolbarModeButton
     private let sourceButton: ToolbarModeButton
     private let selectionIndicator = CALayer()
+    private var indicatorCenter = Motion.SpringScalar(
+        value: 0,
+        perceptualDuration: Motion.springQuick,
+        bounce: 0.08
+    )
     private var activationObservers: [NSObjectProtocol] = []
     private var accessibilityObserver: NSObjectProtocol?
     private var scrubbedSegment: Int?
+    private var indicatorLayoutWidth: CGFloat?
     private(set) var selectedSegment = -1
 
     let onChange: (Int) -> Void
@@ -488,12 +502,12 @@ final class ToolbarPresentationControl: NSView {
         }
 
         NSLayoutConstraint.activate([
-            documentButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
-            documentButton.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            documentButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            documentButton.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 1),
+            documentButton.topAnchor.constraint(equalTo: glass.contentView.topAnchor, constant: 1),
+            documentButton.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -1),
             sourceButton.topAnchor.constraint(equalTo: documentButton.topAnchor),
             sourceButton.bottomAnchor.constraint(equalTo: documentButton.bottomAnchor),
-            sourceButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
+            sourceButton.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -1),
             sourceButton.leadingAnchor.constraint(equalTo: documentButton.trailingAnchor),
             documentButton.widthAnchor.constraint(equalToConstant: Metrics.segmentWidth),
             sourceButton.widthAnchor.constraint(equalTo: documentButton.widthAnchor),
@@ -540,9 +554,28 @@ final class ToolbarPresentationControl: NSView {
     override func layout() {
         super.layout()
         glass.frame = bounds
-        if scrubbedSegment == nil {
-            updateSelectionIndicator(animated: false)
+        if scrubbedSegment == nil,
+           indicatorLayoutWidth.map({ abs($0 - bounds.width) > 0.01 }) ?? true
+        {
+            // Button layout happens below this view in AppKit's layout pass.
+            // Derive the indicator from our stable capsule geometry instead
+            // of sampling child frames before Auto Layout has placed them.
+            indicatorLayoutWidth = bounds.width
+            settleIndicatorOnLayout()
         }
+    }
+
+    override func springTick(dt: CGFloat) -> Bool {
+        indicatorCenter.advance(dt: dt)
+    }
+
+    override func springApply() {
+        placeSelectionIndicator(centerX: indicatorCenter.value)
+    }
+
+    override func springsSettleImmediately() {
+        indicatorCenter.snap(to: indicatorCenterX(for: selectedSegment))
+        springApply()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -591,10 +624,11 @@ final class ToolbarPresentationControl: NSView {
     }
 
     func updateScrub(at pointerX: CGFloat, phase: ToolbarScrubPhase) {
+        let centers = segmentCenters
         let state = ToolbarChromePolicy.scrubState(
             pointerX: pointerX,
-            leftCenterX: documentButton.frame.midX,
-            rightCenterX: sourceButton.frame.midX
+            leftCenterX: centers.left,
+            rightCenterX: centers.right
         )
 
         switch phase {
@@ -632,42 +666,59 @@ final class ToolbarPresentationControl: NSView {
     }
 
     private func updateSelectionIndicator(centerX: CGFloat) {
-        selectionIndicator.removeAnimation(forKey: "selection-change")
+        parkSprings()
+        indicatorCenter.snap(to: centerX)
+        springApply()
+    }
+
+    private func updateSelectionIndicator(animated: Bool) {
+        guard selectedSegment >= 0 else { return }
+        let centerX = indicatorCenterX(for: selectedSegment)
+        selectionIndicator.backgroundColor = styleSheet.accent.cgColor
+        guard animated, window != nil, !styleSheet.reduceMotion else {
+            parkSprings()
+            indicatorCenter.snap(to: centerX)
+            springApply()
+            return
+        }
+        indicatorCenter.target(centerX)
+        if !armSprings() {
+            indicatorCenter.snap(to: centerX)
+            springApply()
+        }
+    }
+
+    private var segmentCenters: (left: CGFloat, right: CGFloat) {
+        let inset: CGFloat = 1
+        let availableWidth = max(0, bounds.width - 2 * inset)
+        let segmentWidth = availableWidth / 2
+        return (
+            inset + segmentWidth / 2,
+            inset + segmentWidth * 1.5
+        )
+    }
+
+    private func indicatorCenterX(for segment: Int) -> CGFloat {
+        segment == 0 ? segmentCenters.left : segmentCenters.right
+    }
+
+    private func settleIndicatorOnLayout() {
+        guard selectedSegment >= 0 else { return }
+        parkSprings()
+        indicatorCenter.snap(to: indicatorCenterX(for: selectedSegment))
+        springApply()
+    }
+
+    private func placeSelectionIndicator(centerX: CGFloat) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         selectionIndicator.frame = NSRect(
-            x: centerX - (Metrics.indicatorWidth / 2),
+            x: centerX - Metrics.indicatorWidth / 2,
             y: 4,
             width: Metrics.indicatorWidth,
             height: Metrics.indicatorHeight
         )
         CATransaction.commit()
-    }
-
-    private func updateSelectionIndicator(animated: Bool) {
-        guard selectedSegment >= 0 else { return }
-        let selectedFrame = selectedSegment == 0 ? documentButton.frame : sourceButton.frame
-        let frame = NSRect(
-            x: selectedFrame.midX - (Metrics.indicatorWidth / 2),
-            y: 4,
-            width: Metrics.indicatorWidth,
-            height: Metrics.indicatorHeight
-        )
-        selectionIndicator.backgroundColor = styleSheet.accent.cgColor
-        guard animated, !styleSheet.reduceMotion else {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            selectionIndicator.frame = frame
-            CATransaction.commit()
-            return
-        }
-        let currentFrame = selectionIndicator.presentation()?.frame ?? selectionIndicator.frame
-        let animation = CABasicAnimation(keyPath: "position")
-        animation.fromValue = NSValue(point: NSPoint(x: currentFrame.midX, y: currentFrame.midY))
-        animation.duration = ToolbarChromePolicy.selectionDuration
-        animation.timingFunction = ToolbarChromePolicy.timingFunction()
-        selectionIndicator.add(animation, forKey: "selection-change")
-        selectionIndicator.frame = frame
     }
 
     private func refreshWindowEmphasis(animated: Bool) {
@@ -698,6 +749,9 @@ final class ToolbarPresentationControl: NSView {
         }
         activationObservers.removeAll(keepingCapacity: true)
     }
+
+    var selectionIndicatorFrameForTesting: NSRect { selectionIndicator.frame }
+    var selectedSegmentCenterForTesting: CGFloat { indicatorCenterX(for: selectedSegment) }
 }
 
 /// Shared compositor-only pointer feedback for titlebar buttons. One owner

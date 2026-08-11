@@ -42,9 +42,6 @@ final class InspectorHostView: NSView {
     private let closeButton: NSButton
     private let sectionControl: PanelSegmentedControl
     private let content = NSView()
-    /// A persistent boundary between document and inspector. Glass alone is
-    /// too dependent on the wallpaper and theme to define the two surfaces.
-    private let leadingRule = NSView()
     /// One rule between the host's chrome and whatever panel is inside it, so
     /// the header reads as the panel's own cap rather than as part of the list
     /// that happens to start below it.
@@ -63,7 +60,6 @@ final class InspectorHostView: NSView {
     private var ruleBelowTitle: NSLayoutConstraint!
     private var ruleBelowSwitcher: NSLayoutConstraint!
     private var closeAction: ButtonAction?
-    private var closeTrackingArea: NSTrackingArea?
     private var views: [InspectorSection: NSView] = [:]
     /// Overrides for the header text, so the surface a command opened is named
     /// after that command rather than after its slot.
@@ -73,7 +69,12 @@ final class InspectorHostView: NSView {
     var closeButtonForTesting: NSButton { closeButton }
 
     override init(frame frameRect: NSRect) {
-        closeButton = PanelButton.symbol("xmark", label: "Close inspector", action: ButtonAction({}))
+        closeButton = PanelButton.symbol(
+            "xmark",
+            label: "Close inspector",
+            action: ButtonAction({}),
+            firesOnMouseDown: true
+        )
         sectionControl = PanelSegmentedControl(
             items: Self.switcherSections.map(\.title),
             styleSheet: .current
@@ -92,8 +93,13 @@ final class InspectorHostView: NSView {
         closeAction = action
         closeButton.target = action
         closeButton.action = #selector(ButtonAction.fire(_:))
+        PanelButton.setImmediatePressHandler(on: closeButton) { [weak self] in
+            self?.onClose?()
+        }
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.alphaValue = 0
+        // Closing is a primary panel action, not hover-only decoration. Keep
+        // the full 28pt target visible and live from the first frame.
+        closeButton.alphaValue = 1
 
         rule.wantsLayer = true
         rule.translatesAutoresizingMaskIntoConstraints = false
@@ -118,10 +124,6 @@ final class InspectorHostView: NSView {
         addSubview(sectionControl)
         addSubview(closeButton)
         addSubview(rule)
-        leadingRule.wantsLayer = true
-        leadingRule.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(leadingRule)
-
         // The close button rides whichever header row is on screen, and the
         // rule sits under whichever is lower — both pairs swap in
         // `updateHeaderChrome()` as sections come and go.
@@ -138,23 +140,20 @@ final class InspectorHostView: NSView {
             equalTo: sectionControl.bottomAnchor, constant: Metrics.topPadding
         )
         NSLayoutConstraint.activate([
-            leadingRule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            leadingRule.topAnchor.constraint(equalTo: topAnchor),
-            leadingRule.bottomAnchor.constraint(equalTo: bottomAnchor),
-            leadingRule.widthAnchor.constraint(equalToConstant: PanelMetrics.hairline),
-
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.horizontalInset),
             titleLabel.trailingAnchor.constraint(
                 lessThanOrEqualTo: closeButton.leadingAnchor, constant: -6
             ),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: Metrics.titleTopPadding),
             titleHeight,
 
-            sectionControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            sectionControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.horizontalInset),
             sectionControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor),
             switcherHeight,
 
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            closeButton.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -Metrics.closeTrailingInset
+            ),
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
 
@@ -175,38 +174,20 @@ final class InspectorHostView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let closeTrackingArea { removeTrackingArea(closeTrackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        closeTrackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { setCloseVisible(true) }
-    override func mouseExited(with event: NSEvent) { setCloseVisible(false) }
-
-    private func setCloseVisible(_ visible: Bool) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = styleSheet.reduceMotion ? 0 : Motion.quick
-            context.timingFunction = Motion.timing(.easeOut)
-            closeButton.animator().alphaValue = visible ? 1 : 0
-        }
+    func syncCloseVisibilityWithPointer() {
+        closeButton.alphaValue = 1
     }
 
     private enum Metrics {
+        static let horizontalInset: CGFloat = 18
+        static let closeTrailingInset: CGFloat = 14
         /// Air above the switcher and between it and the rule.
         static let topPadding: CGFloat = 10
         /// Air above the slim title row — two points more than the switcher's,
         /// so the header's first line never feels nailed to the toolbar rule.
-        static let titleTopPadding: CGFloat = 20
+        static let titleTopPadding: CGFloat = 14
         /// Air between the slim title row and the rule under it.
-        static let titleBottomGap: CGFloat = 18
+        static let titleBottomGap: CGFloat = 10
         /// Title row: one line of `PanelFont.header` plus the gap under it.
         static let titleRowHeight: CGFloat = 22
     }
@@ -216,8 +197,6 @@ final class InspectorHostView: NSView {
         closeButton.contentTintColor = styleSheet.textSecondary
         rule.layer?.backgroundColor = styleSheet.rule
             .panelAlpha(styleSheet.increaseContrast ? 0.9 : 0.30, increaseContrast: false).cgColor
-        leadingRule.layer?.backgroundColor = styleSheet.rule
-            .panelAlpha(styleSheet.increaseContrast ? 1 : 0.82, increaseContrast: false).cgColor
     }
 
     /// Esc closes the inspector, whatever is inside it.  Doing it here rather

@@ -663,7 +663,7 @@ private final class UpdateFailureView: NSView {
 
         let summary = NSTextField(wrappingLabelWithString: failure.message)
         summary.font = PanelFont.system(13, weight: .medium)
-        summary.textColor = .systemOrange
+        summary.textColor = sheet.accent
         summary.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(summary)
 

@@ -5,7 +5,7 @@ import MarkdownRender
 /// in `contentView`; `NSGlassEffectView` only guarantees compositing order for
 /// the content view it owns.
 @MainActor
-final class ChromeGlass: NSView {
+final class ChromeGlass: Motion.SpringSurfaceView {
     enum RoundedCorners {
         case all
         case bottomOnly
@@ -38,6 +38,11 @@ final class ChromeGlass: NSView {
     private let rimGradient = CAGradientLayer()
     private let rimMask = CAShapeLayer()
     private let focusLayer = CAShapeLayer()
+    private var focusOpacity = Motion.SpringScalar(
+        value: 0,
+        perceptualDuration: Motion.springQuick,
+        bounce: 0.04
+    )
     private var material: NSView?
     private(set) var usesGlass = false
 
@@ -175,12 +180,10 @@ final class ChromeGlass: NSView {
         material?.removeFromSuperview()
 
         let glass = NSGlassEffectView()
-        glass.style = .regular
+        glass.style = tint == .panel ? .clear : .regular
+        glass.cornerRadius = roundedCorners == .all ? cornerRadius : 0
         glass.appearance = Self.materialAppearance(styleSheet)
         glass.tintColor = Self.glassTint(styleSheet, tint: tint)
-        if glass.responds(to: Selector(("setEffectIsInteractive:"))) {
-            glass.setValue(true, forKey: "effectIsInteractive")
-        }
         glass.wantsLayer = true
         glass.layer?.cornerCurve = .continuous
         glass.clipsToBounds = true
@@ -244,6 +247,9 @@ final class ChromeGlass: NSView {
 
         material?.layer?.mask = maskLayer(path: path)
         fallback.layer?.mask = maskLayer(path: path)
+        if #available(macOS 26.0, *) {
+            glassEffect?.cornerRadius = roundedCorners == .all ? cornerRadius : 0
+        }
 
         rimGradient.frame = bounds
         rimMask.frame = bounds
@@ -264,24 +270,39 @@ final class ChromeGlass: NSView {
         focusLayer.path = chromePath(in: bounds.insetBy(dx: 1.5, dy: 1.5), inset: 1.5)
         focusLayer.strokeColor = styleSheet.accent.cgColor
         focusLayer.lineWidth = 1.5
-        focusLayer.opacity = showsFocus ? 0.92 : 0
+        focusLayer.opacity = Float(focusOpacity.value)
         CATransaction.commit()
     }
 
     private func updateFocus(animated: Bool) {
-        let target: Float = showsFocus ? 0.92 : 0
-        guard animated, !styleSheet.reduceMotion else {
-            focusLayer.removeAnimation(forKey: "focus")
-            focusLayer.opacity = target
+        let target: CGFloat = showsFocus ? 0.92 : 0
+        guard animated, window != nil, !styleSheet.reduceMotion else {
+            parkSprings()
+            focusOpacity.snap(to: target)
+            springApply()
             return
         }
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = focusLayer.presentation()?.opacity ?? focusLayer.opacity
-        animation.toValue = target
-        animation.duration = Motion.hover
-        animation.timingFunction = Motion.timing(.decelerate)
-        focusLayer.add(animation, forKey: "focus")
-        focusLayer.opacity = target
+        focusOpacity.target(target)
+        if !armSprings() {
+            focusOpacity.snap(to: target)
+            springApply()
+        }
+    }
+
+    override func springTick(dt: CGFloat) -> Bool {
+        focusOpacity.advance(dt: dt)
+    }
+
+    override func springApply() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        focusLayer.opacity = Float(focusOpacity.value)
+        CATransaction.commit()
+    }
+
+    override func springsSettleImmediately() {
+        focusOpacity.snap(to: showsFocus ? 0.92 : 0)
+        springApply()
     }
 
     private func maskLayer(path: CGPath) -> CAShapeLayer {

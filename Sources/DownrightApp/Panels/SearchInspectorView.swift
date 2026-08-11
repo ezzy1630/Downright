@@ -19,7 +19,19 @@ final class SearchInspectorView: NSView {
         get { findBar.showsReplace }
         set {
             findBar.showsReplace = newValue
-            findHeight.constant = newValue ? Metrics.replaceBarHeight : Metrics.findBarHeight
+            let target = newValue ? Metrics.replaceBarHeight : Metrics.findBarHeight
+            guard findHeight.constant != target else { return }
+            // The bar's row content fades in through the find bar itself; the
+            // container's height follows with the same glide rather than
+            // snapping the guidance below it.
+            guard window != nil, !styleSheet.reduceMotion else {
+                findHeight.constant = target
+                return
+            }
+            Motion.run(reduceMotion: false, duration: Motion.standard, curve: .structural) { _ in
+                self.findHeight.animator().constant = target
+                self.layoutSubtreeIfNeeded()
+            }
         }
     }
 
