@@ -2,6 +2,15 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+/// Lets the document keep its normal hit testing while hosting transient
+/// controls above it. Only real descendants of the overlay consume clicks.
+private final class FloatingOverlayHostView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
+}
+
 /// One window over one document.
 ///
 /// The window owns the document, the text surface, and every transient panel.
@@ -61,17 +70,13 @@ final class DocumentWindowController: NSWindowController {
     /// instead of docking in the split.  Kept for as long as it is on screen;
     /// torn down on dismissal.
     private(set) var floatingSurface: FloatingPanelSurface?
-    /// The transparent compositor boundary for the floating surface. It is a
-    /// child of the document window, so it follows the document while keeping
-    /// `NSGlassEffectView` outside the document window's own glass stage.
-    private var floatingPanelWindow: FloatingPanelWindow?
     var isTaskPanelFloating: Bool {
         floatingSurface != nil && inspectorHost?.selectedSection == .tasks
     }
-    /// The surface's resting frame in window space, remembered so a retarget
+    /// The surface's resting frame in screen space, remembered so a retarget
     /// can still aim after the dismissal hands the glass off early.
     private var floatingSurfaceFrame = NSRect.zero
-    /// Toolbar-space origin captured before the child window becomes key.
+    /// Toolbar-space origin captured before the surface begins moving.
     /// Dismissal uses this same geometry, so an in-flight toolbar relayout can
     /// never redirect the panel sideways.
     private var floatingControlAnchorFrame = NSRect.zero
@@ -81,9 +86,6 @@ final class DocumentWindowController: NSWindowController {
     private weak var floatingFocusRestoreView: NSView?
     /// Notification tokens that keep a flying trip aimed at the live pane.
     private var morphRetargetTokens: [NSObjectProtocol] = []
-    /// Re-order the detached panel after app activation without rebuilding its
-    /// content or stealing an in-progress quick-add field.
-    private var floatingActivationObserver: NSObjectProtocol?
     var frontMatterEditor: FrontMatterEditorView?
     var assetDoctorPanel: AssetDoctorView?
     var tidySheetWindow: NSWindow?
@@ -539,39 +541,57 @@ final class DocumentWindowController: NSWindowController {
         stage.wantsLayer = false
         let splitView = split.view
         splitView.translatesAutoresizingMaskIntoConstraints = false
-        let overlay = NSView()
+        let overlay = FloatingOverlayHostView()
         overlay.wantsLayer = false
-
         overlay.translatesAutoresizingMaskIntoConstraints = false
 
         let holder = NSViewController()
         holder.view = stage
         holder.addChild(split)
-        stage.addSubview(splitView)
-        stage.addSubview(overlay)
-        NSLayoutConstraint.activate([
-            splitView.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
-            splitView.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
-            splitView.topAnchor.constraint(equalTo: stage.topAnchor),
-            splitView.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
-            overlay.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
-            overlay.topAnchor.constraint(equalTo: stage.topAnchor),
-            overlay.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
-        ])
         floatingOverlayHost = overlay
 
         if #available(macOS 26.0, *) {
-            let container = NSGlassEffectContainerView(frame: stage.bounds)
-            container.autoresizingMask = [.width, .height]
-            container.contentView = stage
-            let glassRoot = NSViewController()
-            glassRoot.view = container
-            glassRoot.addChild(holder)
-            hostWindow.contentViewController = glassRoot
+            // The document is the sampling source inside the glass container.
+            // The floating lane must be its sibling, not its descendant: a
+            // descendant samples its own stage and resolves as a flat card.
+            let documentLane = NSView()
+            documentLane.addSubview(splitView)
+            NSLayoutConstraint.activate([
+                splitView.leadingAnchor.constraint(equalTo: documentLane.leadingAnchor),
+                splitView.trailingAnchor.constraint(equalTo: documentLane.trailingAnchor),
+                splitView.topAnchor.constraint(equalTo: documentLane.topAnchor),
+                splitView.bottomAnchor.constraint(equalTo: documentLane.bottomAnchor),
+            ])
+            let container = NSGlassEffectContainerView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+            container.contentView = documentLane
+            stage.addSubview(container)
+            stage.addSubview(overlay)
+            NSLayoutConstraint.activate([
+                container.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+                container.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+                container.topAnchor.constraint(equalTo: stage.topAnchor),
+                container.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+                overlay.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: stage.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+            ])
         } else {
-            hostWindow.contentViewController = holder
+            stage.addSubview(splitView)
+            stage.addSubview(overlay)
+            NSLayoutConstraint.activate([
+                splitView.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+                splitView.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+                splitView.topAnchor.constraint(equalTo: stage.topAnchor),
+                splitView.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+                overlay.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: stage.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+            ])
         }
+        hostWindow.contentViewController = holder
     }
 
     /// Keep a flying trip aimed at the pane's true resting place.  A live
@@ -1340,6 +1360,7 @@ final class DocumentWindowController: NSWindowController {
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
         guard let window, let target = window.contentView else { return }
+        let host = floatingSurfaceHost(in: window)
         let morphsFromControl = usesFloatingControlMorph
         let width = min(
             surface.preferredWidth,
@@ -1347,7 +1368,7 @@ final class DocumentWindowController: NSWindowController {
         )
         let cap = floatingHeightCap(in: target)
         let frame = floatingFrame(for: surface, in: target, width: width, cap: cap)
-        let resting = screenFrame(frame, in: target, window: window)
+        let resting = host.convert(target.convert(frame, to: nil), from: nil)
         let sliver = NSRect(
             x: resting.minX,
             y: resting.maxY - FloatingPanelSurface.Top.pourSliverHeight,
@@ -1355,50 +1376,12 @@ final class DocumentWindowController: NSWindowController {
             height: FloatingPanelSurface.Top.pourSliverHeight
         )
 
-        // The child window is transparent, so it owns the final bounds from
-        // the first frame. The surface pours inside those bounds; resizing a
-        // real window on every display-link tick makes arrival step.
-        let shadowMargin = PanelMetrics.floatingShadowMargin
-        let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
-        let child = FloatingPanelWindow(frame: childFrame)
-        // Keep the child invisible for its attachment frame. Native glass
-        // resolves against the parent window only after that relationship
-        // exists; exposing the attachment frame is the solid-card flash.
-        child.alphaValue = morphsFromControl ? 0 : 1
-        child.appearance = ChromeGlass.materialAppearance(activeStyleSheet)
-        child.floatingSurface = surface
-        child.onOutsideMouseDown = { [weak self] in
-            self?.restoreFloatingFocusAndClose()
-        }
-        let childContent = NSView(frame: NSRect(origin: .zero, size: childFrame.size))
-        childContent.autoresizingMask = [.width, .height]
-        childContent.clipsToBounds = false
-        child.contentView = childContent
-        surface.frame = NSRect(
-            x: shadowMargin,
-            y: shadowMargin,
-            width: resting.width,
-            height: resting.height
-        )
+        surface.frame = resting
         surface.configureWindowFrames(
             resting: resting,
             sliver: sliver,
             contentHeight: frame.height
         )
-        surface.onWindowFrameChange = { [weak child, weak surface] frame in
-            guard let child, let surface else { return }
-            child.setFrame(
-                frame.insetBy(dx: -shadowMargin, dy: -shadowMargin),
-                display: true
-            )
-            surface.frame = NSRect(
-                x: shadowMargin,
-                y: shadowMargin,
-                width: frame.width,
-                height: frame.height
-            )
-            surface.needsLayout = true
-        }
         surface.onFrameSpringSettled = { [weak self, weak surface] in
             guard let self, let surface, self.floatingSurface === surface else { return }
             if surface.isDismissing {
@@ -1410,45 +1393,28 @@ final class DocumentWindowController: NSWindowController {
         }
         let sourceAnchor = floatingSourceAnchor(in: window)
         floatingControlAnchorFrame = sourceAnchor.frame
-        let sourceFrame = window.convertToScreen(sourceAnchor.frame)
+        let sourceFrame = host.convert(sourceAnchor.frame, from: nil)
         if morphsFromControl {
             progressRing.alphaValue = 0
             surface.prepareAnchorPresentation(from: sourceFrame)
         }
-        childContent.addSubview(surface)
+        host.addSubview(surface)
         surface.layoutSubtreeIfNeeded()
-        window.addChildWindow(child, ordered: .above)
-        child.orderFront(nil)
         surface.refreshGlassAfterWindowAttach()
 
         if !morphsFromControl { surface.setRestingFrame(resting) }
         surface.layoutSubtreeIfNeeded()
         floatingSurface = surface
-        floatingPanelWindow = child
         if let documentWindow = window as? DocumentWindow {
             documentWindow.floatingSurface = surface
             documentWindow.onFloatingOutsideMouseDown = { [weak self] in
                 self?.restoreFloatingFocusAndClose()
             }
         }
-        floatingActivationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: NSApp,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.restoreFloatingPanelWindow()
-            }
-        }
-        floatingSurfaceFrame = resting
+        floatingSurfaceFrame = screenFrame(frame, in: target, window: window)
         if morphsFromControl {
-            // One run-loop turn lets NSGlassEffectView establish its sampling
-            // topology. The first visible pixel is then the refracting seed at
-            // the toolbar control, never an opaque surrogate panel.
-            DispatchQueue.main.async { [weak self, weak child, weak surface] in
-                guard let self, let child, let surface,
-                      self.floatingSurface === surface else { return }
-                child.alphaValue = 1
+            DispatchQueue.main.async { [weak self, weak surface] in
+                guard let self, let surface, self.floatingSurface === surface else { return }
                 surface.startAnchorPresentation(animated: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + Motion.deliberate * 0.58) {
                     [weak self, weak surface] in
@@ -1479,9 +1445,10 @@ final class DocumentWindowController: NSWindowController {
             removeFloatingSurface()
             return
         }
-        if usesFloatingControlMorph, let window, floatingControlAnchorFrame.width > 1,
+        if usesFloatingControlMorph, floatingControlAnchorFrame.width > 1,
            floatingControlAnchorFrame.height > 1 {
-            let source = window.convertToScreen(floatingControlAnchorFrame)
+            guard let host = surface.superview else { return }
+            let source = host.convert(floatingControlAnchorFrame, from: nil)
             surface.dismissToAnchor(source, animated: true)
             return
         }
@@ -1515,18 +1482,9 @@ final class DocumentWindowController: NSWindowController {
             documentWindow.floatingSurface = nil
             documentWindow.onFloatingOutsideMouseDown = nil
         }
-        if let floatingActivationObserver {
-            NotificationCenter.default.removeObserver(floatingActivationObserver)
-            self.floatingActivationObserver = nil
-        }
-        floatingPanelWindow?.orderOut(nil)
-        if let parent = window, let child = floatingPanelWindow {
-            parent.removeChildWindow(child)
-        }
         floatingSurface?.onWindowFrameChange = nil
         floatingSurface?.onFrameSpringSettled = nil
         floatingSurface?.removeFromSuperview()
-        floatingPanelWindow = nil
         floatingSurface = nil
         floatingControlAnchorFrame = .zero
     }
@@ -1535,13 +1493,10 @@ final class DocumentWindowController: NSWindowController {
     /// or the frame it last rested at once the dismissal hands it off.
     private func floatingDestinationAnchor(in window: NSWindow) -> NSRect {
         if let surface = floatingSurface, let target = window.contentView {
-            // Once the child window is resting, its frame is the authoritative
-            // landing: it is what the surface will actually occupy after the
-            // spring settles.  Flying the vessel to a freshly re-derived frame
-            // can leave it a few points off the card it hands the glass to.
-            if surface.window != nil, surface.restingWindowFrameForMorph != .zero {
-                let frame = window.convertFromScreen(surface.restingWindowFrameForMorph)
-                floatingSurfaceFrame = surface.restingWindowFrameForMorph
+            if let host = surface.superview,
+               surface.restingWindowFrameForMorph != .zero {
+                let frame = host.convert(surface.restingWindowFrameForMorph, to: nil)
+                floatingSurfaceFrame = window.convertToScreen(frame)
                 return frame
             }
             let width = min(
@@ -1656,7 +1611,8 @@ final class DocumentWindowController: NSWindowController {
             width: width,
             cap: floatingHeightCap(in: target)
         )
-        let resting = screenFrame(frame, in: target, window: window)
+        let host = surface.superview ?? floatingSurfaceHost(in: window)
+        let resting = host.convert(target.convert(frame, to: nil), from: nil)
         let sliver = NSRect(
             x: resting.minX,
             y: resting.maxY - FloatingPanelSurface.Top.pourSliverHeight,
@@ -1669,7 +1625,7 @@ final class DocumentWindowController: NSWindowController {
             contentHeight: frame.height
         )
         surface.retargetFrame(resting, animated: animated)
-        floatingSurfaceFrame = resting
+        floatingSurfaceFrame = screenFrame(frame, in: target, window: window)
         surface.layoutSubtreeIfNeeded()
     }
 
@@ -1688,16 +1644,6 @@ final class DocumentWindowController: NSWindowController {
         } else {
             panelWindow.makeFirstResponder(surface.content)
         }
-    }
-
-    private func restoreFloatingPanelWindow() {
-        guard let surface = floatingSurface,
-              let panelWindow = floatingPanelWindow,
-              panelWindow.parent === window,
-              surface.window === panelWindow
-        else { return }
-        panelWindow.orderFrontRegardless()
-        if !panelWindow.isKeyWindow { panelWindow.makeKey() }
     }
 
     private func restoreFloatingFocusAndClose() {
@@ -2455,7 +2401,6 @@ final class DocumentWindowController: NSWindowController {
 extension DocumentWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         restoreInitialReadingPositionIfReady()
-        restoreFloatingPanelWindow()
         refreshToolbarSelectionState()
     }
 

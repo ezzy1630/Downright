@@ -98,12 +98,9 @@ final class TaskPanelView: NSView, PanelSurface {
                 total + rowHeight(row, width: width)
             }
         let insets = scroll.contentInsets
-        // AppKit can report a zero bottom content inset while the detached
-        // scroll view is being measured, then restore the configured inset
-        // after the child panel joins a window. Measuring that transient zero
-        // makes the final add row land under the rounded lower edge. Keep the
+        // Measurement can run before the scroll view joins a window. Keep the
         // authored footer clearance as the floor, plus a small optical gap so
-        // the row never touches the glass rim at fractional backing scales.
+        // the final row never touches the glass rim at fractional scales.
         let footerClearance = max(baseScrollBottomInset, insets.bottom) + 4
         let sectionMapHeight = showsSectionHeaders
             ? sectionBar.intrinsicContentSize.height
@@ -161,6 +158,9 @@ final class TaskPanelView: NSView, PanelSurface {
     }
     func commitNewTaskForTesting(_ text: String) { commitNewTask(text) }
     var undoBottomInsetForTesting: CGFloat { scroll.contentInsets.bottom }
+    var undoRequiredBottomInsetForTesting: CGFloat {
+        baseScrollBottomInset + TaskUndoPillView.height + 12
+    }
     var undoPillFrameForTesting: NSRect { undoPill.frame }
     var lastRowFrameForTesting: NSRect? {
         guard table.numberOfRows > 0 else { return nil }

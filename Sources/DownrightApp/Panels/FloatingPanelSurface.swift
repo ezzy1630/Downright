@@ -1,57 +1,7 @@
 import AppKit
 import MarkdownRender
 
-/// The transparent window boundary is intentional. `NSGlassEffectView` samples
-/// the window below it; putting the floating body in the document window's
-/// glass-container content tree makes the material see its own compositor
-/// stage instead of the document. A child window is also exactly the hit-test
-/// boundary of the visible body while its height is being poured out.
-@MainActor
-final class FloatingPanelWindow: NSPanel {
-    weak var floatingSurface: FloatingPanelSurface?
-    var onOutsideMouseDown: (() -> Void)?
-
-    init(frame: NSRect) {
-        super.init(
-            contentRect: frame,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        isFloatingPanel = true
-        becomesKeyOnlyIfNeeded = true
-        hidesOnDeactivate = false
-        // A floating child keeps the glass surface above the document while
-        // the child relationship still lets AppKit sample the document below.
-        level = .floating
-        collectionBehavior = [.moveToActiveSpace]
-        ignoresMouseEvents = false
-        isReleasedWhenClosed = false
-        setAccessibilityRole(.window)
-        setAccessibilityLabel("Floating panel")
-    }
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown || event.type == .rightMouseDown,
-           let floatingSurface
-        {
-            let point = floatingSurface.convert(event.locationInWindow, from: nil)
-            if !floatingSurface.visibleBodyBoundsForHitTesting.contains(point) {
-                onOutsideMouseDown?()
-                return
-            }
-        }
-        super.sendEvent(event)
-    }
-}
-
-/// A detached panel body. The body owns the material and geometry; the
+/// A floating panel body. The body owns the material and geometry; the
 /// inspector host (when present) owns the one title/switcher header inside it.
 /// That split is intentional: a floating Tasks panel and a floating History
 /// panel must not grow two competing title rows.
@@ -78,9 +28,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     let content: NSView
 
     var onClose: (() -> Void)?
-    /// Set by the owner when this body is the content of a child window. The
-    /// spring remains on the surface, while the child window supplies the
-    /// compositor and hit-test boundary.
+    /// Optional frame owner. In-window surfaces leave this nil and let the
+    /// spring update their frame directly.
     var onWindowFrameChange: ((NSRect) -> Void)?
     var onFrameSpringSettled: (() -> Void)?
 
@@ -200,9 +149,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         }
     }
 
-    /// The child window stays at the final frame. The panel's content is laid
-    /// out at that height while the body is a sliver clipped by the reveal
-    /// mask, with its top edge pinned to the body's top edge.
+    /// The panel's content is laid out at its final height while the body is a
+    /// sliver clipped by the reveal mask, with both top edges pinned together.
     func configureWindowFrames(
         resting: NSRect,
         sliver: NSRect,
@@ -242,9 +190,9 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         armSprings()
     }
 
-    /// Prime the actual panel at the invoking control's screen-space frame.
-    /// No surrogate glass is involved: the child window, native material,
-    /// rounded shape, and eventual panel are one object for the whole trip.
+    /// Prime the actual panel at the invoking control's host-space frame. No
+    /// surrogate is involved: native material, rounded shape, and eventual
+    /// panel are one view for the whole trip.
     func prepareAnchorPresentation(from anchor: NSRect) {
         guard Self.isUsableAnchor(anchor) else {
             isAnchorMorphing = false
@@ -313,9 +261,9 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         if onWindowFrameChange == nil {
             if frame.size != size { frame.size = size }
         } else {
-            // The child window owns the current bounds. Temporarily giving the
-            // content its measured width is enough for Auto Layout; the final
-            // width is applied by the same rect spring as the height.
+            // An external frame owner supplies current bounds. Giving content
+            // its measured width is enough for Auto Layout; the same rect
+            // spring applies the final width and height.
             frame.size.width = size.width
         }
         contentLayoutHeight = max(contentLayoutHeight, size.height)
@@ -552,8 +500,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         (content as? PanelSurface)?.preferredWidth ?? PanelMetrics.detailWidth
     }
 
-    /// The frame the child window is actually resting at — the single source
-    /// of truth for where a morph flight should land.  The floating host's
+    /// The frame the surface is actually resting at — the single source of
+    /// truth for where a morph flight should land. The floating host's
     /// re-derivation of this frame can drift a few points from it (minimum
     /// heights, clamp order), which is exactly the drift that leaves a glass
     /// slab resting slightly off the card it is about to become.
@@ -574,6 +522,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
 
     private static func opaqueFallbackColor(_ styleSheet: StyleSheet) -> NSColor {
         ChromeGlass.opaqueFallbackColor(styleSheet, tint: .panel)
+    }
+
+    private static func glassMaterialAlpha(_ styleSheet: StyleSheet) -> CGFloat {
+        isDarkBackground(styleSheet.background) ? 0.58 : 0.72
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {
@@ -597,36 +549,32 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             if #available(macOS 26.0, *) {
                 glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
                 glassEffect?.tintColor = nil
-                glassEffect?.alphaValue = 1
+                glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
             }
         }
         applySurfaceStyle()
     }
 
-    /// A glass view owns its content view. This is the topology AppKit can
-    /// composite reliably; the child window then lets that material sample the
-    /// document window beneath it instead of sampling a sibling in its own
-    /// glass-container content view.
+    /// Material and controls are siblings. The material stays partially
+    /// transparent from its first frame; controls remain fully opaque and do
+    /// not inherit the material's alpha.
     @available(macOS 26.0, *)
     private func mountContentOnGlass() {
-        // AppKit's glass must own the content view. Do not put a visual-effect
-        // sibling underneath it: that makes the glass sample the wash instead
-        // of the document window and turns Liquid Glass into a flat card.
-        // A hidden visual-effect view can still take part in AppKit's
-        // compositor. Remove the fallback completely while native glass owns
-        // the material or it reads as a flat card behind the glass.
+        // The native material still owns an empty content view, which keeps
+        // its compositor topology valid. Actual controls sit above it so the
+        // material can stay translucent without fading labels or hit targets.
         fallback.removeFromSuperview()
         glass?.removeFromSuperview()
         let material = NSGlassEffectView()
         // The document supplies the panel's colour; regular glass adds the
         // adaptive blur and optical edge. Its tint remains page-derived and
         // deliberately low so the body does not become a painted card.
-        // Clear glass preserves the document as visible context. Regular glass
-        // on a detached dark child window resolves close to an opaque card.
+        // Clear glass preserves the document as visible context throughout the
+        // trip; regular glass resolves too close to a painted card in dark mode.
         material.style = .clear
         material.appearance = ChromeGlass.materialAppearance(styleSheet)
         material.tintColor = nil
-        material.alphaValue = 1
+        material.alphaValue = Self.glassMaterialAlpha(styleSheet)
         if material.responds(to: Selector(("setEffectIsInteractive:"))) {
             material.setValue(true, forKey: "effectIsInteractive")
         }
@@ -647,7 +595,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         let layoutContent = NSView(frame: bounds)
         layoutContent.wantsLayer = false
         layoutContent.clipsToBounds = true
-        contentContainer.addSubview(layoutContent)
+        addSubview(layoutContent, positioned: .above, relativeTo: material)
         layoutContent.addSubview(content)
         glassContent = contentContainer
         glassLayoutContent = layoutContent
@@ -658,20 +606,24 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         PanelBackdrop.resolveDetachedGlass(in: content)
     }
 
-    /// Glass is created before the child window exists so measurement can run
-    /// without a window. Moving that same view into the attached child keeps
-    /// its material continuous. Replacing it after `orderFront` produces a
-    /// visible flat-card frame before the new compositor surface resolves.
+    /// Glass is created before attachment so measurement can run without a
+    /// window. Attaching that same view to the document stage keeps its
+    /// material identity continuous; this refresh changes properties only.
     func refreshGlassAfterWindowAttach() {
         guard usesGlass, #available(macOS 26.0, *) else { return }
         glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
         glassEffect?.tintColor = nil
-        glassEffect?.alphaValue = 1
+        glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
         applySurfaceStyle()
     }
 
     var glassIdentityForTesting: ObjectIdentifier? {
         glass.map(ObjectIdentifier.init)
+    }
+    var glassAlphaForTesting: CGFloat? { glass?.alphaValue }
+    var contentSharesGlassOpacityForTesting: Bool {
+        guard let glass else { return false }
+        return content.isDescendant(of: glass)
     }
     var opaqueFallbackIsMountedForTesting: Bool { fallback.superview != nil }
 

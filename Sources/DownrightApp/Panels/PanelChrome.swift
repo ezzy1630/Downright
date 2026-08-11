@@ -434,6 +434,7 @@ enum PanelList {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.setAccessibilityRole(.scrollArea)
         scroll.documentView = documentView
         scroll.translatesAutoresizingMaskIntoConstraints = false

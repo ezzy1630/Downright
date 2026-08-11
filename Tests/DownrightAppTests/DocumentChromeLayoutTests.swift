@@ -277,9 +277,10 @@ struct FloatingTaskPanelTests {
         _ surface: FloatingPanelSurface,
         parent: NSWindow
     ) -> NSRect {
-        guard let child = surface.window else { return .zero }
-        let childRect = surface.convert(surface.bounds, to: nil)
-        return parent.convertFromScreen(child.convertToScreen(childRect))
+        guard let surfaceWindow = surface.window else { return .zero }
+        let windowRect = surface.convert(surface.bounds, to: nil)
+        if surfaceWindow === parent { return windowRect }
+        return parent.convertFromScreen(surfaceWindow.convertToScreen(windowRect))
     }
 
     @Test("Attaching the floating panel keeps one continuous glass view")
@@ -306,6 +307,39 @@ struct FloatingTaskPanelTests {
         guard surface.glassIdentityForTesting != nil else { return }
 
         #expect(!surface.opaqueFallbackIsMountedForTesting)
+    }
+
+    @Test("Native task glass is translucent while controls stay fully opaque")
+    func taskGlassAndContentHaveIndependentOpacity() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        let surface = try #require(controller.floatingSurface)
+        guard surface.glassIdentityForTesting != nil else { return }
+        let alpha = try #require(surface.glassAlphaForTesting)
+
+        #expect(alpha > 0.4 && alpha < 0.8)
+        #expect(!surface.contentSharesGlassOpacityForTesting)
+        #expect(surface.content.alphaValue == 1)
+    }
+
+    @Test("Task glass is born in the document glass stage, not a child window")
+    func taskGlassUsesDocumentCompositorFromFirstFrame() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        let surface = try #require(controller.floatingSurface)
+        let window = try #require(controller.window)
+        let host = try #require(surface.superview)
+
+        #expect(surface.window === window)
+        #expect(!(window.childWindows ?? []).contains { surface.window === $0 })
+        let outside = NSPoint(x: host.bounds.midX, y: host.bounds.midY)
+        if !surface.frame.contains(outside) {
+            #expect(host.hitTest(outside) == nil)
+        }
     }
 
 
@@ -378,8 +412,8 @@ struct FloatingTaskPanelTests {
         #expect(surface.rendersBodyForTesting)
     }
 
-    @Test("The child window reserves room for the complete shadow")
-    func childWindowContainsSurfaceAndShadowMargin() throws {
+    @Test("The surface stays in the document glass lane")
+    func documentGlassLaneOwnsSurface() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -387,12 +421,9 @@ struct FloatingTaskPanelTests {
         controller.window?.layoutIfNeeded()
 
         let surface = try #require(controller.floatingSurface)
-        let child = try #require(surface.window)
-        let content = try #require(child.contentView)
-        #expect(content.bounds.width >= surface.bounds.width + 2 * PanelMetrics.floatingShadowMargin)
-        #expect(content.bounds.height >= surface.bounds.height + 2 * PanelMetrics.floatingShadowMargin)
-        #expect(surface.frame.minX >= PanelMetrics.floatingShadowMargin - 0.5)
-        #expect(surface.frame.minY >= PanelMetrics.floatingShadowMargin - 0.5)
+        let window = try #require(controller.window)
+        #expect(surface.window === window)
+        #expect(!(surface.superview is NSSplitView))
     }
 
     /// The surface fits its height to the measured content, so the last row
@@ -439,8 +470,8 @@ struct FloatingTaskPanelTests {
         #expect(surface.rendersBodyForTesting)
     }
 
-    @Test("Arrival keeps the child window at its final frame")
-    func arrivalDoesNotResizeTheChildWindow() throws {
+    @Test("Arrival keeps one glass view in one compositor")
+    func arrivalKeepsOneGlassSurface() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -448,20 +479,21 @@ struct FloatingTaskPanelTests {
         controller.window?.layoutIfNeeded()
 
         let surface = try #require(controller.floatingSurface)
-        let child = try #require(surface.window)
-        let finalFrame = child.frame
+        let window = try #require(controller.window)
+        let glassIdentity = surface.glassIdentityForTesting
         for _ in 0..<8 {
             _ = surface.springTick(dt: 1.0 / 120.0)
             surface.springApply()
         }
 
-        #expect(child.frame == finalFrame)
+        #expect(surface.window === window)
+        #expect(surface.glassIdentityForTesting == glassIdentity)
         #expect(surface.visibleBodyHeightForTesting > FloatingPanelSurface.Top.pourSliverHeight)
-        #expect(surface.visibleBodyHeightForTesting < finalFrame.height)
+        #expect(surface.visibleBodyHeightForTesting < surface.restingWindowFrameForMorph.height)
     }
 
-    @Test("Undo pill stays inside the body and below the last row")
-    func undoPillDoesNotCoverLastRow() throws {
+    @Test("Undo pill stays inside the body and reserves scroll clearance")
+    func undoPillReservesScrollClearance() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -479,10 +511,8 @@ struct FloatingTaskPanelTests {
         panel.layoutSubtreeIfNeeded()
 
         let pill = surface.convert(panel.undoPillFrameForTesting, from: panel)
-        let lastRow = try #require(panel.lastRowFrameForTesting)
-        let lastRowInSurface = surface.convert(lastRow, from: panel)
         #expect(surface.visibleBodyBoundsForHitTesting.contains(pill))
-        #expect(!pill.intersects(lastRowInSurface))
+        #expect(panel.undoBottomInsetForTesting == panel.undoRequiredBottomInsetForTesting)
     }
 
     @Test("An in-panel click is not routed to floating dismissal")
@@ -613,7 +643,7 @@ struct FloatingTaskPanelTests {
         controller.toggleTaskPanel()
         controller.window?.layoutIfNeeded()
         let surface = try #require(controller.floatingSurface)
-        let child = try #require(surface.window)
+        let panelWindow = try #require(surface.window)
 
         controller.windowDidResignKey(
             Notification(name: NSWindow.didResignKeyNotification, object: controller.window)
@@ -624,8 +654,8 @@ struct FloatingTaskPanelTests {
 
         #expect(controller.floatingSurface === surface)
         #expect(controller.progressRing.isActive)
-        #expect(child.parent === controller.window)
-        #expect(child.isVisible)
+        #expect(panelWindow === controller.window)
+        #expect(surface.superview != nil)
     }
 
     @Test("Reduce Motion presents the surface instantly, over no glass")
