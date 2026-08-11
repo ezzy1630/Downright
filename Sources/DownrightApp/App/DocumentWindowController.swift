@@ -56,6 +56,7 @@ final class DocumentWindowController: NSWindowController {
     /// instead of docking in the split.  Kept for as long as it is on screen;
     /// torn down on dismissal.
     private(set) var floatingSurface: FloatingPanelSurface?
+    private var floatingPanelWindow: FloatingPanelWindow?
     var isTaskPanelFloating: Bool {
         floatingSurface != nil && inspectorHost?.selectedSection == .tasks
     }
@@ -72,6 +73,7 @@ final class DocumentWindowController: NSWindowController {
     private weak var floatingFocusRestoreView: NSView?
     /// Keeps the settled or travelling surface fitted during a live resize.
     private var floatingResizeToken: NSObjectProtocol?
+    private var floatingActivationObserver: NSObjectProtocol?
     var frontMatterEditor: FrontMatterEditorView?
     var assetDoctorPanel: AssetDoctorView?
     var tidySheetWindow: NSWindow?
@@ -1286,16 +1288,6 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: - Panels
 
-    /// The surface lane is deliberately not the split view. It sits above the
-    /// document in the shared stage, while the stage remains the glass
-    /// container's content on macOS 26.
-    private func floatingSurfaceHost(in window: NSWindow) -> NSView {
-        if let floatingOverlayHost, floatingOverlayHost.window === window {
-            return floatingOverlayHost
-        }
-        return window.contentView ?? NSView()
-    }
-
     /// The Tasks panel morphs from the toolbar ring and hangs over the
     /// document: travelling glass is aimed at a measured frame instead of a
     /// docked pane. The height is content-driven with a ceiling — the
@@ -1311,7 +1303,6 @@ final class DocumentWindowController: NSWindowController {
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
         guard let window, let target = window.contentView else { return }
-        let host = floatingSurfaceHost(in: window)
         let morphsFromControl = usesFloatingControlMorph
         let width = min(
             surface.preferredWidth,
@@ -1319,7 +1310,7 @@ final class DocumentWindowController: NSWindowController {
         )
         let cap = floatingHeightCap(in: target)
         let frame = floatingFrame(for: surface, in: target, width: width, cap: cap)
-        let resting = host.convert(target.convert(frame, to: nil), from: nil)
+        let resting = screenFrame(frame, in: target, window: window)
         let sliver = NSRect(
             x: resting.minX,
             y: resting.maxY - FloatingPanelSurface.Top.pourSliverHeight,
@@ -1327,12 +1318,44 @@ final class DocumentWindowController: NSWindowController {
             height: FloatingPanelSurface.Top.pourSliverHeight
         )
 
-        surface.frame = resting
+        let shadowMargin = PanelMetrics.floatingShadowMargin
+        let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
+        let child = FloatingPanelWindow(frame: childFrame)
+        child.alphaValue = morphsFromControl ? 0 : 1
+        child.appearance = ChromeGlass.materialAppearance(activeStyleSheet)
+        child.floatingSurface = surface
+        child.onOutsideMouseDown = { [weak self] in
+            self?.restoreFloatingFocusAndClose()
+        }
+        let childContent = NSView(frame: NSRect(origin: .zero, size: childFrame.size))
+        childContent.autoresizingMask = [.width, .height]
+        childContent.clipsToBounds = false
+        child.contentView = childContent
+        surface.frame = NSRect(
+            x: shadowMargin,
+            y: shadowMargin,
+            width: resting.width,
+            height: resting.height
+        )
         surface.configureWindowFrames(
             resting: resting,
             sliver: sliver,
             contentHeight: frame.height
         )
+        surface.onWindowFrameChange = { [weak child, weak surface] frame in
+            guard let child, let surface else { return }
+            child.setFrame(
+                frame.insetBy(dx: -shadowMargin, dy: -shadowMargin),
+                display: true
+            )
+            surface.frame = NSRect(
+                x: shadowMargin,
+                y: shadowMargin,
+                width: frame.width,
+                height: frame.height
+            )
+            surface.needsLayout = true
+        }
         surface.onFrameSpringSettled = { [weak self, weak surface] in
             guard let self, let surface, self.floatingSurface === surface else { return }
             if surface.isDismissing {
@@ -1344,28 +1367,42 @@ final class DocumentWindowController: NSWindowController {
         }
         let sourceAnchor = floatingSourceAnchor(in: window)
         floatingControlAnchorFrame = sourceAnchor.frame
-        let sourceFrame = host.convert(sourceAnchor.frame, from: nil)
+        let sourceFrame = window.convertToScreen(sourceAnchor.frame)
         if morphsFromControl {
             progressRing.alphaValue = 0
             surface.prepareAnchorPresentation(from: sourceFrame)
         }
-        host.addSubview(surface)
+        childContent.addSubview(surface)
         surface.layoutSubtreeIfNeeded()
+        window.addChildWindow(child, ordered: .above)
+        child.orderFront(nil)
         surface.refreshGlassAfterWindowAttach()
 
         if !morphsFromControl { surface.setRestingFrame(resting) }
         surface.layoutSubtreeIfNeeded()
         floatingSurface = surface
+        floatingPanelWindow = child
         if let documentWindow = window as? DocumentWindow {
             documentWindow.floatingSurface = surface
             documentWindow.onFloatingOutsideMouseDown = { [weak self] in
                 self?.restoreFloatingFocusAndClose()
             }
         }
-        floatingSurfaceFrame = screenFrame(frame, in: target, window: window)
+        floatingActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.restoreFloatingPanelWindow()
+            }
+        }
+        floatingSurfaceFrame = resting
         if morphsFromControl {
-            DispatchQueue.main.async { [weak self, weak surface] in
-                guard let self, let surface, self.floatingSurface === surface else { return }
+            DispatchQueue.main.async { [weak self, weak child, weak surface] in
+                guard let self, let child, let surface,
+                      self.floatingSurface === surface else { return }
+                child.alphaValue = 1
                 surface.startAnchorPresentation(animated: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + Motion.deliberate * 0.58) {
                     [weak self, weak surface] in
@@ -1396,10 +1433,9 @@ final class DocumentWindowController: NSWindowController {
             removeFloatingSurface()
             return
         }
-        if usesFloatingControlMorph, floatingControlAnchorFrame.width > 1,
+        if usesFloatingControlMorph, let window, floatingControlAnchorFrame.width > 1,
            floatingControlAnchorFrame.height > 1 {
-            guard let host = surface.superview else { return }
-            let source = host.convert(floatingControlAnchorFrame, from: nil)
+            let source = window.convertToScreen(floatingControlAnchorFrame)
             surface.dismissToAnchor(source, animated: true)
             return
         }
@@ -1433,9 +1469,18 @@ final class DocumentWindowController: NSWindowController {
             documentWindow.floatingSurface = nil
             documentWindow.onFloatingOutsideMouseDown = nil
         }
+        if let floatingActivationObserver {
+            NotificationCenter.default.removeObserver(floatingActivationObserver)
+            self.floatingActivationObserver = nil
+        }
+        floatingPanelWindow?.orderOut(nil)
+        if let parent = window, let child = floatingPanelWindow {
+            parent.removeChildWindow(child)
+        }
         floatingSurface?.onWindowFrameChange = nil
         floatingSurface?.onFrameSpringSettled = nil
         floatingSurface?.removeFromSuperview()
+        floatingPanelWindow = nil
         floatingSurface = nil
         floatingControlAnchorFrame = .zero
     }
@@ -1444,10 +1489,9 @@ final class DocumentWindowController: NSWindowController {
     /// or the frame it last rested at once the dismissal hands it off.
     private func floatingDestinationAnchor(in window: NSWindow) -> NSRect {
         if let surface = floatingSurface, let target = window.contentView {
-            if let host = surface.superview,
-               surface.restingWindowFrameForMorph != .zero {
-                let frame = host.convert(surface.restingWindowFrameForMorph, to: nil)
-                floatingSurfaceFrame = window.convertToScreen(frame)
+            if surface.window != nil, surface.restingWindowFrameForMorph != .zero {
+                let frame = window.convertFromScreen(surface.restingWindowFrameForMorph)
+                floatingSurfaceFrame = surface.restingWindowFrameForMorph
                 return frame
             }
             let width = min(
@@ -1562,8 +1606,7 @@ final class DocumentWindowController: NSWindowController {
             width: width,
             cap: floatingHeightCap(in: target)
         )
-        let host = surface.superview ?? floatingSurfaceHost(in: window)
-        let resting = host.convert(target.convert(frame, to: nil), from: nil)
+        let resting = screenFrame(frame, in: target, window: window)
         let sliver = NSRect(
             x: resting.minX,
             y: resting.maxY - FloatingPanelSurface.Top.pourSliverHeight,
@@ -1576,7 +1619,7 @@ final class DocumentWindowController: NSWindowController {
             contentHeight: frame.height
         )
         surface.retargetFrame(resting, animated: animated)
-        floatingSurfaceFrame = screenFrame(frame, in: target, window: window)
+        floatingSurfaceFrame = resting
         surface.layoutSubtreeIfNeeded()
     }
 
@@ -1595,6 +1638,16 @@ final class DocumentWindowController: NSWindowController {
         } else {
             panelWindow.makeFirstResponder(surface.content)
         }
+    }
+
+    private func restoreFloatingPanelWindow() {
+        guard let surface = floatingSurface,
+              let panelWindow = floatingPanelWindow,
+              panelWindow.parent === window,
+              surface.window === panelWindow
+        else { return }
+        panelWindow.orderFrontRegardless()
+        if !panelWindow.isKeyWindow { panelWindow.makeKey() }
     }
 
     private func restoreFloatingFocusAndClose() {
@@ -1759,6 +1812,10 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Find (§9.4)
 
     func showFindBar(replace: Bool, queryAfterFocus: FindQuery? = nil) {
+        let viewportRepairs = queryAfterFocus?.isEmpty != false
+            ? documentPanes.map { $0.textView.makeViewportRepair() }
+            : []
+        defer { viewportRepairs.forEach { $0() } }
         if searchInspector != nil {
             dismissFindBar()
         }
@@ -1771,30 +1828,31 @@ final class DocumentWindowController: NSWindowController {
             created.delegate = self
             findBar = created
             created.prepareForLiquidEntrance()
-            barStack.addArrangedSubview(created)
-            // A find bar is a compact tool, not a full-width strip. The stack's
-            // `.centerX` alignment centres the pill; demand a settled width that
-            // can give way to a narrow window (§9.4).
+            created.translatesAutoresizingMaskIntoConstraints = false
+            rootView.addSubview(created, positioned: .above, relativeTo: nil)
+            // Search floats above a stable document. Opening transient chrome
+            // must not move the page under the reader.
             let width = created.widthAnchor.constraint(equalToConstant: FindBarDensity.barWidth)
             width.priority = .defaultHigh
-            width.isActive = true
-            created.widthAnchor.constraint(
-                lessThanOrEqualTo: barStack.widthAnchor,
-                constant: -2 * PanelMetrics.inset
-            ).isActive = true
+            NSLayoutConstraint.activate([
+                width,
+                created.widthAnchor.constraint(
+                    lessThanOrEqualTo: rootView.widthAnchor,
+                    constant: -2 * PanelMetrics.inset
+                ),
+                created.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+                created.topAnchor.constraint(
+                    equalTo: rootView.safeAreaLayoutGuide.topAnchor,
+                    constant: 14
+                ),
+            ])
             bar = created
-            // Settle the pill into the shared surface vocabulary.  The stack
-            // claims its space with a glide so the document rides the same
-            // layout pass down, and the pill itself rises and fades at
-            // `Motion.standard` — an arrival the reader is watching earns the
-            // state-change duration, not the hover duration.
             created.wantsLayer = true
-            // Reserve the row promptly. The material's compositor-only morph
-            // carries the longer visual settle; stretching live document
-            // layout for the same 380 ms made the entrance feel frame-bound.
-            animateChromeLayoutIfLive(duration: Motion.deliberate, curve: .decelerate)
-            animateFindBarEntrance(created)
-            created.playLiquidEntranceContent()
+            window?.contentView?.layoutSubtreeIfNeeded()
+            let source = toolbarFindButton.map {
+                $0.convert(NSPoint(x: $0.bounds.midX, y: $0.bounds.midY), to: nil)
+            }
+            created.playLiquidEntrance(fromWindowPoint: source)
         }
 
         bar.showsReplace = replace
@@ -1803,7 +1861,7 @@ final class DocumentWindowController: NSWindowController {
         // can seed a newly focused field from the document selection, so the
         // normal path must not inherit either selection or a stale query.
         let requestedQuery = queryAfterFocus ?? FindQuery()
-        bar.setQueryText(requestedQuery.text)
+        bar.setQueryText(requestedQuery.text, notify: false)
         if !requestedQuery.isEmpty {
             runFind(requestedQuery)
         }
@@ -1813,7 +1871,7 @@ final class DocumentWindowController: NSWindowController {
         // otherwise ⌘F becomes "find the selection" again in a live window.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak bar] in
             guard let bar, bar.window != nil else { return }
-            bar.setQueryText(requestedQuery.text)
+            bar.setQueryText(requestedQuery.text, notify: false)
             if let self, !requestedQuery.isEmpty, self.findBar === bar {
                 self.runFind(requestedQuery)
             }
@@ -1864,49 +1922,14 @@ final class DocumentWindowController: NSWindowController {
         else { refreshToolbarSelectionState() }
 
         // Exit reverses the same short settle, one step quicker — leaving is
-        // shorter than arriving. The stack keeps its space until the material
-        // has left; Reduce Motion skips straight to removal.
+        // shorter than arriving. The overlay never owns document layout;
+        // Reduce Motion skips straight to removal.
         guard let leaving, leaving.superview != nil else { return }
         if activeStyleSheet.reduceMotion {
             retire(leaving)
         } else {
             animateFindBarExit(leaving) { [weak self] in self?.retire(leaving) }
         }
-    }
-
-    /// The compact glass grows from the control that summoned it. Geometry is
-    /// measured in window space so the first frame sits on the actual button,
-    /// including when toolbar spacing or window width changes.
-    private func animateFindBarEntrance(_ bar: FindBarView) {
-        guard !activeStyleSheet.reduceMotion, bar.window != nil, let layer = bar.layer else {
-            bar.alphaValue = 1
-            bar.layer?.setAffineTransform(.identity)
-            return
-        }
-        bar.alphaValue = 1
-        layer.setAffineTransform(.identity)
-        let source = findBarSourceTransform(for: bar)
-        let transform = CAKeyframeAnimation(keyPath: "transform")
-        transform.values = [
-            source,
-            interpolatedFindBarTransform(source, progress: 0.58, scaleX: 0.74, scaleY: 0.90),
-            interpolatedFindBarTransform(source, progress: 0.90, scaleX: 1.015, scaleY: 0.97),
-            CATransform3DIdentity,
-        ]
-        transform.keyTimes = [0, 0.55, 0.82, 1]
-        transform.timingFunctions = [
-            Motion.timing(.structural), Motion.timing(.structural), Motion.timing(.decelerate),
-        ]
-        let opacity = CAKeyframeAnimation(keyPath: "opacity")
-        opacity.values = [0.46, 0.88, 1]
-        opacity.keyTimes = [0, 0.64, 1]
-        opacity.timingFunctions = [
-            Motion.timing(.easeOut), Motion.timing(.decelerate),
-        ]
-        let group = CAAnimationGroup()
-        group.animations = [transform, opacity]
-        group.duration = Motion.deliberate
-        layer.add(group, forKey: "find-bar-entrance")
     }
 
     private func animateFindBarExit(_ bar: FindBarView, completion: @escaping () -> Void) {
@@ -1975,64 +1998,12 @@ final class DocumentWindowController: NSWindowController {
         )
     }
 
-    private func interpolatedFindBarTransform(
-        _ source: CATransform3D,
-        progress: CGFloat,
-        scaleX: CGFloat,
-        scaleY: CGFloat
-    ) -> CATransform3D {
-        CATransform3DConcat(
-            CATransform3DMakeTranslation(
-                source.m41 * (1 - progress),
-                source.m42 * (1 - progress),
-                0
-            ),
-            CATransform3DMakeScale(scaleX, scaleY, 1)
-        )
-    }
-
-    /// The bar stack claims and releases space with a glide, not a jump: the
-    /// document rides the same layout pass, so the window's contents move as
-    /// one surface instead of snapping in a single frame.  Offscreen and
-    /// Reduce Motion paths keep the synchronous settle that tests — and
-    /// nobody's retinas — ever have to wait on.
-    private func animateChromeLayoutIfLive(
-        duration: TimeInterval,
-        curve: Motion.Curve = .decelerate
-    ) {
-        guard let window, window.isVisible, let content = window.contentView,
-              !activeStyleSheet.reduceMotion
-        else {
-            window?.contentView?.layoutSubtreeIfNeeded()
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = Motion.timing(curve)
-            context.allowsImplicitAnimation = true
-            content.layoutSubtreeIfNeeded()
-        }
-    }
-
-    /// Drops the find pill out of the bar stack.
-    ///
-    /// Order and idempotence both matter.  `removeArrangedSubview(_:)` raises
-    /// when the view is not currently arranged, and `removeFromSuperview()`
-    /// already un-arranges it — so the old sequence (remove, then un-arrange)
-    /// threw `NSInternalInconsistencyException` from inside
-    /// `-[NSStackView _removeView:animated:removeFromViewHierarchy:]` and
-    /// aborted the process every time the bar closed with animation enabled.
-    /// Closing twice inside one fade must also be harmless, because Escape
-    /// repeats faster than the 0.16 s exit.
+    /// Removes the transient overlay. Repeated close commands are harmless
+    /// because the state is cleared before the exit animation starts.
     private func retire(_ bar: FindBarView) {
-        if barStack.arrangedSubviews.contains(bar) {
-            barStack.removeArrangedSubview(bar)
-        }
         bar.removeFromSuperview()
         bar.alphaValue = 1
         bar.layer?.setAffineTransform(.identity)
-        // The space the pill held glides closed behind it.
-        animateChromeLayoutIfLive(duration: Motion.standard, curve: .structural)
     }
 
     var currentFindQuery: FindQuery { findSession.query }
@@ -2333,6 +2304,7 @@ final class DocumentWindowController: NSWindowController {
 extension DocumentWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         restoreInitialReadingPositionIfReady()
+        restoreFloatingPanelWindow()
         refreshToolbarSelectionState()
     }
 

@@ -659,6 +659,17 @@ public final class MarkdownTextView: NSTextView {
         } else if !followsCaret {
             restoreViewport(to: anchor)
         }
+        // NSTextView may make the restored selection visible after storage
+        // observers return. Normal editing keeps the camera fixed; typewriter
+        // scrolling is the explicit caret-following mode.
+        if followsLocalEdit, !followsCaret {
+            DispatchQueue.main.async { [weak self] in
+                self?.restoreViewport(to: anchor)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                self?.restoreViewport(to: anchor)
+            }
+        }
     }
 
     /// TextKit exposes this view as one text area. Rendered objects also need
@@ -708,6 +719,29 @@ public final class MarkdownTextView: NSTextView {
         nextDocumentUpdateViewportY = y
         DispatchQueue.main.async { [weak self] in
             self?.restoreViewport(y: y)
+        }
+    }
+
+    /// Returns a one-shot repair for transient chrome changes. TextKit may
+    /// resolve estimated geometry when first responder or window layout
+    /// changes; a source anchor plus its screen-space gap survives that work,
+    /// while preserving only the clip view's raw y-coordinate does not.
+    public func makeViewportRepair() -> () -> Void {
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        let selectionOffset = sourceSelectedRange.location
+        let anchor: ViewportAnchor
+        if let selectionRect = rect(forOffset: selectionOffset),
+           selectionRect.intersects(visible) {
+            anchor = captureViewportAnchor(at: selectionOffset)
+        } else {
+            anchor = captureViewportAnchor()
+        }
+        return { [weak self] in
+            guard let self else { return }
+            self.restoreViewport(to: anchor)
+            DispatchQueue.main.async { [weak self] in
+                self?.restoreViewport(to: anchor)
+            }
         }
     }
 

@@ -11,6 +11,7 @@ cd "$ROOT"
 CONFIGURATION="${CONFIGURATION:-Release}"
 SCRATCH="${SCRATCH:-.build-xcode}"
 SWIFTPM_SCRATCH="${SWIFTPM_SCRATCH:-.build-main}"
+DEBUG_INFORMATION_FORMAT="${DEBUG_INFORMATION_FORMAT:-dwarf-with-dsym}"
 # shellcheck disable=SC1091
 source "$ROOT/Config/version.env"
 # PRODUCTION=1 embeds the Sparkle feed configuration and the real public key.
@@ -45,6 +46,7 @@ xcodebuild \
     CODE_SIGNING_REQUIRED=NO \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD" \
+    DEBUG_INFORMATION_FORMAT="$DEBUG_INFORMATION_FORMAT" \
     "${PLIST_ARG[@]+"${PLIST_ARG[@]}"}" \
     build
 

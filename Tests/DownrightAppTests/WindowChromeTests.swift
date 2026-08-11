@@ -419,7 +419,8 @@ struct WindowChromeTests {
 
         controller.showFindBar(replace: false)
 
-        #expect(controller.findBar?.superview === controller.barStack)
+        #expect(controller.findBar?.superview != nil)
+        #expect(controller.findBar?.superview !== controller.barStack)
         #expect(controller.findBar?.intrinsicContentSize.height == FindBarDensity.barHeight)
         #expect(controller.findBar?.dividerCountForTesting == 2)
         #expect(controller.findBar?.hasCloseButtonForTesting == true)
@@ -432,6 +433,31 @@ struct WindowChromeTests {
 
         controller.dismissFindBar()
         #expect(controller.findBar == nil)
+    }
+
+    @Test("opening local Find preserves the document camera")
+    func localFindPreservesViewport() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-find-camera-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        let text = (0..<100).map { "## Section \($0)\n\nParagraph \($0)" }.joined(separator: "\n\n")
+        try Data(text.utf8).write(to: file)
+
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.window?.setContentSize(NSSize(width: 900, height: 500))
+        controller.window?.layoutIfNeeded()
+        controller.primaryContainer.textView.resizeToFitContent()
+        let clip = controller.primaryContainer.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 420))
+        controller.primaryContainer.scrollView.reflectScrolledClipView(clip)
+
+        controller.showFindBar(replace: false)
+
+        #expect(abs(clip.bounds.origin.y - 420) < 0.5)
     }
 
     @Test
@@ -513,14 +539,15 @@ struct WindowChromeTests {
     /// the fade completed.  Closing repeatedly has to be harmless too, because
     /// Escape repeats faster than the 0.16 s exit.
     @Test
-    func closingTheFindBarRetiresItFromTheStackWithoutRaising() {
+    func closingTheFindBarRetiresItsOverlayWithoutRaising() {
         let controller = DocumentWindowController()
         defer { controller.close() }
 
         controller.showFindBar(replace: false)
         let bar = controller.findBar
         #expect(bar != nil)
-        #expect(controller.barStack.arrangedSubviews.contains { $0 === bar })
+        #expect(bar?.superview != nil)
+        #expect(bar?.superview !== controller.barStack)
 
         controller.dismissFindBar()
         controller.dismissFindBar()
@@ -529,7 +556,7 @@ struct WindowChromeTests {
         // Reduce Motion retires the pill synchronously; with motion on, the
         // fade owns the removal and only the state has to have settled.
         if controller.activeStyleSheet.reduceMotion {
-            #expect(!controller.barStack.arrangedSubviews.contains { $0 === bar })
+            #expect(bar?.superview == nil)
         }
 
         controller.showFindBar(replace: false)

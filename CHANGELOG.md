@@ -43,11 +43,10 @@ every release; Sparkle orders updates by it.
   silently disables system following, the View menu exposes separate light
   and dark palettes, and Light/Dark transitions rebuild cached TextKit
   paragraphs so old foreground colours cannot survive over the new page.
-- **Find bar and Tasks panel motion pass.** The find pill now claims and
-  releases its space above the document with a glide instead of a one-frame
-  jump, opens from the toolbar lens as one liquid-glass body before its
-  readable controls resolve, arrives at the state-change duration rather than the hover duration,
-  and grows around the replace row as it expands. The match count crossfades
+- **Find bar and Tasks panel motion pass.** The find pill now opens above the
+  document without moving the page, flows outward from the toolbar lens as one
+  liquid-glass body before its readable controls resolve, and grows around the
+  replace row as it expands. The match count crossfades
   and its tray glides open and closed, and the invalid-regex glyph pops in on
   a small spring instead of hard-appearing. In the Tasks panel, the empty
   state dissolves as a plan's first rows slide in, and the quick-add row
@@ -94,10 +93,13 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
-- The circular Find control no longer leaks a rounded-square hover plate, the
-  Tasks close button uses one immediate dismissal path, and density-map
-  previews now inherit the exact resolved Light/Dark appearance of their
-  document window.
+- The circular Find control no longer leaks a rounded-square hover plate. The
+  Tasks panel again uses a transparent native child compositor, so it refracts
+  the document instead of reading as an opaque grey card, and its close target
+  now consumes the click before the editor can receive it. Density-map previews
+  inherit the exact resolved Light/Dark appearance of their document window.
+- Opening Find and local document edits preserve the same pixel viewport after
+  AppKit performs its delayed caret and focus scroll repairs.
 - Removed the obsolete surrogate morph vessel and inspector-unfurl pipeline;
   the real floating glass surface now owns its animation and resize retargeting.
 

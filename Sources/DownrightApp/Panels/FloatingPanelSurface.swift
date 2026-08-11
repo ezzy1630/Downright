@@ -1,6 +1,83 @@
 import AppKit
 import MarkdownRender
 
+/// Transparent child boundary for detached glass. It samples the document
+/// window below it and owns the same hit-test region the user sees.
+@MainActor
+final class FloatingPanelWindow: NSPanel {
+    weak var floatingSurface: FloatingPanelSurface?
+    var onOutsideMouseDown: (() -> Void)?
+    private var mouseMonitor: Any?
+
+    init(frame: NSRect) {
+        super.init(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        isFloatingPanel = true
+        becomesKeyOnlyIfNeeded = true
+        hidesOnDeactivate = false
+        level = .floating
+        collectionBehavior = [.moveToActiveSpace]
+        ignoresMouseEvents = false
+        isReleasedWhenClosed = false
+        setAccessibilityRole(.window)
+        setAccessibilityLabel("Floating panel")
+
+        // A nonactivating child panel does not receive every first click in
+        // `sendEvent`; AppKit can route that click through its parent window.
+        // Observe local mouse-downs once, then compare the pointer against the
+        // actual close control in screen space. Returning nil consumes the
+        // event so the document beneath cannot also move its caret.
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self, let surface = self.floatingSurface else { return event }
+            let screenPoint = event.window.map {
+                $0.convertPoint(toScreen: event.locationInWindow)
+            } ?? NSEvent.mouseLocation
+            let panelPoint = self.convertPoint(fromScreen: screenPoint)
+            guard surface.closeControlHitZoneContainsWindowPoint(panelPoint) else {
+                return event
+            }
+            surface.requestClose()
+            return nil
+        }
+    }
+
+    deinit {
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown,
+           let floatingSurface {
+            // Compare in window coordinates. During a child-window morph the
+            // surface model frame and the window's live frame can briefly be
+            // on different animation ticks; converting through the surface
+            // made a visible close glyph miss its own pointer event.
+            if floatingSurface.closeControlHitZoneContainsWindowPoint(event.locationInWindow) {
+                floatingSurface.requestClose()
+                return
+            }
+            let point = floatingSurface.convert(event.locationInWindow, from: nil)
+            if !floatingSurface.visibleBodyBoundsForHitTesting.contains(point) {
+                onOutsideMouseDown?()
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
+}
+
 /// A floating panel body. The body owns the material and geometry; the
 /// inspector host (when present) owns the one title/switcher header inside it.
 /// That split is intentional: a floating Tasks panel and a floating History
@@ -525,11 +602,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     private static func glassMaterialAlpha(_ styleSheet: StyleSheet) -> CGFloat {
-        // Clear glass keeps the document legible as context, but a panel full
-        // of text still needs enough optical density that prose beneath it
-        // cannot compete with task labels. Keep refraction visible while
-        // following Apple's guidance to strengthen material behind fine text.
-        isDarkBackground(styleSheet.background) ? 0.78 : 0.84
+        // Keep the page legible through the panel. Controls are rendered in a
+        // separate full-opacity sibling, so lowering only the optical layer
+        // increases refraction without sacrificing label contrast.
+        isDarkBackground(styleSheet.background) ? 0.42 : 0.56
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {
@@ -552,7 +628,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         case (true, true):
             if #available(macOS 26.0, *) {
                 glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
-                glassEffect?.tintColor = Self.glassTint(styleSheet)
+                glassEffect?.tintColor = nil
                 glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
             }
         }
@@ -564,9 +640,8 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     /// not inherit the material's alpha.
     @available(macOS 26.0, *)
     private func mountContentOnGlass() {
-        // The native material still owns an empty content view, which keeps
-        // its compositor topology valid. Actual controls sit above it so the
-        // material can stay translucent without fading labels or hit targets.
+        // The child window supplies the hit-test boundary. Keep controls above
+        // the optical material so translucency never fades labels or targets.
         fallback.removeFromSuperview()
         glass?.removeFromSuperview()
         let material = NSGlassEffectView()
@@ -577,7 +652,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         // trip; regular glass resolves too close to a painted card in dark mode.
         material.style = .clear
         material.appearance = ChromeGlass.materialAppearance(styleSheet)
-        material.tintColor = Self.glassTint(styleSheet)
+        material.tintColor = nil
         material.alphaValue = Self.glassMaterialAlpha(styleSheet)
         if material.responds(to: Selector(("setEffectIsInteractive:"))) {
             material.setValue(true, forKey: "effectIsInteractive")
@@ -616,7 +691,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     func refreshGlassAfterWindowAttach() {
         guard usesGlass, #available(macOS 26.0, *) else { return }
         glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
-        glassEffect?.tintColor = Self.glassTint(styleSheet)
+        glassEffect?.tintColor = nil
         glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
         applySurfaceStyle()
     }
@@ -644,8 +719,36 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
 
     var visibleBodyHeightForTesting: CGFloat { visibleBodyBoundsForHitTesting.height }
 
+    func closeControlHitZoneContains(_ point: NSPoint) -> Bool {
+        guard content is InspectorHostView else { return false }
+        return NSRect(
+            x: bounds.maxX - 56,
+            y: bounds.maxY - 56,
+            width: 56,
+            height: 56
+        ).contains(point)
+    }
+
+    func closeControlHitZoneContainsWindowPoint(_ point: NSPoint) -> Bool {
+        guard let host = content as? InspectorHostView else { return false }
+        let button = host.closeButtonForTesting
+        let buttonFrame = button.convert(button.bounds, to: nil)
+        let hitZone = NSRect(
+            x: buttonFrame.midX - 28,
+            y: buttonFrame.midY - 28,
+            width: 56,
+            height: 56
+        )
+        return hitZone.contains(point)
+    }
+
+    func requestClose() { onClose?() }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard visibleBodyBoundsForHitTesting.contains(point) else { return nil }
+        if let host = content as? InspectorHostView {
+            if closeControlHitZoneContains(point) { return host.closeButtonForTesting }
+        }
         return super.hitTest(point)
     }
 

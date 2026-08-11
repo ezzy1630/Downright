@@ -319,13 +319,35 @@ struct FloatingTaskPanelTests {
         guard surface.glassIdentityForTesting != nil else { return }
         let alpha = try #require(surface.glassAlphaForTesting)
 
-        #expect(alpha > 0.7 && alpha < 0.9)
+        #expect(alpha >= 0.42 && alpha <= 0.56)
         #expect(!surface.contentSharesGlassOpacityForTesting)
         #expect(surface.content.alphaValue == 1)
     }
 
-    @Test("Task glass is born in the document glass stage, not a child window")
-    func taskGlassUsesDocumentCompositorFromFirstFrame() throws {
+    @Test("A physical pointer hit reaches the floating close button")
+    func pointerHitReachesCloseButton() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        controller.window?.layoutIfNeeded()
+        let close = try #require(controller.inspectorHost?.closeButtonForTesting)
+        let localPoint = NSPoint(x: surface.bounds.maxX - 28, y: surface.bounds.maxY - 28)
+        #expect(surface.hitTest(localPoint) === close)
+        #expect(surface.closeControlHitZoneContains(localPoint))
+        let closeInWindow = close.convert(
+            NSPoint(x: close.bounds.midX, y: close.bounds.midY),
+            to: nil
+        )
+        #expect(surface.closeControlHitZoneContainsWindowPoint(closeInWindow))
+        #expect(surface.window is FloatingPanelWindow)
+    }
+
+    @Test("Task glass uses one transparent child compositor")
+    func taskGlassUsesChildCompositorFromFirstFrame() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -334,12 +356,9 @@ struct FloatingTaskPanelTests {
         let window = try #require(controller.window)
         let host = try #require(surface.superview)
 
-        #expect(surface.window === window)
-        #expect(!(window.childWindows ?? []).contains { surface.window === $0 })
-        let outside = NSPoint(x: host.bounds.midX, y: host.bounds.midY)
-        if !surface.frame.contains(outside) {
-            #expect(host.hitTest(outside) == nil)
-        }
+        #expect(surface.window !== window)
+        #expect((window.childWindows ?? []).contains { surface.window === $0 })
+        #expect(surface.superview === host)
     }
 
 
@@ -412,8 +431,8 @@ struct FloatingTaskPanelTests {
         #expect(surface.rendersBodyForTesting)
     }
 
-    @Test("The surface stays in the document glass lane")
-    func documentGlassLaneOwnsSurface() throws {
+    @Test("The surface stays in the document child window")
+    func documentChildWindowOwnsSurface() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -422,7 +441,8 @@ struct FloatingTaskPanelTests {
 
         let surface = try #require(controller.floatingSurface)
         let window = try #require(controller.window)
-        #expect(surface.window === window)
+        #expect(surface.window !== window)
+        #expect((window.childWindows ?? []).contains { surface.window === $0 })
         #expect(!(surface.superview is NSSplitView))
     }
 
@@ -486,7 +506,8 @@ struct FloatingTaskPanelTests {
             surface.springApply()
         }
 
-        #expect(surface.window === window)
+        #expect(surface.window !== window)
+        #expect((window.childWindows ?? []).contains { surface.window === $0 })
         #expect(surface.glassIdentityForTesting == glassIdentity)
         #expect(surface.visibleBodyHeightForTesting > FloatingPanelSurface.Top.pourSliverHeight)
         #expect(surface.visibleBodyHeightForTesting < surface.restingWindowFrameForMorph.height)
@@ -651,7 +672,8 @@ struct FloatingTaskPanelTests {
 
         #expect(controller.floatingSurface === surface)
         #expect(controller.progressRing.isActive)
-        #expect(panelWindow === controller.window)
+        #expect(panelWindow !== controller.window)
+        #expect(panelWindow.parent === controller.window)
         #expect(surface.superview != nil)
     }
 

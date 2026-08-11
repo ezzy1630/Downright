@@ -292,6 +292,7 @@ final class FindBarView: NSView {
     private let findRow = NSStackView()
     private let replaceRow = NSStackView()
     private let rows = NSStackView()
+    private let entranceMask = CAShapeLayer()
     private var entranceGeneration = 0
     private var actions: [ButtonAction] = []
     private var optionsAction: ButtonAction?
@@ -641,10 +642,96 @@ final class FindBarView: NSView {
     /// produced by scaling a populated search field from the toolbar lens.
     func prepareForLiquidEntrance() {
         entranceGeneration &+= 1
+        layer?.removeAnimation(forKey: "find-liquid-presence")
+        layer?.mask = nil
         rows.wantsLayer = true
         rows.layer?.removeAnimation(forKey: "find-content-arrival")
         rows.alphaValue = 0
         rows.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -2))
+    }
+
+    /// Reveals the real glass body from a compact lens near the toolbar's Find
+    /// control. This changes the surface topology instead of scaling a finished
+    /// search field, so the opening reads as liquid while text stays crisp.
+    func playLiquidEntrance(fromWindowPoint source: NSPoint?) {
+        layoutSubtreeIfNeeded()
+        guard !styleSheet.reduceMotion, window != nil, bounds.width > 1, bounds.height > 1,
+              let layer
+        else {
+            self.layer?.mask = nil
+            playLiquidEntranceContent()
+            return
+        }
+
+        let seedX = source.map { convert($0, from: nil).x } ?? bounds.maxX
+        let clampedX = min(bounds.maxX - 17, max(bounds.minX + 17, seedX))
+        let start = liquidEntranceRect(
+            width: 34,
+            height: min(34, bounds.height),
+            centerX: clampedX
+        )
+        let firstPour = liquidEntranceRect(
+            width: bounds.width * 0.42,
+            height: bounds.height * 0.82,
+            centerX: bounds.maxX - bounds.width * 0.21
+        )
+        let overshoot = bounds.insetBy(dx: -2.5, dy: 1)
+        let paths = [
+            PanelMetrics.continuousRoundedPath(rect: start, radius: start.height / 2),
+            PanelMetrics.continuousRoundedPath(rect: firstPour, radius: firstPour.height / 2),
+            PanelMetrics.continuousRoundedPath(
+                rect: overshoot,
+                radius: PanelMetrics.chromePillRadius + 1
+            ),
+            PanelMetrics.continuousRoundedPath(
+                rect: bounds,
+                radius: PanelMetrics.chromePillRadius
+            ),
+        ]
+        entranceMask.frame = bounds
+        entranceMask.fillColor = NSColor.black.cgColor
+        entranceMask.path = paths.last
+        entranceMask.actions = ["path": NSNull(), "frame": NSNull()]
+        layer.mask = entranceMask
+
+        let reveal = CAKeyframeAnimation(keyPath: "path")
+        reveal.values = paths
+        reveal.keyTimes = [0, 0.46, 0.82, 1]
+        reveal.timingFunctions = [
+            Motion.timing(.structural),
+            Motion.timing(.structural),
+            Motion.timing(.decelerate),
+        ]
+        let presence = CAKeyframeAnimation(keyPath: "opacity")
+        presence.values = [0.62, 0.94, 1]
+        presence.keyTimes = [0, 0.58, 1]
+        presence.timingFunctions = [Motion.timing(.easeOut), Motion.timing(.decelerate)]
+        let group = CAAnimationGroup()
+        group.animations = [reveal, presence]
+        group.duration = Motion.liquidSettle
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            self?.layer?.mask = nil
+        }
+        layer.add(group, forKey: "find-liquid-presence")
+        CATransaction.commit()
+        playLiquidEntranceContent()
+    }
+
+    private func liquidEntranceRect(
+        width: CGFloat,
+        height: CGFloat,
+        centerX: CGFloat
+    ) -> NSRect {
+        let width = min(bounds.width, max(1, width))
+        let height = min(bounds.height, max(1, height))
+        let originX = min(bounds.maxX - width, max(bounds.minX, centerX - width / 2))
+        return NSRect(
+            x: originX,
+            y: bounds.midY - height / 2,
+            width: width,
+            height: height
+        )
     }
 
     func playLiquidEntranceContent() {
@@ -684,6 +771,8 @@ final class FindBarView: NSView {
 
     func cancelLiquidEntrance() {
         entranceGeneration &+= 1
+        layer?.removeAnimation(forKey: "find-liquid-presence")
+        layer?.mask = nil
         rows.layer?.removeAnimation(forKey: "find-content-arrival")
         rows.alphaValue = 1
         rows.layer?.setAffineTransform(.identity)
@@ -691,10 +780,10 @@ final class FindBarView: NSView {
 
     /// Used by "Use Selection for Find" (§7.2) — the host pushes text in and
     /// the bar behaves exactly as if it had been typed.
-    func setQueryText(_ text: String) {
+    func setQueryText(_ text: String, notify: Bool = true) {
         searchField.stringValue = text
         updateControlEnablement()
-        emitQuery()
+        if notify { emitQuery() }
     }
 
     /// Buttons that walk or rewrite matches only mean something while there is

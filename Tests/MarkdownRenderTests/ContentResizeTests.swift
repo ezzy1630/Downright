@@ -255,6 +255,45 @@ struct ContentResizeTests {
         #expect(abs(try screenY() - before) < 0.5, "the deferred resize moved the page")
     }
 
+    @Test("a rendered local edit survives AppKit's deferred caret scroll")
+    func localEditKeepsThePixelViewportAfterCaretRepair() async throws {
+        let paragraph = "A paragraph with enough words to form a stable line of document text."
+        let text = (0..<80).map { "## Section \($0)\n\n\(paragraph)" }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 703))
+        container.scrollView.reflectScrolledClipView(clip)
+        let anchor = container.textView.topVisibleOffset
+        let before = try #require(container.textView.rect(forOffset: anchor)).minY
+            - clip.bounds.origin.y
+
+        let editOffset = min(storage.length, anchor + 4)
+        #expect(container.textView.performSourceEdit(
+            range: NSRange(location: editOffset, length: 0), replacement: "x"
+        ))
+        container.textView.update(
+            document: MarkdownParser.parse(storage.string),
+            dirty: DirtySet(ranges: [NSRange(location: editOffset, length: 1)], isWholesale: false)
+        )
+
+        // Simulate NSTextView's late make-caret-visible correction.
+        clip.scroll(to: .zero)
+        container.scrollView.reflectScrolledClipView(clip)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        let after = try #require(container.textView.rect(forOffset: anchor)).minY
+            - clip.bounds.origin.y
+        #expect(abs(after - before) < 0.5, "the deferred caret repair moved the page")
+    }
+
     @Test("undo camera repair survives AppKit's deferred caret scroll")
     func undoCameraRepairRunsAfterTheCommand() async {
         let text = (0..<80).map { "## Section \($0)\n\nParagraph \($0)" }.joined(separator: "\n\n")
