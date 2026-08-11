@@ -26,7 +26,7 @@ account requirement, and never uses a WebView.
 | Native CommonMark/GFM rendering | Live external-change tracking |
 | One adaptive rendered/source surface | Word-level rendered diffs |
 | Math, Mermaid, tables, tasks, and callouts | Local snapshots and version timeline |
-| Structural zoom and density navigation | Missing path and render-target checks |
+| Liquid-glass Find, Tasks, and density navigation | Missing path and render-target checks |
 
 | Work with the whole folder | Use Markdown everywhere |
 |---|---|

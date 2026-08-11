@@ -10,7 +10,11 @@ import MarkdownCore
 /// during passive hover so the line-to-card path does not feel fragile.
 final class DensityGutterPreviewWindow: NSWindow {
     var styleSheet: StyleSheet {
-        didSet { content.styleSheet = styleSheet }
+        didSet {
+            appearance = styleSheet.appearance
+            content.appearance = styleSheet.appearance
+            content.styleSheet = styleSheet
+        }
     }
 
     var onPointerPresence: ((Bool) -> Void)?
@@ -55,6 +59,8 @@ final class DensityGutterPreviewWindow: NSWindow {
         ignoresMouseEvents = true
         isReleasedWhenClosed = false
         animationBehavior = .none
+        appearance = styleSheet.appearance
+        content.appearance = styleSheet.appearance
         contentView = content
         content.onPointerPresence = { [weak self] isInside in
             self?.onPointerPresence?(isInside)

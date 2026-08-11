@@ -1116,6 +1116,12 @@ final class ToolbarActionButton: ToolbarInteractiveButton {
         setAccessibilityHelp(help)
         toolTip = help
         if usesGlassSurface {
+            // The glass is circular. A rounded-square hover layer beneath it
+            // leaked around the rim and looked like a second button. Keep the
+            // hit target square, but make its visual feedback the same circle.
+            feedbackInsetX = 0
+            feedbackInsetY = 0
+            feedbackCornerRadius = Metrics.side / 2
             let glass = ChromeGlass(
                 styleSheet: styleSheet,
                 cornerRadius: PanelMetrics.toolbarControlSide / 2,

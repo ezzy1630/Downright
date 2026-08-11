@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MarkdownCore
 import Testing
@@ -6,6 +7,21 @@ import Testing
 
 @Suite("Density rail")
 struct DensityRailTests {
+    @Test("Detached preview inherits the sheet appearance")
+    @MainActor
+    func previewUsesResolvedAppearance() {
+        let light = NSAppearance(named: .aqua) ?? NSApp.effectiveAppearance
+        let dark = NSAppearance(named: .darkAqua) ?? NSApp.effectiveAppearance
+        let window = DensityGutterPreviewWindow(
+            styleSheet: StyleSheet(theme: ThemeStore.shared.current, appearance: light)
+        )
+        #expect(window.appearance?.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
+
+        window.styleSheet = StyleSheet(theme: ThemeStore.shared.current, appearance: dark)
+        #expect(window.appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        #expect(window.contentView?.appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
+
     @Test("Outline geometry and dwell policy stay on spec")
     func outlineGeometryAndTiming() {
         #expect(DensityGutterView.width == 72)

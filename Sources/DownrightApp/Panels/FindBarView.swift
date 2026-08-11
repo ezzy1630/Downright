@@ -292,6 +292,7 @@ final class FindBarView: NSView {
     private let findRow = NSStackView()
     private let replaceRow = NSStackView()
     private let rows = NSStackView()
+    private var entranceGeneration = 0
     private var actions: [ButtonAction] = []
     private var optionsAction: ButtonAction?
     private let presentation: Presentation
@@ -632,6 +633,60 @@ final class FindBarView: NSView {
         if selectAll {
             searchField.currentEditor()?.selectAll(nil)
         }
+    }
+
+    /// Keep labels and glyphs out of the material's topology change. The
+    /// glass can stretch like one body; readable content arrives only once
+    /// that body is close to its final width, avoiding the rubber-type look
+    /// produced by scaling a populated search field from the toolbar lens.
+    func prepareForLiquidEntrance() {
+        entranceGeneration &+= 1
+        rows.wantsLayer = true
+        rows.layer?.removeAnimation(forKey: "find-content-arrival")
+        rows.alphaValue = 0
+        rows.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -2))
+    }
+
+    func playLiquidEntranceContent() {
+        let generation = entranceGeneration
+        guard !styleSheet.reduceMotion, window != nil, let layer = rows.layer else {
+            rows.alphaValue = 1
+            rows.layer?.setAffineTransform(.identity)
+            return
+        }
+
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [0, 0.72, 1]
+        opacity.keyTimes = [0, 0.58, 1]
+        let transform = CAKeyframeAnimation(keyPath: "transform")
+        transform.values = [
+            CATransform3DMakeTranslation(0, -2, 0),
+            CATransform3DMakeTranslation(0, 0.5, 0),
+            CATransform3DIdentity,
+        ]
+        transform.keyTimes = [0, 0.72, 1]
+        let group = CAAnimationGroup()
+        group.animations = [opacity, transform]
+        group.duration = Motion.standard
+        group.beginTime = CACurrentMediaTime() + Motion.floatingContentRevealLead
+        group.fillMode = .backwards
+        group.timingFunction = Motion.timing(.decelerate)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.entranceGeneration == generation else { return }
+            self.rows.layer?.removeAnimation(forKey: "find-content-arrival")
+        }
+        rows.alphaValue = 1
+        layer.setAffineTransform(.identity)
+        layer.add(group, forKey: "find-content-arrival")
+        CATransaction.commit()
+    }
+
+    func cancelLiquidEntrance() {
+        entranceGeneration &+= 1
+        rows.layer?.removeAnimation(forKey: "find-content-arrival")
+        rows.alphaValue = 1
+        rows.layer?.setAffineTransform(.identity)
     }
 
     /// Used by "Use Selection for Find" (§7.2) — the host pushes text in and

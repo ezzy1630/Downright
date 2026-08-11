@@ -22,11 +22,7 @@ enum InspectorSection: Int, CaseIterable, Equatable {
 @MainActor
 final class InspectorHostView: NSView {
     private static let switcherSections: [InspectorSection] = [.tasks, .history, .context]
-    private var animationGeneration = 0
     var onClose: (() -> Void)?
-    /// When a morph vessel owns the arrival/departure, the unfurl must stand
-    /// down so the two never animate the same view (§ Ring of glass).
-    var morphOwnsTransitions = false
 
     /// The header is chrome like any other panel's, so it follows the theme
     /// rather than the system label colours (§11.3).  A host may assign this;
@@ -230,167 +226,18 @@ final class InspectorHostView: NSView {
             sectionControl.setEnabled(true, forSegment: index)
         }
         installIfNeeded(view)
-        select(section, announceArrival: true)
+        select(section)
     }
 
     func select(_ section: InspectorSection) {
-        select(section, announceArrival: false)
-    }
-
-    private func select(_ section: InspectorSection, announceArrival: Bool) {
         guard views[section] != nil else { return }
-        let previous = selectedSection
         selectedSection = section
         updateHeaderChrome()
         if let index = Self.switcherSections.firstIndex(of: section) {
             sectionControl.setSelectedIndex(index)
         }
         for (candidate, view) in views { view.isHidden = candidate != section }
-        if announceArrival, previous != section, let view = views[section] {
-            guard !morphOwnsTransitions else {
-                // The travelling glass is the arrival now; the unfurl would
-                // only double it.
-                view.alphaValue = 1
-                return
-            }
-            playArrival(on: view)
-        }
         setAccessibilityValue("\(section.title) section")
-    }
-
-    /// The panel unfurls downward out of the control that summoned it.
-    ///
-    /// The toolbar button sits directly above this pane's top edge, so the
-    /// honest reading of "open Tasks" is that the list comes *down* from the
-    /// ring — not that a rectangle fades in somewhere to the right.  Three
-    /// things say that in one gesture: the surface starts a little above its
-    /// resting place and descends, it starts slightly compressed toward its
-    /// top edge and settles to full height, and it fades up.  Anchoring the
-    /// scale at the top means the panel grows away from the ring rather than
-    /// out of its own middle.
-    ///
-    /// The duration is `deliberate`, the same clock the ring's release wave
-    /// runs on, because the two are halves of one movement (§11.4).
-    private func playArrival(on view: NSView) {
-        animateUnfurl(on: view, arriving: true, completion: nil)
-    }
-
-    /// The reverse: the panel folds back up toward the ring before the pane
-    /// itself collapses, so closing is a retreat rather than a disappearance.
-    ///
-    /// This one runs on the content container rather than on a single panel,
-    /// because a close can arrive with the surfaces already torn down — the
-    /// container is the one thing that is always there to fold.  The
-    /// completion runs even when Reduce Motion skips the animation, so callers
-    /// can always sequence the collapse behind it.
-    func playDeparture(completion: @escaping () -> Void) {
-        guard !morphOwnsTransitions else {
-            // The vessel is the departure; the unfurl would only double it.
-            completion()
-            return
-        }
-        animateUnfurl(on: content, arriving: false, completion: completion)
-    }
-
-    private func animateUnfurl(on view: NSView, arriving: Bool, completion: (() -> Void)?) {
-        animationGeneration &+= 1
-        let generation = animationGeneration
-        guard !styleSheet.reduceMotion, window != nil else {
-            completion?()
-            return
-        }
-        view.wantsLayer = true
-        view.layoutSubtreeIfNeeded()
-        guard let layer = view.layer else {
-            completion?()
-            return
-        }
-        for candidate in [content, view] {
-            candidate.layer?.removeAnimation(forKey: "inspector-unfurl")
-            candidate.layer?.removeAnimation(forKey: "inspector-fade")
-        }
-
-        let settled = CATransform3DIdentity
-        let lifted = CATransform3DMakeTranslation(0, arriving ? -14 : -8, 0)
-
-        // Reveal the surface from its top edge. Scaling the panel distorted its
-        // text and grew from the centre, which read as a card popping sideways.
-        // A rounded mask keeps every glyph at final size while the glass pours
-        // downward into the pane.
-        let mask = CAShapeLayer()
-        mask.frame = layer.bounds
-        mask.isGeometryFlipped = layer.isGeometryFlipped
-        let fullPath = CGPath(
-            roundedRect: layer.bounds,
-            cornerWidth: 12,
-            cornerHeight: 12,
-            transform: nil
-        )
-        let foldedHeight = min(max(3, layer.bounds.height * 0.035), 18)
-        let foldedY = layer.isGeometryFlipped
-            ? layer.bounds.minY
-            : layer.bounds.maxY - foldedHeight
-        let foldedPath = CGPath(
-            roundedRect: CGRect(
-                x: layer.bounds.minX,
-                y: foldedY,
-                width: layer.bounds.width,
-                height: foldedHeight
-            ),
-            cornerWidth: min(9, foldedHeight / 2),
-            cornerHeight: min(9, foldedHeight / 2),
-            transform: nil
-        )
-        mask.path = arriving ? fullPath : foldedPath
-        layer.mask = mask
-
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self, weak layer, weak mask] in
-            guard let self, self.animationGeneration == generation else { return }
-            layer?.removeAnimation(forKey: "inspector-unfurl")
-            layer?.removeAnimation(forKey: "inspector-fade")
-            mask?.removeAllAnimations()
-            layer?.mask = nil
-            completion?()
-        }
-
-        let reveal = CABasicAnimation(keyPath: "path")
-        reveal.fromValue = arriving ? foldedPath : fullPath
-        reveal.toValue = arriving ? fullPath : foldedPath
-        reveal.duration = Motion.deliberate
-        reveal.timingFunction = Motion.timing(.structural)
-        mask.add(reveal, forKey: "inspector-liquid-reveal")
-
-        let unfurl = CAKeyframeAnimation(keyPath: "transform")
-        unfurl.values = arriving
-            ? [lifted, CATransform3DMakeTranslation(0, 2, 0), settled]
-            : [settled, CATransform3DMakeTranslation(0, -2, 0), lifted]
-        unfurl.keyTimes = [0, 0.76, 1]
-        unfurl.duration = Motion.deliberate
-        unfurl.timingFunctions = [
-            Motion.timing(.structural),
-            Motion.timing(.decelerate),
-        ]
-        layer.add(unfurl, forKey: "inspector-unfurl")
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = arriving ? 0.12 : 1
-        fade.toValue = arriving ? 1 : 0.12
-        // Leaving is shorter than arriving: a panel should get out of the way
-        // as fast as it can while still being seen to go.
-        fade.duration = arriving ? Motion.standard : Motion.quick
-        fade.timingFunction = Motion.timing(.structural)
-        // Arriving, the fade rides one beat behind the unfurl so the surface
-        // reads as unrolling out of the control rather than popping in beside
-        // it; leaving, the panel is already gone before it refolds.
-        // `beginTime` uses the layer's media-time coordinate space. A bare
-        // 0.12 is long in the past and produces no delay.
-        fade.beginTime = arriving
-            ? CACurrentMediaTime() + Motion.floatingContentRevealLead
-            : 0
-        layer.add(fade, forKey: "inspector-fade")
-
-        CATransaction.commit()
     }
 
     /// How many surfaces the host is holding — a caller closing one needs to

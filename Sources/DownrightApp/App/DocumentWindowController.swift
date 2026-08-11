@@ -51,20 +51,6 @@ final class DocumentWindowController: NSWindowController {
     var searchInspector: SearchInspectorView?
     var historyInspector: HistoryInspectorView?
     var inspectorHost: InspectorHostView?
-    /// The travelling glass body, kept while any trip is in flight and
-    /// removed on settle.  One vessel serves every trip in the window.
-    private var morphVessel: MorphVessel?
-    var hasMorphVesselForTesting: Bool { morphVessel != nil }
-    func settleMorphForTesting() { morphVessel?.springsSettleImmediately() }
-    /// Where the vessel currently in flight is headed. A window resize can
-    /// re-aim the floating body without changing its direction.
-    private enum MorphDestination {
-        /// Floating arrival: down from the toolbar edge into the panel frame.
-        case floating
-        /// Floating dismissal: up into the sliver the pour came out of.
-        case toolTop
-    }
-    private var morphDestination: MorphDestination = .floating
     /// The floating Tasks surface (§8.5's floating clause): the one panel
     /// that pours out of the toolbar edge and hangs over the document
     /// instead of docking in the split.  Kept for as long as it is on screen;
@@ -84,8 +70,8 @@ final class DocumentWindowController: NSWindowController {
     /// restored before the original outside click is delivered, so a dismiss
     /// never costs the document caret.
     private weak var floatingFocusRestoreView: NSView?
-    /// Notification tokens that keep a flying trip aimed at the live pane.
-    private var morphRetargetTokens: [NSObjectProtocol] = []
+    /// Keeps the settled or travelling surface fitted during a live resize.
+    private var floatingResizeToken: NSObjectProtocol?
     var frontMatterEditor: FrontMatterEditorView?
     var assetDoctorPanel: AssetDoctorView?
     var tidySheetWindow: NSWindow?
@@ -504,7 +490,7 @@ final class DocumentWindowController: NSWindowController {
         // Layer 3: the split and the floating lane share one window stage.
         // The surface itself is never mounted on the split view.
         installFloatingOverlayHost()
-        installMorphRetargeting()
+        installFloatingSurfaceRetargeting()
 
         NSLayoutConstraint.activate([
             primaryContainer!.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
@@ -594,40 +580,16 @@ final class DocumentWindowController: NSWindowController {
         hostWindow.contentViewController = holder
     }
 
-    /// Keep a flying trip aimed at the pane's true resting place.  A live
-    /// window resize or a divider drag moves the pane half a metre while the
-    /// vessel is mid-air; retargeting only refits the destination.
-    private func installMorphRetargeting() {
+    /// Keep the real floating surface fitted while its window resizes.
+    private func installFloatingSurfaceRetargeting() {
         guard window != nil else { return }
-        let center = NotificationCenter.default
-        let windowToken = center.addObserver(
+        floatingResizeToken = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: window, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.retargetMorphDestination()
+                self?.refitFloatingSurface()
             }
         }
-        morphRetargetTokens = [windowToken]
-    }
-
-    private func retargetMorphDestination() {
-        guard let vessel = morphVessel, let window else {
-            // No flight to aim: the settled surface itself re-clamps to the
-            // window it now finds itself in (the cap lives on the window).
-            refitFloatingSurface()
-            return
-        }
-        let anchor: Motion.MorphAnchor = switch morphDestination {
-        case .floating:
-            Motion.MorphAnchor(
-                frame: floatingDestinationAnchor(in: window),
-                cornerRadius: FloatingPanelSurface.Top.cornerRadius,
-                tint: FloatingPanelSurface.glassTint(activeStyleSheet)
-            )
-        case .toolTop:
-            floatingSourceAnchor(in: window)
-        }
-        vessel.retarget(to: anchor, window: window)
     }
 
     private func buildToolbar() {
@@ -1317,23 +1279,12 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - End of life
 
     deinit {
-        for token in morphRetargetTokens {
-            NotificationCenter.default.removeObserver(token)
+        if let floatingResizeToken {
+            NotificationCenter.default.removeObserver(floatingResizeToken)
         }
     }
 
     // MARK: - Panels
-
-    // MARK: Morphing arrivals
-
-    /// Whether this window can fly a travelling glass vessel. Reduce Motion
-    /// takes the instant presentation path: no vessel, unfurl, or scale.
-    private var canMorphInspector: Bool {
-        guard let window, window.isVisible, window.screen != nil,
-              !activeStyleSheet.reduceMotion
-        else { return false }
-        return true
-    }
 
     /// The surface lane is deliberately not the split view. It sits above the
     /// document in the shared stage, while the stage remains the glass
@@ -1599,7 +1550,7 @@ final class DocumentWindowController: NSWindowController {
 
     private func refitFloatingSurface(animated: Bool = true) {
         guard let surface = floatingSurface, !surface.isDismissing,
-              morphVessel == nil, let window, let target = window.contentView
+              let window, let target = window.contentView
         else { return }
         let width = min(
             surface.preferredWidth,
@@ -1649,24 +1600,6 @@ final class DocumentWindowController: NSWindowController {
     private func restoreFloatingFocusAndClose() {
         guard floatingSurface != nil else { return }
         closeInspector()
-    }
-
-    /// The vessel is a child of the window's glass container's content view —
-/// on macOS 26 that is the split, which is exactly where the container
-/// merges descendant glass — and of the content view everywhere else.  Its
-/// geometry is owned by the springs; the superview only decides the lanes
-/// it may fly through.
-    private func makeMorphVessel(in window: NSWindow) -> MorphVessel {
-        let vessel = morphVessel ?? MorphVessel(frame: .zero)
-        vessel.autoresizingMask = []
-        morphVessel = vessel
-        // A vessel that landed is detached but may still be held; re-seat it
-        // rather than fly a body that is not in the hierarchy, which would
-        // animate perfectly and draw nothing.
-        guard vessel.superview == nil else { return vessel }
-        let target = floatingSurfaceHost(in: window)
-        target.addSubview(vessel)
-        return vessel
     }
 
     func toggleTaskPanel() {
@@ -1742,10 +1675,6 @@ final class DocumentWindowController: NSWindowController {
         }
         if floatingSurface == nil {
             floatingFocusRestoreView = window?.firstResponder as? NSView
-            // The floating body itself owns the arrival. The host must not
-            // run its legacy content unfurl or a section switch would stage
-            // rows separately from the glass.
-            host.morphOwnsTransitions = true
             host.setContent(view, section: section)
             let surface = FloatingPanelSurface(styleSheet: activeStyleSheet, content: host)
             surface.onClose = { [weak self] in self?.closeInspector() }
@@ -1753,7 +1682,6 @@ final class DocumentWindowController: NSWindowController {
         } else {
             // Switching sections reuses the same glass body and header. The
             // document never enters a split-view resize path.
-            host.morphOwnsTransitions = true
             host.setContent(view, section: section)
             floatingSurface?.layoutSubtreeIfNeeded()
             refitFloatingSurface()
@@ -1842,6 +1770,7 @@ final class DocumentWindowController: NSWindowController {
             let created = FindBarView(styleSheet: activeStyleSheet, presentation: .bar)
             created.delegate = self
             findBar = created
+            created.prepareForLiquidEntrance()
             barStack.addArrangedSubview(created)
             // A find bar is a compact tool, not a full-width strip. The stack's
             // `.centerX` alignment centres the pill; demand a settled width that
@@ -1865,6 +1794,7 @@ final class DocumentWindowController: NSWindowController {
             // layout for the same 380 ms made the entrance feel frame-bound.
             animateChromeLayoutIfLive(duration: Motion.deliberate, curve: .decelerate)
             animateFindBarEntrance(created)
+            created.playLiquidEntranceContent()
         }
 
         bar.showsReplace = replace
@@ -1915,6 +1845,7 @@ final class DocumentWindowController: NSWindowController {
         // now. `findBar` is nilled immediately so nothing can act on a gone
         // bar.
         let leaving = findBar
+        leaving?.cancelLiquidEntrance()
 
         searchInspector?.removeFromSuperview()
         inspectorHost?.removeContent(section: .search)
@@ -1958,16 +1889,17 @@ final class DocumentWindowController: NSWindowController {
         let transform = CAKeyframeAnimation(keyPath: "transform")
         transform.values = [
             source,
-            interpolatedFindBarTransform(source, progress: 0.82, scaleX: 1.008, scaleY: 1.014),
+            interpolatedFindBarTransform(source, progress: 0.58, scaleX: 0.74, scaleY: 0.90),
+            interpolatedFindBarTransform(source, progress: 0.90, scaleX: 1.015, scaleY: 0.97),
             CATransform3DIdentity,
         ]
-        transform.keyTimes = [0, 0.72, 1]
+        transform.keyTimes = [0, 0.55, 0.82, 1]
         transform.timingFunctions = [
-            Motion.timing(.structural), Motion.timing(.decelerate),
+            Motion.timing(.structural), Motion.timing(.structural), Motion.timing(.decelerate),
         ]
         let opacity = CAKeyframeAnimation(keyPath: "opacity")
-        opacity.values = [0.62, 0.96, 1]
-        opacity.keyTimes = [0, 0.70, 1]
+        opacity.values = [0.46, 0.88, 1]
+        opacity.keyTimes = [0, 0.64, 1]
         opacity.timingFunctions = [
             Motion.timing(.easeOut), Motion.timing(.decelerate),
         ]
@@ -2031,7 +1963,7 @@ final class DocumentWindowController: NSWindowController {
         // Native glass lags when stretched sixfold in one frame. Begin as a
         // compact lens, still centred on the invoking button, then let the
         // material travel and widen together.
-        let scaleX = max(0.36, min(0.46, button.bounds.width / bar.bounds.width))
+        let scaleX = max(0.28, min(0.34, button.bounds.width / bar.bounds.width))
         let scaleY = max(0.78, min(0.94, button.bounds.height / bar.bounds.height))
         return CATransform3DConcat(
             CATransform3DMakeTranslation(

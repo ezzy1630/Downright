@@ -45,7 +45,8 @@ every release; Sparkle orders updates by it.
   paragraphs so old foreground colours cannot survive over the new page.
 - **Find bar and Tasks panel motion pass.** The find pill now claims and
   releases its space above the document with a glide instead of a one-frame
-  jump, arrives at the state-change duration rather than the hover duration,
+  jump, opens from the toolbar lens as one liquid-glass body before its
+  readable controls resolve, arrives at the state-change duration rather than the hover duration,
   and grows around the replace row as it expands. The match count crossfades
   and its tray glides open and closed, and the invalid-regex glyph pops in on
   a small spring instead of hard-appearing. In the Tasks panel, the empty
@@ -92,6 +93,13 @@ every release; Sparkle orders updates by it.
   lines instead of text that would only be a smudge at that size.
 
 ### Fixed
+
+- The circular Find control no longer leaks a rounded-square hover plate, the
+  Tasks close button uses one immediate dismissal path, and density-map
+  previews now inherit the exact resolved Light/Dark appearance of their
+  document window.
+- Removed the obsolete surrogate morph vessel and inspector-unfurl pipeline;
+  the real floating glass surface now owns its animation and resize retargeting.
 
 - Quick Look and the Markdown file association silently broke whenever the app
   was **moved or renamed** — Launch Services and `pluginkit` both record an

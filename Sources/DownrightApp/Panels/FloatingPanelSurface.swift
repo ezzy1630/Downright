@@ -525,7 +525,11 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     private static func glassMaterialAlpha(_ styleSheet: StyleSheet) -> CGFloat {
-        isDarkBackground(styleSheet.background) ? 0.58 : 0.72
+        // Clear glass keeps the document legible as context, but a panel full
+        // of text still needs enough optical density that prose beneath it
+        // cannot compete with task labels. Keep refraction visible while
+        // following Apple's guidance to strengthen material behind fine text.
+        isDarkBackground(styleSheet.background) ? 0.78 : 0.84
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {
@@ -548,7 +552,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         case (true, true):
             if #available(macOS 26.0, *) {
                 glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
-                glassEffect?.tintColor = nil
+                glassEffect?.tintColor = Self.glassTint(styleSheet)
                 glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
             }
         }
@@ -573,7 +577,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         // trip; regular glass resolves too close to a painted card in dark mode.
         material.style = .clear
         material.appearance = ChromeGlass.materialAppearance(styleSheet)
-        material.tintColor = nil
+        material.tintColor = Self.glassTint(styleSheet)
         material.alphaValue = Self.glassMaterialAlpha(styleSheet)
         if material.responds(to: Selector(("setEffectIsInteractive:"))) {
             material.setValue(true, forKey: "effectIsInteractive")
@@ -612,7 +616,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     func refreshGlassAfterWindowAttach() {
         guard usesGlass, #available(macOS 26.0, *) else { return }
         glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
-        glassEffect?.tintColor = nil
+        glassEffect?.tintColor = Self.glassTint(styleSheet)
         glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
         applySurfaceStyle()
     }

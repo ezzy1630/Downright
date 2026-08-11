@@ -319,7 +319,7 @@ struct FloatingTaskPanelTests {
         guard surface.glassIdentityForTesting != nil else { return }
         let alpha = try #require(surface.glassAlphaForTesting)
 
-        #expect(alpha > 0.4 && alpha < 0.8)
+        #expect(alpha > 0.7 && alpha < 0.9)
         #expect(!surface.contentSharesGlassOpacityForTesting)
         #expect(surface.content.alphaValue == 1)
     }
@@ -619,19 +619,16 @@ struct FloatingTaskPanelTests {
 
         controller.toggleTaskPanel()
         let firstSurface = try #require(controller.floatingSurface)
-        #expect(!controller.hasMorphVesselForTesting)
 
         controller.closeTaskPanel()
         firstSurface.settleForTesting()
         #expect(controller.floatingSurface == nil)
-        #expect(!controller.hasMorphVesselForTesting)
         #expect(!controller.progressRing.isActive)
 
         controller.toggleTaskPanel()
         let reopened = try #require(controller.floatingSurface)
         reopened.settleForTesting()
         #expect(reopened.visibleBodyHeightForTesting == reopened.bounds.height)
-        #expect(!controller.hasMorphVesselForTesting)
         #expect(controller.progressRing.isActive)
     }
 

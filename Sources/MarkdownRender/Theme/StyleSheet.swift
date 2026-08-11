@@ -16,6 +16,11 @@ import MarkdownCore
 public struct StyleSheet {
     public var theme: Theme
     public var revision: Int
+    /// The concrete appearance used to snapshot every dynamic colour below.
+    /// Detached child windows do not inherit their document window's
+    /// appearance reliably, so chrome such as the density preview needs this
+    /// same value to resolve native drawing and controls consistently.
+    public let appearance: NSAppearance
 
     // MARK: Fonts (resolved once)
 
@@ -84,6 +89,7 @@ public struct StyleSheet {
     ) {
         self.theme = theme
         self.revision = ThemeStore.shared.revision
+        self.appearance = appearance
 
         let workspace = NSWorkspace.shared
         reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
