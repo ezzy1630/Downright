@@ -115,11 +115,23 @@ struct RenderSmokeTests {
         container.layoutSubtreeIfNeeded()
         guard let rep = container.bitmapImageRepForCachingDisplay(in: container.bounds) else { return false }
         container.cacheDisplay(in: container.bounds, to: rep)
-        return ((try? nonBackgroundPixelFraction({
+        let draws = ((try? nonBackgroundPixelFraction({
             let image = NSImage(size: container.bounds.size)
             image.addRepresentation(rep)
             return image
         }())) ?? 0) > 0.01
+
+        // A partial TextKit display cycle can produce a few inked pixels yet
+        // still return the document end for a top-of-viewport hit test. The
+        // view-level offset assertion needs both halves of the cycle.
+        let probeText = "# Probe\n\nBody text.\n\n## Later\n\nMore"
+        let probe = MarkdownContainerView(storage: NSTextStorage(string: probeText))
+        probe.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        probe.textView.update(document: MarkdownParser.parse(probeText), dirty: .wholesale)
+        probe.layoutSubtreeIfNeeded()
+        probe.textView.prepareForDisplay()
+        let later = (probeText as NSString).range(of: "## Later").location
+        return draws && probe.textView.topVisibleOffset < later
     }
 
     private func dump(_ image: NSImage, named name: String) {
