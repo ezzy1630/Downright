@@ -9,6 +9,10 @@ people and coding agents change together.
 
 ---
 
+<p align="center">
+  <img src="Docs/downright-renderer-showcase.png" alt="Downright rendering Markdown with native typography, syntax highlighting, math, Mermaid, tasks, and a density rail." width="1200">
+</p>
+
 Downright opens Markdown as a calm document, keeps its source exact, and shows
 external edits without pulling you out of the page. It works offline, has no
 account requirement, and never uses a WebView.
@@ -18,16 +22,16 @@ account requirement, and never uses a WebView.
 | Read and edit | Review agent output |
 |---|---|
 | Native CommonMark/GFM rendering | Live external-change tracking |
-| One adaptive rendered/source surface | Word-level rendered diffs |
-| Math, Mermaid, tables, tasks, and callouts | Local snapshots and version timeline |
-| Liquid-glass Find, Tasks, and density navigation | Missing path and render-target checks |
+| One adaptive rendered/source surface with stable selection and scroll | Word-level rendered diffs and conflict safety |
+| Math, Mermaid, tables, tasks, callouts, front matter, and images | Local snapshots, version timeline, and undoable task edits |
+| Liquid-glass Find and Tasks panels | Outline, structural zoom, and density navigation |
 
 | Work with the whole folder | Use Markdown everywhere |
 |---|---|
-| Sibling-file search without a vault | Quick Look previews and Finder thumbnails |
-| Task worklist with undo and quick-add | `down` and `md` terminal commands |
-| Clickable `file.swift:42` references | HTML/PDF export, Services, and Spotlight |
-| Themes that follow macOS Light/Dark mode | Optional on-device Apple Intelligence |
+| Optional folder workspace and sibling-file search without a vault | Quick Look previews and Finder thumbnails |
+| Clickable `file.swift:42` references and editor handoff | `down` and `md` terminal commands |
+| Themes that follow macOS Light/Dark mode | HTML/PDF export, Services, Spotlight, and App Intents |
+| First-run setup for app association, CLI, and Quick Look | Optional on-device Apple Intelligence |
 
 Supported files: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`, `.mdc`, `.qmd`,
 and `.rmd`.
@@ -38,10 +42,9 @@ and `.rmd`.
   rebuild or normalize the document.
 - **Safe live updates.** External writes refresh in place while preserving the
   reading position. Dirty local edits are never silently replaced.
-- **Native performance.** TextKit 2, Core Text, SwiftMath, and native Mermaid
-  rendering keep the app and Quick Look extensions lean.
-- **File-first design.** Open one file. No workspace setup, database, sync
-  service, plugin runtime, or chat panel.
+- **Native and file-first.** TextKit 2, Core Text, SwiftMath, and native Mermaid
+  rendering keep the app and Quick Look extensions lean. Open one file with no
+  workspace setup, database, sync service, plugin runtime, or chat panel.
 
 ## Quick start
 
@@ -58,9 +61,11 @@ down README.md
 ```
 
 This path requires Xcode and `xcodegen`; it embeds both the Quick Look preview
-and Finder thumbnail extensions. Launch Downright once after installation so
-macOS can finish registering them. See [Quick Look](Docs/QUICKLOOK.md) and
-[Release](Docs/RELEASE.md) for details.
+and Finder thumbnail extensions. Launch Downright once after installation: the
+first-run setup offers default-app and CLI registration, registers Quick Look,
+and can repeat every step later under **Settings → General → System
+integration**. See [Quick Look](Docs/QUICKLOOK.md) and [Release](Docs/RELEASE.md)
+for details.
 
 For a faster SwiftPM development build without Finder extensions:
 
@@ -161,10 +166,10 @@ See [Privacy](Docs/PRIVACY.md).
 
 ## Project status
 
-Downright is an active source build targeting version 1.0. The repository
-contains app, CLI, Quick Look, updater, signing, notarization, DMG, and release
-automation. See [Status](Docs/STATUS.md) for current implementation notes and
-[Changelog](CHANGELOG.md) for recent work.
+The canonical source version is **1.0.0**; current polish is tracked under
+[Unreleased](CHANGELOG.md). The repository contains the app, CLI, Quick Look,
+updater, signing, notarization, DMG, and release automation. See [Status](Docs/STATUS.md)
+for known gaps and implementation notes.
 
 ## License
 
