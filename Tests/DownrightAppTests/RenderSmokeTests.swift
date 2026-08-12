@@ -126,7 +126,7 @@ struct RenderSmokeTests {
         // view-level offset assertion needs both halves of the cycle.
         let probeText = "# Probe\n\nBody text.\n\n## Later\n\nMore"
         let probe = MarkdownContainerView(storage: NSTextStorage(string: probeText))
-        probe.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        probe.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         probe.textView.update(document: MarkdownParser.parse(probeText), dirty: .wholesale)
         probe.layoutSubtreeIfNeeded()
         probe.textView.prepareForDisplay()
