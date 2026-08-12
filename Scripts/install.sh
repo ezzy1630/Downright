@@ -26,9 +26,30 @@ if [ ! -d "$APP_SOURCE" ]; then
     APP_SOURCE="$SWIFTPM_APP"
 fi
 
+if [ ! -x "$APP_SOURCE/Contents/MacOS/Downright" ]; then
+    echo "error: candidate has no Downright executable: $APP_SOURCE" >&2
+    exit 1
+fi
+"$ROOT/Scripts/verify-bundle.sh" "$APP_SOURCE"
+
 echo "==> Installing to $APP_DEST"
-rm -rf "$APP_DEST"
-cp -R "$APP_SOURCE" "$APP_DEST"
+DEST_PARENT="$(dirname "$APP_DEST")"
+STAGE_ROOT="$(mktemp -d "$DEST_PARENT/.downright-install.XXXXXX")"
+STAGED_APP="$STAGE_ROOT/Downright.app"
+BACKUP_APP="$STAGE_ROOT/previous.app"
+trap 'rm -rf "$STAGE_ROOT"' EXIT
+cp -R "$APP_SOURCE" "$STAGED_APP"
+codesign --verify --deep --strict "$STAGED_APP"
+
+# A running old process can keep Finder extensions and window state pinned to
+# deleted code. Stop only this exact installed bundle before the atomic swap.
+pkill -f "^$APP_DEST/Contents/MacOS/Downright$" 2>/dev/null || true
+if [ -d "$APP_DEST" ]; then mv "$APP_DEST" "$BACKUP_APP"; fi
+if ! mv "$STAGED_APP" "$APP_DEST"; then
+    if [ -d "$BACKUP_APP" ]; then mv "$BACKUP_APP" "$APP_DEST"; fi
+    exit 1
+fi
+rm -rf "$BACKUP_APP"
 
 echo "==> Linking CLI into $BIN_DEST"
 mkdir -p "$BIN_DEST"
@@ -39,7 +60,7 @@ if [ "$(readlink "$BIN_DEST/down" 2>/dev/null || true)" != "$DOWN_TARGET" ]; the
 fi
 # §3.4 calls the terminal launcher `md`; ship both names and let the user keep
 # whichever fits their muscle memory.
-if [ ! -e "$BIN_DEST/md" ]; then
+if ! command -v md >/dev/null 2>&1; then
     ln -sf "$DOWN_TARGET" "$BIN_DEST/md" \
         || echo "    warning: could not create $BIN_DEST/md"
 fi
@@ -72,4 +93,9 @@ if [ -x "$BIN_DEST/md" ]; then
     echo "  md PLAN.md              same thing"
 fi
 echo
-echo "Quick Look: Downright preview and thumbnail extensions registered."
+if [ -d "$APP_DEST/Contents/PlugIns/DownrightQL.appex" ] \
+    && [ -d "$APP_DEST/Contents/PlugIns/DownrightThumb.appex" ]; then
+    echo "Quick Look: Downright preview and thumbnail extensions registered."
+else
+    echo "Quick Look: extensions are not present in this bundle."
+fi

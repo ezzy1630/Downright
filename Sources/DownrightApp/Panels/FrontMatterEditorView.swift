@@ -32,6 +32,19 @@ final class FrontMatterEditorView: NSView, PanelSurface {
 
     var renderedFieldCount: Int { rows.count }
     var showsSourceModePrompt: Bool { !sourceButton.isHidden }
+    var fieldScrollOriginYForTesting: CGFloat { fieldScroll.contentView.bounds.origin.y }
+    var focusedFieldKeyForTesting: String? {
+        guard let window, let firstResponder = window.firstResponder else { return nil }
+        return rows.first { row in
+            firstResponder === row.valueEditor
+                || (firstResponder as? NSTextView)?.delegate === row.valueEditor
+        }?.fieldKey
+    }
+
+    func setFieldScrollOriginYForTesting(_ y: CGFloat) {
+        fieldScroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+        fieldScroll.reflectScrolledClipView(fieldScroll.contentView)
+    }
 
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: Command.frontMatterEditor.panelTitle)
@@ -128,6 +141,10 @@ final class FrontMatterEditorView: NSView, PanelSurface {
             fieldScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
             fieldScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             fieldScroll.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 12),
+            // NSScrollView has no useful vertical intrinsic size. Without an
+            // explicit viewport it collapsed to zero: AX exposed every field,
+            // while the panel showed only the pinned Add Field footer.
+            fieldScroll.heightAnchor.constraint(equalToConstant: 176),
             statusLabel.leadingAnchor.constraint(equalTo: fieldScroll.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: fieldScroll.trailingAnchor),
             statusLabel.topAnchor.constraint(equalTo: fieldScroll.bottomAnchor, constant: 10),
@@ -272,6 +289,37 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         applyStyle()
     }
 
+    /// Focus the requested rendered field after the trailing panel has been
+    /// installed.  Card activation can name a semantic key (title/author),
+    /// while an unqualified activation simply lands on the first value.
+    func focusField(named key: String? = nil) {
+        let target = key.map { wanted in
+            rows.first { $0.fieldKey.caseInsensitiveCompare(wanted) == .orderedSame }
+        } ?? rows.first
+        guard let target else {
+            window?.makeFirstResponder(addKeyField)
+            return
+        }
+        layoutSubtreeIfNeeded()
+        fieldHost.layoutSubtreeIfNeeded()
+        fieldScroll.contentView.scroll(to: .zero)
+        fieldScroll.reflectScrolledClipView(fieldScroll.contentView)
+        target.scrollToVisible(target.bounds)
+        window?.makeFirstResponder(target.valueEditor)
+        target.valueEditor.selectText(nil)
+    }
+
+    /// A reused inspector remembers its previous scroll position.  Opening the
+    /// metadata card must always reveal the existing fields, then place the
+    /// keyboard in the field the reader activated.
+    func prepareForPresentation(focus key: String? = nil) {
+        layoutSubtreeIfNeeded()
+        fieldHost.layoutSubtreeIfNeeded()
+        fieldScroll.contentView.scroll(to: .zero)
+        fieldScroll.reflectScrolledClipView(fieldScroll.contentView)
+        focusField(named: key)
+    }
+
     private func showEmptyState(symbol: String, title: String, subtitle: String) {
         emptyState.configure(symbol: symbol, title: title, subtitle: subtitle, styleSheet: styleSheet)
         emptyState.isHidden = false
@@ -333,6 +381,9 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
     var isEnabled: Bool = true { didSet { setControlsEnabled() } }
     var onCommit: ((String, FrontMatterValue) -> Void)?
     var onRemove: ((String) -> Void)?
+
+    var fieldKey: String { field.key }
+    var valueEditor: NSTextField { valueField }
 
     private let field: FrontMatterField
     private let keyField: NSTextField

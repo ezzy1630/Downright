@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // History pruning at launch rather than on a timer: it touches the disk
         // and there is no reason to do it while the user is reading (§8.3).
-        DispatchQueue.global(qos: .utility).async { SnapshotStore.shared.prune() }
+        SnapshotStore.shared.schedulePrune()
 
         // The one-time setup panel: where the download-and-drag user gets their
         // file association, their Quick Look extensions, and `down`.  It never

@@ -42,6 +42,7 @@ final class FileWatcher {
     /// the path prefix alone woke a full sibling rescan for every one of them.
     private let interestingExtensions: Set<String>
     private let queue = DispatchQueue(label: "com.ezzy.downright.filewatcher", qos: .utility)
+    private let queueKey = DispatchSpecificKey<Void>()
 
     private var stream: FSEventStreamRef?
     private var streamContext: StreamContext?
@@ -82,6 +83,7 @@ final class FileWatcher {
             ?? Set(DocumentTypes.fileExtensions.map { $0.lowercased() })
         self.handler = handler
         self.lastSnapshot = FileWatcher.snapshot(of: self.url)
+        queue.setSpecific(key: queueKey, value: ())
         start()
     }
 
@@ -95,15 +97,19 @@ final class FileWatcher {
     }
 
     func stop() {
+        onQueue { stopOnQueue() }
+    }
+
+    private func stopOnQueue() {
         generation &+= 1
-        streamContext?.watcher = nil
-        streamContext = nil
         if let stream {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
             self.stream = nil
         }
+        streamContext?.watcher = nil
+        streamContext = nil
         pollTimer?.cancel()
         pollTimer = nil
         coalesceWorkItem?.cancel()
@@ -113,18 +119,20 @@ final class FileWatcher {
     /// Point the watcher at a different file (Save As, or following a rename).
     func retarget(to newURL: URL) {
         let resolved = newURL.resolvingSymlinksInPath()
-        guard resolved != url else { return }
-        stop()
-        url = resolved
-        lastSnapshot = FileWatcher.snapshot(of: resolved)
-        start()
+        onQueue {
+            guard resolved != url else { return }
+            stopOnQueue()
+            url = resolved
+            lastSnapshot = FileWatcher.snapshot(of: resolved)
+            start()
+        }
     }
 
     /// Call immediately before writing the file ourselves.  Our own write would
     /// otherwise arrive back as an external change and re-mark the whole
     /// document — the toggle-a-checkbox case (§8.5) makes this obvious fast.
     func suppressOwnWrite(for interval: TimeInterval = 0.6) {
-        queue.sync {
+        onQueue {
             suppressUntil = Date().addingTimeInterval(interval)
             suppressedSnapshot = nil
         }
@@ -132,10 +140,15 @@ final class FileWatcher {
 
     /// Call after writing so the baseline matches what is now on disk.
     func acknowledgeOwnWrite() {
-        queue.sync {
+        onQueue {
             lastSnapshot = FileWatcher.snapshot(of: url)
             suppressUntil = Date().addingTimeInterval(0.25)
         }
+    }
+
+    private func onQueue<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil { return body() }
+        return queue.sync(execute: body)
     }
 
     // MARK: - FSEvents
@@ -148,7 +161,16 @@ final class FileWatcher {
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(box).toOpaque(),
-            retain: nil, release: nil, copyDescription: nil
+            retain: { info in
+                guard let info else { return nil }
+                _ = Unmanaged<StreamContext>.fromOpaque(info).retain()
+                return UnsafeRawPointer(info)
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<StreamContext>.fromOpaque(info).release()
+            },
+            copyDescription: nil
         )
 
         let callback: FSEventStreamCallback = { _, info, count, eventPaths, _, _ in

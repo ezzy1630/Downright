@@ -44,7 +44,12 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
             panel.reviews = []
             return
         }
-        panel.reviews = (try? reviewStore.load(for: url))?.reviews ?? []
+        do {
+            panel.reviews = try reviewStore.load(for: url).reviews
+        } catch {
+            panel.reviews = []
+            presentOperationError("Couldn’t read document reviews", error: error)
+        }
     }
 
     func refreshReviewPanelIfVisible() {
@@ -65,9 +70,21 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
             replacement: replacement
         )
         guard let review else { return nil }
-        var sidecar = (try? reviewStore.load(for: url)) ?? ReviewSidecar()
+        let loaded: ReviewSidecar
+        do {
+            loaded = try reviewStore.load(for: url)
+        } catch {
+            presentOperationError("Couldn’t read document reviews", error: error)
+            return nil
+        }
+        var sidecar = loaded
         sidecar.reviews.append(review)
-        try? reviewStore.save(sidecar, for: url)
+        do {
+            try reviewStore.save(sidecar, for: url)
+        } catch {
+            presentOperationError("Couldn’t save document reviews", error: error)
+            return nil
+        }
         if let reviewPanel { configureReviewPanel(reviewPanel) }
         return review
     }
@@ -147,9 +164,20 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
 
     private func updateReview(_ id: UUID, state: ReviewState) {
         guard let url = markdownDocument.url else { return }
-        var sidecar = (try? reviewStore.load(for: url)) ?? ReviewSidecar()
+        let loaded: ReviewSidecar
+        do {
+            loaded = try reviewStore.load(for: url)
+        } catch {
+            presentOperationError("Couldn’t read document reviews", error: error)
+            return
+        }
+        var sidecar = loaded
         guard let index = sidecar.reviews.firstIndex(where: { $0.id == id }) else { return }
         sidecar.reviews[index].state = state
-        try? reviewStore.save(sidecar, for: url)
+        do {
+            try reviewStore.save(sidecar, for: url)
+        } catch {
+            presentOperationError("Couldn’t save document reviews", error: error)
+        }
     }
 }

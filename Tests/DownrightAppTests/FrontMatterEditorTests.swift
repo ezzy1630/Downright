@@ -46,6 +46,29 @@ struct FrontMatterEditorTests {
         delegate.editorWantsSourceMode()
         #expect(delegate.didRequestSourceMode)
     }
+
+    @Test
+    func presentationReturnsToTopAndFocusesTheRequestedValue() {
+        let editor = FrontMatterEditorView(styleSheet: .current)
+        editor.document = MarkdownParser.parse(
+            "---\ntitle: Demo\nauthor: Downright\ntags: one\nstatus: draft\n---\n\n# Body\n"
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 320),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = editor
+        window.layoutIfNeeded()
+        editor.setFieldScrollOriginYForTesting(120)
+
+        editor.prepareForPresentation(focus: "author")
+
+        #expect(editor.fittingSize.height >= 230)
+        #expect(editor.fieldScrollOriginYForTesting == 0)
+        #expect(editor.focusedFieldKeyForTesting == "author")
+    }
 }
 
 @MainActor

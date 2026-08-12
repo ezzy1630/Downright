@@ -1,83 +1,6 @@
 import AppKit
 import MarkdownRender
 
-/// Transparent child boundary for detached glass. It samples the document
-/// window below it and owns the same hit-test region the user sees.
-@MainActor
-final class FloatingPanelWindow: NSPanel {
-    weak var floatingSurface: FloatingPanelSurface?
-    var onOutsideMouseDown: (() -> Void)?
-    private var mouseMonitor: Any?
-
-    init(frame: NSRect) {
-        super.init(
-            contentRect: frame,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        isFloatingPanel = true
-        becomesKeyOnlyIfNeeded = true
-        hidesOnDeactivate = false
-        level = .floating
-        collectionBehavior = [.moveToActiveSpace]
-        ignoresMouseEvents = false
-        isReleasedWhenClosed = false
-        setAccessibilityRole(.window)
-        setAccessibilityLabel("Floating panel")
-
-        // A nonactivating child panel does not receive every first click in
-        // `sendEvent`; AppKit can route that click through its parent window.
-        // Observe local mouse-downs once, then compare the pointer against the
-        // actual close control in screen space. Returning nil consumes the
-        // event so the document beneath cannot also move its caret.
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            guard let self, let surface = self.floatingSurface else { return event }
-            let screenPoint = event.window.map {
-                $0.convertPoint(toScreen: event.locationInWindow)
-            } ?? NSEvent.mouseLocation
-            let panelPoint = self.convertPoint(fromScreen: screenPoint)
-            guard surface.closeControlHitZoneContainsWindowPoint(panelPoint) else {
-                return event
-            }
-            surface.requestClose()
-            return nil
-        }
-    }
-
-    deinit {
-        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
-    }
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown || event.type == .rightMouseDown,
-           let floatingSurface {
-            // Compare in window coordinates. During a child-window morph the
-            // surface model frame and the window's live frame can briefly be
-            // on different animation ticks; converting through the surface
-            // made a visible close glyph miss its own pointer event.
-            if floatingSurface.closeControlHitZoneContainsWindowPoint(event.locationInWindow) {
-                floatingSurface.requestClose()
-                return
-            }
-            let point = floatingSurface.convert(event.locationInWindow, from: nil)
-            if !floatingSurface.visibleBodyBoundsForHitTesting.contains(point) {
-                onOutsideMouseDown?()
-                return
-            }
-        }
-        super.sendEvent(event)
-    }
-}
-
 /// A floating panel body. The body owns the material and geometry; the
 /// inspector host (when present) owns the one title/switcher header inside it.
 /// That split is intentional: a floating Tasks panel and a floating History
@@ -116,7 +39,6 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     private let arrivalGlint = CAShapeLayer()
     private let revealMask = CAShapeLayer()
     private var glass: NSView?
-    private var glassContent: NSView?
     private var glassLayoutContent: NSView?
     private var isHostingContentInGlass = false
     private var contentLayoutHeight: CGFloat = 0
@@ -549,15 +471,12 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             width: layoutWidth,
             height: layoutHeight
         )
-        if glass != nil, let glassContent, let glassLayoutContent {
-            // `contentView` is managed by AppKit rather than Auto Layout. It
-            // stays at the current body bounds. A child inside it owns the
-            // final content frame even when only its top sliver is visible.
-            glassContent.frame = bounds
-            glassLayoutContent.frame = contentFrame
+        if glass != nil, let glassLayoutContent {
+            // AppKit owns the glass content view's frame. Keep our content in
+            // that view so the native effect can adapt its labels and controls
+            // against the sampled background.
             content.frame = glassLayoutContent.bounds
             glassLayoutContent.layoutSubtreeIfNeeded()
-            glassContent.layoutSubtreeIfNeeded()
         }
         if !isHostingContentInGlass { content.frame = contentFrame }
 
@@ -602,10 +521,17 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     private static func glassMaterialAlpha(_ styleSheet: StyleSheet) -> CGFloat {
-        // Keep the page legible through the panel. Controls are rendered in a
-        // separate full-opacity sibling, so lowering only the optical layer
-        // increases refraction without sacrificing label contrast.
-        isDarkBackground(styleSheet.background) ? 0.42 : 0.56
+        // Alpha scales the complete native effect, including its lensing and
+        // specular response. Keep clear glass at full optical strength.
+        1
+    }
+
+    private static func clearGlassDimmingColor(_ styleSheet: StyleSheet) -> NSColor {
+        // Apple pairs clear glass with localized dimming. This thin veil
+        // quiets prose directly behind task labels without flattening the
+        // native optical layer or reducing its refraction.
+        let base: NSColor = isDarkBackground(styleSheet.background) ? .black : .white
+        return base.withAlphaComponent(styleSheet.increaseContrast ? 0.18 : 0.10)
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {
@@ -630,33 +556,30 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
                 glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
                 glassEffect?.tintColor = nil
                 glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
+                glassLayoutContent?.layer?.backgroundColor = Self.clearGlassDimmingColor(styleSheet).cgColor
             }
         }
         applySurfaceStyle()
     }
 
-    /// Material and controls are siblings. The material stays partially
-    /// transparent from its first frame; controls remain fully opaque and do
-    /// not inherit the material's alpha.
+    /// AppKit requires controls to be the glass view's `contentView`; a sibling
+    /// overlay bypasses the native legibility and optical treatments and turns
+    /// the result into a flat blur.
     @available(macOS 26.0, *)
     private func mountContentOnGlass() {
-        // The child window supplies the hit-test boundary. Keep controls above
-        // the optical material so translucency never fades labels or targets.
+        // The document window's overlay lane supplies the hit-test boundary.
         fallback.removeFromSuperview()
         glass?.removeFromSuperview()
         let material = NSGlassEffectView()
-        // The document supplies the panel's colour; regular glass adds the
-        // adaptive blur and optical edge. Its tint remains page-derived and
-        // deliberately low so the body does not become a painted card.
-        // Clear glass preserves the document as visible context throughout the
-        // trip; regular glass resolves too close to a painted card in dark mode.
+        // The Tasks surface is intentionally the app's expressive glass
+        // moment. Full-strength clear glass preserves the native lensing and
+        // refraction that regular glass mutes into an opaque popover on this
+        // dark document canvas; the content remains platform-managed through
+        // `contentView`, and accessibility settings still select the fallback.
         material.style = .clear
         material.appearance = ChromeGlass.materialAppearance(styleSheet)
         material.tintColor = nil
         material.alphaValue = Self.glassMaterialAlpha(styleSheet)
-        if material.responds(to: Selector(("setEffectIsInteractive:"))) {
-            material.setValue(true, forKey: "effectIsInteractive")
-        }
         material.cornerRadius = Top.cornerRadius
         material.wantsLayer = true
         material.layer?.cornerCurve = .continuous
@@ -667,20 +590,16 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         glass = material
 
         content.removeFromSuperview()
-        let contentContainer = NSView(frame: bounds)
-        contentContainer.autoresizingMask = [.width, .height]
-        contentContainer.clipsToBounds = true
-        material.contentView = contentContainer
         let layoutContent = NSView(frame: bounds)
-        layoutContent.wantsLayer = false
+        layoutContent.wantsLayer = true
+        layoutContent.layer?.backgroundColor = Self.clearGlassDimmingColor(styleSheet).cgColor
         layoutContent.clipsToBounds = true
-        addSubview(layoutContent, positioned: .above, relativeTo: material)
+        material.contentView = layoutContent
         layoutContent.addSubview(content)
-        glassContent = contentContainer
         glassLayoutContent = layoutContent
         content.translatesAutoresizingMaskIntoConstraints = true
         content.autoresizingMask = [.width, .height]
-        content.frame = contentContainer.bounds
+        content.frame = layoutContent.bounds
         isHostingContentInGlass = true
         PanelBackdrop.resolveDetachedGlass(in: content)
     }
@@ -693,6 +612,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         glassEffect?.appearance = ChromeGlass.materialAppearance(styleSheet)
         glassEffect?.tintColor = nil
         glassEffect?.alphaValue = Self.glassMaterialAlpha(styleSheet)
+        glassLayoutContent?.layer?.backgroundColor = Self.clearGlassDimmingColor(styleSheet).cgColor
         applySurfaceStyle()
     }
 
@@ -720,13 +640,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     var visibleBodyHeightForTesting: CGFloat { visibleBodyBoundsForHitTesting.height }
 
     func closeControlHitZoneContains(_ point: NSPoint) -> Bool {
-        guard content is InspectorHostView else { return false }
-        return NSRect(
-            x: bounds.maxX - 56,
-            y: bounds.maxY - 56,
-            width: 56,
-            height: 56
-        ).contains(point)
+        guard let host = content as? InspectorHostView else { return false }
+        let button = host.closeButtonForTesting
+        let buttonFrame = convert(button.bounds, from: button)
+        return buttonFrame.insetBy(dx: -18, dy: -18).contains(point)
     }
 
     func closeControlHitZoneContainsWindowPoint(_ point: NSPoint) -> Bool {
@@ -744,10 +661,55 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
 
     func requestClose() { onClose?() }
 
+    /// Finds a native control by geometry without asking NSGlassEffectView to
+    /// participate in the hit-test walk. macOS 26 clear glass can stop that
+    /// walk at the material even though its contentView is visible and fully
+    /// represented in AX. Window-level routing uses this only for a click that
+    /// is already inside the panel.
+    func nativeControl(atWindowPoint point: NSPoint) -> NSView? {
+        func target(in view: NSView) -> NSView? {
+            guard !view.isHidden, view.alphaValue > 0.01 else { return nil }
+            let local = view.convert(point, from: nil)
+            guard view.bounds.contains(local) else { return nil }
+            for child in view.subviews.reversed() {
+                if let hit = target(in: child) { return hit }
+            }
+            if let field = view as? NSTextField, field.isEditable || field.isSelectable {
+                return field
+            }
+            if view is NSButton || view is NSPopUpButton || view is NSSegmentedControl
+                || view is NSTableView || view is NSScrollView {
+                return view
+            }
+            return nil
+        }
+        return target(in: content)
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard visibleBodyBoundsForHitTesting.contains(point) else { return nil }
+        // AppKit supplies `point` in the receiver's superview coordinates.
+        // Convert once; treating it as bounds-local made the visible glass
+        // draw correctly while every pointer event fell through to the
+        // Markdown view underneath.
+        let localPoint = bounds.contains(point)
+            ? point
+            : (superview.map { convert(point, from: $0) } ?? point)
+        guard visibleBodyBoundsForHitTesting.contains(localPoint) else { return nil }
         if let host = content as? InspectorHostView {
-            if closeControlHitZoneContains(point) { return host.closeButtonForTesting }
+            if closeControlHitZoneContains(localPoint) { return host.closeButtonForTesting }
+        }
+        // NSGlassEffectView may claim the event before its contentView walks
+        // the embedded AppKit controls. Route through the semantic panel body
+        // first so text fields, task rows, popups, and buttons remain native
+        // controls instead of the click falling through to the document.
+        let contentPoint = content.convert(localPoint, from: self)
+        // AppKit's `hitTest` argument is in the receiver's *superview*
+        // coordinates. Passing `contentPoint` (content-local) works only when
+        // both origins happen to be zero and breaks as soon as glass installs
+        // its own contentView.
+        let hitTestPoint = content.superview?.convert(localPoint, from: self) ?? contentPoint
+        if content.bounds.contains(contentPoint), let hit = content.hitTest(hitTestPoint) {
+            return hit
         }
         return super.hitTest(point)
     }
@@ -760,7 +722,6 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
             addSubview(fallback, positioned: .below, relativeTo: nil)
         }
         if isHostingContentInGlass { content.removeFromSuperview() }
-        glassContent = nil
         glassLayoutContent = nil
         content.translatesAutoresizingMaskIntoConstraints = true
         content.autoresizingMask = [.width, .height]

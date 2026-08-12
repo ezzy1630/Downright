@@ -1,17 +1,11 @@
-<p align="center">
-  <img src="Resources/AppIcon.png" width="144" height="144" alt="Downright app icon">
-</p>
+![Downright app icon](Resources/AppIcon.png)
 
-<h1 align="center">Downright</h1>
+# Downright
 
-<p align="center">
-  A fast, native Markdown reader and editor for macOS.<br>
-  Built for files that people and coding agents change together.
-</p>
+A fast, native Markdown reader and editor for macOS. Built for files that
+people and coding agents change together.
 
-<p align="center">
-  macOS 14+ &nbsp;&middot;&nbsp; Swift 6 &nbsp;&middot;&nbsp; Native AppKit &nbsp;&middot;&nbsp; MIT
-</p>
+**macOS 14+ · Swift 6 · Native AppKit · MIT**
 
 ---
 
@@ -53,37 +47,27 @@ and `.rmd`.
 
 Requirements: macOS 14 or newer and a Swift 6 toolchain.
 
+Clone, build the complete app, and install it with Finder integration:
+
 ```bash
 git clone https://github.com/ezzy1630/Downright.git
 cd Downright
-Scripts/bundle-app.sh
-open .build-main/bundle/Downright.app
-```
-
-Install the app and CLI:
-
-```bash
-Scripts/install.sh
+Scripts/bundle-xcode-app.sh
+APP_SOURCE=.build-xcode/Build/Products/Release/Downright.app Scripts/install.sh
 down README.md
 ```
 
-Add the native Quick Look preview and thumbnail extensions:
+This path requires Xcode and `xcodegen`; it embeds both the Quick Look preview
+and Finder thumbnail extensions. Launch Downright once after installation so
+macOS can finish registering them. See [Quick Look](Docs/QUICKLOOK.md) and
+[Release](Docs/RELEASE.md) for details.
+
+For a faster SwiftPM development build without Finder extensions:
 
 ```bash
-Scripts/bundle-quicklook.sh
-Scripts/install.sh
+Scripts/bundle-app.sh
+open .build-main/bundle/Downright.app
 ```
-
-For the complete Xcode build path, including embedded extensions and bundle
-validation:
-
-```bash
-Scripts/bundle-xcode-app.sh
-APP_SOURCE=.build-xcode/Build/Products/Release/Downright.app Scripts/install.sh
-```
-
-The Xcode path requires Xcode and `xcodegen`. See
-[Quick Look](Docs/QUICKLOOK.md) and [Release](Docs/RELEASE.md) for details.
 
 ## Everyday commands
 
@@ -104,8 +88,10 @@ All bindings are editable in **Settings → Keys**.
 
 | Shortcut | Action | Shortcut | Action |
 |---|---|---|---|
-| `⌘F` | Find | `⌘⇧F` | Search sibling files |
-| `⌘⇧E` | Source Focus | `⌘⇧K` | Command palette |
+| `⌘F` | Find | `⌘E` | Find selected text |
+| `⌘⇧F` | Search sibling files | `⌘⇧E` | Source Focus |
+| `⌥⌘1`–`6` | Set heading level | `⌥⌘0` | Convert heading to body |
+| `⌘[` / `⌘]` | Promote / demote heading | `⌘⇧K` | Command palette |
 | `⌥⇧⌘3` | Task worklist | `⌥⌘V` | Version timeline |
 | `⌃⌥⌘1`–`5` | Structural zoom | `⌥⇧↑` / `↓` | Previous / next change |
 | `⌘\` | Split view | `⌘L` | Toggle task at caret |

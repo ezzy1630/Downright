@@ -484,6 +484,26 @@ struct DensityRailTests {
         #expect(noisy.pips.allSatisfy { $0.searchHit })
     }
 
+    @Test("Overlay pips are opt-in on the reading rail")
+    @MainActor
+    func overlayPipsAreOptIn() {
+        let view = DensityGutterView()
+        #expect(!view.showsOverlayPips)
+
+        let bands = [
+            heading(1, 0.1),
+            DensityBand(kind: .change(.modified), startFraction: 0.15, endFraction: 0.16),
+            DensityBand(kind: .searchHit, startFraction: 0.17, endFraction: 0.18),
+        ]
+        let selection = DensityGutterView.selection(
+            for: bands,
+            capacity: 8,
+            includeOverlays: false
+        )
+        #expect(selection.marks.count == 1)
+        #expect(selection.pips.allSatisfy { $0.isEmpty })
+    }
+
     /// An overlay belongs to the section it falls in, not to whichever mark is
     /// physically closest — a change at the top of a section is not the
     /// previous section's change.

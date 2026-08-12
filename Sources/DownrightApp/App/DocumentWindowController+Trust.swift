@@ -145,7 +145,13 @@ extension DocumentWindowController: TrustPromptViewDelegate {
     }
 
     func revokeTrust(scope: TrustScope, path: URL) {
-        trustStore.revoke(scope: scope, path: path)
+        guard trustStore.revoke(scope: scope, path: path) else {
+            presentOperationError(
+                "Couldn’t save the trust revocation",
+                error: CocoaError(.fileWriteUnknown)
+            )
+            return
+        }
     }
 
     func trustPrompt(_ view: TrustPromptView, didChoose decision: TrustPromptDecision, request: TrustRequest) {
@@ -186,7 +192,13 @@ extension DocumentWindowController: TrustPromptViewDelegate {
             path = nil
         }
         guard let path else { return }
-        _ = trustStore.grant(scope: scope, path: path, effects: [request.effect])
+        guard trustStore.grant(scope: scope, path: path, effects: [request.effect]) else {
+            presentOperationError(
+                "Couldn’t save this trust decision",
+                error: CocoaError(.fileWriteUnknown)
+            )
+            return
+        }
     }
 
     private func revokeMatching(request: TrustRequest) {

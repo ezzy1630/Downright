@@ -6,6 +6,7 @@ import AppKit
 /// the click that dismisses the panel can still place the caret.
 final class DocumentWindow: NSWindow {
     var onFloatingOutsideMouseDown: (() -> Void)?
+    var onFloatingCancel: (() -> Void)?
     weak var floatingSurface: NSView?
 
     static func shouldDismissFloatingClick(
@@ -34,11 +35,39 @@ final class DocumentWindow: NSWindow {
     }
 
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown,
+           event.keyCode == 53,
+           floatingSurface != nil,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+            onFloatingCancel?()
+            return
+        }
         if event.type == .leftMouseDown,
            let surface = floatingSurface,
            let surfaceWindow = surface.window,
            surfaceWindow === self || (childWindows ?? []).contains(where: { $0 === surfaceWindow }),
            let content = contentView {
+            let surfacePoint = surface.convert(event.locationInWindow, from: nil)
+            let visibleBounds = (surface as? FloatingPanelSurface)?.visibleBodyBoundsForHitTesting
+                ?? surface.bounds
+            if visibleBounds.contains(surfacePoint),
+               let nativeControl = (surface as? FloatingPanelSurface)?.nativeControl(
+                   atWindowPoint: event.locationInWindow
+               ) {
+                if let field = nativeControl as? NSTextField, field.isEditable {
+                    makeFirstResponder(field)
+                    field.selectText(nil)
+                    return
+                }
+                nativeControl.mouseDown(with: event)
+                return
+            }
+            if visibleBounds.contains(surfacePoint) {
+                // The click is inside glass but not on a control. Consume it;
+                // the document beneath must never receive a caret/selection
+                // event through the panel.
+                return
+            }
             if Self.shouldDismissFloatingClick(
                 at: event.locationInWindow,
                 content: content,

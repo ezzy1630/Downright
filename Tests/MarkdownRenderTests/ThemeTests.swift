@@ -76,6 +76,24 @@ final class ThemeTests {
         }
     }
 
+    @Test("Start-window primary action remains readable in every bundled theme")
+    func startWindowPrimaryActionContrast() {
+        for theme in bundled() {
+            for appearance in [aqua, darkAqua] {
+                let sheet = StyleSheet(theme: theme, appearance: appearance)
+                let base = sheet.startWindowPrimaryAction
+                let hover = base.blended(withFraction: 0.08, of: .white) ?? base
+                let pressed = base.blended(withFraction: 0.18, of: .black) ?? base
+                for fill in [base, hover, pressed] {
+                    #expect(
+                        StyleSheet.contrastRatio(.white, fill) >= 4.5,
+                        "\(theme.name)/\(appearance.name.rawValue) start action is low contrast"
+                    )
+                }
+            }
+        }
+    }
+
     @Test("Bundled themes survive a JSON round trip")
     func bundledThemesRoundTrip() throws {
         let encoder = JSONEncoder()

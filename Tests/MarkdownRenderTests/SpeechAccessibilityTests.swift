@@ -35,11 +35,31 @@ struct SpeechAccessibilityTests {
 
         #expect(rail.accessibilityRole() == .group)
         #expect(rail.accessibilityLabel() == "Document margin")
-        #expect(rail.accessibilityCustomActions()?.map(\.name) == ["Toggle current heading"])
+        #expect(rail.accessibilityCustomActions()?.map(\.name) == [
+            "Choose current heading level", "Toggle current section fold",
+        ])
         #expect(density.accessibilityRole() == .scrollBar)
         #expect(density.accessibilityCustomActions()?.map(\.name) == ["Show document outline"])
         #expect(view.accessibilityRole() == .textArea)
         #expect(view.accessibilityCustomActions()?.map(\.name) == ["Open link at caret", "Copy code block"])
+    }
+
+    @Test("heading rail does not activate a caret heading from empty margin")
+    func headingRailHitIsBoundToChip() {
+        let view = MarkdownTextView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 300),
+            storage: NSTextStorage(string: "# Heading\n\nBody\n")
+        )
+        view.mode = .read
+        view.update(document: MarkdownParser.parse(view.textStorage?.string ?? ""), dirty: .wholesale)
+        let rail = GutterRailView(textView: view)
+        rail.frame = NSRect(x: 0, y: 0, width: RenderMetrics.gutterWidth, height: 300)
+        rail.reload()
+
+        // The caret can still make the heading active, but empty rail space is
+        // not a heading control. Only the drawn H-chip is actionable.
+        view.setSourceSelectedRanges([NSRange(location: 0, length: 0)])
+        #expect(rail.headingIndex(at: NSPoint(x: rail.bounds.midX, y: 8)) == nil)
     }
 
     @Test("rendered fragments expose semantic accessibility children")
@@ -67,5 +87,34 @@ struct SpeechAccessibilityTests {
         #expect(labels.contains("Markdown table"))
         #expect(labels.contains("Display math"))
         #expect(labels.contains("Mermaid diagram"))
+    }
+
+    @Test("rendered front matter is an accessible edit action")
+    func frontMatterAccessibilityAction() throws {
+        let source = "---\ntitle: Draft\nauthor: Ezzy\n---\n\n# Body\n"
+        let view = MarkdownTextView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            storage: NSTextStorage(string: source)
+        )
+        let delegate = FrontMatterActivationProbe()
+        view.markdownDelegate = delegate
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+
+        let action = try #require((view.accessibilityChildren() ?? []).compactMap {
+            $0 as? NSAccessibilityElement
+        }.first { $0.accessibilityLabel() == "Edit document metadata" })
+        #expect(action.accessibilityRole() == .button)
+        #expect(action.isAccessibilityEnabled())
+        #expect(action.accessibilityPerformPress())
+        #expect(delegate.activations == 1)
+    }
+}
+
+@MainActor
+private final class FrontMatterActivationProbe: MarkdownTextViewDelegate {
+    var activations = 0
+
+    func markdownTextView(_ view: MarkdownTextView, didActivateFrontMatterAt range: NSRange) {
+        activations += 1
     }
 }

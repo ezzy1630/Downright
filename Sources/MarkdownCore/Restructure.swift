@@ -37,6 +37,59 @@ public enum Restructure {
         return relevel(doc, headingIndex: headingIndex, delta: level - doc.headings[headingIndex].level)
     }
 
+    /// Converts an ATX or setext heading to ordinary body text without
+    /// guessing marker widths. `contentRange` is parser-owned, so this also
+    /// handles legal compact headings such as `#Title`, extra marker spacing,
+    /// and closing hash runs without deleting title characters.
+    public static func headingToBodyText(
+        _ doc: ParsedDocument, headingIndex: Int
+    ) -> [TextEdit] {
+        guard doc.headings.indices.contains(headingIndex) else { return [] }
+        let heading = doc.headings[headingIndex]
+        let firstLine = doc.range(ofLine: doc.line(at: heading.range.location))
+
+        if heading.range.upperBound > firstLine.upperBound {
+            let underlineNumber = doc.line(at: heading.range.upperBound - 1)
+            let underlineLine = doc.range(ofLine: underlineNumber)
+            guard underlineLine.location > firstLine.location else { return [] }
+            let removalEnd = underlineNumber < doc.lineStarts.count
+                ? doc.lineStarts[underlineNumber]
+                : doc.length
+            return [TextEdit(
+                range: NSRange(
+                    location: underlineLine.location,
+                    length: removalEnd - underlineLine.location
+                ),
+                replacement: "",
+                summary: "Heading to body text"
+            )]
+        }
+
+        let source = doc.substring(firstLine)
+        let indent = source.leadingIndent
+        let markerStart = firstLine.location + indent.utf16.count
+        guard heading.contentRange.location >= markerStart else { return [] }
+        var edits = [TextEdit(
+            range: NSRange(
+                location: markerStart,
+                length: heading.contentRange.location - markerStart
+            ),
+            replacement: "",
+            summary: "Heading to body text"
+        )]
+        if heading.contentRange.upperBound < firstLine.upperBound {
+            edits.append(TextEdit(
+                range: NSRange(
+                    location: heading.contentRange.upperBound,
+                    length: firstLine.upperBound - heading.contentRange.upperBound
+                ),
+                replacement: "",
+                summary: "Remove closing heading marker"
+            ))
+        }
+        return edits.filter { $0.range.length > 0 }
+    }
+
     /// Moves the whole subtree: the heading and every heading beneath it shift
     /// by `delta`, clamped to 1...6.  A no-op at the clamp rather than a
     /// partial move, so the subtree's shape is never flattened.
@@ -47,11 +100,14 @@ public enum Restructure {
         let target = root.level + delta
         guard target >= 1, target <= 6 else { return [] }
 
+        let subtreeEnd = doc.headings[(headingIndex + 1)...]
+            .firstIndex { $0.level <= root.level } ?? doc.headings.endIndex
+        let subtree = doc.headings[headingIndex..<subtreeEnd]
+        guard subtree.allSatisfy({ (1...6).contains($0.level + delta) }) else { return [] }
+
         var edits: [TextEdit] = []
-        for index in headingIndex..<doc.headings.count {
-            let heading = doc.headings[index]
-            if index > headingIndex, heading.level <= root.level { break }
-            let level = max(1, min(6, heading.level + delta))
+        for heading in subtree {
+            let level = heading.level + delta
             guard level != heading.level, let edit = rewriteLevel(doc, heading, to: level) else { continue }
             edits.append(edit)
         }

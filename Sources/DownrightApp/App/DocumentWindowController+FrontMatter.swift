@@ -5,7 +5,8 @@ import MarkdownCore
 /// the document mutation, so each field change is one normal undo step.
 @MainActor
 extension DocumentWindowController: FrontMatterEditorDelegate {
-    func showFrontMatterEditor() {
+    func showFrontMatterEditor(focus: String? = nil) {
+        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
         assetDoctorPanel = nil
         let editor: FrontMatterEditorView
         if let current = frontMatterEditor {
@@ -18,6 +19,19 @@ extension DocumentWindowController: FrontMatterEditorDelegate {
         }
         editor.document = markdownDocument.parsed
         installTrailing(editor, title: Command.frontMatterEditor.panelTitle)
+        viewportRepairs.forEach { $0() }
+        DispatchQueue.main.async { [weak editor] in
+            viewportRepairs.forEach { $0() }
+            editor?.prepareForPresentation(focus: focus)
+        }
+        // The trailing host performs its own key-loop handoff after layout.
+        // Reassert the semantic field once that handoff and the spring's first
+        // frame have completed, or AX/keyboard users land on the window itself.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak editor] in
+            guard let self, let editor, self.frontMatterEditor === editor else { return }
+            viewportRepairs.forEach { $0() }
+            editor.focusField(named: focus)
+        }
     }
 
     func frontMatterEditor(

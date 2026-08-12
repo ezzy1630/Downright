@@ -245,6 +245,8 @@ extension DocumentWindowController {
 
     func showSiblingSearch() {
         guard let scanner else { return }
+        siblingSearchGeneration &+= 1
+        let generation = siblingSearchGeneration
         showFindInspector(replace: false)
         // The header names the surface that opened (§7.2): with results
         // installed this is no longer a bare "Search" — it is the sibling
@@ -270,8 +272,12 @@ extension DocumentWindowController {
         DispatchQueue.global(qos: .userInitiated).async {
             let hits = SiblingSearch.search(query, in: urls)
             DispatchQueue.main.async { [weak self] in
-                self?.searchResults?.hits = hits
-                self?.searchResults?.isSearching = false
+                guard let self,
+                      self.siblingSearchGeneration == generation,
+                      self.currentFindQuery == query
+                else { return }
+                self.searchResults?.hits = hits
+                self.searchResults?.isSearching = false
             }
         }
     }

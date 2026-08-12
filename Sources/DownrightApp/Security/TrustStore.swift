@@ -1,16 +1,16 @@
 import Foundation
 
 protocol TrustStorePersistence: AnyObject {
-    func load() -> [TrustGrant]
-    func save(_ grants: [TrustGrant])
+    func load() throws -> [TrustGrant]
+    func save(_ grants: [TrustGrant]) throws
 }
 
 final class InMemoryTrustStorePersistence: TrustStorePersistence {
     private(set) var values: [TrustGrant]
 
     init(_ values: [TrustGrant] = []) { self.values = values }
-    func load() -> [TrustGrant] { values }
-    func save(_ grants: [TrustGrant]) { values = grants }
+    func load() throws -> [TrustGrant] { values }
+    func save(_ grants: [TrustGrant]) throws { values = grants }
 }
 
 private final class JSONTrustStorePersistence: TrustStorePersistence {
@@ -18,19 +18,19 @@ private final class JSONTrustStorePersistence: TrustStorePersistence {
 
     init(url: URL) { self.url = url }
 
-    func load() -> [TrustGrant] {
-        guard let data = try? Data(contentsOf: url),
-              let grants = try? JSONDecoder().decode([TrustGrant].self, from: data)
-        else { return [] }
-        return grants
+    func load() throws -> [TrustGrant] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        return try JSONDecoder().decode([TrustGrant].self, from: Data(contentsOf: url))
     }
 
-    func save(_ grants: [TrustGrant]) {
+    func save(_ grants: [TrustGrant]) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(grants) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        let data = try encoder.encode(grants)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try data.write(to: url, options: .atomic)
     }
 }
 
@@ -43,11 +43,17 @@ final class TrustStore {
 
     private let persistence: TrustStorePersistence
     private var values: [TrustGrant]
+    private var loadFailed = false
     private let lock = NSLock()
 
     init(persistence: TrustStorePersistence) {
         self.persistence = persistence
-        self.values = persistence.load()
+        do {
+            self.values = try persistence.load()
+        } catch {
+            self.values = []
+            self.loadFailed = true
+        }
     }
 
     func grants() -> [TrustGrant] {
@@ -73,20 +79,36 @@ final class TrustStore {
         let grant = TrustGrant(scope: scope, canonicalPath: canonical.path, effects: effects)
         lock.lock()
         defer { lock.unlock() }
+        guard !loadFailed else { return false }
+        let previous = values
         values.removeAll { $0.scope == scope && $0.canonicalPath == canonical.path }
         values.append(grant)
         // Keep mutation and persistence ordered. Unlocking before the save
         // lets concurrent callers write snapshots in reverse order, leaving
         // trust.json stale even though the in-memory grants are current.
-        persistence.save(values)
-        return true
+        do {
+            try persistence.save(values)
+            return true
+        } catch {
+            values = previous
+            return false
+        }
     }
 
-    func revoke(scope: TrustScope, path: URL) {
-        guard let canonical = DocumentTrust.canonicalFilePath(path) else { return }
+    @discardableResult
+    func revoke(scope: TrustScope, path: URL) -> Bool {
+        guard let canonical = DocumentTrust.canonicalFilePath(path) else { return false }
         lock.lock()
         defer { lock.unlock() }
         values.removeAll { $0.scope == scope && $0.canonicalPath == canonical.path }
-        persistence.save(values)
+        guard !loadFailed else { return false }
+        do {
+            try persistence.save(values)
+            return true
+        } catch {
+            // Revocation is fail-closed for this process even when persistence
+            // fails; callers surface that the durable file needs attention.
+            return false
+        }
     }
 }

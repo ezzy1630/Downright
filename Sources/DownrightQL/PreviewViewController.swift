@@ -12,6 +12,11 @@ import QuickLookUI
 /// ~120MB ceiling, and an extension that exceeds it is killed outright.
 @available(macOS 14.0, *)
 final class PreviewViewController: NSViewController, QLPreviewingController {
+    private enum LoadResult: Sendable {
+        case full(String)
+        case prefix(String)
+        case failure
+    }
     private let storage = NSTextStorage()
     private var container: MarkdownContainerView?
     private var densityGutter: DensityGutterView?
@@ -67,11 +72,26 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 return
             }
 
-            // Size first, bytes second.  The ~120MB kill ceiling is a hard
-            // process limit, not a style guideline — a huge file must never be
-            // read whole before the presentation policy has refused it.
-            let byteCount =
-                (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            // Finder owns the main thread that presents this controller. File
+            // coordination and decoding must not occupy it, especially for the
+            // multi-megabyte prefix path.
+            let load = await Task.detached(priority: .userInitiated) {
+                let byteCount =
+                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                switch QuickLookPolicy.presentation(forByteCount: byteCount) {
+                case .prefix:
+                    guard let head = DocumentIO.readHead(
+                        contentsOf: url,
+                        limit: QuickLookPolicy.prefixReadLimitBytes
+                    ) else { return LoadResult.failure }
+                    return LoadResult.prefix(head)
+                case .full:
+                    guard let (text, _) = try? DocumentIO.read(contentsOf: url) else {
+                        return LoadResult.failure
+                    }
+                    return LoadResult.full(text)
+                }
+            }.value
 
             guard !Task.isCancelled else {
                 handler(CocoaError(.userCancelled))
@@ -85,34 +105,12 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 }
 
                 self.resetPreview()
-                switch QuickLookPolicy.presentation(forByteCount: byteCount) {
-                case .prefix:
-                    // Bounded head read (§10): only enough bytes for the first
-                    // `prefixBlockCount` blocks are ever decoded.  An agent
-                    // transcript that would take the extension down instead
-                    // previews its opening.
-                    guard let head = DocumentIO.readHead(
-                        contentsOf: url,
-                        limit: QuickLookPolicy.prefixReadLimitBytes
-                    ) else {
-                        handler(CocoaError(.fileReadCorruptFile))
-                        return
-                    }
-                    guard !Task.isCancelled, self.previewGeneration == generation else {
-                        handler(CocoaError(.userCancelled))
-                        return
-                    }
-                    self.presentTruncated(head, url: url)
-                case .full:
-                    guard let (text, _) = try? DocumentIO.read(contentsOf: url) else {
-                        handler(CocoaError(.fileReadCorruptFile))
-                        return
-                    }
-                    guard !Task.isCancelled, self.previewGeneration == generation else {
-                        handler(CocoaError(.userCancelled))
-                        return
-                    }
-                    self.present(text, url: url)
+                switch load {
+                case .prefix(let head): self.presentTruncated(head, url: url)
+                case .full(let text): self.present(text, url: url)
+                case .failure:
+                    handler(CocoaError(.fileReadCorruptFile))
+                    return
                 }
                 self.startMemoryWatch()
                 if PreviewViewController.residentBytes() > self.memoryCeiling {

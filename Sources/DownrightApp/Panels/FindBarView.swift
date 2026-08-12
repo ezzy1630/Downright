@@ -134,8 +134,20 @@ final class FindBarView: NSView {
     /// simply appears or disappears, so no timing code ever runs on a surface
     /// nobody is looking at.
     private func setReplaceRowVisible(_ visible: Bool) {
+        // A two-row bar needs the denser native control material. The old
+        // clear pill let document copy read as a third row, especially behind
+        // disabled Replace controls. This remains refracting glass; only its
+        // semantic density changes while the surface is taller.
+        glass?.tint = visible ? .control : .panel
+
+        replaceTransitionGeneration &+= 1
+        let generation = replaceTransitionGeneration
+        replaceRow.layer?.removeAllAnimations()
+
         guard window != nil, !styleSheet.reduceMotion else {
             replaceRow.isHidden = !visible
+            replaceRow.alphaValue = 1
+            replaceRow.layer?.setAffineTransform(.identity)
             invalidateIntrinsicContentSize()
             return
         }
@@ -153,7 +165,10 @@ final class FindBarView: NSView {
                 self.replaceRow.animator().alphaValue = 0
                 self.replaceRow.layer?.setAffineTransform(CGAffineTransform(translationX: 0, y: -5))
             } completion: { [weak self] in
-                guard let self, !self.showsReplace else { return }
+                guard let self,
+                      self.replaceTransitionGeneration == generation,
+                      !self.showsReplace
+                else { return }
                 self.replaceRow.isHidden = true
                 self.replaceRow.alphaValue = 1
                 self.replaceRow.layer?.setAffineTransform(.identity)
@@ -294,6 +309,7 @@ final class FindBarView: NSView {
     private let rows = NSStackView()
     private let entranceMask = CAShapeLayer()
     private var entranceGeneration = 0
+    private var replaceTransitionGeneration = 0
     private var actions: [ButtonAction] = []
     private var optionsAction: ButtonAction?
     private let presentation: Presentation
@@ -778,6 +794,35 @@ final class FindBarView: NSView {
         rows.layer?.setAffineTransform(.identity)
     }
 
+    /// Stop an in-flight entrance without snapping the pill back to its
+    /// identity transform. The controller uses this handoff for dismissal:
+    /// the current presentation frame becomes the first frame of the exit,
+    /// so closing never flashes a fully expanded bar before it folds away.
+    func prepareForLiquidExit() {
+        entranceGeneration &+= 1
+        if let layer {
+            if let presentation = layer.presentation() {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                layer.setAffineTransform(presentation.affineTransform())
+                alphaValue = CGFloat(presentation.opacity)
+                CATransaction.commit()
+            }
+            layer.removeAnimation(forKey: "find-liquid-presence")
+            layer.mask = nil
+        }
+        if let rowsLayer = rows.layer {
+            if let presentation = rowsLayer.presentation() {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                rowsLayer.setAffineTransform(presentation.affineTransform())
+                rows.alphaValue = CGFloat(presentation.opacity)
+                CATransaction.commit()
+            }
+            rowsLayer.removeAnimation(forKey: "find-content-arrival")
+        }
+    }
+
     /// Used by "Use Selection for Find" (§7.2) — the host pushes text in and
     /// the bar behaves exactly as if it had been typed.
     func setQueryText(_ text: String, notify: Bool = true) {
@@ -921,6 +966,15 @@ final class FindBarView: NSView {
     var hasCloseButtonForTesting: Bool { closeButton != nil }
     var leadingGlyphIsAccessibleForTesting: Bool { leadingGlyph.isAccessibilityElement() }
     var searchFieldIsBezeledForTesting: Bool { searchField.isBezeled }
+    var findRowFrameForTesting: NSRect { convert(findRow.bounds, from: findRow) }
+    var replaceRowFrameForTesting: NSRect { convert(replaceRow.bounds, from: replaceRow) }
+    var replaceRowAlphaForTesting: CGFloat { replaceRow.alphaValue }
+    var replaceRowIsHiddenForTesting: Bool { replaceRow.isHidden }
+    var usesDenseReplaceMaterialForTesting: Bool {
+        guard let glass else { return false }
+        if case .control = glass.tint { return true }
+        return false
+    }
 }
 
 // MARK: - Field editing

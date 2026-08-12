@@ -210,9 +210,16 @@ final class InspectorHostView: NSView {
     /// body opens. Tasks forwards this to its table; other panels land on the
     /// host so Esc and the section switcher remain reachable.
     func focusForPresentation() {
-        if let task = views[.tasks] as? TaskPanelView {
-            task.focusForPresentation()
-        } else {
+        switch selectedSection {
+        case .tasks:
+            (views[.tasks] as? TaskPanelView)?.focusForPresentation()
+        case .context:
+            if let editor = views[.context] as? FrontMatterEditorView {
+                editor.focusField()
+            } else {
+                window?.makeFirstResponder(self)
+            }
+        case .history, .search, nil:
             window?.makeFirstResponder(self)
         }
     }

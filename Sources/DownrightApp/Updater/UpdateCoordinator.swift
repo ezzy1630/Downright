@@ -97,7 +97,7 @@ final class UpdateCoordinator: UpdateDriverHost {
 
     var canCheckForUpdates: Bool {
         guard isConfigured else { return false }
-        return engine?.canCheckForUpdates ?? false
+        return engine?.canCheckForUpdates ?? (startupFailure != nil)
     }
 
     /// Whether this bundle carries the production Sparkle configuration at all
@@ -109,6 +109,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     private var engine: (any UpdateEngine)?
     private var driver: DownrightUpdateDriver?
     private var panel: UpdateWindowController?
+    private var startupFailure: UpdateFailure?
 
     /// Whether this bundle carries the production Sparkle configuration.
     /// Dev/ad-hoc bundles omit `SUFeedURL` (and the whole Sparkle block) from
@@ -163,11 +164,17 @@ final class UpdateCoordinator: UpdateDriverHost {
         }
         do {
             try engine.start()
+            if startupFailure != nil { machine.reduce(.dismissed) }
+            startupFailure = nil
         } catch {
             // Startup failure (bad feed, missing signing key): surface once,
             // quietly — the pill carries the warning until the app restarts.
             self.engine = nil
             self.driver = nil
+            let failure = UpdateFailure(error: error)
+            startupFailure = failure
+            machine.reduce(.updaterError(failure))
+            notifyStateChanged()
         }
     }
 
@@ -181,6 +188,8 @@ final class UpdateCoordinator: UpdateDriverHost {
         panel = nil
         engine = nil
         driver = nil
+        startupFailure = nil
+        releaseNotes = .none
         notifyStateChanged()
     }
 
@@ -192,7 +201,12 @@ final class UpdateCoordinator: UpdateDriverHost {
             presentDisabledAlert()
             return
         }
-        engine?.checkForUpdates()
+        if engine == nil { start() }
+        guard let engine else {
+            if startupFailure != nil { showPanel() }
+            return
+        }
+        engine.checkForUpdates()
     }
 
     func showPanel() {
@@ -349,6 +363,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     // MARK: - UpdateDriverHost
 
     func driverDidBeginUserCheck(cancellation: @escaping () -> Void) {
+        releaseNotes = .none
         currentCycleIsUserInitiated = true
         checkCancellation?.discard()
         checkCancellation = Capability(cancellation)
@@ -363,6 +378,7 @@ final class UpdateCoordinator: UpdateDriverHost {
         userInitiated: Bool = true,
         reply: @escaping (UpdateUserChoice) -> Void
     ) {
+        releaseNotes = .none
         checkCancellation?.discard()
         checkCancellation = nil
         choiceReply?.discard()
@@ -387,6 +403,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func driverDidFindNoUpdate(userInitiated: Bool, acknowledgement: @escaping () -> Void) {
+        releaseNotes = .none
         checkCancellation?.discard()
         checkCancellation = nil
         currentCycleIsUserInitiated = false
@@ -405,6 +422,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func driverDidEncounterError(_ error: Error, acknowledgement: @escaping () -> Void) {
+        releaseNotes = .none
         let userInitiated = currentCycleIsUserInitiated
         currentCycleIsUserInitiated = false
         self.acknowledgement?.discard()
@@ -491,6 +509,7 @@ final class UpdateCoordinator: UpdateDriverHost {
         currentCycleIsUserInitiated = false
         machine.reduce(.dismissed)
         downloadedUpdate = nil
+        releaseNotes = .none
         closePanel()
         notifyStateChanged()
     }

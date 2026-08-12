@@ -39,6 +39,28 @@ import Testing
         #expect(Restructure.setHeadingLevel(doc, headingIndex: 1, level: 0).isEmpty)
     }
 
+    @Test func headingToBodyPreservesTitlesAndRemovesClosingMarkers() {
+        let compact = "#   Title\n"
+        #expect(apply(
+            compact,
+            Restructure.headingToBodyText(MarkdownParser.parse(compact), headingIndex: 0)
+        ) == "Title\n")
+
+        let closed = "  ###   Title ###\n"
+        #expect(apply(
+            closed,
+            Restructure.headingToBodyText(MarkdownParser.parse(closed), headingIndex: 0)
+        ) == "  Title\n")
+    }
+
+    @Test func headingToBodySupportsSetext() {
+        let text = "Title\n=====\n\nBody\n"
+        #expect(apply(
+            text,
+            Restructure.headingToBodyText(MarkdownParser.parse(text), headingIndex: 0)
+        ) == "Title\n\nBody\n")
+    }
+
     @Test func clampsAtTheEnds() {
         let top = MarkdownParser.parse("# A\n\n## B\n")
         #expect(Restructure.promoteHeading(top, headingIndex: 0).isEmpty)
@@ -50,7 +72,7 @@ import Testing
         // rather than flattened.
         let nested = MarkdownParser.parse("##### A\n\n###### B\n")
         let out = apply("##### A\n\n###### B\n", Restructure.demoteHeading(nested, headingIndex: 0))
-        #expect(out == "###### A\n\n###### B\n")
+        #expect(out == "##### A\n\n###### B\n")
     }
 
     // MARK: Move section — §14 calls this out as harder than it looks

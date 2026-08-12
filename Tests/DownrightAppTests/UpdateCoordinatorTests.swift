@@ -427,6 +427,33 @@ struct UpdateCoordinatorFlowTests {
         #expect(coordinator.phase == .idle)
     }
 
+    @Test func releaseNotesNeverLeakIntoTheNextUpdateCycle() {
+        let (coordinator, _) = makeCoordinator()
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded) { _ in }
+        coordinator.driverDidReceiveReleaseNotes(Data("v1 notes".utf8))
+        #expect(coordinator.releaseNotes == .loaded(Data("v1 notes".utf8)))
+
+        coordinator.driverDidDismiss()
+        #expect(coordinator.releaseNotes == .none)
+        coordinator.driverDidFindUpdate(
+            UpdateMetadata(
+                versionString: "48",
+                displayVersionString: "1.1.1",
+                title: nil,
+                itemDescription: nil,
+                releaseNotesURL: nil,
+                infoURL: nil,
+                contentLength: 0,
+                isInformationOnly: false,
+                isMajorUpgrade: false,
+                isCritical: false,
+                minimumSystemVersion: nil
+            ),
+            stage: .notDownloaded
+        ) { _ in }
+        #expect(coordinator.releaseNotes == .none)
+    }
+
     // MARK: Background downloads
 
     @Test func backgroundDownloadDrivesRestartPill() {

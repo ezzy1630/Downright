@@ -169,13 +169,14 @@ final class MarkdownContentStorage: NSTextContentStorage {
     /// Last element that begins before `offset`, or the final element when none
     /// does — matching the reverse enumeration's "start from the end" fallback.
     private func lastIndex(startingBefore offset: Int) -> Int {
+        guard offset > 0 else { return -1 }
         var low = 0
         var high = sourceRanges.count
         while low < high {
             let middle = (low + high) / 2
             if sourceRanges[middle].location < offset { low = middle + 1 } else { high = middle }
         }
-        return low > 0 ? low - 1 : sourceRanges.count - 1
+        return low - 1
     }
 
     private func element(at index: Int, storage: NSTextStorage) -> NSTextParagraph {

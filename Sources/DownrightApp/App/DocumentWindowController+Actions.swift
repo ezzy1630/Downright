@@ -26,9 +26,7 @@ extension DocumentWindowController {
 
     func updateBreadcrumbAndGutter() {
         refreshBreadcrumb()
-        let current = markdownDocument.parsed.headings.lastIndex(where: {
-            $0.range.location <= containerTextView.topVisibleOffset
-        })
+        let current = visibleHeadingIndex(at: containerTextView.topVisibleOffset)
         let length = max(1, markdownDocument.parsed.length)
         let top = CGFloat(containerTextView.topVisibleOffset) / CGFloat(length)
         let activeContainer = documentPanes.first { $0.textView === containerTextView } ?? primaryContainer!

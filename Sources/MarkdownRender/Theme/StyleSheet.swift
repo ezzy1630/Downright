@@ -69,6 +69,21 @@ public struct StyleSheet {
     public var searchHitCurrent: NSColor
     public var selection: NSColor
 
+    /// The welcome surface has one primary action.  Keep it distinct from the
+    /// editor accent so changing the document's semantic accent does not turn
+    /// the start window into a bright blue slab.
+    public var startWindowPrimaryAction: NSColor {
+        // The label is white in every state. Darken only as far as needed to
+        // retain 5.2:1 at rest, leaving room for the hover highlight to lift
+        // the fill without dropping below WCAG AA.
+        for step in 4...14 {
+            let amount = CGFloat(step) * 0.05
+            let candidate = accent.blended(withFraction: amount, of: .black) ?? accent
+            if Self.contrastRatio(.white, candidate) >= 5.2 { return candidate }
+        }
+        return NSColor(calibratedRed: 0.08, green: 0.28, blue: 0.58, alpha: 1)
+    }
+
     private let headingColors: [NSColor]
     private let calloutColors: [NSColor]      // note, warning, success, danger
     private let changeColors: [NSColor]       // added, removed, modified

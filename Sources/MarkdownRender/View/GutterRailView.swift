@@ -18,6 +18,7 @@ public final class GutterRailView: NSView {
     private var changeBars: [(kind: ChangeKind, range: NSRange)] = []
     private var lineStarts: [Int] = [0]
     private var headingMenuAction: HeadingMenuAction?
+    private var trackingArea: NSTrackingArea?
 
     /// Gap between the rail's right edge — which is the text column's left edge
     /// — and the shared right edge everything in the rail hangs from.  Named
@@ -44,7 +45,15 @@ public final class GutterRailView: NSView {
         setAccessibilityLabel("Document margin")
         setAccessibilityHelp("Heading level and change controls")
         setAccessibilityCustomActions([
-            NSAccessibilityCustomAction(name: "Toggle current heading") { [weak self] in
+            NSAccessibilityCustomAction(name: "Choose current heading level") { [weak self] in
+                guard let self, let textView = self.textView else { return false }
+                let offset = textView.primarySourceCaret ?? textView.topVisibleOffset
+                let index = textView.hoveredHeadingIndex
+                    ?? textView.parsedDocument.headings.lastIndex { $0.range.location <= offset }
+                guard let index, index < textView.parsedDocument.headings.count else { return false }
+                return self.presentHeadingMenu(for: index)
+            },
+            NSAccessibilityCustomAction(name: "Toggle current section fold") { [weak self] in
                 guard let self, let textView = self.textView else { return false }
                 let offset = textView.primarySourceCaret ?? textView.topVisibleOffset
                 let index = textView.hoveredHeadingIndex
@@ -58,6 +67,7 @@ public final class GutterRailView: NSView {
                 return true
             },
         ])
+        updateTrackingAreas()
     }
 
     public required init?(coder: NSCoder) { nil }
@@ -133,20 +143,11 @@ public final class GutterRailView: NSView {
         let heading = textView.parsedDocument.headings[index]
         guard let rect = rowRect(for: heading.range, in: textView), rect.intersects(visible) else { return }
 
-        let font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
-        let title = NSAttributedString(string: "H\(heading.level)", attributes: [
-            .font: font,
-            .foregroundColor: textView.hoveredHeadingIndex == index ? style.accent : style.textFaint,
-        ])
-        let size = title.size()
-        let chip = NSRect(
-            x: bounds.maxX - Self.markerInset - size.width - 10,
-            y: rect.minY + max(0, (style.lineHeight - 18) / 2),
-            width: size.width + 10,
-            height: 18
-        )
+        let chip = headingChipRect(for: index, row: rect, in: textView)
+        let title = headingChipTitle(for: heading, highlighted: textView.hoveredHeadingIndex == index)
         style.inlineCodeBackground.withAlphaComponent(0.72).setFill()
         NSBezierPath(roundedRect: chip, xRadius: 4, yRadius: 4).fill()
+        let size = title.size()
         title.draw(at: NSPoint(x: chip.minX + 5, y: chip.minY + (chip.height - size.height) / 2))
 
     }
@@ -279,6 +280,90 @@ public final class GutterRailView: NSView {
         return NSRect(x: 0, y: converted.minY, width: bounds.width, height: max(converted.height, 1))
     }
 
+    private func headingChipTitle(
+        for heading: HeadingNode,
+        highlighted: Bool
+    ) -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+        let color = highlighted ? (textView?.styleSheet.accent ?? .controlAccentColor) : (textView?.styleSheet.textFaint ?? .secondaryLabelColor)
+        return NSAttributedString(string: "H\(heading.level)", attributes: [
+            .font: font,
+            .foregroundColor: color,
+        ])
+    }
+
+    private func headingChipRect(
+        for index: Int,
+        row: NSRect,
+        in textView: MarkdownTextView
+    ) -> NSRect {
+        let heading = textView.parsedDocument.headings[index]
+        let title = headingChipTitle(for: heading, highlighted: false)
+        let size = title.size()
+        return NSRect(
+            x: bounds.maxX - Self.markerInset - size.width - 10,
+            y: row.minY + max(0, (textView.styleSheet.lineHeight - 18) / 2),
+            width: size.width + 10,
+            height: 18
+        )
+    }
+
+    /// Return only the heading whose visible chip contains `point`.
+    ///
+    /// The old fallback to the active caret heading made a click in empty rail
+    /// space mutate whichever heading happened to own the caret.  Besides
+    /// being surprising, this became dangerous after a parse moved heading
+    /// indices.  Geometry is the source of truth: if a chip is not visible at
+    /// the pointer, no heading action is offered.
+    func headingIndex(at point: NSPoint) -> Int? {
+        guard let textView, textView.mode != .source else { return nil }
+        guard let index = textView.hoveredHeadingIndex ?? activeHeadingIndex,
+              textView.parsedDocument.headings.indices.contains(index),
+              let row = rowRect(
+                for: textView.parsedDocument.headings[index].range,
+                in: textView
+              )
+        else { return nil }
+        let chip = headingChipRect(for: index, row: row, in: textView)
+        return chip.intersects(bounds) && chip.contains(point) ? index : nil
+    }
+
+    // MARK: - Pointer handoff
+
+    public override func updateTrackingAreas() {
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let options: NSTrackingArea.Options = [
+            .mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect,
+        ]
+        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+        super.updateTrackingAreas()
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        updateHeadingHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        updateHeadingHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        guard let textView, textView.hoveredHeadingIndex != nil else { return }
+        textView.hoveredHeadingIndex = nil
+        needsDisplay = true
+    }
+
+    private func updateHeadingHover(at point: NSPoint) {
+        guard let textView else { return }
+        let index = headingIndex(at: point)
+        guard textView.hoveredHeadingIndex != index else { return }
+        textView.hoveredHeadingIndex = index
+        needsDisplay = true
+        textView.needsDisplay = true
+    }
+
     /// The full vertical span of `range`: the first line's top to the last
     /// line's bottom.
     ///
@@ -306,11 +391,19 @@ public final class GutterRailView: NSView {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         guard modifiers.isEmpty,
-              let index = textView.hoveredHeadingIndex ?? activeHeadingIndex,
+              let index = headingIndex(at: point),
               textView.parsedDocument.headings.indices.contains(index),
               let rect = rowRect(for: textView.parsedDocument.headings[index].range, in: textView),
-              point.y >= rect.minY - 2, point.y <= rect.maxY + 2
+              headingChipRect(for: index, row: rect, in: textView).contains(point)
         else { return }
+        _ = presentHeadingMenu(for: index, at: point)
+    }
+
+    @discardableResult
+    private func presentHeadingMenu(for index: Int, at requestedPoint: NSPoint? = nil) -> Bool {
+        guard let textView,
+              textView.parsedDocument.headings.indices.contains(index)
+        else { return false }
         let action = HeadingMenuAction { [weak textView] level in
             guard let textView else { return }
             textView.markdownDelegate?.markdownTextView(
@@ -330,7 +423,20 @@ public final class GutterRailView: NSView {
         let body = NSMenuItem(title: "Body Text", action: #selector(HeadingMenuAction.chooseBody(_:)), keyEquivalent: "")
         body.target = action
         menu.addItem(body)
+        let point: NSPoint
+        if let requestedPoint {
+            point = requestedPoint
+        } else if let row = rowRect(for: textView.parsedDocument.headings[index].range, in: textView) {
+            let chip = headingChipRect(for: index, row: row, in: textView)
+            point = NSPoint(
+                x: chip.midX,
+                y: min(max(bounds.minY + 8, chip.maxY), bounds.maxY - 8)
+            )
+        } else {
+            point = NSPoint(x: bounds.midX, y: bounds.midY)
+        }
         menu.popUp(positioning: nil, at: point, in: self)
+        return true
     }
 }
 

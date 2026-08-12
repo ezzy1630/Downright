@@ -48,6 +48,7 @@ final class DocumentWindowController: NSWindowController {
     var changeSummaryTopConstraint: NSLayoutConstraint?
     private var changeSummaryDismissWorkItem: DispatchWorkItem?
     var searchResults: SearchResultsPanelView?
+    var siblingSearchGeneration = 0
     var searchInspector: SearchInspectorView?
     var historyInspector: HistoryInspectorView?
     var inspectorHost: InspectorHostView?
@@ -56,7 +57,6 @@ final class DocumentWindowController: NSWindowController {
     /// instead of docking in the split.  Kept for as long as it is on screen;
     /// torn down on dismissal.
     private(set) var floatingSurface: FloatingPanelSurface?
-    private var floatingPanelWindow: FloatingPanelWindow?
     var isTaskPanelFloating: Bool {
         floatingSurface != nil && inspectorHost?.selectedSection == .tasks
     }
@@ -89,7 +89,7 @@ final class DocumentWindowController: NSWindowController {
     /// siblings and the document can disappear behind the material. The
     /// overlay is a separate lane above the split, still inside the window's
     /// glass stage, so the split keeps ownership of its panes.
-    private var floatingOverlayHost: NSView!
+    private var floatingOverlayHost: FloatingOverlayHostView!
 
     // State
     var scanner: SiblingScanner?
@@ -128,12 +128,18 @@ final class DocumentWindowController: NSWindowController {
 
     /// Cached offset for the last breadcrumb rebuild, to avoid walking the
     /// heading tree on every scroll frame when the current section hasn't changed.
-    private var lastBreadcrumbOffset: Int = -1
+    private var lastBreadcrumbHeadingIndex: Int = .min
 
     /// Coalesces panel/metrics refresh so typing does not rebuild outline,
     /// density bands, and diagnostics on every parse commit.
     private var derivedUIRefreshWorkItem: DispatchWorkItem?
     private var findRefreshWorkItem: DispatchWorkItem?
+    /// A closing find bar stays mounted until its material exit completes.
+    /// Keep this separate from `findBar` so commands can reopen immediately
+    /// without the old animation retiring the new bar.
+    private var exitingFindBar: FindBarView?
+    private var exitingSearchInspector: SearchInspectorView?
+    private var findBarExitGeneration = 0
     private var cachedMetricsDocumentID: ObjectIdentifier?
     private var cachedSectionMetrics: [ReadingMetrics] = []
     private var cachedWordCount = 0
@@ -539,31 +545,31 @@ final class DocumentWindowController: NSWindowController {
         floatingOverlayHost = overlay
 
         if #available(macOS 26.0, *) {
-            // The document is the sampling source inside the glass container.
-            // The floating lane must be its sibling, not its descendant: a
-            // descendant samples its own stage and resolves as a flat card.
-            let documentLane = NSView()
-            documentLane.addSubview(splitView)
+            // Document pixels and floating glass share one native container.
+            // The overlay remains inside its content host so AppKit composes
+            // NSGlassEffectView against the document below it.
+            let glassStage = NSView()
+            glassStage.addSubview(splitView)
+            glassStage.addSubview(overlay)
             NSLayoutConstraint.activate([
-                splitView.leadingAnchor.constraint(equalTo: documentLane.leadingAnchor),
-                splitView.trailingAnchor.constraint(equalTo: documentLane.trailingAnchor),
-                splitView.topAnchor.constraint(equalTo: documentLane.topAnchor),
-                splitView.bottomAnchor.constraint(equalTo: documentLane.bottomAnchor),
+                splitView.leadingAnchor.constraint(equalTo: glassStage.leadingAnchor),
+                splitView.trailingAnchor.constraint(equalTo: glassStage.trailingAnchor),
+                splitView.topAnchor.constraint(equalTo: glassStage.topAnchor),
+                splitView.bottomAnchor.constraint(equalTo: glassStage.bottomAnchor),
+                overlay.leadingAnchor.constraint(equalTo: glassStage.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: glassStage.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: glassStage.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: glassStage.bottomAnchor),
             ])
             let container = NSGlassEffectContainerView()
             container.translatesAutoresizingMaskIntoConstraints = false
-            container.contentView = documentLane
+            container.contentView = glassStage
             stage.addSubview(container)
-            stage.addSubview(overlay)
             NSLayoutConstraint.activate([
                 container.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
                 container.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
                 container.topAnchor.constraint(equalTo: stage.topAnchor),
                 container.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
-                overlay.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
-                overlay.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
-                overlay.topAnchor.constraint(equalTo: stage.topAnchor),
-                overlay.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
             ])
         } else {
             stage.addSubview(splitView)
@@ -968,6 +974,7 @@ final class DocumentWindowController: NSWindowController {
         // Path existence is stable across local edits; wipe only on external
         // writes and document hops (see handleExternalEvent / open).
         refreshDensityBands(metrics: metrics)
+        lastBreadcrumbHeadingIndex = .min
         refreshBreadcrumb()
         markdownDocument.state.zoomLevel = source.zoomLevel
         markdownDocument.state.foldedHeadings = source.foldedHeadingSlugs
@@ -1021,7 +1028,7 @@ final class DocumentWindowController: NSWindowController {
         )
         let length = CGFloat(max(1, parsed.length))
         let source = containerTextView
-        let current = parsed.headings.lastIndex { $0.range.location <= source.topVisibleOffset }
+        let current = visibleHeadingIndex(at: source.topVisibleOffset)
         densityGutterView.outlineEntries = parsed.headings.enumerated().map { index, heading in
             DensityOutlineEntry(
                 title: heading.title,
@@ -1036,16 +1043,12 @@ final class DocumentWindowController: NSWindowController {
     func refreshBreadcrumb() {
         breadcrumbView.zoomLevel = containerTextView.zoomLevel
         let offset = containerTextView.topVisibleOffset
-        // Skip the heading tree walk if the offset hasn't crossed a heading
-        // boundary since the last scroll.  The breadcrumb view's own
-        // `sameTrail` guard already prevents UI rebuilds, but the tree walk
-        // (`lastIndex(where:)`) is O(headings) and measurable for large docs.
-        guard offset != lastBreadcrumbOffset else { return }
-        lastBreadcrumbOffset = offset
         let headings = markdownDocument.parsed.headings
-        guard var index = headings.lastIndex(where: { $0.range.location <= offset })
-            ?? headings.indices.first
-        else {
+        let resolved = visibleHeadingIndex(at: offset)
+        let cacheKey = resolved ?? -1
+        guard cacheKey != lastBreadcrumbHeadingIndex else { return }
+        lastBreadcrumbHeadingIndex = cacheKey
+        guard var index = resolved ?? headings.indices.first else {
             breadcrumbView.trail = []
             return
         }
@@ -1057,6 +1060,23 @@ final class DocumentWindowController: NSWindowController {
             index = parent
         }
         breadcrumbView.trail = trail
+    }
+
+    /// Last heading beginning at or before `offset`, resolved in logarithmic
+    /// time. Scroll callbacks use this once and share the answer across chrome.
+    func visibleHeadingIndex(at offset: Int) -> Int? {
+        let headings = markdownDocument.parsed.headings
+        var low = 0
+        var high = headings.count
+        while low < high {
+            let middle = (low + high) / 2
+            if headings[middle].range.location <= offset {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low > 0 ? low - 1 : nil
     }
 
     func refreshChangeDecorations() {
@@ -1302,7 +1322,9 @@ final class DocumentWindowController: NSWindowController {
     /// the glass. Ordinary app switching is deliberately not a dismissal;
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
-        guard let window, let target = window.contentView else { return }
+        guard let window, let target = window.contentView,
+              let overlay = floatingOverlayHost
+        else { return }
         let morphsFromControl = usesFloatingControlMorph
         let width = min(
             surface.preferredWidth,
@@ -1318,42 +1340,22 @@ final class DocumentWindowController: NSWindowController {
             height: FloatingPanelSurface.Top.pourSliverHeight
         )
 
-        let shadowMargin = PanelMetrics.floatingShadowMargin
-        let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
-        let child = FloatingPanelWindow(frame: childFrame)
-        child.alphaValue = morphsFromControl ? 0 : 1
-        child.appearance = ChromeGlass.materialAppearance(activeStyleSheet)
-        child.floatingSurface = surface
-        child.onOutsideMouseDown = { [weak self] in
-            self?.restoreFloatingFocusAndClose()
-        }
-        let childContent = NSView(frame: NSRect(origin: .zero, size: childFrame.size))
-        childContent.autoresizingMask = [.width, .height]
-        childContent.clipsToBounds = false
-        child.contentView = childContent
-        surface.frame = NSRect(
-            x: shadowMargin,
-            y: shadowMargin,
-            width: resting.width,
-            height: resting.height
-        )
+        // Keep the material in the document window's overlay lane. A child
+        // NSPanel gets a separate compositor surface, so its native glass
+        // samples the desktop (and reads as a flat plastic card) instead of
+        // refracting the document beneath it.
+        let restingInTarget = target.convert(window.convertFromScreen(resting), from: nil)
+        surface.frame = overlay.convert(restingInTarget, from: target)
         surface.configureWindowFrames(
             resting: resting,
             sliver: sliver,
             contentHeight: frame.height
         )
-        surface.onWindowFrameChange = { [weak child, weak surface] frame in
-            guard let child, let surface else { return }
-            child.setFrame(
-                frame.insetBy(dx: -shadowMargin, dy: -shadowMargin),
-                display: true
-            )
-            surface.frame = NSRect(
-                x: shadowMargin,
-                y: shadowMargin,
-                width: frame.width,
-                height: frame.height
-            )
+        surface.onWindowFrameChange = { [weak overlay, weak window, weak surface] frame in
+            guard let overlay, let window, let surface else { return }
+            let inTarget = window.contentView?.convert(window.convertFromScreen(frame), from: nil)
+                ?? .zero
+            surface.frame = overlay.convert(inTarget, from: target)
             surface.needsLayout = true
         }
         surface.onFrameSpringSettled = { [weak self, weak surface] in
@@ -1372,20 +1374,20 @@ final class DocumentWindowController: NSWindowController {
             progressRing.alphaValue = 0
             surface.prepareAnchorPresentation(from: sourceFrame)
         }
-        childContent.addSubview(surface)
+        overlay.addSubview(surface, positioned: .above, relativeTo: nil)
         surface.layoutSubtreeIfNeeded()
-        window.addChildWindow(child, ordered: .above)
-        child.orderFront(nil)
         surface.refreshGlassAfterWindowAttach()
 
         if !morphsFromControl { surface.setRestingFrame(resting) }
         surface.layoutSubtreeIfNeeded()
         floatingSurface = surface
-        floatingPanelWindow = child
         if let documentWindow = window as? DocumentWindow {
             documentWindow.floatingSurface = surface
             documentWindow.onFloatingOutsideMouseDown = { [weak self] in
                 self?.restoreFloatingFocusAndClose()
+            }
+            documentWindow.onFloatingCancel = { [weak self] in
+                self?.closeInspector()
             }
         }
         floatingActivationObserver = NotificationCenter.default.addObserver(
@@ -1399,10 +1401,9 @@ final class DocumentWindowController: NSWindowController {
         }
         floatingSurfaceFrame = resting
         if morphsFromControl {
-            DispatchQueue.main.async { [weak self, weak child, weak surface] in
-                guard let self, let child, let surface,
+            DispatchQueue.main.async { [weak self, weak surface] in
+                guard let self, let surface,
                       self.floatingSurface === surface else { return }
-                child.alphaValue = 1
                 surface.startAnchorPresentation(animated: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + Motion.deliberate * 0.58) {
                     [weak self, weak surface] in
@@ -1468,19 +1469,15 @@ final class DocumentWindowController: NSWindowController {
         if let documentWindow = window as? DocumentWindow {
             documentWindow.floatingSurface = nil
             documentWindow.onFloatingOutsideMouseDown = nil
+            documentWindow.onFloatingCancel = nil
         }
         if let floatingActivationObserver {
             NotificationCenter.default.removeObserver(floatingActivationObserver)
             self.floatingActivationObserver = nil
         }
-        floatingPanelWindow?.orderOut(nil)
-        if let parent = window, let child = floatingPanelWindow {
-            parent.removeChildWindow(child)
-        }
         floatingSurface?.onWindowFrameChange = nil
         floatingSurface?.onFrameSpringSettled = nil
         floatingSurface?.removeFromSuperview()
-        floatingPanelWindow = nil
         floatingSurface = nil
         floatingControlAnchorFrame = .zero
     }
@@ -1641,13 +1638,10 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func restoreFloatingPanelWindow() {
-        guard let surface = floatingSurface,
-              let panelWindow = floatingPanelWindow,
-              panelWindow.parent === window,
-              surface.window === panelWindow
-        else { return }
-        panelWindow.orderFrontRegardless()
-        if !panelWindow.isKeyWindow { panelWindow.makeKey() }
+        guard let surface = floatingSurface, surface.window === window else { return }
+        surface.superview?.addSubview(surface, positioned: .above, relativeTo: nil)
+        window?.orderFrontRegardless()
+        if window?.isKeyWindow != true { window?.makeKey() }
     }
 
     private func restoreFloatingFocusAndClose() {
@@ -1749,7 +1743,7 @@ final class DocumentWindowController: NSWindowController {
     /// width back to the document.  Collapsing first would make the panel
     /// vanish and the text jump in the same frame, which is the snap this
     /// replaces.
-    func closeInspector() {
+    func closeInspector(restoringFocus: Bool = true) {
         guard floatingSurface != nil else {
             refreshToolbarSelectionState()
             return
@@ -1757,10 +1751,12 @@ final class DocumentWindowController: NSWindowController {
         progressRing.isActive = false
         let restore = floatingFocusRestoreView
         dismissFloatingSurface()
-        if let restore, restore.window === window {
-            window?.makeFirstResponder(restore)
-        } else {
-            window?.makeFirstResponder(primaryContainer.textView)
+        if restoringFocus {
+            if let restore, restore.window === window {
+                window?.makeFirstResponder(restore)
+            } else {
+                window?.makeFirstResponder(primaryContainer.textView)
+            }
         }
         floatingFocusRestoreView = nil
         refreshToolbarSelectionState()
@@ -1812,6 +1808,22 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Find (§9.4)
 
     func showFindBar(replace: Bool, queryAfterFocus: FindQuery? = nil) {
+        // Reopening while the previous pill is travelling owns the same
+        // visual lane. Cancel the stale exit before installing the new bar;
+        // otherwise its completion could retire the freshly reopened view.
+        if let exiting = exitingFindBar {
+            findBarExitGeneration &+= 1
+            retire(exiting)
+            if let inspector = exitingSearchInspector,
+               inspectorHost?.content(for: .search) === inspector {
+                inspectorHost?.removeContent(section: .search)
+                if inspectorHost?.hasContent != true {
+                    closeInspector(restoringFocus: false)
+                }
+            }
+            exitingFindBar = nil
+            exitingSearchInspector = nil
+        }
         let viewportRepairs = queryAfterFocus?.isEmpty != false
             ? documentPanes.map { $0.textView.makeViewportRepair() }
             : []
@@ -1820,6 +1832,7 @@ final class DocumentWindowController: NSWindowController {
             dismissFindBar()
         }
 
+        let existingQuery = findBar?.currentQuery
         let bar: FindBarView
         if let findBar {
             bar = findBar
@@ -1860,7 +1873,10 @@ final class DocumentWindowController: NSWindowController {
         // Selection for Find explicitly supplies the selected query. AppKit
         // can seed a newly focused field from the document selection, so the
         // normal path must not inherit either selection or a stale query.
-        let requestedQuery = queryAfterFocus ?? FindQuery()
+        // Toggling Replace augments an existing search; clearing the query here
+        // left stale highlights and a stale match count beside an empty field.
+        // A newly summoned ordinary Find still starts clean.
+        let requestedQuery = queryAfterFocus ?? existingQuery ?? FindQuery()
         bar.setQueryText(requestedQuery.text, notify: false)
         if !requestedQuery.isEmpty {
             runFind(requestedQuery)
@@ -1899,36 +1915,34 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func dismissFindBar() {
-        // Hold the pill so it can leave gracefully while the state tears down
-        // now. `findBar` is nilled immediately so nothing can act on a gone
-        // bar.
-        let leaving = findBar
-        leaving?.cancelLiquidEntrance()
+        guard let leaving = findBar else { return }
 
-        searchInspector?.removeFromSuperview()
-        inspectorHost?.removeContent(section: .search)
-        searchInspector = nil
+        findBarExitGeneration &+= 1
+        let generation = findBarExitGeneration
+        let leavingInspector = searchInspector
+        exitingFindBar = leaving
+        exitingSearchInspector = leavingInspector
+
+        // Clear the command-facing references now, but keep the actual view
+        // hierarchy, inspector shell, and match highlights alive until the
+        // last exit frame. This avoids the abrupt content teardown that used
+        // to expose the document underneath before the pill had left.
         findBar = nil
-        searchResults = nil
-        // Keep the query & matches so ⌘G/Find Next still advance after the bar
-        // closes, and so reopening ⌘F does not start empty (#2). Only the
-        // visible highlights are torn down.
-        for pane in documentPanes {
-            pane.textView.searchHits = []
-            pane.textView.currentSearchHit = nil
-        }
-        refreshDensityBands()
-        if inspectorHost?.hasContent != true { closeInspector() }
-        else { refreshToolbarSelectionState() }
+        searchInspector = nil
+        leaving.prepareForLiquidExit()
 
-        // Exit reverses the same short settle, one step quicker — leaving is
-        // shorter than arriving. The overlay never owns document layout;
-        // Reduce Motion skips straight to removal.
-        guard let leaving, leaving.superview != nil else { return }
-        if activeStyleSheet.reduceMotion {
-            retire(leaving)
+        let finish = { [weak self, weak leaving, weak leavingInspector] in
+            guard let self, let leaving else { return }
+            self.finishFindBarDismissal(
+                leaving,
+                inspector: leavingInspector,
+                generation: generation
+            )
+        }
+        if activeStyleSheet.reduceMotion || leaving.superview == nil {
+            finish()
         } else {
-            animateFindBarExit(leaving) { [weak self] in self?.retire(leaving) }
+            animateFindBarExit(leaving, completion: finish)
         }
     }
 
@@ -1961,6 +1975,34 @@ final class DocumentWindowController: NSWindowController {
         layer.opacity = 0
         layer.add(group, forKey: "find-bar-exit")
         CATransaction.commit()
+    }
+
+    private func finishFindBarDismissal(
+        _ bar: FindBarView,
+        inspector: SearchInspectorView?,
+        generation: Int
+    ) {
+        guard generation == findBarExitGeneration, exitingFindBar === bar else { return }
+        retire(bar)
+        if let inspector,
+           exitingSearchInspector === inspector,
+           inspectorHost?.content(for: .search) === inspector {
+            inspectorHost?.removeContent(section: .search)
+            if inspectorHost?.hasContent != true { closeInspector(restoringFocus: false) }
+        }
+        if exitingSearchInspector === inspector { exitingSearchInspector = nil }
+        // Keep ⌘G/Find Next's query in the session, but remove visible marks
+        // only after the pill and its inspector shell have fully left.
+        if findBar == nil, searchInspector == nil {
+            searchResults = nil
+            for pane in documentPanes {
+                pane.textView.searchHits = []
+                pane.textView.currentSearchHit = nil
+            }
+            refreshDensityBands()
+        }
+        exitingFindBar = nil
+        refreshToolbarSelectionState()
     }
 
     private func findBarSourceTransform(for bar: FindBarView) -> CATransform3D {

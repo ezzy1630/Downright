@@ -146,6 +146,28 @@ struct ContentStorageTilingTests {
         #expect(ranges.contains(group))
     }
 
+    @Test("reverse enumeration at the document origin yields no final paragraph")
+    func reverseEnumerationAtOriginStopsAtOrigin() {
+        let text = Self.wrapped
+        let (content, storage) = Self.makeStorage(text)
+        content.configure(
+            paragraphIndex: ParagraphIndex(text: text as NSString),
+            reflowRanges: [],
+            displayMap: .identity
+        )
+        var delivered = 0
+        let resume = content.enumerateTextElements(
+            from: content.documentRange.location,
+            options: [.reverse]
+        ) { _ in
+            delivered += 1
+            return true
+        }
+        #expect(delivered == 0)
+        #expect(resume === content.documentRange.location)
+        #expect(storage.length > 0)
+    }
+
     // MARK: - Harness
 
     private static func makeStorage(_ text: String) -> (MarkdownContentStorage, NSTextStorage) {

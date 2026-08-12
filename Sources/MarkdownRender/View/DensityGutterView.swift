@@ -37,15 +37,14 @@ public struct DensityBand {
 /// while every resting mark was drawing at one length (see `headingMarkWidth`)
 /// — at rest the stack is a column of identical ticks, and shape is what the
 /// hover outline is for.  The honest claim is smaller and is the one the
-/// control delivers: a section index you can scan, with review state hanging
-/// off it.
+/// control delivers: a section index you can scan. Explicit review surfaces
+/// may opt into secondary state; the normal reading rail stays structural.
 ///
 /// The stack is an index of *sections*: one mark per drawn heading, thinned by
 /// depth when the track cannot hold them all, spaced by a pitch derived from
-/// the track rather than a fixed gap.  Changed regions are the band that
-/// matters most (§8.1), so they hang off the mark for the section they fall in
-/// as a leading-edge pip — they can neither be occluded by a heading tick nor,
-/// as when thinning ran over the merged band list, thinned away by it.
+/// the track rather than a fixed gap. Optional diagnostic overlays attach to
+/// their section without displacing its heading, but remain hidden until a
+/// host explicitly enables them.
 ///
 /// The band palette is deliberately narrow.  A theme only guarantees *semantic*
 /// colours (§11.2), so inventing six hues here would break the moment someone
@@ -69,6 +68,19 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             // from the stack — both caches are stale the moment bands change.
             bandsRevision &+= 1
             previousCurrentFraction = nil
+            updateMarkLayers(animated: false)
+        }
+    }
+
+    /// Review/search pips are secondary diagnostics, not part of the calm
+    /// document outline. Hosts may opt in for an explicit review surface;
+    /// normal reading and Find keep the rail free of leading-edge dots.
+    public var showsOverlayPips = false {
+        didSet {
+            guard showsOverlayPips != oldValue else { return }
+            bandsRevision &+= 1
+            cachedSelection = nil
+            cachedSelectionKey = nil
             updateMarkLayers(animated: false)
         }
     }
@@ -637,19 +649,27 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         let capacity = Self.stackCapacity(track: track.bottom - track.top)
         let key = SelectionKey(revision: bandsRevision, capacity: capacity)
         if key == cachedSelectionKey, let cachedSelection { return cachedSelection }
-        let resolved = Self.selection(for: bands, capacity: capacity)
+        let resolved = Self.selection(
+            for: bands,
+            capacity: capacity,
+            includeOverlays: showsOverlayPips
+        )
         cachedSelection = resolved
         cachedSelectionKey = key
         return resolved
     }
 
-    static func selection(for bands: [DensityBand], capacity: Int) -> Selection {
+    static func selection(
+        for bands: [DensityBand],
+        capacity: Int,
+        includeOverlays: Bool = true
+    ) -> Selection {
         let headings = bands
             .filter { if case .heading = $0.kind { return true } else { return false } }
             .sorted { $0.startFraction < $1.startFraction }
-        let overlays = bands
-            .filter { isOverlay($0.kind) }
-            .sorted { $0.startFraction < $1.startFraction }
+        let overlays = includeOverlays
+            ? bands.filter { isOverlay($0.kind) }.sorted { $0.startFraction < $1.startFraction }
+            : []
 
         // A document with no headings has no sections to index, so the review
         // overlays become the stack rather than vanishing along with it.

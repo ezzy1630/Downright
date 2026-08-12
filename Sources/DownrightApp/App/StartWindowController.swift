@@ -1270,7 +1270,7 @@ private final class StartActionButton: NSButton {
         let isFocused = window?.firstResponder === self && window?.isKeyWindow == true
         let changes = {
             if self.kind == .primary {
-                let accent = sheet.accent
+                let accent = sheet.startWindowPrimaryAction
                 let fill: NSColor
                 if self.isPressed {
                     fill = accent.blended(withFraction: 0.18, of: .black) ?? accent

@@ -435,6 +435,97 @@ struct WindowChromeTests {
         #expect(controller.findBar == nil)
     }
 
+    @Test("Replace mode preserves the active query and match state")
+    func replaceModePreservesActiveQuery() {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+
+        controller.showFindBar(replace: false)
+        controller.findBar?.setQueryText("table")
+        controller.showFindBar(replace: true)
+
+        #expect(controller.findBar?.currentQuery.text == "table")
+        #expect(controller.findBar?.showsReplace == true)
+    }
+
+    @Test("Replace settles as two non-overlapping rows on denser native glass")
+    func replaceBarSettledLayout() throws {
+        let style = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSAppearance(named: .darkAqua)!,
+            reduceMotionOverride: true
+        )
+        let bar = FindBarView(styleSheet: style)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 140))
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.addSubview(bar)
+        bar.frame = NSRect(x: 40, y: 30, width: FindBarDensity.barWidth, height: FindBarDensity.replaceHeight)
+
+        bar.showsReplace = true
+        bar.layoutSubtreeIfNeeded()
+
+        let find = bar.findRowFrameForTesting
+        let replace = bar.replaceRowFrameForTesting
+        #expect(bar.intrinsicContentSize.height == FindBarDensity.replaceHeight)
+        #expect(!bar.replaceRowIsHiddenForTesting)
+        #expect(bar.replaceRowAlphaForTesting == 1)
+        #expect(bar.usesDenseReplaceMaterialForTesting)
+        #expect(find.height > 0)
+        #expect(replace.height > 0)
+        #expect(!find.intersects(replace))
+        #expect(bar.bounds.contains(find))
+        #expect(bar.bounds.contains(replace))
+    }
+
+    @Test("Rapid Replace toggles cannot leave a faded ghost row")
+    func replaceBarRapidToggleSettlesVisible() async throws {
+        let style = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSAppearance(named: .darkAqua)!,
+            reduceMotionOverride: false
+        )
+        let bar = FindBarView(styleSheet: style)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 140))
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.addSubview(bar)
+        bar.frame = NSRect(x: 40, y: 30, width: FindBarDensity.barWidth, height: FindBarDensity.replaceHeight)
+
+        bar.showsReplace = true
+        bar.showsReplace = false
+        bar.showsReplace = true
+        try await Task.sleep(for: .milliseconds(350))
+        bar.layoutSubtreeIfNeeded()
+
+        #expect(bar.showsReplace)
+        #expect(!bar.replaceRowIsHiddenForTesting)
+        #expect(abs(bar.replaceRowAlphaForTesting - 1) < 0.001)
+        #expect(bar.usesDenseReplaceMaterialForTesting)
+        #expect(!bar.findRowFrameForTesting.intersects(bar.replaceRowFrameForTesting))
+    }
+
+    @Test("Reduce Motion toggles Replace synchronously")
+    func replaceBarReducedMotionToggleIsAtomic() {
+        let style = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSAppearance(named: .darkAqua)!,
+            reduceMotionOverride: true
+        )
+        let bar = FindBarView(styleSheet: style)
+
+        bar.showsReplace = true
+        #expect(!bar.replaceRowIsHiddenForTesting)
+        #expect(bar.replaceRowAlphaForTesting == 1)
+        #expect(bar.usesDenseReplaceMaterialForTesting)
+
+        bar.showsReplace = false
+        #expect(bar.replaceRowIsHiddenForTesting)
+        #expect(bar.replaceRowAlphaForTesting == 1)
+        #expect(!bar.usesDenseReplaceMaterialForTesting)
+        #expect(bar.intrinsicContentSize.height == FindBarDensity.barHeight)
+    }
+
     @Test("opening local Find preserves the document camera")
     func localFindPreservesViewport() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())

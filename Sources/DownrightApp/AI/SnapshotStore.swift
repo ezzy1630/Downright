@@ -57,16 +57,30 @@ final class SnapshotStore {
         case corrupt
     }
 
-    /// Defaults from §8.3.
-    var maximumAge: TimeInterval = 30 * 24 * 60 * 60
-    var maximumBytes: Int = 500 * 1024 * 1024
+    /// Defaults from §8.3. Preferences mutate these on the main actor while
+    /// pruning runs on the history queue, so the lock owns the complete limits
+    /// snapshot as well as the pending-record cache.
+    private var storedMaximumAge: TimeInterval = 30 * 24 * 60 * 60
+    private var storedMaximumBytes: Int = 500 * 1024 * 1024
+    private var storedMaximumBytesPerDocument: Int = 32 * 1024 * 1024
+    var maximumAge: TimeInterval {
+        get { pendingLock.withLock { storedMaximumAge } }
+        set { pendingLock.withLock { storedMaximumAge = newValue } }
+    }
+    var maximumBytes: Int {
+        get { pendingLock.withLock { storedMaximumBytes } }
+        set { pendingLock.withLock { storedMaximumBytes = newValue } }
+    }
     /// Per-document size cap.
     ///
     /// A single global cap lets one 400 MB document's history evict every other
     /// document's, which defeats the entire point of the store: the file *you*
     /// are reading has to have a yesterday.  Each document is trimmed against
     /// its own budget first, and the global cap is only a backstop.
-    var maximumBytesPerDocument: Int = 32 * 1024 * 1024
+    var maximumBytesPerDocument: Int {
+        get { pendingLock.withLock { storedMaximumBytesPerDocument } }
+        set { pendingLock.withLock { storedMaximumBytesPerDocument = newValue } }
+    }
 
     /// What a prune removed, so a document can say "older versions were
     /// dropped" instead of quietly having fewer entries than last time.
@@ -204,6 +218,15 @@ final class SnapshotStore {
         }
     }
 
+    /// Runs pruning on the same serial executor as object and index writes.
+    /// This prevents launch maintenance from deleting an object in the narrow
+    /// window between its write and the matching index append.
+    func schedulePrune() {
+        queue.async { [self] in
+            _ = prune()
+        }
+    }
+
     /// Total bytes held by the store, for the preferences pane.
     func totalBytes() -> Int {
         guard let e = fm.enumerator(at: objectsDirectory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
@@ -305,8 +328,11 @@ final class SnapshotStore {
     /// own.  Whatever is dropped is recorded per document so the timeline can
     /// say so out loud.
     @discardableResult
-    func prune() -> PruneReport {
-        let cutoff = Date().addingTimeInterval(-maximumAge)
+    private func prune() -> PruneReport {
+        let limits = pendingLock.withLock {
+            (storedMaximumAge, storedMaximumBytes, storedMaximumBytesPerDocument)
+        }
+        let cutoff = Date().addingTimeInterval(-limits.0)
         var report = PruneReport()
         var referenced = Set<String>()
         var newestHashes = Set<String>()
@@ -328,7 +354,7 @@ final class SnapshotStore {
 
             // Per-document size budget, oldest first, newest always kept.
             var total = index.versions.reduce(0) { $0 + $1.byteCount }
-            while total > maximumBytesPerDocument, index.versions.count > 1 {
+            while total > limits.2, index.versions.count > 1 {
                 total -= index.versions.removeFirst().byteCount
             }
 
@@ -352,7 +378,7 @@ final class SnapshotStore {
 
         var live = objects.filter { referenced.contains($0.hash) }
         var total = live.reduce(0) { $0 + $1.size }
-        guard total > maximumBytes else {
+        guard total > limits.1 else {
             recordPrune(report)
             return report
         }
@@ -361,7 +387,7 @@ final class SnapshotStore {
         var dropped = Set<String>()
         // Keep every document's newest version.  The in-memory reservation
         // cache relies on the index's newest hash remaining durable.
-        for object in live where total > maximumBytes && !newestHashes.contains(object.hash) {
+        for object in live where total > limits.1 && !newestHashes.contains(object.hash) {
             try? fm.removeItem(at: object.url)
             dropped.insert(object.hash)
             report.freedBytes += object.size

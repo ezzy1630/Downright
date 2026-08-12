@@ -7,6 +7,7 @@ import MarkdownCore
 private final class FragmentAccessibilityElement: NSAccessibilityElement {
     weak var textView: MarkdownTextView?
     let sourceOffset: Int
+    var onPress: (() -> Bool)?
 
     init(textView: MarkdownTextView, sourceOffset: Int) {
         self.textView = textView
@@ -16,6 +17,10 @@ private final class FragmentAccessibilityElement: NSAccessibilityElement {
 
     override func accessibilityFrameInParentSpace() -> NSRect {
         textView?.rect(forOffset: sourceOffset) ?? .zero
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        onPress?() ?? false
     }
 }
 
@@ -415,6 +420,9 @@ public final class MarkdownTextView: NSTextView {
     private var motionDriver: Motion.SpringDriver?
     var checkboxPulseDisplayLink: CADisplayLink?
     private var resizeGeneration: UInt = 0
+    /// Cancels late AppKit caret-camera repairs when a newer parse commit or
+    /// deliberate user navigation supersedes them.
+    private var viewportRepairGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
     private var pendingResizeViewportY: CGFloat?
     /// One-shot camera lock for semantic controls such as checkboxes. Their
@@ -659,16 +667,19 @@ public final class MarkdownTextView: NSTextView {
         } else if !followsCaret {
             restoreViewport(to: anchor)
         }
-        // NSTextView may make the restored selection visible after storage
-        // observers return. Normal editing keeps the camera fixed; typewriter
-        // scrolling is the explicit caret-following mode.
+        // NSTextView can issue a late make-caret-visible scroll after storage
+        // observers return. Repair it, but only while this is still the newest
+        // local commit; later commits and real navigation cancel the work.
+        viewportRepairGeneration &+= 1
+        let viewportGeneration = viewportRepairGeneration
         if followsLocalEdit, !followsCaret {
-            DispatchQueue.main.async { [weak self] in
-                self?.restoreViewport(to: anchor)
+            let repair = { [weak self] in
+                guard let self,
+                      self.viewportRepairGeneration == viewportGeneration else { return }
+                self.restoreViewport(to: anchor)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-                self?.restoreViewport(to: anchor)
-            }
+            DispatchQueue.main.async(execute: repair)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: repair)
         }
     }
 
@@ -684,21 +695,35 @@ public final class MarkdownTextView: NSTextView {
         }
         var elements: [NSAccessibilityElement] = []
         parsedDocument.root.walk { block in
-            let label: String? = switch block.content {
-            case .table: "Markdown table"
-            case .mathBlock: "Display math"
-            case .mermaid: "Mermaid diagram"
+            let descriptor: (label: String, role: NSAccessibility.Role, help: String)? = switch block.content {
+            case .table: ("Markdown table", .group, "Rendered markdown table")
+            case .mathBlock: ("Display math", .group, "Rendered display math")
+            case .mermaid: ("Mermaid diagram", .group, "Rendered mermaid diagram")
+            case .frontMatter: (
+                "Edit document metadata",
+                .button,
+                "Edit title, author, tags, status, and other front matter"
+            )
             default: nil
             }
-            guard let label else { return }
+            guard let descriptor else { return }
             let element = FragmentAccessibilityElement(
                 textView: self,
                 sourceOffset: block.range.location
             )
-            element.setAccessibilityRole(.group)
-            element.setAccessibilityLabel(label)
+            element.setAccessibilityRole(descriptor.role)
+            element.setAccessibilityLabel(descriptor.label)
             element.setAccessibilityParent(self)
-            element.setAccessibilityHelp("Rendered \(label.lowercased())")
+            element.setAccessibilityHelp(descriptor.help)
+            element.setAccessibilityEnabled(true)
+            if case .frontMatter = block.content {
+                let range = block.range
+                element.onPress = { [weak self] in
+                    guard let self else { return false }
+                    markdownDelegate?.markdownTextView(self, didActivateFrontMatterAt: range)
+                    return true
+                }
+            }
             elements.append(element)
         }
         fragmentAccessibilityElements = elements
@@ -825,6 +850,24 @@ public final class MarkdownTextView: NSTextView {
     /// deep restored offset lazily; the first keyboard scroll would otherwise
     /// be the thing that makes them appear.
     public func prepareForDisplay() {
+        synchronizeVisibleLayout()
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        // `displayIfNeeded()` may leave a freshly scrolled TextKit 2 surface
+        // pending when the view has not painted once at that offset yet.
+        // Force this small visible rect so programmatic restores behave like
+        // the first native scroll gesture.
+        display(visible)
+    }
+
+    /// Makes TextKit's active fragment set agree with the clip view.
+    ///
+    /// Changing source elements and moving an `NSClipView` are both legal
+    /// without a native scroll gesture. TextKit 2 may then keep the previous
+    /// viewport's fragments until the next gesture, drawing old and new
+    /// generations together. The source remains correct, but rows stack and a
+    /// far navigation can show fragments from the camera it left. Resolve only
+    /// the visible rectangle, then advance the viewport controller explicitly.
+    func synchronizeVisibleLayout() {
         guard let layoutManager = textLayoutManager else { return }
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin
@@ -835,17 +878,9 @@ public final class MarkdownTextView: NSTextView {
             height: max(1, visible.height)
         )
         layoutManager.ensureLayout(for: viewport)
-        // NSTextView's TextKit 2 viewport controller owns the active fragment
-        // set. A bounds jump can update the clip view without asking that
-        // controller to lay out its new viewport; a native scroll gesture
-        // does both. Re-run it explicitly for programmatic restores.
         layoutManager.textViewportLayoutController.layoutViewport()
         setNeedsDisplay(visible)
-        // `displayIfNeeded()` may leave a freshly scrolled TextKit 2 surface
-        // pending when the view has not painted once at that offset yet.
-        // Force this small visible rect so programmatic restores behave like
-        // the first native scroll gesture.
-        display(visible)
+        gutterRail?.needsDisplay = true
     }
 
     private enum ContentLayoutScope {
@@ -2420,6 +2455,7 @@ public final class MarkdownTextView: NSTextView {
             if let clip = scrollSpringClip ?? enclosingScrollView?.contentView {
                 clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
                 enclosingScrollView?.reflectScrolledClipView(clip)
+                synchronizeVisibleLayout()
             }
         }
         if let rect = pendingMotionInvalidation {
@@ -2522,6 +2558,7 @@ public final class MarkdownTextView: NSTextView {
             // sync with a programmatic jump.
             clip.scroll(to: target)
             scrollView.reflectScrolledClipView(clip)
+            synchronizeVisibleLayout()
         }
     }
 
@@ -2793,6 +2830,11 @@ public final class MarkdownTextView: NSTextView {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    if let event = NSApp.currentEvent,
+                       [.scrollWheel, .keyDown, .leftMouseDown, .leftMouseDragged]
+                        .contains(event.type) {
+                        self.viewportRepairGeneration &+= 1
+                    }
                     // Coalesce: batch multiple rapid scroll events into one
                     // callback per run-loop iteration.  The gutter needs a
                     // redraw, but the density rail, breadcrumb, and pane sync

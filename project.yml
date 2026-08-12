@@ -44,32 +44,6 @@ targets:
         embed: true
       - target: DownrightThumb
         embed: true
-    # SwiftPM resource bundles: Xcode copies them into a target that links the
-    # package, but it is implicit and it does not reach app extensions at all —
-    # which is how the Quick Look extension shipped without the math fonts and
-    # trapped on the first formula.  Copy them explicitly instead, and fail the
-    # build rather than the preview when one is missing.  Runs before signing,
-    # so the copies are sealed with the rest of the bundle.
-    postBuildScripts: &embedResourceBundles
-      - name: Embed SwiftPM resource bundles
-        # No inputs/outputs to analyse: the phase is a cheap idempotent copy.
-        basedOnDependencyAnalysis: false
-        script: |
-          set -euo pipefail
-          DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
-          mkdir -p "$DEST"
-          LOCK="${DEST}/.downright-resource-embed-lock"
-          until mkdir "$LOCK" 2>/dev/null; do sleep 0.1; done
-          trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
-          for bundle in Downright_MarkdownRender.bundle SwiftMath_SwiftMath.bundle; do
-              SRC="${BUILT_PRODUCTS_DIR}/${bundle}"
-              if [ ! -d "$SRC" ]; then
-                  echo "error: ${bundle} is missing from ${BUILT_PRODUCTS_DIR}" >&2
-                  exit 1
-              fi
-              rm -rf "${DEST:?}/${bundle}"
-              cp -R "$SRC" "$DEST/"
-          done
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright
@@ -94,7 +68,6 @@ targets:
         product: MarkdownCore
       - package: Downright
         product: MarkdownRender
-    postBuildScripts: *embedResourceBundles
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.quicklook
@@ -119,7 +92,6 @@ targets:
         product: MarkdownCore
       - package: Downright
         product: MarkdownRender
-    postBuildScripts: *embedResourceBundles
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.thumbnail

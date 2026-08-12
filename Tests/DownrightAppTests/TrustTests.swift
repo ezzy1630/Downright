@@ -114,6 +114,48 @@ struct DocumentTrustTests {
 
         #expect(Set(persistence.persisted()) == Set(store.grants()))
     }
+
+    @Test
+    func failedPersistenceNeverClaimsAGrantAndRevocationStaysFailClosed() throws {
+        let path = URL(fileURLWithPath: "/tmp/downright-trust-failure")
+        let existing = TrustGrant(
+            scope: .file,
+            canonicalPath: try #require(DocumentTrust.canonicalFilePath(path)).path,
+            effects: [.readLocalAsset]
+        )
+        let persistence = FailingSaveTrustPersistence([existing])
+        let store = TrustStore(persistence: persistence)
+
+        #expect(!store.grant(scope: .file, path: path, effects: [.launchPathOrEditor]))
+        #expect(store.grants() == [existing])
+        #expect(!store.revoke(scope: .file, path: path))
+        #expect(store.grants().isEmpty)
+    }
+
+    @Test
+    func corruptPersistenceCannotBeOverwrittenByANewGrant() {
+        let store = TrustStore(persistence: FailingLoadTrustPersistence())
+        #expect(!store.grant(
+            scope: .folder,
+            path: URL(fileURLWithPath: "/tmp/downright-corrupt-trust"),
+            effects: [.readLocalAsset]
+        ))
+        #expect(store.grants().isEmpty)
+    }
+}
+
+private enum TrustPersistenceFailure: Error { case unavailable }
+
+private final class FailingSaveTrustPersistence: TrustStorePersistence {
+    let initial: [TrustGrant]
+    init(_ initial: [TrustGrant]) { self.initial = initial }
+    func load() throws -> [TrustGrant] { initial }
+    func save(_ grants: [TrustGrant]) throws { throw TrustPersistenceFailure.unavailable }
+}
+
+private final class FailingLoadTrustPersistence: TrustStorePersistence {
+    func load() throws -> [TrustGrant] { throw TrustPersistenceFailure.unavailable }
+    func save(_ grants: [TrustGrant]) throws { Issue.record("save must not follow a failed load") }
 }
 
 /// Delays the first save long enough for a second caller to expose reversed
@@ -125,9 +167,9 @@ private final class DelayedFirstSaveTrustPersistence: TrustStorePersistence, @un
     private var saveCount = 0
     private var stored: [TrustGrant] = []
 
-    func load() -> [TrustGrant] { [] }
+    func load() throws -> [TrustGrant] { [] }
 
-    func save(_ grants: [TrustGrant]) {
+    func save(_ grants: [TrustGrant]) throws {
         let call = lock.withLock {
             saveCount += 1
             return saveCount

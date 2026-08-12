@@ -161,6 +161,11 @@ final class ChromeGlass: Motion.SpringSurfaceView {
         if wantsGlass {
             if !usesGlass, #available(macOS 26.0, *) { mountGlass() }
             if #available(macOS 26.0, *) {
+                // `tint` is mutable: transient chrome can become denser when
+                // it grows around more controls. Keep the native material's
+                // style in sync too; recolouring an old `.clear` effect alone
+                // still lets document copy compete with the controls.
+                glassEffect?.style = tint == .panel ? .clear : .regular
                 glassEffect?.appearance = Self.materialAppearance(styleSheet)
                 glassEffect?.tintColor = Self.glassTint(styleSheet, tint: tint)
             }

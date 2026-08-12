@@ -303,30 +303,30 @@ extension DocumentWindowController: CommandResponder {
         let edits = promote
             ? Restructure.promoteHeading(markdownDocument.parsed, headingIndex: index)
             : Restructure.demoteHeading(markdownDocument.parsed, headingIndex: index)
+        guard !edits.isEmpty else { return }
+        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
         markdownDocument.apply(edits, actionName: promote ? "Promote Heading" : "Demote Heading")
+        viewportRepairs.forEach { $0() }
     }
 
     private func setHeadingLevel(_ level: Int) {
         markdownDocument.ensureParsedCurrent()
         guard let index = currentHeadingIndex() else { return }
         let edits = Restructure.setHeadingLevel(markdownDocument.parsed, headingIndex: index, level: level)
+        guard !edits.isEmpty else { return }
+        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
         markdownDocument.apply(edits, actionName: "Set Heading (level)")
+        viewportRepairs.forEach { $0() }
     }
 
     private func convertHeadingToBody() {
         markdownDocument.ensureParsedCurrent()
         guard let index = currentHeadingIndex() else { return }
-        let heading = markdownDocument.parsed.headings[index]
-        let line = markdownDocument.parsed.range(ofLine: markdownDocument.parsed.line(at: heading.range.location))
-        let source = markdownDocument.parsed.substring(line)
-        let indent = source.prefix { $0 == " " || $0 == "\t" }
-        let hashes = source.dropFirst(indent.count).prefix { $0 == "#" }
-        guard !hashes.isEmpty else { return }
-        let marker = NSRange(location: line.location + indent.utf16.count, length: hashes.utf16.count + 1)
-        markdownDocument.apply(
-            [TextEdit(range: marker, replacement: "", summary: "Heading to body text")],
-            actionName: "Body Text"
-        )
+        let edits = Restructure.headingToBodyText(markdownDocument.parsed, headingIndex: index)
+        guard !edits.isEmpty else { return }
+        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
+        markdownDocument.apply(edits, actionName: "Body Text")
+        viewportRepairs.forEach { $0() }
     }
 
     private func moveBlock(_ direction: MoveDirection) {

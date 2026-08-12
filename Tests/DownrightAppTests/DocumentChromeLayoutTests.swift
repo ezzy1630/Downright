@@ -277,10 +277,8 @@ struct FloatingTaskPanelTests {
         _ surface: FloatingPanelSurface,
         parent: NSWindow
     ) -> NSRect {
-        guard let surfaceWindow = surface.window else { return .zero }
-        let windowRect = surface.convert(surface.bounds, to: nil)
-        if surfaceWindow === parent { return windowRect }
-        return parent.convertFromScreen(surfaceWindow.convertToScreen(windowRect))
+        guard surface.window === parent, let content = parent.contentView else { return .zero }
+        return content.convert(surface.convert(surface.bounds, to: content), to: nil)
     }
 
     @Test("Attaching the floating panel keeps one continuous glass view")
@@ -309,8 +307,8 @@ struct FloatingTaskPanelTests {
         #expect(!surface.opaqueFallbackIsMountedForTesting)
     }
 
-    @Test("Native task glass is translucent while controls stay fully opaque")
-    func taskGlassAndContentHaveIndependentOpacity() throws {
+    @Test("Native task glass keeps the complete effect and embeds its content")
+    func taskGlassOwnsItsContentAtFullOpticalStrength() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -319,8 +317,8 @@ struct FloatingTaskPanelTests {
         guard surface.glassIdentityForTesting != nil else { return }
         let alpha = try #require(surface.glassAlphaForTesting)
 
-        #expect(alpha >= 0.42 && alpha <= 0.56)
-        #expect(!surface.contentSharesGlassOpacityForTesting)
+        #expect(alpha == 1)
+        #expect(surface.contentSharesGlassOpacityForTesting)
         #expect(surface.content.alphaValue == 1)
     }
 
@@ -343,11 +341,11 @@ struct FloatingTaskPanelTests {
             to: nil
         )
         #expect(surface.closeControlHitZoneContainsWindowPoint(closeInWindow))
-        #expect(surface.window is FloatingPanelWindow)
+        #expect(surface.window === controller.window)
     }
 
-    @Test("Task glass uses one transparent child compositor")
-    func taskGlassUsesChildCompositorFromFirstFrame() throws {
+    @Test("Task glass stays in the document window compositor from first frame")
+    func taskGlassUsesDocumentCompositorFromFirstFrame() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -356,8 +354,8 @@ struct FloatingTaskPanelTests {
         let window = try #require(controller.window)
         let host = try #require(surface.superview)
 
-        #expect(surface.window !== window)
-        #expect((window.childWindows ?? []).contains { surface.window === $0 })
+        #expect(surface.window === window)
+        #expect(!(window.childWindows ?? []).contains { surface.window === $0 })
         #expect(surface.superview === host)
     }
 
@@ -431,8 +429,8 @@ struct FloatingTaskPanelTests {
         #expect(surface.rendersBodyForTesting)
     }
 
-    @Test("The surface stays in the document child window")
-    func documentChildWindowOwnsSurface() throws {
+    @Test("The surface stays in the document window overlay lane")
+    func documentWindowOwnsSurface() throws {
         let (_, cleanup, controller) = try makeDocument()
         defer { cleanup(); controller.close() }
 
@@ -441,9 +439,21 @@ struct FloatingTaskPanelTests {
 
         let surface = try #require(controller.floatingSurface)
         let window = try #require(controller.window)
-        #expect(surface.window !== window)
-        #expect((window.childWindows ?? []).contains { surface.window === $0 })
+        #expect(surface.window === window)
+        #expect(!(window.childWindows ?? []).contains { surface.window === $0 })
         #expect(!(surface.superview is NSSplitView))
+        if #available(macOS 26.0, *) {
+            var ancestor = surface.superview
+            var sharesGlassContainer = false
+            while let view = ancestor {
+                if view is NSGlassEffectContainerView {
+                    sharesGlassContainer = true
+                    break
+                }
+                ancestor = view.superview
+            }
+            #expect(sharesGlassContainer)
+        }
     }
 
     /// The surface fits its height to the measured content, so the last row
@@ -506,8 +516,8 @@ struct FloatingTaskPanelTests {
             surface.springApply()
         }
 
-        #expect(surface.window !== window)
-        #expect((window.childWindows ?? []).contains { surface.window === $0 })
+        #expect(surface.window === window)
+        #expect(!(window.childWindows ?? []).contains { surface.window === $0 })
         #expect(surface.glassIdentityForTesting == glassIdentity)
         #expect(surface.visibleBodyHeightForTesting > FloatingPanelSurface.Top.pourSliverHeight)
         #expect(surface.visibleBodyHeightForTesting < surface.restingWindowFrameForMorph.height)
@@ -672,8 +682,8 @@ struct FloatingTaskPanelTests {
 
         #expect(controller.floatingSurface === surface)
         #expect(controller.progressRing.isActive)
-        #expect(panelWindow !== controller.window)
-        #expect(panelWindow.parent === controller.window)
+        #expect(panelWindow === controller.window)
+        #expect(controller.window?.childWindows?.isEmpty == true)
         #expect(surface.superview != nil)
     }
 

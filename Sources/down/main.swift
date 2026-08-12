@@ -8,17 +8,25 @@ func writeError(_ message: String, status: Int32) -> Never {
     exit(status)
 }
 
-func readInputs(_ paths: [String]) -> [(String, String)] {
+func readInputs(_ paths: [String], maximumBytes: Int? = nil) -> [(String, String)] {
     let requested = paths.isEmpty ? ["-"] : paths
     return requested.map { path in
         if path == "-" {
             let data = FileHandle.standardInput.readDataToEndOfFile()
             guard !data.isEmpty else { writeError("stdin is empty", status: 66) }
+            if let maximumBytes, data.count > maximumBytes {
+                writeError("stdin exceeds the \(maximumBytes / 1_024 / 1_024) MB check limit", status: 65)
+            }
             return ("stdin", String(decoding: data, as: UTF8.self))
         }
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         guard FileManager.default.fileExists(atPath: url.path) else {
             writeError("\(path): no such file", status: 66)
+        }
+        if let maximumBytes,
+           let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > maximumBytes {
+            writeError("\(path): file exceeds the \(maximumBytes / 1_024 / 1_024) MB check limit", status: 65)
         }
         do { return (url.path, try String(contentsOf: url, encoding: .utf8)) }
         catch { writeError("\(path): cannot read UTF-8 Markdown (\(error.localizedDescription))", status: 65) }
@@ -26,20 +34,35 @@ func readInputs(_ paths: [String]) -> [(String, String)] {
 }
 
 func expandedMarkdownPaths(_ paths: [String]) -> [String] {
-    paths.flatMap { path -> [String] in
-        guard path != "-" else { return [path] }
+    let ignoredDirectories: Set<String> = [
+        ".git", ".build", "node_modules", "DerivedData", ".swiftpm",
+    ]
+    let maximumFiles = 1_000
+    var results: [String] = []
+    for path in paths {
+        guard path != "-" else { results.append(path); continue }
         let expanded = (path as NSString).expandingTildeInPath
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return [path]
+            results.append(path)
+            continue
         }
-        guard let enumerator = FileManager.default.enumerator(atPath: expanded) else { return [] }
-        return enumerator.compactMap { item in
-            guard let item = item as? String else { return nil }
+        guard let enumerator = FileManager.default.enumerator(atPath: expanded) else { continue }
+        while let item = enumerator.nextObject() as? String {
+            let name = (item as NSString).lastPathComponent
+            if ignoredDirectories.contains(name) {
+                enumerator.skipDescendants()
+                continue
+            }
             let full = URL(fileURLWithPath: expanded).appendingPathComponent(item).path
-            return MarkdownCLI.isMarkdownPath(full) ? full : nil
-        }.sorted()
+            guard MarkdownCLI.isMarkdownPath(full) else { continue }
+            results.append(full)
+            if results.count > maximumFiles {
+                writeError("folder check exceeds the \(maximumFiles)-file limit", status: 65)
+            }
+        }
     }
+    return results.sorted()
 }
 
 func stdinFile() -> URL? {
@@ -108,13 +131,6 @@ func resolvedExecutable() -> String {
     return FileManager.default.fileExists(atPath: resolved.path) ? resolved.standardizedFileURL.path : "down"
 }
 
-func loadSettings(at url: URL) -> [String: Any] {
-    guard let data = try? Data(contentsOf: url),
-          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { return [:] }
-    return object
-}
-
 let action: MarkdownCLI.Action
 do { action = try MarkdownCLI.parse(arguments) }
 catch let error as MarkdownCLI.ParseError { writeError(error.description, status: 64) }
@@ -149,7 +165,7 @@ case .export(_, let output, let paths):
         catch { writeError("cannot write \(output): \(error.localizedDescription)", status: 73) }
     } else { FileHandle.standardOutput.write(data) }
 case .check(let json, let target, let paths):
-    let inputs = readInputs(expandedMarkdownPaths(paths))
+    let inputs = readInputs(expandedMarkdownPaths(paths), maximumBytes: 10 * 1_024 * 1_024)
     var findings = 0
     for (index, input) in inputs {
         let base = input == "stdin" ? nil : URL(fileURLWithPath: index).deletingLastPathComponent()
@@ -265,7 +281,12 @@ case .hook(let options):
             home: URL(fileURLWithPath: NSHomeDirectory()),
             workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         )
-        let existing = loadSettings(at: url)
+        let existing: [String: Any]
+        do {
+            existing = try MarkdownCLI.loadSettings(at: url)
+        } catch {
+            writeError(error.localizedDescription, status: 65)
+        }
         let result = options.mode == .install
             ? AgentBridge.installingHook(into: existing, executable: executable)
             : AgentBridge.removingHook(from: existing, executable: executable)

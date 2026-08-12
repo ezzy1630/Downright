@@ -24,8 +24,13 @@ public final class AgentWatcher {
     private let debounce: TimeInterval
     private let handler: ([URL]) -> Void
     private let queue = DispatchQueue(label: "com.ezzy.downright.agentwatcher", qos: .utility)
+    private let queueKey = DispatchSpecificKey<Void>()
 
     private var stream: FSEventStreamRef?
+    private final class StreamContext {
+        weak var watcher: AgentWatcher?
+    }
+    private var streamContext: StreamContext?
     /// Resolved once at `start()`.  Recomputing it per event would stat the
     /// file system on every write in a busy directory to answer a question whose
     /// answer cannot change while the stream is running.
@@ -75,6 +80,7 @@ public final class AgentWatcher {
         self.roots = roots.map { $0.standardizedFileURL }
         self.debounce = debounce
         self.handler = handler
+        queue.setSpecific(key: queueKey, value: ())
     }
 
     deinit { stop() }
@@ -125,15 +131,30 @@ public final class AgentWatcher {
 
     @discardableResult
     public func start() -> Bool {
+        stop()
+        return onQueue { startOnQueue() }
+    }
+
+    private func startOnQueue() -> Bool {
         let plan = Self.plan(for: roots)
         guard !plan.directories.isEmpty else { return false }
         watchPlan = plan
 
+        let box = StreamContext()
+        box.watcher = self
+        streamContext = box
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
+            info: Unmanaged.passUnretained(box).toOpaque(),
+            retain: { info in
+                guard let info else { return nil }
+                _ = Unmanaged<StreamContext>.fromOpaque(info).retain()
+                return UnsafeRawPointer(info)
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<StreamContext>.fromOpaque(info).release()
+            },
             copyDescription: nil
         )
         // Without `kFSEventStreamCreateFlagUseCFTypes` the callback receives a
@@ -143,7 +164,8 @@ public final class AgentWatcher {
         // runs forever and simply never reports anything.
         let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
             guard let info else { return }
-            let watcher = Unmanaged<AgentWatcher>.fromOpaque(info).takeUnretainedValue()
+            let box = Unmanaged<StreamContext>.fromOpaque(info).takeUnretainedValue()
+            guard let watcher = box.watcher else { return }
             let raw = paths.assumingMemoryBound(to: UnsafePointer<CChar>?.self)
             var changed: [String] = []
             for index in 0..<count {
@@ -177,11 +199,27 @@ public final class AgentWatcher {
     }
 
     public func stop() {
-        guard let stream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        self.stream = nil
+        onQueue { stopOnQueue() }
+    }
+
+    private func stopOnQueue() {
+        if let stream {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            self.stream = nil
+        }
+        streamContext?.watcher = nil
+        streamContext = nil
+        flush?.cancel()
+        flush = nil
+        pending.removeAll(keepingCapacity: false)
+        pendingSeen.removeAll(keepingCapacity: false)
+    }
+
+    private func onQueue<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil { return body() }
+        return queue.sync(execute: body)
     }
 
     private func absorb(_ paths: [String]) {

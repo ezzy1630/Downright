@@ -251,7 +251,15 @@ final class BreadcrumbView: NSView {
     private func showPathMenu() {
         guard !trail.isEmpty else { return }
         let menu = makePathMenu()
-        menu.popUp(positioning: menu.items.last, at: NSPoint(x: 0, y: 0), in: self)
+        // Anchor to the control that owns the path.  Positioning the last item
+        // at the host's origin made the menu appear detached from the crumb
+        // (and selected the deepest item by default), especially when the
+        // navigation lane was inset by a split view.
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: sectionButton.frame.minX, y: sectionButton.frame.minY),
+            in: self
+        )
     }
 
     func makePathMenu() -> NSMenu {

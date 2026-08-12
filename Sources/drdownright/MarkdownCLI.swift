@@ -8,6 +8,30 @@ import MarkdownCore
 public enum MarkdownCLI {
     public static let version = "1.0.0"
 
+    /// Settings are user-owned configuration. Bound reads so a special file or
+    /// unexpectedly large document cannot make `down hook` consume unbounded
+    /// memory, and never turn a read failure into an empty configuration.
+    public static let maximumSettingsBytes = 1_048_576
+
+    public enum SettingsFileError: Error, CustomStringConvertible, LocalizedError, Sendable {
+        case unreadable(path: String, reason: String)
+        case tooLarge(path: String, maximumBytes: Int)
+        case invalidJSON(path: String)
+
+        public var description: String {
+            switch self {
+            case .unreadable(let path, let reason):
+                return "cannot read \(path): \(reason)"
+            case .tooLarge(let path, let maximumBytes):
+                return "cannot read \(path): settings exceed \(maximumBytes) bytes"
+            case .invalidJSON(let path):
+                return "cannot read \(path): settings must be a JSON object"
+            }
+        }
+
+        public var errorDescription: String? { description }
+    }
+
     public enum Action: Equatable, Sendable {
         case open(OpenOptions, paths: [String])
         case read(json: Bool, paths: [String])
@@ -456,6 +480,60 @@ public enum MarkdownCLI {
         return supported.contains(URL(fileURLWithPath: path).pathExtension.lowercased())
     }
 
+    /// Loads a hook settings object without ever treating damaged input as an
+    /// absent file. The caller may safely write only after this returns.
+    public static func loadSettings(
+        at url: URL,
+        maximumBytes: Int = maximumSettingsBytes
+    ) throws -> [String: Any] {
+        guard maximumBytes >= 0 else {
+            throw SettingsFileError.unreadable(
+                path: url.path,
+                reason: "maximum byte count must not be negative"
+            )
+        }
+        let manager = FileManager.default
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try manager.attributesOfItem(atPath: url.path)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return [:]
+        } catch {
+            throw SettingsFileError.unreadable(path: url.path, reason: error.localizedDescription)
+        }
+
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw SettingsFileError.unreadable(path: url.path, reason: "not a regular file")
+        }
+        if let size = attributes[.size] as? NSNumber, size.uint64Value > UInt64(maximumBytes) {
+            throw SettingsFileError.tooLarge(path: url.path, maximumBytes: maximumBytes)
+        }
+
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: url)
+        } catch {
+            throw SettingsFileError.unreadable(path: url.path, reason: error.localizedDescription)
+        }
+        defer { try? handle.close() }
+
+        let data: Data
+        do {
+            data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+        } catch {
+            throw SettingsFileError.unreadable(path: url.path, reason: error.localizedDescription)
+        }
+        guard data.count <= maximumBytes else {
+            throw SettingsFileError.tooLarge(path: url.path, maximumBytes: maximumBytes)
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let settings = object as? [String: Any]
+        else {
+            throw SettingsFileError.invalidJSON(path: url.path)
+        }
+        return settings
+    }
+
     private static func escape(_ value: String) -> String {
         value.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -468,9 +546,79 @@ public enum MarkdownCLI {
         result = result.replacingOccurrences(of: #"`([^`]+)`"#, with: "<code>$1</code>", options: .regularExpression)
         result = result.replacingOccurrences(of: #"\*\*([^*]+)\*\*"#, with: "<strong>$1</strong>", options: .regularExpression)
         result = result.replacingOccurrences(of: #"\*([^*]+)\*"#, with: "<em>$1</em>", options: .regularExpression)
-        result = result.replacingOccurrences(of: #"!\[([^\]]*)\]\(([^)]+)\)"#, with: "<img alt=\"$1\" src=\"$2\">", options: .regularExpression)
-        result = result.replacingOccurrences(of: #"\[([^\]]+)\]\(([^)]+)\)"#, with: "<a href=\"$2\">$1</a>", options: .regularExpression)
+        result = replacingMatches(in: result, pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#) { captures in
+            let alt = captures[0]
+            let source = captures[1]
+            guard imageSourceIsSafe(source) else {
+                return "<span class=\"missing-image\" title=\"\(source)\">\(alt)</span>"
+            }
+            return "<img alt=\"\(alt)\" src=\"\(source)\">"
+        }
+        result = replacingMatches(in: result, pattern: #"\[([^\]]+)\]\(([^)]+)\)"#) { captures in
+            let label = captures[0]
+            let destination = captures[1]
+            guard linkDestinationIsSafe(destination) else {
+                return "<span title=\"\(destination)\">\(label)</span>"
+            }
+            return "<a href=\"\(destination)\">\(label)</a>"
+        }
         return result.replacingOccurrences(of: "\\n", with: "<br>\\n")
+    }
+
+    private static let linkSchemeAllowlist: Set<String> = ["http", "https", "mailto"]
+
+    private static func linkDestinationIsSafe(_ destination: String) -> Bool {
+        let lower = destination.lowercased()
+        guard let colon = lower.firstIndex(of: ":") else { return true }
+        let prefix = lower[..<colon]
+        guard !prefix.isEmpty,
+              prefix.rangeOfCharacter(from: CharacterSet(charactersIn: "/?#\\")) == nil
+        else { return true }
+        return linkSchemeAllowlist.contains(String(prefix))
+    }
+
+    private static func imageSourceIsSafe(_ source: String) -> Bool {
+        guard !source.hasPrefix("/"),
+              !source.hasPrefix("\\"),
+              !hasURLScheme(source)
+        else { return false }
+        let decoded = source.removingPercentEncoding ?? source
+        let path = decoded
+            .split(separator: "#", maxSplits: 1)[0]
+            .split(separator: "?", maxSplits: 1)[0]
+            .replacingOccurrences(of: "\\", with: "/")
+        return !path.split(separator: "/", omittingEmptySubsequences: false).contains("..")
+    }
+
+    private static func hasURLScheme(_ source: String) -> Bool {
+        guard let colon = source.firstIndex(of: ":") else { return false }
+        let prefix = source[..<colon]
+        guard !prefix.isEmpty else { return false }
+        let scheme = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+-."))
+        return prefix.unicodeScalars.allSatisfy { scheme.contains($0) }
+    }
+
+    private static func replacingMatches(
+        in value: String,
+        pattern: String,
+        transform: ([String]) -> String
+    ) -> String {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return value }
+        let source = value as NSString
+        let matches = expression.matches(
+            in: value,
+            range: NSRange(location: 0, length: source.length)
+        )
+        var result = value
+        for match in matches.reversed() {
+            let captures = (1..<match.numberOfRanges).map { index -> String in
+                let range = match.range(at: index)
+                return range.location == NSNotFound ? "" : source.substring(with: range)
+            }
+            guard let range = Range(match.range, in: result) else { continue }
+            result.replaceSubrange(range, with: transform(captures))
+        }
+        return result
     }
 
     private static func heading(_ line: String) -> (level: Int, text: String)? {

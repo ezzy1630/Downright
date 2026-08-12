@@ -43,32 +43,32 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     ) {
         markdownDocument.ensureParsedCurrent()
         guard markdownDocument.parsed.headings.indices.contains(headingIndex) else { return }
+        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
         if let level {
             let edits = Restructure.setHeadingLevel(
                 markdownDocument.parsed, headingIndex: headingIndex, level: level
             )
+            guard !edits.isEmpty else { return }
+            // The heading chip is a rendered control, not an insertion gesture.
+            // Preserve both cameras before mutating the shared storage so the
+            // async decoration pass cannot make either pane follow the menu.
             markdownDocument.apply(edits, actionName: "Set Heading \(level)")
+            viewportRepairs.forEach { $0() }
             return
         }
-        let heading = markdownDocument.parsed.headings[headingIndex]
-        let line = markdownDocument.parsed.range(ofLine: markdownDocument.parsed.line(at: heading.range.location))
-        let source = markdownDocument.parsed.substring(line)
-        let indent = source.prefix { $0 == " " || $0 == "\t" }
-        let hashes = source.dropFirst(indent.count).prefix { $0 == "#" }
-        guard !hashes.isEmpty else { return }
-        markdownDocument.apply([
-            TextEdit(
-                range: NSRange(
-                    location: line.location + indent.utf16.count,
-                    length: hashes.utf16.count + 1
-                ),
-                replacement: "",
-                summary: "Heading to body text"
-            ),
-        ], actionName: "Body Text")
+        let edits = Restructure.headingToBodyText(
+            markdownDocument.parsed, headingIndex: headingIndex
+        )
+        guard !edits.isEmpty else { return }
+        markdownDocument.apply(edits, actionName: "Body Text")
+        viewportRepairs.forEach { $0() }
     }
     func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange) {
         presentLightbox(source: source, caption: nil)
+    }
+
+    func markdownTextView(_ view: MarkdownTextView, didActivateFrontMatterAt range: NSRange) {
+        showFrontMatterEditor(focus: nil)
     }
 
     func markdownTextView(
@@ -192,8 +192,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         updateBreadcrumbAndGutter()
         noteVisibleChangeMarks()
         let visible = view.enclosingScrollView?.documentVisibleRect ?? view.visibleRect
-        let current = markdownDocument.parsed.headings.last {
-            $0.range.location <= view.topVisibleOffset
+        let current = visibleHeadingIndex(at: view.topVisibleOffset).map {
+            markdownDocument.parsed.headings[$0]
         }
         if let current,
            let headingRect = view.rect(forOffset: current.range.location),

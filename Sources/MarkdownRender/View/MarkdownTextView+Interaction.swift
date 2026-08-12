@@ -119,6 +119,15 @@ extension MarkdownTextView {
 
     public override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        // Keep the chip alive while the pointer crosses into the adjacent
+        // gutter.  AppKit sends `mouseExited` before the rail's tracking area
+        // receives `mouseEntered`; clearing here made the control disappear
+        // for one frame and discarded the heading target mid-handoff.
+        if let rail = gutterRail,
+           rail.window === window,
+           rail.bounds.contains(rail.convert(event.locationInWindow, from: nil)) {
+            return
+        }
         clearHoverState()
     }
 
@@ -133,7 +142,7 @@ extension MarkdownTextView {
         // zebra the row under the pointer (§7.1, §11.3).
         let hoveredFragment: NSRange?
         switch payload?.kind {
-        case .codeBlock, .collapsedCodeBlock, .image: hoveredFragment = payload?.sourceRange
+        case .codeBlock, .collapsedCodeBlock, .image, .frontMatter: hoveredFragment = payload?.sourceRange
         default: hoveredFragment = nil
         }
         if fragmentContext.hoveredFragmentRange != hoveredFragment {
@@ -188,6 +197,8 @@ extension MarkdownTextView {
             // see, and it doubles as the cue that the image opens.
             let alt = payload?.detail.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             nextToolTip = alt.isEmpty ? nil : alt
+        } else if payload?.kind == .frontMatter {
+            nextToolTip = "Edit front matter"
         } else if let hit = attribute(.drReference, atSourceOffset: offset),
                   let identifier = hit.value as? String,
                   let footnote = parsedDocument.footnotes[identifier] {
@@ -225,6 +236,7 @@ extension MarkdownTextView {
             || attribute(.drReference, atSourceOffset: offset) != nil
             || attribute(.drPathToken, atSourceOffset: offset) != nil
             || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
+            || (mode != .source && fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter)
             || (mode != .source && attribute(.drCheckbox, atSourceOffset: offset) != nil)
     }
 
@@ -315,6 +327,17 @@ extension MarkdownTextView {
         }
 
         if handleCodeBlockChrome(at: point) { return }
+
+        if mode != .source,
+           let hit = fragmentPayload(at: point),
+           hit.payload.kind == .frontMatter,
+           clickActivates(hit.payload.sourceRange, modifiers: modifiers) {
+            markdownDelegate?.markdownTextView(
+                self,
+                didActivateFrontMatterAt: hit.payload.sourceRange
+            )
+            return
+        }
 
         if mode != .source, let hit = attribute(.drElided, at: point) {
             expandElision(at: hit.range.location)

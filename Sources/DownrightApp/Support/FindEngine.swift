@@ -127,6 +127,8 @@ final class FindSession {
 /// Still no index and no vault (§2): it reads the same shallow file list the
 /// sidebar already has, on demand.
 enum SiblingSearch {
+    static let maximumFileBytes = 4 * 1_024 * 1_024
+    static let maximumTotalBytes = 32 * 1_024 * 1_024
     struct Hit: Identifiable {
         var id: String { "\(url.path):\(range.location)" }
         var url: URL
@@ -142,7 +144,14 @@ enum SiblingSearch {
 
     static func search(_ query: FindQuery, in urls: [URL], limitPerFile: Int = 20) -> [Hit] {
         var hits: [Hit] = []
+        var bytesRead = 0
         for url in urls {
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size >= 0,
+                  size <= maximumFileBytes,
+                  bytesRead + size <= maximumTotalBytes
+            else { continue }
+            bytesRead += size
             guard let (text, _) = try? DocumentIO.read(contentsOf: url) else { continue }
             let ranges = FindEngine.matches(in: text, query: query)
             guard !ranges.isEmpty else { continue }
