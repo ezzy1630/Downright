@@ -188,6 +188,16 @@ import Testing
     #expect(padded.size.height - unpadded.size.height >= 15.9)
 }
 
+@Test @MainActor func blockMathSupportsOperatorWrappers() throws {
+    let formula = #"\mathop{\mathrm{read}}(source) \longrightarrow \mathop{\mathrm{parse}}(tree)"#
+    let image = MathRenderer.image(
+        latex: formula,
+        display: true,
+        pointSize: 16,
+        color: .labelColor)
+    #expect(image != nil, "common operator wrappers should not fall back to raw LaTeX")
+}
+
 /// P0-5 regression: a task label must end at its own line terminator, never
 /// swallowing nested children's text.  The list item's `contentRange` is the
 /// source of truth — the derived task list reads it directly.

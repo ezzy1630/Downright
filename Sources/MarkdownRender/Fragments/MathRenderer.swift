@@ -43,7 +43,7 @@ public enum MathRenderer {
             padding: (padding * 2).rounded())
         return MarkdownFragmentImageCaches.math.image(for: key, keyCost: key.source.utf8.count) {
             let renderer = MTMathImage(
-                latex: trimmed,
+                latex: swiftMathSource(from: trimmed),
                 fontSize: key.pointSize,
                 textColor: color,
                 labelMode: display ? .display : .text,
@@ -71,10 +71,67 @@ public enum MathRenderer {
         }
     }
 
+    /// SwiftMath does not implement TeX's `\mathop{...}` wrapper. It is a
+    /// presentation hint around an existing expression, so dropping the
+    /// wrapper preserves the visible math instead of turning a valid formula
+    /// into a source-text fallback.
+    private static func swiftMathSource(from latex: String) -> String {
+        var output = ""
+        var cursor = latex.startIndex
+
+        while cursor < latex.endIndex {
+            guard latex[cursor] == "\\" else {
+                output.append(latex[cursor])
+                cursor = latex.index(after: cursor)
+                continue
+            }
+
+            let commandStart = cursor
+            cursor = latex.index(after: cursor)
+            while cursor < latex.endIndex, latex[cursor].isLetter {
+                cursor = latex.index(after: cursor)
+            }
+            let command = String(latex[latex.index(after: commandStart)..<cursor])
+
+            guard command == "mathop", cursor < latex.endIndex, latex[cursor] == "{",
+                  let closingBrace = matchingBrace(in: latex, openingAt: cursor) else {
+                output.append(contentsOf: latex[commandStart..<cursor])
+                continue
+            }
+
+            let contentStart = latex.index(after: cursor)
+            output.append(contentsOf: latex[contentStart..<closingBrace])
+            cursor = latex.index(after: closingBrace)
+        }
+
+        return output
+    }
+
+    private static func matchingBrace(in source: String, openingAt opening: String.Index) -> String.Index? {
+        var depth = 0
+        var cursor = opening
+
+        while cursor < source.endIndex {
+            if source[cursor] == "\\" {
+                cursor = source.index(after: cursor)
+                if cursor < source.endIndex { cursor = source.index(after: cursor) }
+                continue
+            }
+            if source[cursor] == "{" {
+                depth += 1
+            } else if source[cursor] == "}" {
+                depth -= 1
+                if depth == 0 { return cursor }
+            }
+            cursor = source.index(after: cursor)
+        }
+
+        return nil
+    }
+
     private static func colorToken(_ color: NSColor) -> String {
         let rgb = color.usingColorSpace(.sRGB) ?? color
         return String(format: "%.3f,%.3f,%.3f,%.3f",
                       rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent)
     }
 }
-
