@@ -73,6 +73,13 @@ import Testing
         #expect(ListEditing.indent(doc, lineRange: doc.range(ofLine: 1), outdent: true).isEmpty)
     }
 
+    @Test func proseIsNeverTreatedAsAListItem() {
+        let text = "Paragraph text.\n"
+        let doc = MarkdownParser.parse(text)
+        #expect(ListEditing.indent(doc, lineRange: doc.range(ofLine: 1), outdent: false).isEmpty)
+        #expect(ListEditing.indent(doc, lineRange: doc.range(ofLine: 1), outdent: true).isEmpty)
+    }
+
     @Test func indentSpansMultipleLines() {
         let text = "- a\n- b\n- c\n"
         let doc = MarkdownParser.parse(text)

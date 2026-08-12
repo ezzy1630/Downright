@@ -121,7 +121,28 @@ public enum Restructure {
         let source = doc.substring(line)
         let indent = source.leadingIndent
         let hashes = source.dropFirst(indent.count).prefix { $0 == "#" }
-        guard hashes.count == heading.level else { return nil }  // setext: nothing to rewrite
+        if hashes.count != heading.level {
+            // Setext can express only H1/H2. The direct picker still promises
+            // H1...H6, so normalize this heading to ATX while preserving the
+            // parsed title, indentation, and original line ending.
+            let titleLineNumber = doc.line(at: line.location)
+            guard titleLineNumber < doc.lineStarts.count else { return nil }
+            let underlineStart = doc.lineStarts[titleLineNumber]
+            let removalEnd = titleLineNumber + 1 < doc.lineStarts.count
+                ? doc.lineStarts[titleLineNumber + 1]
+                : doc.length
+            let separator = line.upperBound < underlineStart
+                ? doc.substring(NSRange(
+                    location: line.upperBound,
+                    length: underlineStart - line.upperBound
+                ))
+                : ""
+            return TextEdit(
+                range: NSRange(location: line.location, length: removalEnd - line.location),
+                replacement: "\(indent)\(String(repeating: "#", count: level)) \(heading.title)\(separator)",
+                summary: "H\(heading.level) → H\(level): \(heading.title)"
+            )
+        }
         return TextEdit(
             range: NSRange(location: line.location + indent.utf16.count, length: hashes.count),
             replacement: String(repeating: "#", count: level),

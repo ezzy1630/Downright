@@ -129,6 +129,9 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     public var metricsSummary: String = ""
 
     public var preferredWidth: CGFloat { DensityGutterView.width }
+    /// Allows the host to opt into a compact hover card when its window has no
+    /// side margin. Off by default: the document editor keeps its prose clear.
+    public var allowsPreviewContentOverlap = false
 
     /// Narrower than this and the rail is noise rather than signal, so hosts
     /// whose width varies — the Quick Look panel especially (§10, "density
@@ -1546,7 +1549,8 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             over: window,
             maximumTrailingX: maximumTrailingX,
             reduceMotion: styleSheet.reduceMotion,
-            interactive: interactive
+            interactive: interactive,
+            allowContentOverlap: allowsPreviewContentOverlap
         )
     }
 

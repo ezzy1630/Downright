@@ -551,6 +551,49 @@ struct WindowChromeTests {
         #expect(abs(clip.bounds.origin.y - 420) < 0.5)
     }
 
+    @Test("Find entrance and exit keep the document geometry fixed")
+    func findMotionDoesNotShiftDocument() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-find-motion-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        let text = (0..<80).map {
+            "## Section \($0)\n\nStable prose \($0)."
+        }.joined(separator: "\n\n")
+        try Data(text.utf8).write(to: file)
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.window?.setContentSize(NSSize(width: 900, height: 500))
+        controller.window?.layoutIfNeeded()
+        let container = try #require(controller.primaryContainer)
+        container.textView.resizeToFitContent()
+        let beforeFrame = container.frame
+        let clip = container.scrollView.contentView
+        let requestedBounds = NSRect(
+            x: clip.bounds.origin.x,
+            y: 900,
+            width: clip.bounds.width,
+            height: clip.bounds.height
+        )
+        let constrainedBounds = clip.constrainBoundsRect(requestedBounds)
+        clip.scroll(to: constrainedBounds.origin)
+        container.scrollView.reflectScrolledClipView(clip)
+        let beforeBounds = clip.bounds
+
+        controller.showFindBar(replace: false)
+        controller.window?.layoutIfNeeded()
+        controller.dismissFindBar()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        controller.window?.layoutIfNeeded()
+
+        #expect(container.frame == beforeFrame)
+        #expect(abs(clip.bounds.origin.x - beforeBounds.origin.x) < 0.5)
+        #expect(abs(clip.bounds.origin.y - beforeBounds.origin.y) < 0.5)
+        #expect(clip.bounds.size == beforeBounds.size)
+    }
+
     @Test
     func inspectorFindKeepsTheSameRhythmWithoutADuplicateClose() {
         let bar = FindBarView(styleSheet: .current, presentation: .inspector)

@@ -695,6 +695,10 @@ extension MarkdownTextView {
         guard isEditable, let storage = textStorage else { return false }
         let clamped = NSRange(location: max(0, min(range.location, storage.length)),
                               length: max(0, min(range.length, storage.length - min(range.location, storage.length))))
+        // Capture before `didChangeText()` can run AppKit's implicit
+        // make-caret-visible path. Capturing after the mutation records the
+        // teleported camera as if it were intentional.
+        let viewportAnchor = captureViewportAnchor()
         // AppKit's `shouldChangeText` coalesces into the undo manager. Synthetic
         // key events (and a few edge focus paths) can arrive with no open group;
         // open one so typing never traps on `NSUndoManager` state.
@@ -712,6 +716,9 @@ extension MarkdownTextView {
         let oldHiddenRanges = currentDisplayMap.baseHiddenRangesForEditProjection
         let deletedText = storage.attributedSubstring(from: clamped).string
         let inserted = (replacement as NSString).length
+        let projectedViewportAnchor = projectViewportAnchor(
+            viewportAnchor, across: clamped, insertedLength: inserted
+        )
         let preservesParagraphStructure = !containsParagraphSeparator(deletedText)
             && !containsParagraphSeparator(replacement)
         projectFragmentPayloads(across: clamped, insertedLength: inserted)
@@ -731,8 +738,9 @@ extension MarkdownTextView {
 
         markdownDelegate?.markdownTextView(self, didEdit: clamped, delta: inserted - clamped.length)
         shouldFollowCaretAfterLocalEdit = true
+        localEditViewportAnchor = projectedViewportAnchor
         setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
-        handleSelectionChanged()
+        handleSelectionChanged(preservingViewport: projectedViewportAnchor)
         return true
     }
 

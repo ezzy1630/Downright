@@ -51,6 +51,8 @@ struct DensityRailTests {
 
     @Test("Leading preview stays inside the page margin")
     func previewWidthRespectsTextBoundary() {
+        #expect(DensityGutterPreviewWindow.compactOverlayWidth(parentWidth: 720) == 302.4)
+        #expect(DensityGutterPreviewWindow.compactOverlayWidth(parentWidth: 300) == 140)
         #expect(DensityGutterPreviewWindow.resolvedMaximumWidth(
             anchorX: 72,
             maximumTrailingX: 412,

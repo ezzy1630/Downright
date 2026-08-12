@@ -112,6 +112,43 @@ struct EditingKeyReproTests {
         #expect(controller.markdownDocument.text.hasPrefix("# xyTitle"))
     }
 
+    @Test("Real key events keep the caret line fixed through the async parse")
+    func typingKeepsCaretLineFixed() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproCamera-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = (0..<50).map {
+            "## Section \($0)\n\nParagraph \($0) stays on screen while the user types."
+        }.joined(separator: "\n\n")
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.setContentSize(NSSize(width: 900, height: 640))
+        controller.window?.layoutIfNeeded()
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        let target = (text as NSString).range(of: "Paragraph 25")
+        var caret = target.upperBound
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+        view.resizeToFitContent()
+        view.scroll(toOffset: target.location, position: .center, animated: false)
+        let clip = controller.primaryContainer.scrollView.contentView
+        let screenY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.origin.y
+
+        for character in "abc" {
+            type(character, into: view)
+            caret += 1
+            let currentY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.origin.y
+            #expect(abs(currentY - screenY) < 1, "the key event moved the caret line")
+        }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        controller.window?.layoutIfNeeded()
+        let settledY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.origin.y
+        #expect(abs(settledY - screenY) < 1, "the parse commit moved the caret line")
+    }
+
     @Test func deleteThroughRealKeyDownMutatesDocument() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("EditingKeyReproDel-\(UUID().uuidString).md")
@@ -167,12 +204,17 @@ struct EditingKeyReproTests {
         type("x", into: view)
         pressDelete(into: view)
         view.insertNewline(nil)
+        type("t", into: view)
+        type("a", into: view)
+        type("i", into: view)
+        type("l", into: view)
         pressTab(into: view)
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.35))
         controller.window?.layoutIfNeeded()
         view.resizeToFitContent()
 
         #expect(abs(clip.bounds.origin.y - expectedY) < 2)
+        #expect(controller.markdownDocument.text.contains("\ntail\t"))
         let layout = try #require(view.textLayoutManager)
         layout.ensureLayout(for: layout.documentRange)
         var frames: [NSRect] = []
@@ -259,13 +301,50 @@ struct EditingKeyReproTests {
         view.resizeToFitContent()
         view.scroll(toOffset: target.location, position: .center, animated: false)
         let clip = controller.primaryContainer.scrollView.contentView
-        let expectedY = clip.bounds.origin.y
+        let expectedScreenY = try #require(view.rect(forOffset: target.location)).minY
+            - clip.bounds.origin.y
 
         #expect(controller.perform(.promoteHeading))
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.35))
         controller.window?.layoutIfNeeded()
 
-        #expect(abs(clip.bounds.origin.y - expectedY) < 2)
+        let actualScreenY = try #require(view.rect(forOffset: target.location)).minY
+            - clip.bounds.origin.y
+        #expect(abs(actualScreenY - expectedScreenY) < 2)
         #expect(controller.markdownDocument.text.contains("## Detail 20"))
+    }
+
+    @Test("Rendered heading picker commits in place before the next frame")
+    func headingPickerKeepsClickedHeadingFixed() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproHeadingPicker-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sections = (0..<35).map {
+            "## Section \($0)\n\nParagraph \($0) keeps the page tall."
+        }.joined(separator: "\n\n")
+        let text = "# Title\n\n\(sections)\n"
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.setContentSize(NSSize(width: 900, height: 640))
+        controller.window?.layoutIfNeeded()
+        let view = controller.primaryContainer.textView
+        view.resizeToFitContent()
+        let headingIndex = try #require(
+            controller.markdownDocument.parsed.headings.firstIndex { $0.title == "Section 20" }
+        )
+        let offset = controller.markdownDocument.parsed.headings[headingIndex].range.location
+        view.scroll(toOffset: offset, position: .center, animated: false)
+        let clip = controller.primaryContainer.scrollView.contentView
+        let before = try #require(view.rect(forOffset: offset)).minY - clip.bounds.origin.y
+
+        controller.markdownTextView(view, didRequestHeadingLevel: 3, headingIndex: headingIndex)
+        controller.window?.layoutIfNeeded()
+
+        #expect(controller.markdownDocument.parsed.headings[headingIndex].level == 3)
+        let after = try #require(view.rect(forOffset: offset)).minY - clip.bounds.origin.y
+        #expect(abs(after - before) < 2, "the picker moved its clicked heading")
     }
 }

@@ -930,6 +930,18 @@ enum PreferencesForms {
         let light = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
         let dark = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
         return [
+            .choice("Quick Look appearance",
+                    help: "Preview files in System appearance by default, or keep a fixed Light or Dark surface.",
+                    options: PreviewAppearance.allCases.map(\.title),
+                    get: {
+                        .index(PreviewAppearance.allCases.firstIndex(of: Preferences.shared.values.previewAppearance) ?? 0)
+                    },
+                    set: { index in
+                        guard PreviewAppearance.allCases.indices.contains(index) else { return }
+                        Preferences.shared.update {
+                            $0.previewAppearance = PreviewAppearance.allCases[index]
+                        }
+                    }),
             .section("Themes"),
             .choice("Light theme", help: "Used when macOS is in Light appearance.",
                     options: light,

@@ -43,7 +43,6 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     ) {
         markdownDocument.ensureParsedCurrent()
         guard markdownDocument.parsed.headings.indices.contains(headingIndex) else { return }
-        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
         if let level {
             let edits = Restructure.setHeadingLevel(
                 markdownDocument.parsed, headingIndex: headingIndex, level: level
@@ -52,16 +51,22 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             // The heading chip is a rendered control, not an insertion gesture.
             // Preserve both cameras before mutating the shared storage so the
             // async decoration pass cannot make either pane follow the menu.
-            markdownDocument.apply(edits, actionName: "Set Heading \(level)")
-            viewportRepairs.forEach { $0() }
+            applyInPlaceDocumentEdits(
+                edits,
+                actionName: "Set Heading \(level)",
+                anchorOffset: markdownDocument.parsed.headings[headingIndex].range.location
+            )
             return
         }
         let edits = Restructure.headingToBodyText(
             markdownDocument.parsed, headingIndex: headingIndex
         )
         guard !edits.isEmpty else { return }
-        markdownDocument.apply(edits, actionName: "Body Text")
-        viewportRepairs.forEach { $0() }
+        applyInPlaceDocumentEdits(
+            edits,
+            actionName: "Body Text",
+            anchorOffset: markdownDocument.parsed.headings[headingIndex].range.location
+        )
     }
     func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange) {
         presentLightbox(source: source, caption: nil)

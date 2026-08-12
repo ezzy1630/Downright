@@ -12,6 +12,9 @@ final class Preferences {
         var darkThemeName: String = "Warm Dark"
         /// When true the light/dark theme pair follows the system appearance.
         var followsSystemAppearance: Bool = true
+        /// Quick Look is a separate sandboxed process. Its default follows
+        /// macOS, with an explicit override for readers who want a fixed mode.
+        var previewAppearance: PreviewAppearance = .system
 
         var typography: TypographyConfig = .default
         /// Text size is app-wide rather than per document (§7.1).
@@ -82,6 +85,7 @@ final class Preferences {
             themeName = get(.themeName, "Paper Light")
             darkThemeName = get(.darkThemeName, "Warm Dark")
             followsSystemAppearance = get(.followsSystemAppearance, true)
+            previewAppearance = get(.previewAppearance, .system)
             typography = get(.typography, TypographyConfig.default)
             textSizeAdjustment = get(.textSizeAdjustment, 0)
             typographicSubstitution = get(.typographicSubstitution, false)
@@ -171,6 +175,11 @@ final class Preferences {
             // (§8.4).
             values.externalEditor = ExternalEditor.bestAvailable
         }
+        PreviewAppearanceStore.write(
+            appearance: values.previewAppearance,
+            lightThemeName: values.themeName,
+            darkThemeName: values.darkThemeName
+        )
         SnapshotStore.shared.maximumAge = TimeInterval(values.historyMaximumDays) * 86_400
         SnapshotStore.shared.maximumBytes = values.historyMaximumMegabytes * 1024 * 1024
     }
@@ -219,6 +228,11 @@ final class Preferences {
         do {
             let data = try encoder.encode(values)
             try data.write(to: AppPaths.preferencesFile, options: .atomic)
+            PreviewAppearanceStore.write(
+                appearance: values.previewAppearance,
+                lightThemeName: values.themeName,
+                darkThemeName: values.darkThemeName
+            )
             lastPersistenceError = nil
         } catch {
             // Edge-triggered: report the first failure of a run and stay quiet

@@ -304,9 +304,9 @@ extension DocumentWindowController: CommandResponder {
             ? Restructure.promoteHeading(markdownDocument.parsed, headingIndex: index)
             : Restructure.demoteHeading(markdownDocument.parsed, headingIndex: index)
         guard !edits.isEmpty else { return }
-        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
-        markdownDocument.apply(edits, actionName: promote ? "Promote Heading" : "Demote Heading")
-        viewportRepairs.forEach { $0() }
+        applyInPlaceDocumentEdits(
+            edits, actionName: promote ? "Promote Heading" : "Demote Heading"
+        )
     }
 
     private func setHeadingLevel(_ level: Int) {
@@ -314,9 +314,11 @@ extension DocumentWindowController: CommandResponder {
         guard let index = currentHeadingIndex() else { return }
         let edits = Restructure.setHeadingLevel(markdownDocument.parsed, headingIndex: index, level: level)
         guard !edits.isEmpty else { return }
-        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
-        markdownDocument.apply(edits, actionName: "Set Heading (level)")
-        viewportRepairs.forEach { $0() }
+        applyInPlaceDocumentEdits(
+            edits,
+            actionName: "Set Heading \(level)",
+            anchorOffset: markdownDocument.parsed.headings[index].range.location
+        )
     }
 
     private func convertHeadingToBody() {
@@ -324,8 +326,26 @@ extension DocumentWindowController: CommandResponder {
         guard let index = currentHeadingIndex() else { return }
         let edits = Restructure.headingToBodyText(markdownDocument.parsed, headingIndex: index)
         guard !edits.isEmpty else { return }
-        let viewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
-        markdownDocument.apply(edits, actionName: "Body Text")
+        applyInPlaceDocumentEdits(edits, actionName: "Body Text")
+    }
+
+    /// Structural controls mutate storage outside
+    /// `MarkdownTextView.performSourceEdit`. Leaving the old display map alive
+    /// until the async parser runs makes TextKit briefly fall back to raw
+    /// paragraphs, which is the visible page teleport. Lock each pane's pixel
+    /// camera and publish the matching parse before this event can draw that
+    /// inconsistent state.
+    func applyInPlaceDocumentEdits(
+        _ edits: [TextEdit], actionName: String, anchorOffset: Int? = nil
+    ) {
+        guard !edits.isEmpty else { return }
+        let viewportRepairs = documentPanes.map { pane in
+            anchorOffset.map { pane.textView.makeViewportRepair(at: $0) }
+                ?? pane.textView.makeViewportRepair()
+        }
+        documentPanes.forEach { $0.textView.preserveViewportOnNextDocumentUpdate() }
+        markdownDocument.apply(edits, actionName: actionName)
+        markdownDocument.reparseNow()
         viewportRepairs.forEach { $0() }
     }
 

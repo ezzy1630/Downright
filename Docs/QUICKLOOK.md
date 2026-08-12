@@ -49,10 +49,15 @@ Settings → General → System integration repeats every step at any time.
 - Read-mode rendering with the app's full typography.
 - The leading-edge density gutter, when the panel is wide enough (≥ 520pt).
   Hover shows the current section and reading metrics; click or drag scrubs the
-  document; dwelling opens the outline.
+  document; dwelling opens the outline. In compact Finder panels the hover card
+  becomes a small translucent overlay rather than disappearing or covering the
+  whole page.
 - Arrow keys scroll; `n`/`p` jump between headings.
 - Text is selectable and copyable. Most Quick Look previews are dead surfaces;
   this one isn't.
+- Appearance follows macOS by default. Choose **Settings → Appearance → Quick
+  Look appearance** to pin previews to Light or Dark; the setting is shared with
+  the sandboxed extension.
 
 ## Memory discipline
 

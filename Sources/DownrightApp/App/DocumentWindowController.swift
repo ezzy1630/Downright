@@ -1351,10 +1351,19 @@ final class DocumentWindowController: NSWindowController {
             sliver: sliver,
             contentHeight: frame.height
         )
-        surface.onWindowFrameChange = { [weak overlay, weak window, weak surface] frame in
-            guard let overlay, let window, let surface else { return }
-            let inTarget = window.contentView?.convert(window.convertFromScreen(frame), from: nil)
-                ?? .zero
+        surface.onWindowFrameChange = { [weak self, weak overlay, weak window, weak surface] frame in
+            guard let self, let overlay, let window, let surface else { return }
+            // A window can transiently lose its content view during a live
+            // resize or activation hand-off. Converting to `.zero` here was
+            // the source of the occasional bottom-left flight: the spring
+            // quite correctly applied the fallback rect it was handed.
+            guard let target = window.contentView,
+                  frame.origin.x.isFinite, frame.origin.y.isFinite,
+                  frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 1, frame.height > 1
+            else { return }
+            let inTarget = target.convert(window.convertFromScreen(frame), from: nil)
+            self.floatingSurfaceFrame = frame
             surface.frame = overlay.convert(inTarget, from: target)
             surface.needsLayout = true
         }
@@ -1983,6 +1992,23 @@ final class DocumentWindowController: NSWindowController {
         generation: Int
     ) {
         guard generation == findBarExitGeneration, exitingFindBar === bar else { return }
+        // Removing the focused search field can make AppKit reveal the live
+        // editor selection. Capture at the last exit frame, not when dismissal
+        // starts, so any scrolling during the animation remains intentional.
+        let panes = documentPanes
+        let viewportRepairs = panes.map { $0.textView.makeViewportRepair() }
+        let viewportXs = panes.map { $0.scrollView.contentView.bounds.origin.x }
+        let restoreHorizontalPosition = {
+            for (pane, x) in zip(panes, viewportXs) {
+                let clip = pane.scrollView.contentView
+                clip.scroll(to: NSPoint(x: x, y: clip.bounds.origin.y))
+                pane.scrollView.reflectScrolledClipView(clip)
+            }
+        }
+        defer {
+            viewportRepairs.forEach { $0() }
+            restoreHorizontalPosition()
+        }
         retire(bar)
         if let inspector,
            exitingSearchInspector === inspector,
@@ -2045,6 +2071,8 @@ final class DocumentWindowController: NSWindowController {
     private func retire(_ bar: FindBarView) {
         bar.removeFromSuperview()
         bar.alphaValue = 1
+        bar.layer?.removeAllAnimations()
+        bar.layer?.transform = CATransform3DIdentity
         bar.layer?.setAffineTransform(.identity)
     }
 

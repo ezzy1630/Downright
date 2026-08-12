@@ -383,6 +383,12 @@ public final class MarkdownTextView: NSTextView {
     /// A local edit should leave the caret in charge of the camera while its
     /// asynchronous parse result catches up.
     var shouldFollowCaretAfterLocalEdit = false
+    /// Camera captured before the local storage mutation. `didChangeText()`
+    /// may ask AppKit to reveal the caret before the parse result arrives, so
+    /// capturing in `update(document:dirty:)` is already too late: it would
+    /// faithfully preserve the accidental scroll. The offset is projected
+    /// across the edit and carried into the parse commit instead.
+    var localEditViewportAnchor: ViewportAnchor?
     /// AppKit sends many selection updates while a drag is in flight. Do not
     /// rebuild substitutions or scroll the document until that gesture ends.
     var isTrackingMouseSelection = false
@@ -580,7 +586,8 @@ public final class MarkdownTextView: NSTextView {
     /// Re-decorates only what the AST diff says changed (§3.5).
     public func update(document: ParsedDocument, dirty: DirtySet) {
         let selection = sourceSelectedRanges
-        let anchor = captureViewportAnchor()
+        let anchor = localEditViewportAnchor ?? captureViewportAnchor()
+        localEditViewportAnchor = nil
         let lockedViewportY = nextDocumentUpdateViewportY
         nextDocumentUpdateViewportY = nil
         let followsLocalEdit = shouldFollowCaretAfterLocalEdit
@@ -770,6 +777,26 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// Source-targeted variant for rendered controls. A picker click does not
+    /// move the insertion caret, so selection-based repair can anchor an
+    /// unrelated off-screen line. Bind the repair to the control's heading.
+    public func makeViewportRepair(at sourceOffset: Int) -> () -> Void {
+        let anchor = captureViewportAnchor(at: sourceOffset)
+        return { [weak self] in
+            guard let self else { return }
+            // A heading level changes font metrics. The new target can lie
+            // outside the raw-y viewport while stale estimated fragments still
+            // describe it, so viewport-only layout resolves the wrong
+            // generation. Settle the document before reading the target rect.
+            self.resizeToFitContent()
+            self.restoreViewport(to: anchor)
+            DispatchQueue.main.async { [weak self] in
+                self?.resizeToFitContent()
+                self?.restoreViewport(to: anchor)
+            }
+        }
+    }
+
     private func restoreViewport(y: CGFloat) {
         guard let scrollView = enclosingScrollView else { return }
         let clip = scrollView.contentView
@@ -803,7 +830,7 @@ public final class MarkdownTextView: NSTextView {
         captureViewportAnchor(at: topVisibleOffset)
     }
 
-    private func captureViewportAnchor(at offset: Int) -> ViewportAnchor {
+    func captureViewportAnchor(at offset: Int) -> ViewportAnchor {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         return ViewportAnchor(
             offset: offset,
@@ -824,6 +851,22 @@ public final class MarkdownTextView: NSTextView {
         guard abs(y - clip.bounds.origin.y) > 0.5 else { return }
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
         scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// Carries a source-coordinate camera through a source edit. An insertion
+    /// or deletion before the visible line moves its offset by the same delta;
+    /// an edit containing the anchor leaves it at the end of the replacement.
+    func projectViewportAnchor(
+        _ anchor: ViewportAnchor, across edit: NSRange, insertedLength: Int
+    ) -> ViewportAnchor {
+        var projected = anchor
+        if anchor.offset >= edit.upperBound {
+            projected.offset += insertedLength - edit.length
+        } else if anchor.offset > edit.location {
+            projected.offset = edit.location + insertedLength
+        }
+        projected.offset = max(0, projected.offset)
+        return projected
     }
 
     /// Size the document view to the height layout actually used.
@@ -2179,7 +2222,14 @@ public final class MarkdownTextView: NSTextView {
     /// selection in source terms *before* the map changes under it, rebuild,
     /// then put it back.  Getting this backwards is exactly the caret drift
     /// §6.1 warns about.
-    func handleSelectionChanged(allowTypewriterScrolling: Bool = true) {
+    func handleSelectionChanged(
+        allowTypewriterScrolling: Bool = true,
+        preservingViewport requestedViewportAnchor: ViewportAnchor? = nil
+    ) {
+        // A real caret gesture supersedes the camera captured by an earlier
+        // keystroke whose parse is still pending. The edit path passes its
+        // projected anchor explicitly; arrows and pointer selections do not.
+        if requestedViewportAnchor == nil { localEditViewportAnchor = nil }
         // A caret/selection gesture is newer than any queued layout pass. The
         // pass may still repair height, but it must not restore an old viewport.
         pendingResizeAnchor = nil
@@ -2188,7 +2238,7 @@ public final class MarkdownTextView: NSTextView {
         // visible source line through that rebuild; a raw clip y-coordinate
         // points at different content once TextKit resolves the new geometry.
         let sourceSelection = sourceSelectedRanges
-        let viewportAnchor = sourceSelection.first.flatMap { selection -> ViewportAnchor? in
+        let viewportAnchor = requestedViewportAnchor ?? sourceSelection.first.flatMap { selection -> ViewportAnchor? in
             guard selection.length == 0 else { return nil }
             return captureViewportAnchor(at: selection.location)
         } ?? captureViewportAnchor()

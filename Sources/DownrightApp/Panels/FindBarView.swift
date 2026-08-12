@@ -804,8 +804,12 @@ final class FindBarView: NSView {
             if let presentation = layer.presentation() {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
-                layer.setAffineTransform(presentation.affineTransform())
-                alphaValue = CGFloat(presentation.opacity)
+                // Use the same 3-D key path the exit animation drives. Mixing
+                // `setAffineTransform` with a `transform` animation leaves a
+                // stale model transform behind and makes the document appear
+                // to shift when the bar is removed.
+                layer.transform = presentation.transform
+                layer.opacity = presentation.opacity
                 CATransaction.commit()
             }
             layer.removeAnimation(forKey: "find-liquid-presence")
@@ -815,8 +819,8 @@ final class FindBarView: NSView {
             if let presentation = rowsLayer.presentation() {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
-                rowsLayer.setAffineTransform(presentation.affineTransform())
-                rows.alphaValue = CGFloat(presentation.opacity)
+                rowsLayer.transform = presentation.transform
+                rowsLayer.opacity = presentation.opacity
                 CATransaction.commit()
             }
             rowsLayer.removeAnimation(forKey: "find-content-arrival")

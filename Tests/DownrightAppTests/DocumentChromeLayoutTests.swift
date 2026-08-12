@@ -318,6 +318,7 @@ struct FloatingTaskPanelTests {
         let alpha = try #require(surface.glassAlphaForTesting)
 
         #expect(alpha == 1)
+        #expect(surface.usesClearNativeGlassForTesting)
         #expect(surface.contentSharesGlassOpacityForTesting)
         #expect(surface.content.alphaValue == 1)
     }
@@ -661,6 +662,31 @@ struct FloatingTaskPanelTests {
         reopened.settleForTesting()
         #expect(reopened.visibleBodyHeightForTesting == reopened.bounds.height)
         #expect(controller.progressRing.isActive)
+    }
+
+    @Test("An interrupted anchor flight ignores stale open work and invalid frames")
+    func interruptedAnchorFlightDoesNotFallToWindowOrigin() throws {
+        let (_, cleanup, controller) = try makeDocument()
+        defer { cleanup(); controller.close() }
+
+        controller.toggleTaskPanel()
+        let surface = try #require(controller.floatingSurface)
+        let resting = surface.restingWindowFrameForMorph
+        #expect(resting.width > 1)
+
+        // Simulate a close racing the deferred opening callback. The stale
+        // start must not retarget the outbound spring back to the card.
+        surface.dismissToAnchor(
+            NSRect(x: resting.maxX - 22, y: resting.maxY - 22, width: 22, height: 22),
+            animated: false
+        )
+        let outbound = surface.currentWindowFrameForTesting
+        surface.startAnchorPresentation(animated: true)
+        #expect(surface.currentWindowFrameForTesting == outbound)
+
+        // A transient zero frame from a disappearing window must be ignored.
+        surface.retargetFrame(.zero, animated: true)
+        #expect(surface.currentWindowFrameForTesting == outbound)
     }
 
     @Test("A resign-key and become-key cycle preserves the floating panel")

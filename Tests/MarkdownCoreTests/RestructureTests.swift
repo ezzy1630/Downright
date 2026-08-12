@@ -39,6 +39,20 @@ import Testing
         #expect(Restructure.setHeadingLevel(doc, headingIndex: 1, level: 0).isEmpty)
     }
 
+    @Test func headingPickerConvertsSetextAcrossAllLevels() {
+        let text = "Title\n=====\n\nBody\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.setHeadingLevel(doc, headingIndex: 0, level: 4))
+        #expect(out == "#### Title\n\nBody\n")
+
+        let crlf = "Title\r\n-----\r\n\r\nBody\r\n"
+        let crlfDoc = MarkdownParser.parse(crlf)
+        let promoted = apply(
+            crlf, Restructure.setHeadingLevel(crlfDoc, headingIndex: 0, level: 1)
+        )
+        #expect(promoted == "# Title\r\n\r\nBody\r\n")
+    }
+
     @Test func headingToBodyPreservesTitlesAndRemovesClosingMarkers() {
         let compact = "#   Title\n"
         #expect(apply(

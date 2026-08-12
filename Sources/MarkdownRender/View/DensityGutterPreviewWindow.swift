@@ -29,6 +29,15 @@ final class DensityGutterPreviewWindow: NSWindow {
     /// body) and only gives up when the margin is genuinely a sliver.
     static let minimumUsefulWidth: CGFloat = 140
     static let anchorGap: CGFloat = 8
+    /// Quick Look windows are often only 600–800pt wide. When the reading
+    /// measure consumes the entire margin, a compact overlay is preferable to
+    /// silently removing the map's only orientation affordance. The editor
+    /// leaves this off so prose is never covered during normal work.
+    var allowsContentOverlap = false
+
+    static func compactOverlayWidth(parentWidth: CGFloat) -> CGFloat {
+        min(preferredWidth, max(minimumUsefulWidth, parentWidth * 0.42))
+    }
 
     static func resolvedMaximumWidth(
         anchorX: CGFloat,
@@ -78,9 +87,11 @@ final class DensityGutterPreviewWindow: NSWindow {
         over parent: NSWindow,
         maximumTrailingX: CGFloat? = nil,
         reduceMotion: Bool,
-        interactive: Bool
+        interactive: Bool,
+        allowContentOverlap: Bool = false
     ) {
         presentationGeneration &+= 1
+        allowsContentOverlap = allowContentOverlap
         ignoresMouseEvents = !interactive
         let titleChanged = content.update(title: title, snippet: snippet, footer: footer)
         let alreadyPresented = isVisible && self.parent === parent
@@ -89,12 +100,19 @@ final class DensityGutterPreviewWindow: NSWindow {
         // when a new heading arrives, where the change carries meaning.
         let opensInward = anchor.x > parent.frame.midX
         let visibleFrame = (parent.screen ?? NSScreen.main)?.visibleFrame
-        guard let maximumWidth = Self.resolvedMaximumWidth(
+        let resolvedWidth = Self.resolvedMaximumWidth(
             anchorX: anchor.x,
             maximumTrailingX: maximumTrailingX,
             minimumOriginX: visibleFrame.map { $0.minX + 4 },
             opensInward: opensInward
-        ) else {
+        )
+        let usesCompactOverlay = resolvedWidth == nil && allowsContentOverlap
+        let maximumWidth: CGFloat
+        if let resolvedWidth {
+            maximumWidth = resolvedWidth
+        } else if usesCompactOverlay {
+            maximumWidth = Self.compactOverlayWidth(parentWidth: parent.frame.width)
+        } else {
             hide()
             return
         }
@@ -118,7 +136,9 @@ final class DensityGutterPreviewWindow: NSWindow {
         // The screen clamp above must not trade one invariant for another. If
         // the card cannot fit both on-screen and before the text column, hide
         // it; covering prose is never an acceptable fallback.
-        if !opensInward, let maximumTrailingX, origin.x + size.width > maximumTrailingX + 0.5 {
+        if !opensInward, let maximumTrailingX,
+           !usesCompactOverlay,
+           origin.x + size.width > maximumTrailingX + 0.5 {
             hide()
             return
         }

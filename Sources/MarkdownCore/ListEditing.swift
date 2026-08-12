@@ -86,6 +86,8 @@ public enum ListEditing {
             let source = doc.substring(range)
             guard !source.isBlankLine else { continue }
             let indent = source.leadingIndent
+            let contentOffset = min(range.upperBound, range.location + indent.utf16.count)
+            guard enclosingItem(doc, offset: contentOffset) != nil else { continue }
             let width = indentWidth(of: String(source.dropFirst(indent.count)))
 
             if outdent {

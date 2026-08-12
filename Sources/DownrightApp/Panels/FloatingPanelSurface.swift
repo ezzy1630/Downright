@@ -138,6 +138,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     /// zero-frame first paint while preserving the spring's state for later
     /// content-driven refits.
     func setRestingFrame(_ frame: NSRect) {
+        guard Self.isUsableFrame(frame) else { return }
         frameSpring.snap(to: frame)
         hasSpringFrame = true
         applyFrame(frame)
@@ -155,6 +156,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         sliver: NSRect,
         contentHeight: CGFloat
     ) {
+        guard Self.isUsableFrame(resting), Self.isUsableFrame(sliver) else { return }
         restingWindowFrame = resting
         sliverWindowFrame = sliver
         contentLayoutHeight = max(0, contentHeight)
@@ -211,7 +213,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     func startAnchorPresentation(animated: Bool) {
-        guard isAnchorMorphing else { return }
+        // The controller schedules this on the next run-loop turn. A close
+        // can arrive before that turn; never let the stale opening callback
+        // retarget a panel that is already travelling back to its anchor.
+        guard isAnchorMorphing, !isDismissing else { return }
         guard animated, !styleSheet.reduceMotion else {
             frameSpring.snap(to: restingWindowFrame)
             revealSpring.snap(to: restingWindowFrame.height)
@@ -279,6 +284,11 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     /// axes, but a live resize settles immediately so the trailing edge stays
     /// welded to the window while the user drags it.
     func retargetFrame(_ frame: NSRect, animated: Bool) {
+        // Window teardown/activation can briefly hand back an empty or
+        // non-finite screen rect. Ignore it instead of feeding a zero target
+        // into SpringRect, which would visibly fly the panel to the window's
+        // lower-left corner on the next display-link tick.
+        guard Self.isUsableFrame(frame) else { return }
         if !hasSpringFrame { setRestingFrame(self.frame) }
         guard animated, !styleSheet.reduceMotion, window != nil, !inLiveResize else {
             frameSpring.snap(to: frame)
@@ -363,6 +373,15 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     }
 
     private static func isUsableAnchor(_ rect: NSRect) -> Bool {
+        rect.origin.x.isFinite
+            && rect.origin.y.isFinite
+            && rect.width.isFinite
+            && rect.height.isFinite
+            && rect.width > 1
+            && rect.height > 1
+    }
+
+    private static func isUsableFrame(_ rect: NSRect) -> Bool {
         rect.origin.x.isFinite
             && rect.origin.y.isFinite
             && rect.width.isFinite
@@ -531,7 +550,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         // quiets prose directly behind task labels without flattening the
         // native optical layer or reducing its refraction.
         let base: NSColor = isDarkBackground(styleSheet.background) ? .black : .white
-        return base.withAlphaComponent(styleSheet.increaseContrast ? 0.18 : 0.10)
+        // Keep the veil just strong enough to protect label contrast. A heavy
+        // wash reads as acrylic and masks the document's refracted glyphs; the
+        // native clear effect is already the strongest public lensing surface.
+        return base.withAlphaComponent(styleSheet.increaseContrast ? 0.18 : 0.06)
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {
@@ -620,6 +642,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         glass.map(ObjectIdentifier.init)
     }
     var glassAlphaForTesting: CGFloat? { glass?.alphaValue }
+    var usesClearNativeGlassForTesting: Bool {
+        guard #available(macOS 26.0, *) else { return false }
+        return glassEffect?.style == .clear && glassEffect?.tintColor == nil
+    }
     var contentSharesGlassOpacityForTesting: Bool {
         guard let glass else { return false }
         return content.isDescendant(of: glass)
@@ -805,7 +831,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     /// system material then land together instead of the list appearing only
     /// after the card has stopped moving.
     func playMorphArrivalDetails() {
-        guard !styleSheet.reduceMotion, window != nil else {
+        // Arrival is scheduled independently of the spring. If the user
+        // closes during the hand-off, the old arrival must not reintroduce
+        // content or alter the outbound flight.
+        guard !isDismissing, !styleSheet.reduceMotion, window != nil else {
             content.layer?.transform = CATransform3DIdentity
             return
         }
