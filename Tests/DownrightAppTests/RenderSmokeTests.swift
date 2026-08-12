@@ -119,7 +119,7 @@ struct RenderSmokeTests {
             let image = NSImage(size: container.bounds.size)
             image.addRepresentation(rep)
             return image
-        }())) ?? 0) > 0
+        }())) ?? 0) > 0.01
     }
 
     private func dump(_ image: NSImage, named name: String) {

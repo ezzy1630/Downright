@@ -170,9 +170,22 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         revealSpring.snap(to: sliverWindowFrame.height)
         applyReveal()
         guard animated, !styleSheet.reduceMotion else {
-            revealSpring.snap(to: restingWindowFrame.height)
-            applyReveal()
-            onFrameSpringSettled?()
+            if styleSheet.reduceMotion, !animated {
+                // Reduce Motion still gets a real first frame: the body is
+                // born from the toolbar-sized sliver, then arrives as a
+                // discrete state change on the next turn. This avoids both
+                // a moving animation and a full-card flash before layout.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.isDismissing else { return }
+                    self.revealSpring.snap(to: self.restingWindowFrame.height)
+                    self.applyReveal()
+                    self.onFrameSpringSettled?()
+                }
+            } else {
+                revealSpring.snap(to: restingWindowFrame.height)
+                applyReveal()
+                onFrameSpringSettled?()
+            }
             return
         }
         revealSpring.target(restingWindowFrame.height)

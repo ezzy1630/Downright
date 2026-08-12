@@ -760,6 +760,7 @@ public final class MarkdownTextView: NSTextView {
     /// while preserving only the clip view's raw y-coordinate does not.
     public func makeViewportRepair() -> () -> Void {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        let viewportY = enclosingScrollView?.contentView.bounds.origin.y ?? 0
         let selectionOffset = sourceSelectedRange.location
         let anchor: ViewportAnchor
         if let selectionRect = rect(forOffset: selectionOffset),
@@ -770,9 +771,14 @@ public final class MarkdownTextView: NSTextView {
         }
         return { [weak self] in
             guard let self else { return }
+            // Transient chrome does not change source geometry. Re-anchor if
+            // TextKit relaid out first, then restore the exact clip position
+            // last so the repair cannot leave the reader at a new y.
             self.restoreViewport(to: anchor)
+            self.restoreViewport(y: viewportY)
             DispatchQueue.main.async { [weak self] in
                 self?.restoreViewport(to: anchor)
+                self?.restoreViewport(y: viewportY)
             }
         }
     }
