@@ -104,7 +104,11 @@ struct RenderSmokeTests {
     /// their full strength and declare this prerequisite, rather than being
     /// softened into something that passes without it.
     private func viewportLayoutRuns() -> Bool {
-        let text = "# Probe\n\nBody text.\n"
+        // Probe the same fixture as the smoke test. A tiny prose-only sample
+        // can draw while a document whose blocks use the renderer's custom
+        // fragments remains blank on a headless runner, which made this gate
+        // claim a display cycle existed when the actual sample had none.
+        guard let text = try? sampleDocumentText() else { return false }
         let container = MarkdownContainerView(storage: NSTextStorage(string: text))
         container.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)

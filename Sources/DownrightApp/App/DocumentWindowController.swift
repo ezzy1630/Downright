@@ -109,6 +109,11 @@ final class DocumentWindowController: NSWindowController {
     private var isSynchronizingPanes = false
     private var pendingInitialRestoreOffset: Int?
     private var deferredInitialRestoreOffset: Int?
+    /// The clip position before the first-frame restore was scheduled. If a
+    /// user scrolls or edits before that async turn, their position owns the
+    /// camera and the saved-document restore must stand down.
+    private var initialRestoreViewportY: CGFloat?
+    private var initialRestoreGeneration: UInt = 0
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
@@ -238,9 +243,13 @@ final class DocumentWindowController: NSWindowController {
         // after the document surface has had a chance to establish its TextKit
         // viewport; restoring it during the first layout pass can otherwise
         // produce a blank surface until the first user scroll.
+        initialRestoreGeneration &+= 1
+        let restoreGeneration = initialRestoreGeneration
+        initialRestoreViewportY = primaryContainer.scrollView.contentView.bounds.origin.y
         pendingInitialRestoreOffset = 0
         deferredInitialRestoreOffset = markdownDocument.restoredOffset()
         DispatchQueue.main.async { [weak self] in
+            guard self?.initialRestoreGeneration == restoreGeneration else { return }
             self?.restoreInitialReadingPositionIfReady()
         }
     }
@@ -267,6 +276,16 @@ final class DocumentWindowController: NSWindowController {
 
     private func restoreInitialReadingPositionIfReady() {
         guard let restored = pendingInitialRestoreOffset, window?.isVisible == true else { return }
+        guard let clip = primaryContainer?.scrollView.contentView else { return }
+        if let expected = initialRestoreViewportY,
+           abs(clip.bounds.origin.y - expected) > 0.5 {
+            // A real scroll/edit happened before the deferred first frame.
+            // Do not put the saved camera back under the user's hands.
+            pendingInitialRestoreOffset = nil
+            deferredInitialRestoreOffset = nil
+            initialRestoreViewportY = nil
+            return
+        }
         pendingInitialRestoreOffset = nil
 
         window?.layoutIfNeeded()
@@ -285,6 +304,7 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.prepareForDisplay()
         primaryContainer.textView.needsDisplay = true
         primaryContainer.scrollView.contentView.needsDisplay = true
+        initialRestoreViewportY = clip.bounds.origin.y
         updateBreadcrumbAndGutter()
 
         let selection = NSRange(
@@ -310,24 +330,36 @@ final class DocumentWindowController: NSWindowController {
         }
         dumpLayoutIfRequested()
 
+        let expectedAfterFirstRestore = initialRestoreViewportY ?? clip.bounds.origin.y
+        let restoreGeneration = initialRestoreGeneration
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.initialRestoreGeneration == restoreGeneration,
+                  abs(clip.bounds.origin.y - expectedAfterFirstRestore) <= 0.5
+            else { return }
             self.primaryContainer.textView.scroll(toOffset: restored, position: .top, animated: false)
             self.primaryContainer.textView.prepareForDisplay()
             self.primaryContainer.textView.displayIfNeeded()
             self.primaryContainer.scrollView.contentView.displayIfNeeded()
+            self.initialRestoreViewportY = clip.bounds.origin.y
         }
 
         guard let deferred = deferredInitialRestoreOffset, deferred > 0 else { return }
         deferredInitialRestoreOffset = nil
+        let expectedBeforeDeferredRestore = initialRestoreViewportY ?? clip.bounds.origin.y
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            guard let self, self.window?.isVisible == true else { return }
+            guard let self,
+                  self.initialRestoreGeneration == restoreGeneration,
+                  self.window?.isVisible == true,
+                  abs(clip.bounds.origin.y - expectedBeforeDeferredRestore) <= 0.5
+            else { return }
             self.window?.layoutIfNeeded()
             self.primaryContainer.layoutSubtreeIfNeeded()
             self.primaryContainer.textView.scroll(toOffset: deferred, position: .top, animated: false)
             self.primaryContainer.textView.prepareForDisplay()
             self.primaryContainer.textView.displayIfNeeded()
             self.primaryContainer.scrollView.contentView.displayIfNeeded()
+            self.initialRestoreViewportY = clip.bounds.origin.y
             self.updateBreadcrumbAndGutter()
         }
     }

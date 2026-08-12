@@ -800,7 +800,11 @@ public final class MarkdownTextView: NSTextView {
     private func restoreViewport(y: CGFloat) {
         guard let scrollView = enclosingScrollView else { return }
         let clip = scrollView.contentView
-        let maxY = max(0, frame.height - clip.bounds.height)
+        // AppKit can briefly report the document view's old, undersized frame
+        // while TextKit resolves a new viewport.  Clamping against that stale
+        // zero-height estimate drops a reader at the top of the document.
+        let contentHeight = max(frame.height, clip.bounds.maxY)
+        let maxY = max(0, contentHeight - clip.bounds.height)
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(max(0, y), maxY)))
         scrollView.reflectScrolledClipView(clip)
     }
@@ -846,7 +850,11 @@ public final class MarkdownTextView: NSTextView {
         let offset = min(max(0, anchor.offset), parsedDocument.length)
         guard let rect = rect(forOffset: offset) else { return }
         let clip = scrollView.contentView
-        let maxY = max(0, frame.height - clip.bounds.height)
+        // Preserve the current clip extent when the document frame is
+        // transiently stale; otherwise a chrome transition can clamp a valid
+        // deep viewport to zero before the next layout pass repairs it.
+        let contentHeight = max(frame.height, clip.bounds.maxY)
+        let maxY = max(0, contentHeight - clip.bounds.height)
         let y = min(max(0, rect.minY + anchor.gap), maxY)
         guard abs(y - clip.bounds.origin.y) > 0.5 else { return }
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
@@ -2351,14 +2359,33 @@ public final class MarkdownTextView: NSTextView {
     public var topVisibleOffset: Int {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin
-        // At the top of the document `visible.minY` sits above the text
-        // container's vertical inset. Asking AppKit for an insertion index in
-        // that empty band can return the current selection instead of the
-        // first laid-out glyph, which made the sticky breadcrumb name a far
-        // later heading while the title was on screen. Sample inside the
-        // visible text container, never inside its padding.
-        let sampleY = max(visible.minY, origin.y) + 1
-        return sourceOffset(at: NSPoint(x: origin.x + 1, y: sampleY))
+        // Resolve the first laid-out fragment in TextKit's own coordinate
+        // space. `characterIndexForInsertion(at:)` is a viewport hit test and
+        // can return the current selection or the document end while the
+        // viewport is being rebuilt, which made a visible title report a
+        // later heading to the breadcrumb.
+        let sampleY = max(0, visible.minY - origin.y) + 1
+        let viewport = NSRect(
+            x: 0,
+            y: max(0, sampleY - 1),
+            width: max(1, visible.width),
+            height: max(1, visible.height)
+        )
+        markdownLayoutManager.ensureLayout(for: viewport)
+        if let fragment = markdownLayoutManager.textLayoutFragment(
+            for: NSPoint(x: 1, y: sampleY)
+        ) {
+            let textKitOffset = markdownLayoutManager.offset(
+                from: markdownLayoutManager.documentRange.location,
+                to: fragment.rangeInElement.location
+            )
+            return displayMap.sourceOffset(forTextKit: textKitOffset)
+        }
+
+        // Keep the native hit test as a last resort for an empty or not-yet
+        // materialized viewport.
+        let sampleViewY = max(visible.minY, origin.y) + 1
+        return sourceOffset(at: NSPoint(x: origin.x + 1, y: sampleViewY))
     }
 
     /// One-based source position for status UI. The paragraph index is rebuilt

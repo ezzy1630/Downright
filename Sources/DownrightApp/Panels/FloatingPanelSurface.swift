@@ -653,8 +653,16 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
     var opaqueFallbackIsMountedForTesting: Bool { fallback.superview != nil }
 
     var visibleBodyBoundsForHitTesting: NSRect {
-        if isAnchorMorphing { return bounds }
-        let height = min(bounds.height, max(0, revealSpring.value))
+        let height: CGFloat
+        if isAnchorMorphing {
+            // During an anchor flight the surface's frame is the body mask.
+            // `bounds` can still describe the resting card while the frame
+            // spring is travelling, which lets clicks leak through the
+            // toolbar-sized sliver and makes geometry report a full card.
+            height = min(bounds.height, max(0, frameSpring.rect.height))
+        } else {
+            height = min(bounds.height, max(0, revealSpring.value))
+        }
         return NSRect(
             x: bounds.minX,
             y: bounds.maxY - height,
