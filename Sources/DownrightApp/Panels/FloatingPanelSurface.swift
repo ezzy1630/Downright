@@ -171,6 +171,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         applyReveal()
         guard animated, !styleSheet.reduceMotion else {
             if styleSheet.reduceMotion, !animated {
+                revealSpring.target(restingWindowFrame.height)
                 // Reduce Motion still gets a real first frame: the body is
                 // born from the toolbar-sized sliver, then arrives as a
                 // discrete state change on the next turn. This avoids both

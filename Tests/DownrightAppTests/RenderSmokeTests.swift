@@ -240,7 +240,15 @@ struct RenderSmokeTests {
         let origin = textView.textContainerOrigin
         let sampled = try #require(layout.textLayoutFragment(for: NSPoint(x: 1, y: 1)))
         let first = try #require(layout.textLayoutFragment(for: NSPoint(x: 0, y: 0)))
-        #expect(sampled === first, "the sample point must sit inside the first fragment, not the inset")
+        let sampledOffset = layout.offset(
+            from: layout.documentRange.location,
+            to: sampled.rangeInElement.location
+        )
+        let firstOffset = layout.offset(
+            from: layout.documentRange.location,
+            to: first.rangeInElement.location
+        )
+        #expect(sampledOffset == firstOffset, "the sample point must sit inside the first fragment, not the inset")
         #expect(origin.y > 0, "…and the inset it must skip is real")
 
         // The view-level answer needs the viewport pass; see `viewportLayoutRuns`.
