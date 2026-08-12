@@ -1,16 +1,20 @@
-![Downright app icon](Resources/AppIcon.png)
+<p align="center">
+  <img src="Resources/AppIcon.png" width="128" alt="Downright app icon">
+</p>
 
-# Downright
+<h1 align="center">Downright</h1>
 
-A fast, native Markdown reader and editor for macOS. Built for files that
-people and coding agents change together.
+<p align="center">
+  A fast, native Markdown reader and editor for macOS.<br>
+  Built for files that people and coding agents change together.
+</p>
 
-**macOS 14+ · Swift 6 · Native AppKit · MIT**
+<p align="center"><strong>macOS 14+ · Swift 6 · Native AppKit · MIT</strong></p>
 
 ---
 
 <p align="center">
-  <img src="Docs/downright-renderer-showcase.png" alt="Downright rendering Markdown with native typography, syntax highlighting, math, Mermaid, tasks, and a density rail." width="1200">
+  <img src="Docs/downright-renderer-showcase.png" alt="Downright rendering Markdown with native typography, syntax highlighting, math, Mermaid, tasks, and a density rail." width="1100">
 </p>
 
 Downright opens Markdown as a calm document, keeps its source exact, and shows
