@@ -125,7 +125,13 @@ jobs:
           APP=".build-release/Downright.xcarchive/Products/Applications/Downright.app"
           echo "APP=$APP" >> "$GITHUB_ENV"
           swift build -c release --scratch-path .build-release-spm --product down
-          cp .build-release-spm/release/down "$APP/Contents/MacOS/down"
+          # SwiftPM puts products directly under the scratch directory on
+          # older toolchains, but adds the target triple on newer ones. Ask
+          # SwiftPM for the active binary directory instead of assuming one
+          # of those layouts.
+          CLI_BIN="$(swift build -c release --scratch-path .build-release-spm --product down --show-bin-path)/down"
+          test -x "$CLI_BIN"
+          cp "$CLI_BIN" "$APP/Contents/MacOS/down"
           # XcodeGen's `embed: true` for an SPM framework resolves to a bare
           # product name and fails, so Sparkle is linked in the project and
           # copied into the bundle by hand (matching the SwiftPM path).

@@ -65,8 +65,13 @@ else
 fi
 
 echo "==> Embedding down CLI"
+# SwiftPM may place products directly under the scratch directory or under a
+# target-triple directory, depending on the active toolchain. Ask SwiftPM for
+# the active binary directory instead of assuming one of those layouts.
 swift build -c release --scratch-path "$SWIFTPM_SCRATCH" --product down
-cp "$ROOT/$SWIFTPM_SCRATCH/release/down" "$APP/Contents/MacOS/down"
+CLI_BIN="$(swift build -c release --scratch-path "$SWIFTPM_SCRATCH" --product down --show-bin-path)/down"
+test -x "$CLI_BIN"
+cp "$CLI_BIN" "$APP/Contents/MacOS/down"
 
 echo "==> Flattening resource bundles"
 # Xcode emits SwiftPM resource bundles as deep bundles (Contents/Resources/…),
