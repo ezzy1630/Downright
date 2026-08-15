@@ -396,18 +396,29 @@ jobs:
           # Validation battery (Sparkle 2.9.5 ships no appcast_validate tool).
           # sign_update --verify needs the private seed (it derives the public
           # key); the public key alone is rejected.
+          echo "Validating generated appcast XML"
           xmllint --noout /tmp/appcast-input/appcast.xml
-          grep -q 'sparkle-signatures' /tmp/appcast-input/appcast.xml
+          if grep -q 'sparkle-signatures' /tmp/appcast-input/appcast.xml; then
+            echo "Appcast feed signature block present"
+          else
+            echo "::error::generated appcast has no Sparkle feed signature block"
+            exit 1
+          fi
+          echo "Verifying generated appcast signature"
           echo "$SPARKLE_ED25519_PRIVATE_KEY" \
             | /tmp/sparkle/bin/sign_update --verify --ed-key-file - /tmp/appcast-input/appcast.xml
+          echo "Sparkle appcast signature verified"
           mkdir -p artifacts/pages
           cp /tmp/appcast-input/appcast.xml artifacts/pages/appcast.xml
           cp artifacts/RELEASE-NOTES.md artifacts/pages/RELEASE-NOTES.md
+          echo "Copied signed appcast and release notes"
           # Delta archives referenced by the appcast must ship as assets of
           # THIS release (the download-url-prefix points here).  Sparkle names
           # them "<AppName><build>-<fromBuild>.delta" (e.g. Downright42-41.delta).
+          shopt -s nullglob
           for delta in /tmp/appcast-input/*.delta; do
-            [ -f "$delta" ] && cp "$delta" artifacts/
+            cp "$delta" artifacts/
+            echo "Copied delta $(basename "$delta")"
           done
         env:
           SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
