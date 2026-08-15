@@ -369,10 +369,10 @@ jobs:
       # ----------------------------------------- appcast (private key, stdin only)
       # generate_appcast does the whole job natively: per-archive EdDSA
       # signatures (it reads SUPublicEDKey from the built app), Markdown release
-      # notes embedded as signed CDATA, delta updates from the previous zips, and
-      # enclosure URLs pointing at this tag's GitHub Release assets.
-      # Feed signing (SURequireSignedFeed) is the FINAL step: sign_update covers
-      # the whole XML, so nothing may rewrite the appcast afterwards.
+      # notes embedded as signed CDATA, delta updates from the previous zips,
+      # enclosure URLs pointing at this tag's GitHub Release assets, and the
+      # signed feed required by SURequireSignedFeed. Nothing may rewrite the
+      # generated appcast afterwards.
       - name: Generate signed appcast with deltas
         shell: bash
         run: |
@@ -393,13 +393,9 @@ jobs:
                 --link "https://github.com/${{ github.repository }}" \
                 --maximum-versions 1 \
                 /tmp/appcast-input
-          # Feed signature (final mutation; nothing touches the XML after this).
-          echo "$SPARKLE_ED25519_PRIVATE_KEY" \
-            | /tmp/sparkle/bin/sign_update --ed-key-file - /tmp/appcast-input/appcast.xml
           # Validation battery (Sparkle 2.9.5 ships no appcast_validate tool).
           # sign_update --verify needs the private seed (it derives the public
-          # key); the public key alone is rejected.  Verification must run
-          # AFTER the feed signature above — it is the only valid end state.
+          # key); the public key alone is rejected.
           xmllint --noout /tmp/appcast-input/appcast.xml
           grep -q 'sparkle-signatures' /tmp/appcast-input/appcast.xml
           echo "$SPARKLE_ED25519_PRIVATE_KEY" \
