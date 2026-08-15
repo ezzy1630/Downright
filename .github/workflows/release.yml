@@ -88,6 +88,7 @@ jobs:
       - name: Run full check suite (all unit/UI suites + version gates)
         env:
           RUN_DRBENCH: "1"  # release performance budgets enforced
+          DOWNRIGHT_HEADLESS_UI_CI: "1"  # swift test has no activated app display cycle
         run: ./Scripts/check.sh
 
       # ----------------------------------------------------------- build (Xcode)

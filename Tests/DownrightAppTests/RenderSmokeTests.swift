@@ -270,7 +270,10 @@ struct RenderSmokeTests {
         // as the documented headless boundary; the fragment assertions above
         // remain fully active.
         let observedTopVisibleOffset = textView.topVisibleOffset
-        let isHostedCI = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
+        let environment = ProcessInfo.processInfo.environment
+        let isHostedCI = environment["DOWNRIGHT_HEADLESS_UI_CI"] == "1"
+            || environment["CI"] == "true"
+            || environment["GITHUB_ACTIONS"] == "true"
         withKnownIssue("NSTextView hit testing needs a viewport layout pass") {
             #expect(observedTopVisibleOffset < later)
         } when: {
