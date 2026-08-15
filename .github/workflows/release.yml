@@ -154,7 +154,18 @@ jobs:
             rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
             cp -R "$FW" "$APP/Contents/Frameworks/"
           fi
-          Scripts/verify-bundle.sh "$APP" --production
+          # Xcode emits SwiftPM resource bundles as deep bundles
+          # (Contents/Resources/…), while the runtime resource resolvers and
+          # the bundle contract use the flat layout. Flatten every bundle,
+          # including the nested SwiftMath font bundle, before anything is
+          # signed. The final verify-bundle call runs after signing because it
+          # also checks the Quick Look sandbox entitlements.
+          while IFS= read -r bundle; do
+            deep="$bundle/Contents/Resources"
+            [ -d "$deep" ] || continue
+            ditto "$deep" "$bundle"
+            rm -rf "$bundle/Contents"
+          done < <(find "$APP" -type d -name "*.bundle")
           # The manual embed above put Sparkle in place; prove it.
           test -d "$APP/Contents/Frameworks/Sparkle.framework"
 
