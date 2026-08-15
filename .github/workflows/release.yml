@@ -341,7 +341,10 @@ jobs:
           curl -fsSL -o /tmp/sparkle.tar.xz \
             https://github.com/sparkle-project/Sparkle/releases/download/2.9.5/Sparkle-2.9.5.tar.xz
           echo "$SPARKLE_SHA256  /tmp/sparkle.tar.xz" | shasum -a 256 -c -
-          tar xf /tmp/sparkle.tar.xz -C /tmp
+          # Sparkle's archive has ./bin at its root; isolate extraction so the
+          # tool paths remain stable and cannot collide with runner temp files.
+          mkdir -p /tmp/sparkle
+          tar xf /tmp/sparkle.tar.xz -C /tmp/sparkle
           ls /tmp/sparkle/bin/
 
       - name: Download supported previous release zips (for deltas)
