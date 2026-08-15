@@ -104,7 +104,14 @@ fi
 # looks healthy. The two current sites are the headless TextKit viewport hit
 # test and the raster smoke test; an activated-app lane exercises both without
 # this exception.
-KNOWN_ISSUE_SITES=$(rg -n "withKnownIssue\\(" Tests | wc -l | tr -d ' ')
+if command -v rg >/dev/null 2>&1; then
+    KNOWN_ISSUE_SITES=$(rg -n "withKnownIssue\\(" Tests | wc -l | tr -d ' ')
+else
+    # The release runner intentionally uses only the tools shipped by macOS.
+    # Keep the gate portable when ripgrep is not preinstalled there.
+    KNOWN_ISSUE_SITES=$(find Tests -type f -name '*.swift' \
+        -exec grep -F -n 'withKnownIssue(' {} + | wc -l | tr -d ' ')
+fi
 EXPECTED_KNOWN_ISSUES=2
 echo "    $KNOWN_ISSUE_SITES deliberate known-issue sites"
 if [ "$KNOWN_ISSUE_SITES" -ne "$EXPECTED_KNOWN_ISSUES" ]; then
