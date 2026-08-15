@@ -34,6 +34,17 @@ struct MarkdownCLITests {
         #expect(!html.contains("http://") && !html.contains("https://"))
     }
 
+    /// Regression: the writer joined paragraphs, code lines, and body blocks
+    /// with the two characters `\` + `n` instead of a newline, so every
+    /// multi-line paragraph and every code block exported as one line of text
+    /// with visible `\n` garbage in it.
+    @Test func htmlExportUsesRealNewlines() {
+        let html = MarkdownCLI.html(for: "line one\nline two\n\n```swift\nlet a = 1\nlet b = 2\n```\n")
+        #expect(html.contains("<p>line one<br>\nline two</p>"))
+        #expect(html.contains(">let a = 1\nlet b = 2</code>"))
+        #expect(!html.contains("\\n"), "no literal backslash-n may appear in the output")
+    }
+
     @Test func htmlExportMakesUnsafeLinksInert() {
         let html = MarkdownCLI.html(for: """
         [relative](guide.md) [anchor](#part) [web](https://example.com) [mail](mailto:a@example.com)

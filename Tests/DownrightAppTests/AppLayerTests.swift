@@ -549,6 +549,29 @@ struct AppLayerTests {
         #expect(html.contains("href=\"https://example.com\""), "absolute links are untouched")
     }
 
+    /// Regression: wikilink targets used to ship as live `href`s with no
+    /// scheme check.  `[[javascript:alert(1)//]]` exported as
+    /// `href="javascript:alert(1)//.html"` — the `//` comments the suffix out
+    /// of the script, so opening the export and clicking ran the payload.
+    @Test @MainActor func htmlExportMakesUnsafeWikilinkTargetsInert() {
+        let document = MarkdownParser.parse(
+            """
+            [[javascript:alert(document.domain)//]] [[data:text/html;base64,x]]
+            [[Notes]] [[deep/note|with a label]]
+            """
+        )
+        let html = HTMLExporter(
+            document: document, theme: ThemeStore.shared.current,
+            title: "T", baseDirectory: nil, imageProvider: nil
+        ).html()
+        #expect(!html.lowercased().contains("href=\"javascript:"), "script wikilinks must not be live")
+        #expect(!html.lowercased().contains("href=\"data:"), "data wikilinks must not be live")
+        #expect(!html.contains("href=\"javascript:alert(document.domain)//.html\""))
+        #expect(html.contains("href=\"Notes.html\""), "plain wikilinks still export")
+        #expect(html.contains("href=\"deep/note.html\""), "labelled wikilinks still export")
+        #expect(html.contains(">with a label<"))
+    }
+
     @Test @MainActor func htmlExportKeepsDeepHeadingHierarchy() {
         let markdown = "# H1\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6\n"
         let html = HTMLExporter(

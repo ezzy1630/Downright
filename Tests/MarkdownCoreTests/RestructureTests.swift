@@ -131,6 +131,31 @@ import Testing
         #expect(Restructure.moveSection(doc, headingIndex: 0, before: 0).isEmpty)
     }
 
+    /// A consistently CRLF document keeps CRLF through a move — the classic-Mac
+    /// and Windows round trips must not silently become LF.
+    @Test func moveSectionKeepsConsistentCRLFEndings() {
+        let text = "## A\r\n\r\nbody a\r\n\r\n## B\r\n\r\nbody b\r\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 1, before: 0))
+        #expect(out == "## B\r\n\r\nbody b\r\n\r\n## A\r\n\r\nbody a\r\n")
+        #expect(!out.contains("\r\r"), "no stray carriage returns")
+    }
+
+    /// Regression: in a mixed-ending file the old width-blind walk could not
+    /// see the `\r\n` blank line before the last section, so a move glued the
+    /// two sections together with no separator at all.  The separator's own
+    /// bytes must survive the move.
+    @Test func moveSectionPreservesMixedEndingSeparators() {
+        let text = "## A\n\nbody a\r\n\r\n## B\n\nbody b\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.moveSection(doc, headingIndex: 1, before: 0))
+        let escaped = out.replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        // B keeps its own terminator, the `\r\n` blank separator it had in
+        // life lands between it and A, and A keeps its own CRLF terminator.
+        #expect(escaped == "## B\\n\\nbody b\\n\\r\\n## A\\n\\nbody a\\r\\n")
+    }
+
     @Test func moveSectionSurvivesAnArbitraryPermutation() {
         var text = "# Doc\n\n## A\n\na\n\n## B\n\nb\n\n## C\n\nc\n\n## D\n\nd\n"
         for (from, to) in [(4, 1), (1, 4), (2, 1), (3, 2)] {

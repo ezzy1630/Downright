@@ -133,6 +133,9 @@ enum HardWrapReflow {
         hiddenRanges: [NSRange]
     ) -> [NSRange] {
         var runs: [NSRange] = []
+        // A stale parsed document can outlive the buffer it was parsed from, so
+        // the caller's limit may run past `text.length`; clamp before indexing.
+        let limit = Swift.min(limit, text.length)
         var cursor = terminator.upperBound
         while cursor < limit {
             if let hidden = hiddenRanges.first(where: { $0.location == cursor }), hidden.length > 0 {

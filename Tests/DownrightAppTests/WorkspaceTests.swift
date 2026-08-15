@@ -147,6 +147,50 @@ struct WorkspaceTests {
     }
 
     @Test
+    func graphToleratesNormalizedPathCollisions() {
+        // `normalize` folds backslashes to slashes and trims a leading `./`, so
+        // `a\b.md` collides with `a/b.md` and `.x.md` with `x.md`.  The builder
+        // used to trap on the first duplicate; it must instead prefer the
+        // already-normalized path deterministically.
+        let root = URL(fileURLWithPath: "/workspace")
+        let slash = WorkspaceIndexEntry(
+            url: URL(fileURLWithPath: "/workspace/a/b.md"), relativePath: "a/b.md",
+            text: "", headings: [], frontMatter: [], links: [], byteCount: 0
+        )
+        let backslash = WorkspaceIndexEntry(
+            url: URL(fileURLWithPath: "/workspace/a\\b.md"), relativePath: "a\\b.md",
+            text: "", headings: [], frontMatter: [], links: [], byteCount: 0
+        )
+        let visible = WorkspaceIndexEntry(
+            url: URL(fileURLWithPath: "/workspace/x.md"), relativePath: "x.md",
+            text: "", headings: [], frontMatter: [], links: [], byteCount: 0
+        )
+        let hidden = WorkspaceIndexEntry(
+            url: URL(fileURLWithPath: "/workspace/.x.md"), relativePath: ".x.md",
+            text: "", headings: [], frontMatter: [], links: [], byteCount: 0
+        )
+        let source = WorkspaceIndexEntry(
+            url: URL(fileURLWithPath: "/workspace/notes.md"), relativePath: "notes.md",
+            text: "", headings: [], frontMatter: [],
+            links: [
+                WorkspaceLink(destination: "a/b.md", range: NSRange(location: 0, length: 6), kind: .markdown),
+                WorkspaceLink(destination: "x.md", range: NSRange(location: 7, length: 4), kind: .markdown),
+            ],
+            byteCount: 0
+        )
+        let snapshot = WorkspaceIndexSnapshot(
+            rootURL: root, revision: 1, entries: [slash, backslash, visible, hidden, source]
+        )
+        let graph = WorkspaceLinkGraphBuilder.build(snapshot: snapshot)
+        let resolved = Set(graph.outgoing[source.id]?.compactMap(\.targetFile) ?? [])
+        #expect(resolved.contains(slash.id))
+        #expect(resolved.contains(visible.id))
+        #expect(!resolved.contains(backslash.id))
+        #expect(!resolved.contains(hidden.id))
+        #expect(graph.unresolved.isEmpty)
+    }
+
+    @Test
     func sidebarShowsTreeSearchAndAccessibleRows() throws {
         let entry = WorkspaceIndexEntry(
             url: URL(fileURLWithPath: "/workspace/readme.md"), relativePath: "readme.md", text: "# Readme", headings: [], frontMatter: [], links: [], byteCount: 8

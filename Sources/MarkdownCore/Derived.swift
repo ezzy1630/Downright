@@ -24,7 +24,11 @@ struct SourceScanner {
     init(map: SourceMap) {
         let text = map.text
         var line = 0
-        var fence: String?
+        /// The open fence's character and run length.  CommonMark: a closing
+        /// fence line is only fence characters and whitespace, and at least as
+        /// long as the opening run — an info string (`\`\`\`ruby`) inside a
+        /// longer fence is content, not a closer.
+        var fence: (character: unichar, length: Int)?
         while line < map.lineCount {
             defer { line += 1 }
             let lineRange = map.contentRange(ofLine: line)
@@ -51,11 +55,21 @@ struct SourceScanner {
             let trimmedLength = end - trimmedStart
 
             if let open = fence {
-                if hasPrefix(text, at: trimmedStart, length: trimmedLength, open) { fence = nil }
+                if isClosingFenceLine(text, at: trimmedStart, length: trimmedLength, fence: open) {
+                    fence = nil
+                }
                 continue
             }
-            if hasPrefix(text, at: trimmedStart, length: trimmedLength, "```") { fence = "```"; continue }
-            if hasPrefix(text, at: trimmedStart, length: trimmedLength, "~~~") { fence = "~~~"; continue }
+            if let backticks = fenceRun(text, at: trimmedStart, length: trimmedLength, character: 0x60),
+               backticks >= 3 {
+                fence = (0x60, backticks)
+                continue
+            }
+            if let tildes = fenceRun(text, at: trimmedStart, length: trimmedLength, character: 0x7E),
+               tildes >= 3 {
+                fence = (0x7E, tildes)
+                continue
+            }
             guard indentColumns < 4, trimmedLength > 0,
                   text.character(at: trimmedStart) == 0x5B
             else { continue }
@@ -105,12 +119,27 @@ struct SourceScanner {
         }
     }
 
-    /// Whether `text[trimmedStart..<trimmedStart+length]` begins with `prefix`.
-    /// All prefixes in play are ASCII, so UTF-16 units can be compared directly.
-    private func hasPrefix(_ text: NSString, at offset: Int, length: Int, _ prefix: String) -> Bool {
-        var index = 0
-        for unit in prefix.utf16 { // lazy UTF-16 view, no array allocation
-            guard index < length, text.character(at: offset + index) == unit else { return false }
+    /// The leading run of `character` on a trimmed line, or `nil` when there is
+    /// none.  ASCII units compare directly on the UTF-16 buffer.
+    private func fenceRun(_ text: NSString, at offset: Int, length: Int, character: unichar) -> Int? {
+        var run = 0
+        while run < length, text.character(at: offset + run) == character { run += 1 }
+        return run > 0 ? run : nil
+    }
+
+    /// CommonMark's closing-fence test: the same character as the opening
+    /// fence, a run at least as long as (and no shorter than three), and
+    /// nothing after it but spaces or tabs.  An info string does not close.
+    private func isClosingFenceLine(
+        _ text: NSString, at offset: Int, length: Int, fence: (character: unichar, length: Int)
+    ) -> Bool {
+        guard let run = fenceRun(text, at: offset, length: length, character: fence.character),
+              run >= 3, run >= fence.length else { return false }
+        var index = offset + run
+        let end = offset + length
+        while index < end {
+            let c = text.character(at: index)
+            if c != 0x20, c != 0x09 { return false }
             index += 1
         }
         return true

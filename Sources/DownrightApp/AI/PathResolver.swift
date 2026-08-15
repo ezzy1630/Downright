@@ -206,10 +206,17 @@ enum ExternalEditor: String, CaseIterable, Codable {
         let editor = ProcessInfo.processInfo.environment["EDITOR"].flatMap(sanitizedEditor) ?? "vi"
         let lineArg = line.map { "+\($0) " } ?? ""
         let command = "\(editor) \(lineArg)\(shellQuoted(file.path))"
+        // Inside the AppleScript string literal, backslash is an escape
+        // character too: a raw `\` in the path would swallow the next
+        // character (or break the literal).  Escape both, and only, of the
+        // characters AppleScript gives meaning to.
+        let appleScriptString = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
         tell application "Terminal"
             activate
-            do script "\(command.replacingOccurrences(of: "\"", with: "\\\""))"
+            do script "\(appleScriptString)"
         end tell
         """
         var error: NSDictionary?

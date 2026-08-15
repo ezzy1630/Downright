@@ -14,12 +14,26 @@ extension DocumentWindowController {
     /// state first so its reading position survives the hop.
     func openInPlace(_ url: URL) {
         guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return }
+        let previousURL = markdownDocument.url
         resetTransientChrome()
         markdownDocument.close()
         do {
             try open(url, mode: mode)
             resetWorkspaceState(for: url)
         } catch {
+            // The hop died mid-flight (the target vanished between the click
+            // and the read).  The document is closed and watcherless now; put
+            // the file the reader was actually looking at back instead of
+            // leaving a dead surface that no longer tracks external writes.
+            if let previousURL {
+                do {
+                    try open(previousURL, mode: mode)
+                    resetWorkspaceState(for: previousURL)
+                    return
+                } catch {
+                    // The previous file is gone too; fall through to the beep.
+                }
+            }
             NSSound.beep()
         }
     }
@@ -60,7 +74,7 @@ extension DocumentWindowController {
     // MARK: - Images
 
     func presentLightbox(source: String, caption: String?) {
-        guard let window else { return }
+        guard window != nil else { return }
         let localURL = LocalAssetPolicy.request(raw: source, documentURL: markdownDocument.url)?.url
         let remoteURL = URL(string: source).flatMap { url -> URL? in
             guard let scheme = url.scheme?.lowercased(),
@@ -72,15 +86,28 @@ extension DocumentWindowController {
         }
         let url = localURL ?? remoteURL
         guard let url else { return }
-        let present = {
+        let present = { [weak self] in
+            guard let self else { return }
             self.documentPanes.forEach { $0.textView.refreshLocalAssets() }
-            guard let image = NSImage(contentsOf: url) else { return }
-            LightboxWindow(
-                image: image,
-                caption: caption,
-                reduceMotion: self.activeStyleSheet.reduceMotion,
-                reduceTransparency: self.activeStyleSheet.reduceTransparency
-            ).present(over: window)
+            // Decoding — and for a remote image, downloading — must never
+            // block the main thread: a slow or hanging server would freeze
+            // the whole app inside the click handler. Read off-main, then
+            // present on the main actor against the window that is current
+            // when the image actually arrives.
+            let reduceMotion = self.activeStyleSheet.reduceMotion
+            let reduceTransparency = self.activeStyleSheet.reduceTransparency
+            Task.detached(priority: .userInitiated) {
+                let image = NSImage(contentsOf: url)
+                await MainActor.run { [weak self] in
+                    guard let self, let image, let window = self.window else { return }
+                    LightboxWindow(
+                        image: image,
+                        caption: caption,
+                        reduceMotion: reduceMotion,
+                        reduceTransparency: reduceTransparency
+                    ).present(over: window)
+                }
+            }
         }
         if url.isFileURL {
             authorizeLocalEffect(.readLocalAsset, target: url, action: present)

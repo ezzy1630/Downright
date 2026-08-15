@@ -385,7 +385,7 @@ public enum MarkdownCLI {
 
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
-            body.append("<p>\(inline(paragraph.joined(separator: "\\n")))</p>")
+            body.append("<p>\(inline(paragraph.joined(separator: "\n")))</p>")
             paragraph.removeAll(keepingCapacity: true)
         }
         var selfListKind: Character?
@@ -397,7 +397,7 @@ public enum MarkdownCLI {
         for line in lines {
             if inCode {
                 if line.hasPrefix("```") {
-                    body.append("<pre><code class=\"language-\(escape(codeLanguage))\">\(escape(codeLines.joined(separator: "\\n")))</code></pre>")
+                    body.append("<pre><code class=\"language-\(escape(codeLanguage))\">\(escape(codeLines.joined(separator: "\n")))</code></pre>")
                     codeLines.removeAll(keepingCapacity: true)
                     inCode = false
                 } else { codeLines.append(line) }
@@ -419,9 +419,9 @@ public enum MarkdownCLI {
             }
             paragraph.append(line)
         }
-        if inCode { body.append("<pre><code>\(escape(codeLines.joined(separator: "\\n")))</code></pre>") }
+        if inCode { body.append("<pre><code>\(escape(codeLines.joined(separator: "\n")))</code></pre>") }
         flushParagraph(); closeList()
-        return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>\(escape(title))</title><style>body{font:16px/1.55 -apple-system,BlinkMacSystemFont,sans-serif;max-width:70ch;margin:3rem auto;padding:0 1rem;color:#222}pre{padding:1rem;background:#f3f3f3;overflow:auto}code{font-family:ui-monospace,monospace}blockquote{border-left:3px solid #aaa;padding-left:1rem;color:#555}img{max-width:100%}</style></head><body>\(body.joined(separator: "\\n"))</body></html>"
+        return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>\(escape(title))</title><style>body{font:16px/1.55 -apple-system,BlinkMacSystemFont,sans-serif;max-width:70ch;margin:3rem auto;padding:0 1rem;color:#222}pre{padding:1rem;background:#f3f3f3;overflow:auto}code{font-family:ui-monospace,monospace}blockquote{border-left:3px solid #aaa;padding-left:1rem;color:#555}img{max-width:100%}</style></head><body>\(body.joined(separator: "\n"))</body></html>"
     }
 
     public static func diagnostics(for markdown: String, baseURL: URL? = nil) -> [DocumentHealthDiagnostic] {
@@ -562,7 +562,7 @@ public enum MarkdownCLI {
             }
             return "<a href=\"\(destination)\">\(label)</a>"
         }
-        return result.replacingOccurrences(of: "\\n", with: "<br>\\n")
+        return result.replacingOccurrences(of: "\n", with: "<br>\n")
     }
 
     private static let linkSchemeAllowlist: Set<String> = ["http", "https", "mailto"]

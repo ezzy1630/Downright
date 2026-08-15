@@ -12,6 +12,66 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed a crash on ordinary prose.** Any document containing a one-character
+  word before `:digits` — "John 3:16", "meet at 9:30", `` `a:1` `` — fatally
+  trapped the path-token scanner during the per-keystroke reparse.
+- **Fixed code-fence recovery.** A closing fence may now carry trailing spaces
+  or tabs (legal CommonMark) instead of being swallowed into the code content,
+  and a same-character run shorter than the opening fence inside an unclosed
+  longer fence is content, not a phantom closer.
+- **Fixed footnote recovery inside fenced example code.** The source scanner
+  no longer ends a fence on an info string (` ```ruby ` inside ` ```` `), which
+  used to leak footnote-looking lines out of code blocks.
+- **Fixed section moves in mixed-ending files.** `moveSection` now recognizes
+  terminators by width and preserves the separator's exact bytes; a CRLF blank
+  separator used to be invisible to the walk, gluing the moved sections
+  together. Table realigns and list looseness are width-aware for the same
+  reason, and re-levelling a setext heading keeps its emphasis and code
+  markers instead of the plain-text title.
+- **Closed a stored-XSS hole in HTML export.** Wikilink targets now pass the
+  same scheme allowlist as ordinary links: `[[javascript:alert(1)//]]` used to
+  export as a live `javascript:` URL (the `.html` suffix sits behind a `//`
+  comment, so it did not neutralize the payload).
+- **Fixed `down export`.** Multi-line paragraphs and code blocks exported as
+  one line of visible `\n` garbage; the writer now emits real newlines.
+- **Fixed a main-thread freeze in the image lightbox.** Remote (and large
+  local) images now decode off the main thread; a slow server no longer hangs
+  the app inside the click handler.
+- **Fixed watcher events after close.** A file-watcher event already in flight
+  when its document closed scheduled one more external-write pass on the
+  closed document; and an in-place link hop whose target vanished mid-flight
+  now reopens the previous document instead of leaving a window that no longer
+  tracks external writes.
+- Hardened the release chain: the Apple API key and Developer ID certificate
+  materialize under `mktemp`/`RUNNER_TEMP` instead of fixed `/tmp` paths, the
+  Sparkle key ceremony no longer runs a binary discovered by globbing `/tmp`,
+  the ephemeral signing keychain is deleted on every path, and CI/release
+  install a checksum-pinned `xcodegen` (2.46.0) instead of a floating Homebrew
+  head, shipping its SettingPresets alongside the binary so the generated
+  project keeps `ONLY_ACTIVE_ARCH=YES` (a binary-only install dropped it and
+  made the acceptance build fail on universal app extensions).
+- **Fixed a workspace-sidebar crash on colliding filenames.** The link graph
+  keyed files by a normalized path that folds `a\b.md` into `a/b.md` (and a
+  hidden `.x.md` into `x.md`); `uniqueKeysWithValues` trapped on the first
+  duplicate. Lookup is now collision-tolerant and prefers the already-normalized
+  path deterministically.
+- **Fixed "Allow for Folder" over-granting on a directory.** Consenting from a
+  directory token stored the directory's *parent*, authorizing every sibling;
+  a directory target now grants itself, and revoke targets the same folder.
+- **Fixed trust grants silently revoking earlier ones.** A second grant for the
+  same path replaced the first instead of extending it, so folder-read and
+  editor-launch kept ping-ponging; grants now union their effects.
+- **Fixed a hard-wrap reflow overrun on stale documents.** The
+  continuation-indent walk indexed the buffer by an unclamped paragraph range
+  and could read one character past the end after an external rewrite; it now
+  clamps to the buffer length.
+- **Fixed agent hook install/uninstall matching the command only.** A foreign
+  `PostToolUse` entry that runs `down notify` under another matcher used to
+  block a needed install and be deleted by an uninstall; both now match on
+  matcher and command together.
+
 ### Added
 
 - **First-run setup panel.** Downright now installs itself. On first launch it

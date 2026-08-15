@@ -117,4 +117,12 @@ struct DocumentTrust: Sendable {
         guard childParts.count >= rootParts.count else { return false }
         return Array(childParts.prefix(rootParts.count)) == rootParts
     }
+
+    /// The folder a "Allow for Folder" grant covers for a target.  A file
+    /// target grants its containing directory; a directory target grants the
+    /// directory itself — granting a directory's parent would authorize more
+    /// than the user consented to when the target is itself a folder.
+    static func folderScope(for target: URL, isDirectory: Bool) -> URL {
+        isDirectory ? target : target.deletingLastPathComponent()
+    }
 }

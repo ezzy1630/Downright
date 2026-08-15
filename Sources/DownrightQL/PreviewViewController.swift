@@ -83,8 +83,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
             // Finder owns the main thread that presents this controller. File
             // coordination and decoding must not occupy it, especially for the
-            // multi-megabyte prefix path.
-            let load = await Task.detached(priority: .userInitiated) {
+            // multi-megabyte prefix path. The load runs detached (off the main
+            // actor), and cancellation is forwarded to it: a superseded or
+            // dismissed preview stops paying for bytes nobody will present.
+            let load = Task.detached(priority: .userInitiated) { () -> LoadResult in
+                if Task.isCancelled { return LoadResult.failure }
                 let byteCount =
                     (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                 switch QuickLookPolicy.presentation(forByteCount: byteCount) {
@@ -93,14 +96,21 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                         contentsOf: url,
                         limit: QuickLookPolicy.prefixReadLimitBytes
                     ) else { return LoadResult.failure }
+                    if Task.isCancelled { return LoadResult.failure }
                     return LoadResult.prefix(head)
                 case .full:
                     guard let (text, _) = try? DocumentIO.read(contentsOf: url) else {
                         return LoadResult.failure
                     }
+                    if Task.isCancelled { return LoadResult.failure }
                     return LoadResult.full(text)
                 }
-            }.value
+            }
+            let loadResult = await withTaskCancellationHandler {
+                await load.value
+            } onCancel: {
+                load.cancel()
+            }
 
             guard !Task.isCancelled else {
                 handler(CocoaError(.userCancelled))
@@ -119,7 +129,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 // appearance from the first file shown in this process.
                 self.view.appearance = self.previewAppearance.nsAppearance
                 self.resetPreview()
-                switch load {
+                switch loadResult {
                 case .prefix(let head): self.presentTruncated(head, url: url)
                 case .full(let text): self.present(text, url: url)
                 case .failure:
