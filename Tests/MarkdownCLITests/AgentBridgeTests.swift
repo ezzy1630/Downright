@@ -142,6 +142,36 @@ struct AgentBridgeTests {
         #expect((hooks?["PostToolUse"] as? [[String: Any]])?.count == 2)
     }
 
+    /// Our hook is identified by its matcher *and* its command.  A foreign
+    /// entry that runs `down notify` under another matcher is the user's own
+    /// hook, so it must not count as installed and must not block our install.
+    @Test("A foreign entry with our command under another matcher is not ours")
+    func foreignMatcherWithSameCommandDoesNotBlockInstall() {
+        let foreign: [String: Any] = [
+            "hooks": ["PostToolUse": [["matcher": "Bash", "hooks": [["type": "command", "command": "down notify"]]]]],
+        ]
+        #expect(!AgentBridge.isHookInstalled(in: foreign, executable: "down"))
+        let (settings, changed) = AgentBridge.installingHook(into: foreign, executable: "down")
+        #expect(changed)
+        let postToolUse = (settings["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]]
+        #expect(postToolUse?.count == 2)
+        #expect(AgentBridge.isHookInstalled(in: settings, executable: "down"))
+    }
+
+    @Test("Uninstalling leaves a foreign entry with the same command untouched")
+    func uninstallPreservesForeignMatcherWithSameCommand() {
+        let foreign: [String: Any] = [
+            "hooks": ["PostToolUse": [["matcher": "Bash", "hooks": [["type": "command", "command": "down notify"]]]]],
+        ]
+        let installed = AgentBridge.installingHook(into: foreign, executable: "down").settings
+        let (settings, changed) = AgentBridge.removingHook(from: installed, executable: "down")
+        #expect(changed)
+        let postToolUse = (settings["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]]
+        #expect(postToolUse?.count == 1)
+        #expect(postToolUse?.first?["matcher"] as? String == "Bash")
+        #expect((postToolUse?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String == "down notify")
+    }
+
     @Test("Uninstalling removes only our hook")
     func uninstallRemovesOnlyOurs() {
         let seeded: [String: Any] = [

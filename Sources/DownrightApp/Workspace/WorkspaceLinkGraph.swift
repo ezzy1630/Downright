@@ -54,7 +54,22 @@ public struct WorkspaceLinkGraph: Sendable, Equatable {
 
 enum WorkspaceLinkGraphBuilder {
     static func build(snapshot: WorkspaceIndexSnapshot, includeUnlinkedMentions: Bool = false) -> WorkspaceLinkGraph {
-        let byPath = Dictionary(uniqueKeysWithValues: snapshot.entries.map { (normalize($0.relativePath), $0) })
+        // `normalize` folds distinct files together (`a\b.md` vs `a/b.md`, and
+        // a hidden `.x.md` vs `x.md`), so a plain uniqueKeysWithValues would
+        // trap on the first duplicate.  Prefer the entry whose relative path is
+        // already normalized (no backslash folding or `./` trimming); among
+        // ties the sorted scan order decides, so the winner is deterministic.
+        var byPath: [String: WorkspaceIndexEntry] = [:]
+        for entry in snapshot.entries {
+            let key = normalize(entry.relativePath)
+            if let existing = byPath[key] {
+                if existing.relativePath != key, entry.relativePath == key {
+                    byPath[key] = entry
+                }
+                continue
+            }
+            byPath[key] = entry
+        }
         let byStem = Dictionary(grouping: snapshot.entries) { normalize(URL(fileURLWithPath: $0.relativePath).deletingPathExtension().path) }
         var outgoing: [String: [WorkspaceLinkTarget]] = [:]
         var backlinks: [String: [WorkspaceBacklink]] = [:]

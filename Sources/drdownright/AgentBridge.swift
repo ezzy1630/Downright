@@ -115,9 +115,14 @@ public enum AgentBridge {
         let command = hookCommand(executable: executable)
         let entries = (settings["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]] ?? []
         return entries.contains { entry in
-            (entry["hooks"] as? [[String: Any]] ?? [])
-                .compactMap { $0["command"] as? String }
-                .contains(command)
+            // Our hook is identified by its matcher *and* its command.  A
+            // foreign entry that happens to run `down notify` under another
+            // matcher must not count as installed — matching on the command
+            // alone would block a needed install and let uninstall delete it.
+            entry["matcher"] as? String == toolMatcher
+                && (entry["hooks"] as? [[String: Any]] ?? [])
+                    .compactMap { $0["command"] as? String }
+                    .contains(command)
         }
     }
 
@@ -157,6 +162,13 @@ public enum AgentBridge {
         var changed = false
         var remaining: [[String: Any]] = []
         for var entry in postToolUse {
+            // Only entries under our matcher are ours to edit.  A foreign entry
+            // with the same command string is the user's own hook and must
+            // survive an uninstall untouched.
+            guard entry["matcher"] as? String == toolMatcher else {
+                remaining.append(entry)
+                continue
+            }
             let commands = entry["hooks"] as? [[String: Any]] ?? []
             let kept = commands.filter { ($0["command"] as? String) != command }
             if kept.count != commands.count { changed = true }

@@ -185,9 +185,9 @@ extension DocumentWindowController: TrustPromptViewDelegate {
         let path: URL?
         if let targetPath = request.target.canonicalPath {
             let targetURL = URL(fileURLWithPath: targetPath)
-            path = scope == .folder ? targetURL.deletingLastPathComponent() : targetURL
+            path = scope == .folder ? folderScopeURL(for: targetURL) : targetURL
         } else if let documentURL = markdownDocument.url {
-            path = scope == .folder ? documentURL.deletingLastPathComponent() : documentURL
+            path = scope == .folder ? folderScopeURL(for: documentURL) : documentURL
         } else {
             path = nil
         }
@@ -203,11 +203,20 @@ extension DocumentWindowController: TrustPromptViewDelegate {
 
     private func revokeMatching(request: TrustRequest) {
         if let path = request.target.canonicalPath {
-            revokeTrust(scope: .file, path: URL(fileURLWithPath: path))
-            revokeTrust(scope: .folder, path: URL(fileURLWithPath: path).deletingLastPathComponent())
+            let targetURL = URL(fileURLWithPath: path)
+            revokeTrust(scope: .file, path: targetURL)
+            revokeTrust(scope: .folder, path: folderScopeURL(for: targetURL))
         } else if let documentURL = markdownDocument.url {
             revokeTrust(scope: .file, path: documentURL)
-            revokeTrust(scope: .folder, path: documentURL.deletingLastPathComponent())
+            revokeTrust(scope: .folder, path: folderScopeURL(for: documentURL))
         }
+    }
+
+    /// The folder a "Allow for Folder" grant covers for a target.  A file
+    /// target grants its parent directory; a directory target grants the
+    /// directory itself, so consenting on a folder never widens to its parent.
+    private func folderScopeURL(for target: URL) -> URL {
+        let isDirectory = (try? target.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        return DocumentTrust.folderScope(for: target, isDirectory: isDirectory)
     }
 }

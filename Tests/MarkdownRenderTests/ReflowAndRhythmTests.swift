@@ -137,6 +137,23 @@ private let wrappedListItem = """
     #expect(made.ranges.isEmpty)
 }
 
+@Test func aStaleDocumentLongerThanTheBufferDoesNotOverrunIndents() {
+    // The planner is defensive by contract: a parsed document can outlive the
+    // buffer it was parsed from (an external rewrite racing the last parse), so
+    // a paragraph range can run past `text.length`.  The continuation-indent
+    // walk indexed the text by that unclamped range and read one past the end.
+    //
+    // Three leading spaces keep this a soft break (four would make a code
+    // block), and the truncated buffer ends mid-indent so the walk reaches the
+    // very end of the text and used to read one character past it.
+    let source = "line one\n   line two\n"
+    let document = MarkdownParser.parse(source)
+    let truncated = String(source.prefix(12)) as NSString  // "line one\n   "
+    let made = HardWrapReflow.plan(document: document, text: truncated, hiddenRanges: [], enabled: true)
+    #expect(made.substitutions.allSatisfy { $0.sourceRange.upperBound <= truncated.length })
+    #expect(made.substitutions.contains { $0.sourceRange == NSRange(location: 9, length: 3) })
+}
+
 @Test func aCalloutBodyDoesNotOpenWithASpace() {
     // A quoted paragraph's range begins on the newline that ends the line above
     // it, so the terminator that opens the element joins nothing.  Rendered as a

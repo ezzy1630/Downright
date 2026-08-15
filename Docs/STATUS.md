@@ -236,7 +236,7 @@ what they mean for §13's P0 kill criterion.
 
 ## Test suites
 
-The full check currently runs **716 tests in 71 suites**.
+The full check currently runs **1003 tests in 85 suites**.
 
 | Suite | Covers |
 |---|---|

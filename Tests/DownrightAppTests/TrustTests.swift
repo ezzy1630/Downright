@@ -142,6 +142,33 @@ struct DocumentTrustTests {
         ))
         #expect(store.grants().isEmpty)
     }
+
+    /// "Allow for Folder" on a directory must grant that directory, not its
+    /// parent — granting the parent authorizes every sibling the user never
+    /// consented to.
+    @Test
+    func folderScopeGrantsADirectoryItselfButAParentForAFile() {
+        let directory = URL(fileURLWithPath: "/workspace/assets")
+        let file = directory.appendingPathComponent("logo.png")
+        // `deletingLastPathComponent` keeps a trailing slash, so compare the
+        // path — both spellings name the same directory.
+        #expect(DocumentTrust.folderScope(for: file, isDirectory: false).path == directory.path)
+        #expect(DocumentTrust.folderScope(for: directory, isDirectory: true).path == directory.path)
+    }
+
+    /// A second grant for the same path extends the earlier one; it must not
+    /// wipe the first effect, which is how folder-read and editor-launch kept
+    /// ping-ponging (granting one silently blocked the other).
+    @Test
+    func grantingASecondEffectExtendsTheExistingGrant() {
+        let store = TrustStore(persistence: InMemoryTrustStorePersistence())
+        let path = URL(fileURLWithPath: "/tmp/downright-trust-effects")
+        #expect(store.grant(scope: .file, path: path, effects: [.readLocalAsset]))
+        #expect(store.grant(scope: .file, path: path, effects: [.launchPathOrEditor]))
+        let grants = store.grants()
+        #expect(grants.count == 1)
+        #expect(grants.first?.effects == Set([.readLocalAsset, .launchPathOrEditor]))
+    }
 }
 
 private enum TrustPersistenceFailure: Error { case unavailable }
