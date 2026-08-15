@@ -1,13 +1,15 @@
 name: Release
 
-# A tag vX.Y.Z triggers the full production pipeline: gates → tests → signed,
-# notarized, stapled universal build → Sparkle-signed appcast → GitHub Release
-# → GitHub Pages deployment.  All secrets live in the `release` environment.
+# Every push to `main` triggers the full production pipeline: gates → tests →
+# signed, notarized, stapled universal build → Sparkle-signed appcast → GitHub
+# Release → GitHub Pages deployment. All secrets live in the `release`
+# environment. The workflow gives each commit a unique build identity so
+# Sparkle can order updates without requiring a manual version-tag push.
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -40,37 +42,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate tag shape and version contract
+      - name: Derive release identity and validate main
+        id: release_identity
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "TAG=$TAG"
-          # 1. Reject non-SemVer tags.
-          if ! echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::tag '$GITHUB_REF_NAME' is not SemVer X.Y.Z"; exit 1
-          fi
-          # 2. The tag must match the canonical MARKETING_VERSION.
+          [ "$GITHUB_REF_NAME" = "main" ] || {
+            echo "::error::release workflow only accepts pushes to main (got $GITHUB_REF_NAME)"
+            exit 1
+          }
           # shellcheck disable=SC1091
           source Config/version.env
-          if [ "$MARKETING_VERSION" != "$TAG" ]; then
-            echo "::error::Config/version.env says $MARKETING_VERSION, tag says $TAG"; exit 1
+          if ! echo "$MARKETING_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::MARKETING_VERSION '$MARKETING_VERSION' is not SemVer X.Y.Z"
+            exit 1
           fi
-          # 3. The tag must point into protected main (reachable from origin/main).
+          # build-number.sh is deterministic on this clean full checkout. The
+          # commit count is the numeric CFBundleVersion Sparkle compares.
+          BUILD="$(Scripts/build-number.sh)"
+          if ! echo "$BUILD" | grep -Eq '^[0-9]+$'; then
+            echo "::error::release build number '$BUILD' is not numeric"
+            exit 1
+          fi
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          # TAG is used in human-facing asset filenames. RELEASE_TAG is the
+          # unique GitHub release tag; it is intentionally not a source version
+          # tag, because every main commit is a release.
+          TAG="${MARKETING_VERSION}-${BUILD}-${SHORT_SHA}"
+          RELEASE_TAG="auto-${GITHUB_SHA}"
+          echo "MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG"
+          echo "RELEASE_TAG=$RELEASE_TAG"
+          # The pushed commit must still be reachable from protected main.
           # Keep the full checkout history intact: build-number.sh derives
           # CURRENT_PROJECT_VERSION from the reachable commit count.
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::tag $GITHUB_REF_NAME does not point into main"; exit 1
+            echo "::error::pushed commit is not reachable from origin/main"; exit 1
           fi
-          # 4. Working tree must be clean (no generated-file drift).
+          # Working tree must be clean (no generated-file drift).
           if [ -n "$(git status --porcelain)" ]; then
             echo "::error::dirty working tree:"; git status --porcelain; exit 1
           fi
-          # 5. Numeric, monotonically increasing build number comes from the
-          #    commit count (build-number.sh); release builds must be > any
-          #    previous release.  The value is checked again after building.
           Scripts/sync-versions.sh
 
       # Same reason as CI: pick a toolchain that satisfies the manifest and
@@ -104,8 +122,7 @@ jobs:
       - name: Build Release archive (universal)
         run: |
           set -euo pipefail
-          BUILD="$(Scripts/build-number.sh)"
-          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          BUILD="${BUILD:?release build number was not derived in the validation step}"
           xcodebuild \
             -project Downright.xcodeproj \
             -scheme Downright \
@@ -113,7 +130,7 @@ jobs:
             -derivedDataPath .build-release \
             -archivePath .build-release/Downright.xcarchive \
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            MARKETING_VERSION="$TAG" \
+            MARKETING_VERSION="$MARKETING_VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD" \
             DEVELOPMENT_TEAM="" \
             CODE_SIGN_STYLE=Manual \
@@ -284,16 +301,23 @@ jobs:
           set -euo pipefail
           APP="${{ env.APP }}"
           Scripts/make-dmg.sh "$APP"
+          # make-dmg.sh names the image from the human-facing app version.
+          # Rename it to the per-commit release asset name before notarising so
+          # the versioned archive, stable alias, and checksum are identical.
+          SOURCE_DMG="dist/Downright-$MARKETING_VERSION.dmg"
+          VERSIONED_DMG="Downright-$TAG.dmg"
+          test -f "$SOURCE_DMG"
+          mv "$SOURCE_DMG" "$VERSIONED_DMG"
           echo "$APPLE_API_PRIVATE_KEY_P8" | base64 --decode > /tmp/AuthKey.p8
-          xcrun notarytool submit "dist/Downright-$TAG.dmg" \
+          xcrun notarytool submit "$VERSIONED_DMG" \
             --key /tmp/AuthKey.p8 \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER_ID" \
             --wait --timeout 20m
           rm -f /tmp/AuthKey.p8
-          xcrun stapler staple "dist/Downright-$TAG.dmg"
-          xcrun stapler validate "dist/Downright-$TAG.dmg"
-          mv "dist/Downright-$TAG.dmg" "Downright-$TAG.dmg"
+          xcrun stapler staple "$VERSIONED_DMG"
+          xcrun stapler validate "$VERSIONED_DMG"
+          cp "$VERSIONED_DMG" Downright.dmg
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -307,6 +331,7 @@ jobs:
           mkdir -p artifacts
           shasum -a 256 "Downright-$TAG.zip" > artifacts/Downright-$TAG.zip.sha256
           shasum -a 256 "Downright-$TAG.dmg" > artifacts/Downright-$TAG.dmg.sha256
+          shasum -a 256 Downright.dmg > artifacts/Downright.dmg.sha256
           echo "SHA256: $(cat artifacts/Downright-$TAG.zip.sha256)"
           # A GitHub Release asset must be a file, not a directory. Preserve
           # the complete symbol bundle in one deterministic archive and fail
@@ -318,15 +343,15 @@ jobs:
           shasum -a 256 "artifacts/Downright-$TAG-dSYMs.zip" \
             > "artifacts/Downright-$TAG-dSYMs.zip.sha256"
           # Auto-assemble release notes from the commits since the previous
-          # SemVer tag; the GitHub release keeps the full history.
-          PREV_TAG="$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')"
+          # generated or manually tagged release.
+          PREV_TAG="$(git tag --sort=-creatordate | grep -E '^(auto-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)$' | head -1 || true)"
           if [ -n "$PREV_TAG" ]; then
             COMMITS="$(git log --oneline --no-merges "${PREV_TAG}..HEAD")"
           else
             COMMITS="$(git log --oneline --no-merges -30 HEAD)"
           fi
           {
-            echo "# Downright $TAG"
+            echo "# Downright $MARKETING_VERSION (build $BUILD)"
             echo
             echo "## What's new"
             echo
@@ -360,7 +385,7 @@ jobs:
           # so they cannot be mistaken for update archives.
           curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/releases?per_page=10" \
-            | jq -r '.[] | select(.prerelease == false) | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+\\.zip$")) | .browser_download_url' \
+            | jq -r '.[] | select(.prerelease == false) | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9]+-[0-9a-f]+)?\\.zip$")) | .browser_download_url' \
             | head -3 | while read -r url; do
                 curl -fsSL -L -O --output-dir /tmp/appcast-input "$url"
               done
@@ -390,8 +415,8 @@ jobs:
             | /tmp/sparkle/bin/generate_appcast \
                 --ed-key-file - \
                 --embed-release-notes \
-                --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/" \
-                --full-release-notes-url "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" \
+                --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
+                --full-release-notes-url "https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG" \
                 --link "https://github.com/${{ github.repository }}" \
                 --maximum-versions 1 \
                 /tmp/appcast-input
@@ -429,27 +454,31 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.release_identity.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           files: |
-            Downright-${{ env.TAG }}.zip
-            Downright-${{ env.TAG }}.dmg
-            artifacts/Downright-${{ env.TAG }}.zip.sha256
-            artifacts/Downright-${{ env.TAG }}.dmg.sha256
-            artifacts/Downright-${{ env.TAG }}-dSYMs.zip
-            artifacts/Downright-${{ env.TAG }}-dSYMs.zip.sha256
+            Downright-${{ steps.release_identity.outputs.tag }}.zip
+            Downright-${{ steps.release_identity.outputs.tag }}.dmg
+            Downright.dmg
+            artifacts/Downright-${{ steps.release_identity.outputs.tag }}.zip.sha256
+            artifacts/Downright-${{ steps.release_identity.outputs.tag }}.dmg.sha256
+            artifacts/Downright.dmg.sha256
+            artifacts/Downright-${{ steps.release_identity.outputs.tag }}-dSYMs.zip
+            artifacts/Downright-${{ steps.release_identity.outputs.tag }}-dSYMs.zip.sha256
             artifacts/*.delta
           body_path: artifacts/RELEASE-NOTES.md
 
       - name: Verify public asset URL
         run: |
           set -euo pipefail
-          URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Downright-$TAG.zip"
+          URL="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/Downright-$TAG.zip"
           HTTP=$(curl -sIL -o /dev/null -w '%{http_code}' "$URL")
           [ "$HTTP" = "200" ] || [ "$HTTP" = "302" ] || { echo "asset not reachable: $HTTP"; exit 1; }
           PUBLISHED_SHA="$(curl -fsSL "$URL" | shasum -a 256 | awk '{print $1}')"
           LOCAL_SHA="$(cat artifacts/Downright-$TAG.zip.sha256 | awk '{print $1}')"
           [ "$PUBLISHED_SHA" = "$LOCAL_SHA" ] || { echo "checksum mismatch after publish"; exit 1; }
-          DMG_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Downright-$TAG.dmg"
+          DMG_URL="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/Downright-$TAG.dmg"
           DMG_HTTP=$(curl -sIL -o /dev/null -w '%{http_code}' "$DMG_URL")
           [ "$DMG_HTTP" = "200" ] || [ "$DMG_HTTP" = "302" ] || { echo "dmg not reachable: $DMG_HTTP"; exit 1; }
           PUBLISHED_DMG_SHA="$(curl -fsSL "$DMG_URL" | shasum -a 256 | awk '{print $1}')"
@@ -460,13 +489,31 @@ jobs:
           for delta in artifacts/*.delta; do
             [ -f "$delta" ] || continue
             BASE=$(basename "$delta")
-            DELTA_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$BASE"
+            DELTA_URL="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$BASE"
             DH=$(curl -sIL -o /dev/null -w '%{http_code}' "$DELTA_URL")
             [ "$DH" = "200" ] || [ "$DH" = "302" ] || { echo "delta not reachable: $DH $BASE"; exit 1; }
             DL=$(curl -fsSL "$DELTA_URL" | shasum -a 256 | awk '{print $1}')
             LL=$(shasum -a 256 "$delta" | awk '{print $1}')
             [ "$DL" = "$LL" ] || { echo "delta checksum mismatch: $BASE"; exit 1; }
           done
+          STABLE_DMG_URL="https://github.com/${{ github.repository }}/releases/latest/download/Downright.dmg"
+          STABLE_DMG_SHA="$(cat artifacts/Downright.dmg.sha256 | awk '{print $1}')"
+          for attempt in $(seq 1 30); do
+            STABLE_HTTP=$(curl -sIL -o /dev/null -w '%{http_code}' "$STABLE_DMG_URL" || true)
+            if [ "$STABLE_HTTP" = "200" ] || [ "$STABLE_HTTP" = "302" ]; then
+              break
+            fi
+            sleep 2
+          done
+          [ "$STABLE_HTTP" = "200" ] || [ "$STABLE_HTTP" = "302" ] || {
+            echo "stable DMG not reachable: $STABLE_HTTP"
+            exit 1
+          }
+          PUBLISHED_STABLE_SHA="$(curl -fsSL "$STABLE_DMG_URL" | shasum -a 256 | awk '{print $1}')"
+          [ "$PUBLISHED_STABLE_SHA" = "$STABLE_DMG_SHA" ] || {
+            echo "stable DMG checksum mismatch"
+            exit 1
+          }
 
       - name: Upload Pages artifact (appcast + release notes)
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
