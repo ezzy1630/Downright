@@ -49,7 +49,9 @@ every release; Sparkle orders updates by it.
   Sparkle key ceremony no longer runs a binary discovered by globbing `/tmp`,
   the ephemeral signing keychain is deleted on every path, and CI/release
   install a checksum-pinned `xcodegen` (2.46.0) instead of a floating Homebrew
-  head.
+  head, shipping its SettingPresets alongside the binary so the generated
+  project keeps `ONLY_ACTIVE_ARCH=YES` (a binary-only install dropped it and
+  made the acceptance build fail on universal app extensions).
 - **Fixed a workspace-sidebar crash on colliding filenames.** The link graph
   keyed files by a normalized path that folds `a\b.md` into `a/b.md` (and a
   hidden `.x.md` into `x.md`); `uniqueKeysWithValues` trapped on the first

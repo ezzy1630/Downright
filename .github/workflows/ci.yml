@@ -57,8 +57,16 @@ jobs:
             "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
           echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          sudo mkdir -p /usr/local/bin /usr/local/share
           sudo cp "$RUNNER_TEMP/xcodegen/bin/xcodegen" /usr/local/bin/xcodegen
           sudo chmod +x /usr/local/bin/xcodegen
+          # The SettingPresets (ONLY_ACTIVE_ARCH=YES for Debug, plus the other
+          # default settings) ship in the zip's share/ tree, which xcodegen
+          # resolves relative to the binary. A binary-only install silently
+          # drops them, and the generated project then builds the app-extension
+          # and UI-test targets for every standard architecture, mismatching
+          # the arm64-only package modules. Copy the tree, not just the binary.
+          sudo cp -R "$RUNNER_TEMP/xcodegen/share/xcodegen" /usr/local/share/xcodegen
           xcodegen --version
       - name: Build and run the activated-app acceptance suite
         env:
