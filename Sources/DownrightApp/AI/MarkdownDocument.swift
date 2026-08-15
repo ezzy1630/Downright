@@ -241,6 +241,18 @@ final class MarkdownDocument: NSObject {
     // MARK: - Opening and saving
 
     func open(_ fileURL: URL) throws {
+        // Canonicalise once, up front.  A `.atomic` write renames a new file
+        // over the destination, which would *replace a symlink with a regular
+        // file* while the link's target kept its stale content.  Resolving here
+        // makes the identity, the watcher, and the write path agree, so saving
+        // a file opened through a symlink edits the target it points at rather
+        // than clobbering the link itself (§8.1).
+        let canonical = fileURL.resolvingSymlinksInPath()
+        // Read before touching any state: a file that vanishes between the
+        // link-follow and the read must leave the document exactly as the
+        // caller's `close()` left it, not half-torn-down.
+        let (text, fidelity) = try DocumentIO.read(contentsOf: canonical)
+
         isClosed = false
         enqueueParseControl { await $0.resume() }
         cancelParseWork()
@@ -249,14 +261,6 @@ final class MarkdownDocument: NSObject {
         // file must not decorate the next one.  `reset`, not `clear`: dropping
         // a document is not the user reviewing it.
         changes.reset()
-        // Canonicalise once, up front.  A `.atomic` write renames a new file
-        // over the destination, which would *replace a symlink with a regular
-        // file* while the link's target kept its stale content.  Resolving here
-        // makes the identity, the watcher, and the write path agree, so saving
-        // a file opened through a symlink edits the target it points at rather
-        // than clobbering the link itself (§8.1).
-        let canonical = fileURL.resolvingSymlinksInPath()
-        let (text, fidelity) = try DocumentIO.read(contentsOf: canonical)
         self.url = canonical
         self.fidelity = fidelity
         self.state = DocumentStateStore.shared.state(for: canonical)
@@ -755,6 +759,13 @@ final class MarkdownDocument: NSObject {
     }
 
     private func handleWatchEvent(_ event: FileWatcher.Event) {
+        // `FileWatcher` dispatches to the main queue; a block already in
+        // flight when `close()` ran cannot be retracted, and `stop()` only
+        // cancels work that has not started.  A late event on a closed
+        // document would schedule a fresh absorb and fire external-change UI
+        // on a window that is going away — the same guard `startAsyncReparse`
+        // and `preferencesDidChange` already apply.
+        guard !isClosed else { return }
         switch event {
         case .removed:
             onExternalEvent?(.fileRemoved)

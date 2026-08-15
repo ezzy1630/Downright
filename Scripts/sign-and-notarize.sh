@@ -117,9 +117,13 @@ trap 'rm -f "${CLEANUP[@]}"' EXIT
 if [ -n "${KEYCHAIN_PROFILE:-}" ]; then
     NOTARY=(--keychain-profile "$KEYCHAIN_PROFILE")
 else
-    printf '%s' "${APPLE_API_PRIVATE_KEY_P8:-}" > /tmp/downright-AuthKey.p8
-    CLEANUP+=(/tmp/downright-AuthKey.p8)
-    NOTARY=(--key /tmp/downright-AuthKey.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
+    # The API key is the release credential: never at a fixed /tmp path where
+    # another local user can pre-create or symlink it. mktemp gives a fresh
+    # 0600 file; the EXIT trap removes it after the last submit that uses it.
+    AUTH_KEY="$(mktemp "${TMPDIR:-/tmp}/downright-AuthKey.XXXXXX")"
+    printf '%s' "${APPLE_API_PRIVATE_KEY_P8:-}" > "$AUTH_KEY"
+    CLEANUP+=("$AUTH_KEY")
+    NOTARY=(--key "$AUTH_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
 fi
 xcrun notarytool submit "$NOTARY_ZIP" "${NOTARY[@]}" --wait --timeout 20m
 

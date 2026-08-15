@@ -244,6 +244,14 @@ struct HTMLExporter {
             guard linkIsSafe(destination) else { return escape(destination) }
             return "<a href=\"\(escape(destination))\">\(escape(destination))</a>"
         case .wikilink(let target, let label):
+            // Same rule as ordinary links above: a wikilink target with a
+            // scheme missing from the allowlist (`[[javascript:alert(1)//]]`)
+            // must not become a live `href` — the `.html` suffix does not
+            // neutralize it, because the `//` comments the suffix out of the
+            // script.  Render it inert with the destination as tooltip text.
+            guard linkIsSafe(target) else {
+                return "<span class=\"wikilink\" title=\"\(escape(target))\">\(escape(label ?? target))</span>"
+            }
             return "<a class=\"wikilink\" href=\"\(escape(target)).html\">\(escape(label ?? target))</a>"
         case .image(let source, let alt):
             return renderImage(source: source, alt: alt)
