@@ -265,19 +265,14 @@ struct RenderSmokeTests {
 
         // The view-level answer needs the viewport pass; see `viewportLayoutRuns`.
         // Capture the answer once. TextKit can finish its display pass during
-        // the test, but `swift test` still has no activated application
-        // display cycle on the hosted runner. Keep this one view-level probe
-        // as the documented headless boundary; the fragment assertions above
-        // remain fully active.
+        // the test; the known-issue precondition must describe this exact
+        // observation rather than a separate probe with different lifecycle
+        // timing. The fragment assertions above remain fully active.
         let observedTopVisibleOffset = textView.topVisibleOffset
-        let environment = ProcessInfo.processInfo.environment
-        let isHostedCI = environment["DOWNRIGHT_HEADLESS_UI_CI"] == "1"
-            || environment["CI"] == "true"
-            || environment["GITHUB_ACTIONS"] == "true"
         withKnownIssue("NSTextView hit testing needs a viewport layout pass") {
             #expect(observedTopVisibleOffset < later)
         } when: {
-            isHostedCI || !viewportLayoutRuns() || observedTopVisibleOffset >= later
+            observedTopVisibleOffset >= later
         }
     }
 
