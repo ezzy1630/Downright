@@ -343,9 +343,24 @@ struct BlockBuilder {
         for index in children.indices.dropFirst() {
             let start = children[index - 1].range.location
             let span = NSRange(location: start, length: max(0, children[index].range.location - start))
-            // Only the two trailing UTF-16 units decide; avoid a substring.
-            let end = span.upperBound
-            if end >= 2, text.character(at: end - 1) == 0x0A, text.character(at: end - 2) == 0x0A { return false }
+            // A blank line means two terminators back to back; `\r\n` counts
+            // as one, so recognize terminators by width rather than assuming
+            // LF units.
+            var end = span.upperBound
+            var terminators = 0
+            while terminators < 2 {
+                if end >= 2,
+                   text.character(at: end - 2) == 0x0D, text.character(at: end - 1) == 0x0A {
+                    end -= 2
+                } else if end >= 1,
+                          text.character(at: end - 1) == 0x0A || text.character(at: end - 1) == 0x0D {
+                    end -= 1
+                } else {
+                    break
+                }
+                terminators += 1
+            }
+            if terminators >= 2 { return false }
         }
         // CommonMark: a list is loose when any item directly contains two
         // block-level elements, not only when a single item happens to.
@@ -424,12 +439,20 @@ struct BlockBuilder {
             let closeStart = endLine > startLine ? map.lineStarts[endLine] : range.upperBound
             // A closing fence must match the opening fence's character, not a
             // mixture of both, or a `~~~` code block could be terminated by a
-            // backtick fence and vice versa.
+            // backtick fence and vice versa.  CommonMark also requires it to be
+            // at least as long as the opening fence and to be followed only by
+            // spaces or tabs — an info string (`\`\`\`ruby`) does not close,
+            // and a shorter same-character run inside an unclosed longer
+            // fence is content, not chrome.
             let fenceChar: Character = fenceCharacters.hasPrefix("~~~") ? "~" : "`"
+            let openLength = fenceCharacters.prefix { $0 == fenceChar }.count
             let closeLine = Self.fencePrefix(of: map.string(ofLine: endLine))
+            let closeRun = closeLine.prefix { $0 == fenceChar }
+            let closeTail = closeLine.dropFirst(closeRun.count)
+                .trimmingCharacters(in: .whitespaces)
             let hasClosingFence = endLine > startLine
-                && !closeLine.isEmpty
-                && closeLine.allSatisfy { $0 == fenceChar }
+                && closeRun.count >= max(3, openLength)
+                && closeTail.isEmpty
             let contentEnd = hasClosingFence ? closeStart : range.upperBound
             content = NSRange(location: openEnd, length: max(0, contentEnd - openEnd))
             if hasClosingFence {
@@ -602,12 +625,13 @@ struct BlockBuilder {
                 existing.inlines = InlineSpan.clipLeading(existing.inlines, to: definition.markerRange.upperBound)
                 continue
             }
+            let synthesized = clampedSynthesisRange(definition.range, in: children)
             let block = MDBlock(
                 content: .footnoteDefinition(identifier: definition.identifier),
-                range: definition.range,
+                range: synthesized,
                 contentRange: NSRange(
                     location: definition.markerRange.upperBound,
-                    length: max(0, definition.range.upperBound - definition.markerRange.upperBound)
+                    length: max(0, synthesized.upperBound - definition.markerRange.upperBound)
                 ),
                 markerRange: definition.markerRange,
                 depth: 1
@@ -615,6 +639,20 @@ struct BlockBuilder {
             let insertion = children.firstIndex { $0.range.location > definition.range.location }
             children.insert(block, at: insertion ?? children.count)
         }
+    }
+
+    /// The scanner folds indented continuation lines into a footnote
+    /// definition's range, but cmark can claim those same lines for a sibling
+    /// (an indented code block, when the definition's body parses as a bare
+    /// URL).  Top-level children never overlap — a synthesized block must not
+    /// either, so it ends where the next child begins.
+    private func clampedSynthesisRange(_ range: NSRange, in children: [MDBlock]) -> NSRange {
+        var clamped = range
+        if let next = children.first(where: { $0.range.location > range.location }),
+           next.range.location < clamped.upperBound {
+            clamped.length = max(0, next.range.location - clamped.location)
+        }
+        return clamped
     }
 }
 

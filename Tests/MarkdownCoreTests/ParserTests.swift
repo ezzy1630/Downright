@@ -138,6 +138,38 @@ import Testing
         #expect(doc.substring(block.trailingMarkerRange!) == "```")
     }
 
+    /// CommonMark: a closing fence "may be followed only by spaces or tabs,
+    /// which are ignored".  The recovery used to reject a closer carrying
+    /// trailing whitespace, swallow it into the content, and render it inside
+    /// the block (and copy it, and feed it to math/Mermaid sources).
+    @Test func closingFenceMayCarryTrailingWhitespace() {
+        let doc = MarkdownParser.parse("```swift\nlet x = 1\n``` \n")
+        let block = doc.root.children.first!
+        guard case .codeBlock(_, let isFenced, let content) = block.content else {
+            Issue.record("expected a code block, got \(block.content)")
+            return
+        }
+        #expect(isFenced)
+        #expect(doc.substring(content) == "let x = 1\n")
+        #expect(doc.substring(block.trailingMarkerRange!) == "``` ")
+    }
+
+    /// CommonMark: "The closing code fence must be at least as long as the
+    /// opening fence."  Inside an unclosed four-backtick block a three-backtick
+    /// line is *content*; the recovery used to treat it as the closer and hide
+    /// it as chrome.
+    @Test func shortFenceLineInsideLongerUnclosedFenceIsContent() {
+        let doc = MarkdownParser.parse("````\ncode\n```\nmore\n")
+        let block = doc.root.children.first!
+        guard case .codeBlock(_, let isFenced, let content) = block.content else {
+            Issue.record("expected a code block, got \(block.content)")
+            return
+        }
+        #expect(isFenced)
+        #expect(doc.substring(content) == "code\n```\nmore")
+        #expect(block.trailingMarkerRange == nil)
+    }
+
     @Test func indentedCodeIsNotFenced() {
         let doc = MarkdownParser.parse("    indented\n    more\n")
         guard case .codeBlock(_, let isFenced, _) = doc.root.children.first!.content else {
@@ -231,6 +263,35 @@ import Testing
             }
         }
         #expect(referenced)
+    }
+
+    /// Regression: a line inside an outer fence that starts with a shorter
+    /// fence run plus an info string (`\`\`\`ruby` inside `\`\`\`\`) is content,
+    /// not a closer.  The source scanner used to close on it and then read a
+    /// footnote-looking line *inside* the fence as a real definition.
+    @Test func fencedExampleCodeWithInfoStringsHidesFootnoteLookingLines() {
+        let doc = MarkdownParser.parse(
+            "````markdown\n```ruby\n[^inner]: not a definition\n```\n````\n"
+        )
+        #expect(doc.footnotes["inner"] == nil)
+        #expect(doc.root.children.count == 1, "the whole construct is one code block")
+    }
+
+    /// Regression: when a footnote definition's body parses as a bare URL,
+    /// cmark consumes the definition line and gives the indented continuation
+    /// to a code block.  The synthesized footnote block used to cover both
+    /// lines and overlap that sibling — top-level children never overlap.
+    @Test func synthesizedFootnoteBlockDoesNotOverlapItsSibling() {
+        let doc = MarkdownParser.parse("[^a]: first\n    continued\n")
+        // The definition itself is still recognized…
+        #expect(doc.footnotes["a"] != nil)
+        // …and no two top-level blocks claim the same bytes.
+        let children = doc.root.children
+        for (index, block) in children.enumerated() {
+            if index + 1 < children.count {
+                #expect(block.range.upperBound <= children[index + 1].range.location)
+            }
+        }
     }
 
     @Test func tablesCarryRowsCellsAndAlignments() {

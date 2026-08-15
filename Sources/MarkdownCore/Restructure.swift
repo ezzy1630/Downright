@@ -124,7 +124,10 @@ public enum Restructure {
         if hashes.count != heading.level {
             // Setext can express only H1/H2. The direct picker still promises
             // H1...H6, so normalize this heading to ATX while preserving the
-            // parsed title, indentation, and original line ending.
+            // title's exact source bytes, indentation, and original line
+            // ending.  The *source* span, not `heading.title`: the parsed
+            // title is plain text, and rebuilding from it would strip the
+            // emphasis and code markers the line carries.
             let titleLineNumber = doc.line(at: line.location)
             guard titleLineNumber < doc.lineStarts.count else { return nil }
             let underlineStart = doc.lineStarts[titleLineNumber]
@@ -137,9 +140,10 @@ public enum Restructure {
                     length: underlineStart - line.upperBound
                 ))
                 : ""
+            let rawTitle = doc.substring(heading.contentRange)
             return TextEdit(
                 range: NSRange(location: line.location, length: removalEnd - line.location),
-                replacement: "\(indent)\(String(repeating: "#", count: level)) \(heading.title)\(separator)",
+                replacement: "\(indent)\(String(repeating: "#", count: level)) \(rawTitle)\(separator)",
                 summary: "H\(heading.level) → H\(level): \(heading.title)"
             )
         }
@@ -175,20 +179,23 @@ public enum Restructure {
         let text = doc.text as NSString
         let ending = DocumentIO.dominantLineEnding(doc.text).rawValue
         let title = doc.headings[headingIndex].title
-        let split = SectionSplit(section, in: text, ending: ending)
-        let leadingBlanks = blankRun(before: section.location, in: text, ending: ending)
+        let split = SectionSplit(section, in: text)
+        let leadingSeparator = Self.blankSeparator(before: section.location, in: text)
 
         // Cut.  A section that owns a trailing blank run takes it along and the
         // separator before it survives to join its neighbours.  The last
         // section owns nothing, so the run before it — and the final newline,
-        // if the file has none of its own — go too.  `leadingBlanks` counts
-        // *lines*, so the extension must scale by the terminator's width or a
-        // CRLF separator is only half-swallowed and its stray `\r` survives.
+        // if the file has none of its own — go too.  The separator is measured
+        // in its own bytes: a mixed-ending file keeps whatever terminators it
+        // actually had instead of being rebuilt as LF.
         var cut = section
         if split.trailingBlanks > 0 || section.upperBound < doc.length {
             cut = section
         } else {
-            let extra = (leadingBlanks + (split.isTerminated ? 0 : 1)) * ending.utf16.count
+            let unterminatedWidth = split.isTerminated
+                ? 0
+                : (Self.terminator(endingAt: section.location, in: text)?.utf16.count ?? ending.utf16.count)
+            let extra = leadingSeparator.utf16.count + unterminatedWidth
             cut = NSRange(
                 location: max(0, section.location - extra),
                 length: section.length + min(extra, section.location)
@@ -201,13 +208,13 @@ public enum Restructure {
             // Appending: the separator has to go in front, since there is no
             // following section to carry one.
             let separator = split.trailingBlanks > 0
-                ? String(repeating: ending, count: split.trailingBlanks)
-                : String(repeating: ending, count: max(1, leadingBlanks))
+                ? split.trailingSeparator
+                : (leadingSeparator.isEmpty ? ending : leadingSeparator)
             insertion = separator + split.core
         } else {
-            var separator = blankRun(before: destination, in: text, ending: ending)
-            if separator == 0 { separator = leadingBlanks }
-            insertion = split.terminatedCore + String(repeating: ending, count: separator)
+            var separator = Self.blankSeparator(before: destination, in: text)
+            if separator.isEmpty { separator = leadingSeparator }
+            insertion = split.terminatedCore(ending) + separator
         }
 
         return [
@@ -220,51 +227,73 @@ public enum Restructure {
         ]
     }
 
+    /// The line terminator that ends exactly at `offset` (`\r\n`, `\n`, or a
+    /// lone `\r`), or `nil` when no terminator ends there.
+    private static func terminator(endingAt offset: Int, in text: NSString) -> String? {
+        guard offset > 0 else { return nil }
+        if offset >= 2,
+           text.character(at: offset - 2) == 0x0D, text.character(at: offset - 1) == 0x0A {
+            return "\r\n"
+        }
+        if text.character(at: offset - 1) == 0x0A { return "\n" }
+        if text.character(at: offset - 1) == 0x0D { return "\r" }
+        return nil
+    }
+
     /// A section's content, its terminator and the blank run that trails it.
-    /// `ending` is the document's dominant line terminator (`\n`, `\r\n` or a
-    /// lone `\r`), so a move through a classic-Mac or CRLF file never mixes
-    /// endings.
+    /// Terminators are recognised by width (`\r\n`, `\n`, `\r`), so a move
+    /// through a CRLF, classic-Mac, or mixed file keeps the bytes it found.
     private struct SectionSplit {
         var core: String
         var isTerminated: Bool
         var trailingBlanks: Int
-        private let ending: String
+        /// The exact terminator bytes of the trailing blank run, in document
+        /// order — what a move must hand back when it re-establishes the gap.
+        var trailingSeparator: String
 
-        init(_ section: NSRange, in text: NSString, ending: String) {
-            self.ending = ending
-            let length = ending.utf16.count
+        init(_ section: NSRange, in text: NSString) {
             var end = section.upperBound
-            var terminators = 0
-            while end - length >= section.location,
-                  text.substring(with: NSRange(location: end - length, length: length)) == ending {
-                end -= length
-                terminators += 1
+            var stripped: [String] = []
+            while let terminator = Restructure.terminator(endingAt: end, in: text),
+                  end - terminator.utf16.count >= section.location {
+                end -= terminator.utf16.count
+                stripped.append(terminator)
             }
-            isTerminated = terminators > 0
-            let coreEnd = isTerminated ? end + length : end
-            core = text.substring(with: NSRange(
-                location: section.location, length: coreEnd - section.location
-            ))
-            trailingBlanks = max(0, terminators - (isTerminated ? 1 : 0))
+            isTerminated = !stripped.isEmpty
+            // `stripped` is in reverse document order; the first element is
+            // the terminator that directly follows the content.
+            if let own = stripped.last {
+                core = text.substring(with: NSRange(
+                    location: section.location, length: end + own.utf16.count - section.location
+                ))
+            } else {
+                core = text.substring(with: NSRange(location: section.location, length: end - section.location))
+            }
+            trailingBlanks = max(0, stripped.count - (isTerminated ? 1 : 0))
+            trailingSeparator = stripped.dropLast(isTerminated ? 1 : 0).reversed().joined()
         }
 
         /// The content with a line terminator, for pasting somewhere that is
         /// not the end of the document.
-        var terminatedCore: String { isTerminated ? core : core + ending }
+        func terminatedCore(_ ending: String) -> String {
+            if isTerminated { return core }
+            return core.hasSuffix("\n") || core.hasSuffix("\r") ? core : core + ending
+        }
     }
 
-    /// Blank lines immediately before `offset`, which is a line start: the run
-    /// of `ending` terminators there, less the previous line's own terminator.
-    private static func blankRun(before offset: Int, in text: NSString, ending: String) -> Int {
-        let length = (ending as NSString).length
-        var count = 0
+    /// The blank-line separator immediately before `offset`, which is a line
+    /// start: the run of terminators there, less the previous line's own
+    /// terminator, as the exact bytes found in the document.
+    private static func blankSeparator(before offset: Int, in text: NSString) -> String {
+        var terminators: [String] = []
         var index = offset
-        while index - length >= 0,
-              text.substring(with: NSRange(location: index - length, length: length)) == ending {
-            count += 1
-            index -= length
+        while let terminator = Self.terminator(endingAt: index, in: text) {
+            terminators.append(terminator)
+            index -= terminator.utf16.count
         }
-        return max(0, count - 1)
+        // `terminators[0]` is the previous line's own terminator; the rest are
+        // the blank lines that make up the separator.
+        return terminators.dropFirst().reversed().joined()
     }
 
     /// Moves the block containing `offset` past its neighbouring sibling.  The

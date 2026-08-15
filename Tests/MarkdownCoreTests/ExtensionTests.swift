@@ -318,6 +318,21 @@ import Testing
         // A real extension after the emoji still resolves.
         #expect(paths("Edit `src/cache.🚀.ts`.\n") == ["src/cache.🚀.ts"])
     }
+
+    /// Regression: a one-character path before a `:digits` suffix (`3:16`,
+    /// `9:30`) used to reach `isURL` with a one-unit range, whose `://` scan
+    /// built `start..<(start - 1)` and fatally trapped the per-keystroke
+    /// parse.  Ordinary prose times and ratios must simply not be tokens.
+    @Test func singleCharacterClockAndRatioTokensDoNotCrash() {
+        #expect(paths("John 3:16 says so.\n").isEmpty)
+        #expect(paths("Meet at 9:30 sharp.\n").isEmpty)
+        #expect(paths("A ratio of 1:2 here.\n").isEmpty)
+        #expect(paths("Run `a:1` for it.\n").isEmpty)
+        #expect(paths("Verse 2:5 and chapter 3:16 agree.\n").isEmpty)
+        // A real path keeps its suffix behaviour after the fix.
+        let doc = MarkdownParser.parse("Edit src/auth/session.ts:42 next.\n")
+        #expect(doc.pathTokens.first?.token.line == 42)
+    }
 }
 
 @Suite struct FenceLanguageTests {

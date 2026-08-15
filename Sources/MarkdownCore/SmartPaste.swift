@@ -271,7 +271,14 @@ private struct HTMLToMarkdown {
     }
 
     private func attribute(_ name: String, in tag: String) -> String? {
-        guard let start = tag.range(of: "\(name)=", options: .caseInsensitive) else { return nil }
+        // `href=` must start at an attribute boundary: matching it as a bare
+        // substring would also hit `data-href=` or `xlink-href=` and pull the
+        // wrong value out of the tag.
+        guard let start = tag.range(of: "\(name)=", options: .caseInsensitive),
+              start.lowerBound == tag.startIndex
+                  || tag[tag.index(before: start.lowerBound)].isWhitespace
+                  || tag[tag.index(before: start.lowerBound)] == "/"
+        else { return nil }
         var rest = tag[start.upperBound...]
         guard let quote = rest.first else { return nil }
         if quote == "\"" || quote == "'" {

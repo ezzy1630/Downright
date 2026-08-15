@@ -15,6 +15,10 @@ enum TableFormatter {
         var rows: [[String]]
         var alignments: [TableAlignment]
         var indent: String
+        /// The line terminator that followed each source line, in render order
+        /// (header, delimiter, body…).  A mixed-ending file keeps the bytes it
+        /// had instead of being rebuilt as LF; empty where unknown.
+        var lineTerminators: [String] = []
         var columnCount: Int { Swift.max(alignments.count, rows.map(\.count).max() ?? 0) }
     }
 
@@ -31,7 +35,29 @@ enum TableFormatter {
         let rows = table.rows.map { row in
             row.cells.map { text.substring(with: $0.range).trimmingCharacters(in: .whitespaces) }
         }
-        return Model(rows: rows, alignments: table.alignments, indent: indent)
+        return Model(
+            rows: rows, alignments: table.alignments, indent: indent,
+            lineTerminators: lineTerminators(of: table, in: text)
+        )
+    }
+
+    /// One terminator per source line of the table, in order.  A line without
+    /// a terminator (the last one, in a file with no final newline) yields "".
+    private static func lineTerminators(of table: TableData, in text: NSString) -> [String] {
+        let range = sourceRange(of: table, fallback: NSRange(location: 0, length: 0))
+        var terminators: [String] = []
+        var offset = range.location
+        while offset < range.upperBound {
+            let lineEnd = min(text.length, text.lineEnd(after: offset))
+            var contentEnd = lineEnd
+            if contentEnd > offset, text.character(at: contentEnd - 1) == 0x0A { contentEnd -= 1 }
+            if contentEnd > offset, text.character(at: contentEnd - 1) == 0x0D { contentEnd -= 1 }
+            terminators.append(text.substring(with: NSRange(
+                location: contentEnd, length: max(0, lineEnd - contentEnd)
+            )))
+            offset = lineEnd
+        }
+        return terminators
     }
 
     /// Renders a table back to aligned pipe syntax.
@@ -52,7 +78,17 @@ enum TableFormatter {
         for row in model.rows.dropFirst() {
             lines.append(renderRow(row, widths: widths, alignments: model.alignments, indent: model.indent))
         }
-        return lines.joined(separator: "\n")
+        var out = ""
+        for (index, line) in lines.enumerated() {
+            out += line
+            if index < lines.count - 1 {
+                let captured = model.lineTerminators.indices.contains(index)
+                    ? model.lineTerminators[index]
+                    : ""
+                out += captured.isEmpty ? "\n" : captured
+            }
+        }
+        return out
     }
 
     private static func renderRow(

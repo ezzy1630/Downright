@@ -201,8 +201,10 @@ enum PathTokenScanner {
     private static func isURL(_ text: NSString, range: NSRange) -> Bool {
         let start = range.location
         let end = range.upperBound
-        // `://` anywhere in the token.
-        for index in start..<(end - 2) where text.character(at: index) == 0x3A {
+        // `://` anywhere in the token.  A one-unit path (`3:16` splits to the
+        // path `3`) makes `end - 2` precede `start`; building that range
+        // traps, so clamp it — there is nothing to scan.
+        for index in start..<max(start, end - 2) where text.character(at: index) == 0x3A {
             if text.character(at: index + 1) == 0x2F, text.character(at: index + 2) == 0x2F {
                 return true
             }
