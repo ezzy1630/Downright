@@ -111,7 +111,6 @@ jobs:
             -derivedDataPath .build-release \
             -archivePath .build-release/Downright.xcarchive \
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            INFOPLIST_FILE=Config/Release-Info.plist \
             MARKETING_VERSION="$TAG" \
             CURRENT_PROJECT_VERSION="$BUILD" \
             DEVELOPMENT_TEAM="" \

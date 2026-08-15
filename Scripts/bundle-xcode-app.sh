@@ -29,10 +29,8 @@ echo "==> Generating app icon"
 echo "==> Generating Downright.xcodeproj"
 xcodegen generate --spec project.yml
 
-PLIST_ARG=()
 if [ "$PRODUCTION" = "1" ]; then
     "$ROOT/Scripts/prepare-release-info-plist.sh"
-    PLIST_ARG=(-overrideInBuildSettings INFOPLIST_FILE=Config/Release-Info.plist)
 fi
 
 echo "==> Building Downright.app ($CONFIGURATION, build $BUILD)"
@@ -47,7 +45,6 @@ xcodebuild \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD" \
     DEBUG_INFORMATION_FORMAT="$DEBUG_INFORMATION_FORMAT" \
-    "${PLIST_ARG[@]+"${PLIST_ARG[@]}"}" \
     build
 
 APP="$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Downright.app"

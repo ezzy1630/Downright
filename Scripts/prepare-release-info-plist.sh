@@ -6,8 +6,10 @@
 # the real key — supplied via the SPARKLE_ED25519_PUBLIC_KEY environment
 # variable (the GitHub release environment secret) — into Config/Release-Info.plist.
 #
-# The release workflow runs this before xcodebuild and passes
-# INFOPLIST_FILE=Config/Release-Info.plist, so the placeholder never ships.
+# XcodeGen's Release configuration points only the host app target at this
+# file. Do not pass INFOPLIST_FILE on the xcodebuild command line: command-line
+# build settings are inherited by SwiftPM resource bundles too, which would
+# make their paths resolve under Vendor/SwiftMath instead of the project root.
 #
 # The injection uses PlistBuddy, not sed: Ed25519 public keys are base64 and
 # routinely contain '/' and '&', which would corrupt a plain-text substitution.
