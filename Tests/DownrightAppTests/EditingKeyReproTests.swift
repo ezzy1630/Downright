@@ -144,6 +144,33 @@ struct EditingKeyReproTests {
         #expect(view.sourceSelectedRange.length == 0)
     }
 
+    @Test("a stale persisted Select All becomes a caret on reopen")
+    func staleFullDocumentSelectionIsMigrated() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproStaleSelection-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "# Existing selection\n\nBody text.\n"
+        try source.write(to: url, atomically: true, encoding: .utf8)
+
+        var state = DocumentStateStore.shared.state(for: url)
+        state.selectionLocation = 0
+        state.selectionLength = (source as NSString).length
+        DocumentStateStore.shared.save(state, for: url)
+
+        let controller = DocumentWindowController()
+        try controller.open(url, mode: .live)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.makeFirstResponder(controller.primaryContainer.textView)
+
+        #expect(pumpMainRunLoop {
+            controller.primaryContainer.textView.selectedRange().length == 0
+                && controller.markdownDocument.state.selectionLength == 0
+        })
+        #expect(controller.primaryContainer.textView.sourceSelectedRange.length == 0)
+    }
+
     private func pressTab(into textView: NSTextView) {
         let event = NSEvent.keyEvent(
             with: .keyDown,

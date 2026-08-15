@@ -605,14 +605,23 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// Re-decorates only what the AST diff says changed (§3.5).
-    public func update(document: ParsedDocument, dirty: DirtySet) {
+    ///
+    /// A document open deliberately clears the native selection before this
+    /// update. AppKit can expand the old caret to the replacement range while
+    /// shared storage is being swapped; preserving that range would paint a
+    /// false Select All state into the new document.
+    public func update(
+        document: ParsedDocument,
+        dirty: DirtySet,
+        preservingSelection: Bool = true
+    ) {
         let isInitialUpdate = updateGeneration == 0
         // Replacing the shared NSTextStorage while opening a new document can
         // make AppKit expand the old zero-length caret to the replacement
         // range. That is a storage-loading side effect, not a user selection;
         // the controller restores the document's persisted selection after the
         // first frame has been laid out.
-        let selection = isInitialUpdate
+        let selection = !preservingSelection || isInitialUpdate
             ? [NSRange(location: 0, length: 0)]
             : sourceSelectedRanges
         let explicitViewportAnchor = localEditViewportAnchor

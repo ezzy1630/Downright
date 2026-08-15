@@ -219,6 +219,7 @@ final class DocumentWindowController: NSWindowController {
         defer { isOpeningDocument = false }
         resetTransientChrome()
         try markdownDocument.open(url)
+        clearStaleFullDocumentSelectionIfNeeded()
         let requestedMode = mode.normalizedForEditing
         self.mode = requestedMode
 
@@ -237,7 +238,11 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.zoomLevel = markdownDocument.state.zoomLevel
         primaryContainer.textView.foldedHeadingSlugs = markdownDocument.state.foldedHeadings
         // Structure-only tree is ready; full decoration follows via onReparse.
-        primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
+        primaryContainer.textView.update(
+            document: markdownDocument.parsed,
+            dirty: .wholesale,
+            preservingSelection: false
+        )
         // AppKit keeps the old text view's native selection while the shared
         // storage is replaced. That selection belongs to the previous file,
         // not to this open operation; the deferred restore below will apply
@@ -275,6 +280,22 @@ final class DocumentWindowController: NSWindowController {
             guard self?.initialRestoreGeneration == restoreGeneration else { return }
             self?.restoreInitialReadingPositionIfReady()
         }
+    }
+
+    /// A pre-fix build could persist the synthetic full-range selection that
+    /// AppKit created while replacing a document's shared storage. Full-source
+    /// selections are transient commands, not a useful reopen position, so
+    /// migrate that stale state to a caret before the first frame is painted.
+    private func clearStaleFullDocumentSelectionIfNeeded() {
+        let length = markdownDocument.storage.length
+        guard length > 0,
+              markdownDocument.state.selectionLocation <= 0,
+              markdownDocument.state.selectionLength >= length,
+              let documentURL = markdownDocument.url
+        else { return }
+        markdownDocument.state.selectionLocation = 0
+        markdownDocument.state.selectionLength = 0
+        DocumentStateStore.shared.save(markdownDocument.state, for: documentURL)
     }
 
     /// Clears find / conflict / change chrome that must not survive a document hop.
