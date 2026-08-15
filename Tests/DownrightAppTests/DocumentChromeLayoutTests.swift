@@ -266,8 +266,18 @@ struct FloatingTaskPanelTests {
 
         let controller = DocumentWindowController()
         try controller.open(file, mode: .live)
+        let visibleFrame = NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 900)
+        let frameWidth = min(1200, max(640, visibleFrame.width - 40))
+        let frameHeight = min(windowHeight, max(320, visibleFrame.height - 40))
         controller.window?.setFrame(
-            NSRect(x: 0, y: 0, width: 1200, height: windowHeight), display: true
+            NSRect(
+                x: visibleFrame.minX + 20,
+                y: visibleFrame.minY + 20,
+                width: frameWidth,
+                height: frameHeight
+            ),
+            display: true
         )
         controller.window?.layoutIfNeeded()
         return (file, { try? FileManager.default.removeItem(at: directory) }, controller)

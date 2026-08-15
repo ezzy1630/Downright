@@ -127,7 +127,10 @@ import BeautifulMermaid
         Issue.record("bridge produced no renderable bitmap")
         return
     }
-    #expect(crossbarFraction(of: rep) < 0.5, "bridge bitmap has upside-down labels")
+    // Sampling every other pixel can put a symmetric glyph's widest row on
+    // the exact centre line at some display scales. That is still upright;
+    // only a lower-half crossbar indicates an inversion.
+    #expect(crossbarFraction(of: rep) <= 0.5, "bridge bitmap has upside-down labels")
 }
 
 /// Measures where the label's widest dark row falls within the content's row
