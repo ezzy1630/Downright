@@ -40,6 +40,15 @@ if ! swift build --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.
 fi
 echo "    ok"
 
+echo "==> Spotlight importer build"
+if ! swift build --scratch-path "$SCRATCH" --product DownrightSpotlightImporter \
+    > "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" 2>&1; then
+    echo "    FAILED"
+    grep "error:" "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" | sort -u | head -40
+    exit 1
+fi
+echo "    ok"
+
 echo "==> Tests"
 TEST_LOG="$LOG_DIR/downright-test-$LOG_TAG.log"
 if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then

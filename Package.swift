@@ -59,6 +59,12 @@ let package = Package(
         .library(name: "MarkdownCore", targets: ["MarkdownCore"]),
         .library(name: "MarkdownRender", targets: ["MarkdownRender"]),
         .library(name: "drdownright", targets: ["drdownright"]),
+        .library(name: "DownrightSpotlightMetadata", targets: ["DownrightSpotlightMetadata"]),
+        .library(
+            name: "DownrightSpotlightImporter",
+            type: .dynamic,
+            targets: ["DownrightSpotlightImporter"]
+        ),
         .executable(name: "Downright", targets: ["DownrightApp"]),
         .executable(name: "down", targets: ["down"]),
         .executable(name: "drbench", targets: ["drbench"]),
@@ -99,11 +105,35 @@ let package = Package(
             resources: [.copy("Themes")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // The app and the filesystem importer must derive Spotlight metadata
+        // from one parser-backed implementation. Keeping this target free of
+        // AppKit also lets mdworker load it without starting the application.
+        .target(
+            name: "DownrightSpotlightMetadata",
+            dependencies: ["MarkdownCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // The CFPlugIn bridge is intentionally a tiny C target. It owns the
+        // ABI Spotlight loads; DownrightSpotlightMetadata owns all Markdown
+        // interpretation and is linked into this dynamic bundle.
+        .target(
+            name: "DownrightSpotlightImporter",
+            dependencies: ["DownrightSpotlightMetadata"],
+            path: "Sources/DownrightSpotlightImporter",
+            linkerSettings: [
+                .linkedFramework("CoreServices"),
+                // Spotlight's CFPlugIn loader expects an MH_BUNDLE image,
+                // which is distinct from the MH_DYLIB produced by a normal
+                // dynamic library product.
+                .unsafeFlags(["-Xlinker", "-bundle"]),
+            ]
+        ),
         .executableTarget(
             name: "DownrightApp",
             dependencies: [
                 "MarkdownCore",
                 "MarkdownRender",
+                "DownrightSpotlightMetadata",
                 // The app and `down` share one definition of the agent hook, so
                 // the Settings toggle and the CLI can never disagree about what
                 // is installed.

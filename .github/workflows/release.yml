@@ -187,6 +187,11 @@ jobs:
           done < <(find "$APP" -type d -name "*.bundle")
           # The manual embed above put Sparkle in place; prove it.
           test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          # A classic MDImporter is nested code too. Build it from the same
+          # source as local bundles before the signing step seals the archive.
+          APP="$APP" SPOTLIGHT_SCRATCH=.build-release-spm \
+            SPOTLIGHT_CONFIGURATION=release \
+            Scripts/bundle-spotlight.sh
 
       # ---------------------------------------------------------------- signing
       - name: Import Developer ID into ephemeral keychain
@@ -240,6 +245,11 @@ jobs:
           sign "$SPARKLE_VERSION/Autoupdate"
           sign "$SPARKLE_VERSION/Updater.app"
           sign "$SPARKLE"
+          # Spotlight importer: sign the Mach-O bundle first, then its
+          # containing .mdimporter bundle, before the host resource envelope.
+          SPOTLIGHT="$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter"
+          sign "$SPOTLIGHT/Contents/MacOS/DownrightSpotlight"
+          sign "$SPOTLIGHT"
           # Quick Look extensions.
           for appex in "$APP"/Contents/PlugIns/*.appex; do
             sign_quicklook "$appex"
@@ -250,6 +260,8 @@ jobs:
           sign "$APP"
           # Verify each individually.
           for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" \
+              "$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter" \
+              "$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter/Contents/MacOS/DownrightSpotlight" \
               "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/XPCServices/*.xpc \
               "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/Autoupdate \
               "$APP"/Contents/Frameworks/Sparkle.framework/Versions/*/Updater.app \

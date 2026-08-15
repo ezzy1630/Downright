@@ -14,11 +14,11 @@ no Xcode project involved. What it cannot do:
 | Needs Xcode | Why |
 |---|---|
 | Quick Look `.appex` bundles | Use `Scripts/bundle-xcode-app.sh`. It generates the Xcode project and embeds both signed extension targets. See [QUICKLOOK.md](QUICKLOOK.md). |
-| Production Sparkle packaging | Release builds sign every nested helper and the framework separately, notarise, and staple. |
+| Production Sparkle and Spotlight packaging | Release builds sign every nested helper, the classic Spotlight importer, and the framework separately, then notarise and staple. |
 | Developer ID signing and notarisation | Requires a certificate in the login keychain and an App Store Connect API key. |
 
-Everything else — the app, the render packages, the CLI, the tests — builds with
-the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.5 binary
+Everything else — the app, the render packages, the CLI, the tests, and the
+Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.5 binary
 XCFramework (pinned exactly in `Package.swift`), so building the app needs
 network access the first time.
 
@@ -86,7 +86,7 @@ Scripts/sign-and-notarize.sh                     # sign, notarise, staple (+ DMG
 
 `Scripts/sign-and-notarize.sh` is the manual twin of the workflow's signing
 steps: it signs every nested executable individually (Sparkle framework and its
-XPC helpers, both Quick Look extensions, the `down` CLI, then the host — never
+XPC helpers, the Spotlight importer, both Quick Look extensions, the `down` CLI, then the host — never
 `codesign --deep`), verifies each, notarises with `notarytool`, staples, and
 runs the `codesign`/`spctl`/`stapler validate` battery. Set `NO_NOTARIZE=1` to
 sign with a real identity without submitting, and `MAKE_DMG=1` to additionally

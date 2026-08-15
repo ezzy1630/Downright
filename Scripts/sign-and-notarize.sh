@@ -77,6 +77,9 @@ sign_preserving_entitlements "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
 sign "$SPARKLE_VERSION/Autoupdate"
 sign "$SPARKLE_VERSION/Updater.app"
 sign "$SPARKLE"
+SPOTLIGHT="$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter"
+sign "$SPOTLIGHT/Contents/MacOS/DownrightSpotlight"
+sign "$SPOTLIGHT"
 for appex in "$APP"/Contents/PlugIns/*.appex; do
     [ -d "$appex" ] && sign_quicklook "$appex"
 done
@@ -85,6 +88,8 @@ sign "$APP"
 
 echo "==> Verifying signatures"
 for item in "$APP" "$APP/Contents/Frameworks/Sparkle.framework" \
+            "$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter" \
+            "$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter/Contents/MacOS/DownrightSpotlight" \
             "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/XPCServices/*.xpc \
             "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/Autoupdate \
             "$APP/Contents/Frameworks/Sparkle.framework"/Versions/*/Updater.app \

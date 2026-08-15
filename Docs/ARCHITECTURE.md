@@ -20,12 +20,15 @@ Sources/
   DownrightApp/     windows, commands, panels, file and agent workflows
   DownrightQL/      Quick Look preview extension
   DownrightThumb/   Quick Look thumbnail extension
+  DownrightSpotlightMetadata/  shared parser-backed metadata extraction
+  DownrightSpotlightImporter/  classic macOS MDImporter plug-in
   down/             terminal launcher
 ```
 
 `MarkdownCore` has no UI dependency. `MarkdownRender` owns AppKit rendering.
 The app owns windows, file access, and user actions. Quick Look uses the same
-core and render contracts as the app.
+core and render contracts as the app. The Spotlight targets share only the
+parser-backed metadata contract and never start an AppKit surface.
 
 ## Document pipeline
 
@@ -103,7 +106,13 @@ watcher, save, or navigation work.
 No remote model, telemetry, or background prompt runs in the core path. A
 future provider must be explicit, opt-in, and separately reviewed.
 
-## Quick Look
+## Quick Look and Spotlight
+
+The filesystem Spotlight importer lives at
+`Downright.app/Contents/Library/Spotlight`. Its `schema.xml` declares only
+title, text content, keywords, and kind. It extracts metadata from unopened
+Markdown files, while `CoreSpotlight` remains the fast path for documents the
+app has already opened.
 
 Quick Look and thumbnail targets share parser, theme, and render contracts but
 have strict limits:
@@ -114,7 +123,8 @@ have strict limits:
 - Keep preview work below 400 ms and 60 MB peak.
 
 The host app must be launched once before the extensions register. Xcode is
-needed to bundle the `.appex` targets.
+needed to bundle the `.appex` targets; the Spotlight importer is bundled by
+both the SwiftPM and Xcode paths.
 
 ## Concurrency and effects
 

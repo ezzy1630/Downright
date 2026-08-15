@@ -90,6 +90,30 @@ check "$([ -f "$CONTENTS/Resources/Downright_MarkdownRender.bundle/Themes/paper-
 check "$([ -f "$CONTENTS/Resources/SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf" ] && echo 1 || echo 0)" \
       "host carries the SwiftMath math fonts"
 
+# --- Spotlight importer -----------------------------------------------------
+# macOS discovers classic MDImporter bundles at this exact location. Keep the
+# importer in the same bundle contract as Quick Look: the binary, schema, and
+# metadata version must all travel with the app that owns them.
+SPOTLIGHT="$CONTENTS/Library/Spotlight/DownrightSpotlight.mdimporter"
+SPOTLIGHT_PLIST="$SPOTLIGHT/Contents/Info.plist"
+SPOTLIGHT_BIN="$SPOTLIGHT/Contents/MacOS/DownrightSpotlight"
+check "$([ -d "$SPOTLIGHT" ] && echo 1 || echo 0)" "Spotlight importer embedded"
+check "$([ -x "$SPOTLIGHT_BIN" ] && echo 1 || echo 0)" "Spotlight importer executable present"
+check "$([ -f "$SPOTLIGHT/Contents/Resources/schema.xml" ] && echo 1 || echo 0)" "Spotlight importer schema present"
+check "$([ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')" = "BNDL" ] && echo 1 || echo 0)" \
+      "Spotlight importer is a CFPlugIn bundle"
+check "$([ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')" = "DownrightSpotlight" ] && echo 1 || echo 0)" \
+      "Spotlight importer executable name"
+check "$(grep -q '8B08C4BF-415B-11D8-B3F9-0003936726FC' "$SPOTLIGHT_PLIST" 2>/dev/null && echo 1 || echo 0)" \
+      "Spotlight importer declares the MDImporter plug-in type"
+check "$(grep -q 'net.daringfireball.markdown' "$SPOTLIGHT_PLIST" 2>/dev/null && echo 1 || echo 0)" \
+      "Spotlight importer claims Markdown UTI"
+if [ -x "$SPOTLIGHT_BIN" ]; then
+    SPOTLIGHT_BAD_DYLIBS="$(otool -L "$SPOTLIGHT_BIN" | tail -n +2 | grep -vE '\(architecture [^)]*\):$|@rpath|@executable_path|@loader_path|/usr/lib/|/System/|/Library/Frameworks/' || true)"
+    check "$([ -z "$SPOTLIGHT_BAD_DYLIBS" ] && echo 1 || echo 0)" \
+          "Spotlight importer has no absolute build-machine dylib paths"
+fi
+
 # --- Quick Look extensions ---------------------------------------------------
 # Two .appex layouts reach this script: flat, as Scripts/bundle-quicklook.sh
 # assembles them, and deep (Contents/MacOS, Contents/Resources) from Xcode.
@@ -157,6 +181,11 @@ host_build() { /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$1/Contents/
 HOST_SHORT="$(host_short "$APP")"
 HOST_BUILD="$(host_build "$APP")"
 [ -n "$HOST_SHORT" ] || { check 0 "host CFBundleShortVersionString readable"; exit 1; }
+
+SPOTLIGHT_SHORT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')"
+SPOTLIGHT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')"
+check "$([ "$SPOTLIGHT_SHORT" = "$HOST_SHORT" ] && echo 1 || echo 0)" "Spotlight importer marketing version matches host"
+check "$([ "$SPOTLIGHT_BUILD" = "$HOST_BUILD" ] && echo 1 || echo 0)" "Spotlight importer build version matches host"
 
 for appex in "$CONTENTS"/PlugIns/*.appex; do
     [ -e "$appex" ] || continue

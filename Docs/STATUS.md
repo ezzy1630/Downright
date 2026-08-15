@@ -87,8 +87,8 @@ tags (`<Foo` still colours as a type); Ruby and shell heredocs are not tracked.
 `Vendor/SwiftMath`; see its `PATCHES.md`),
 `beautiful-mermaid-swift` for diagrams, `NLTokenizer` for sentence segmentation,
 and FSEvents (directory-level) for watching. No WebView is used. The Xcode
-release path includes Quick Look. It does not include a metadata importer, a
-Share extension, or Sparkle.
+release path includes Quick Look and the classic filesystem Spotlight
+importer. It does not include a Share extension.
 
 ## Open questions from §15, decided
 
@@ -195,9 +195,11 @@ Approximate:
   `Downright.app` locally, but the signed, notarised, stapled pipeline around it
   has never run end to end — that needs a tagged CI run, and until one happens
   the release path is unproven.
-- **Spotlight coverage for files that have not been opened.** Downright adds
-  each opened document to Core Spotlight. The metadata extractor for a full
-  importer exists, but the signed importer bundle does not.
+- **Spotlight acceptance on a clean installed artifact.** The classic
+  `MDImporter` target, schema, shared metadata extractor, bundle embedding, and
+  release signing hooks now exist. The remaining release gate is a live
+  `mdimport` run against a freshly installed signed/notarised artifact; local
+  source and bundle checks do not substitute for that OS registration proof.
 - **A dedicated Share extension.** The app provides a macOS Service and an App
   Intent. Finder's Share menu does not yet contain a Downright extension.
 - **System document versions.** Downright has undo, atomic saves, external

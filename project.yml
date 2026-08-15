@@ -6,6 +6,9 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
   developmentLanguage: en
+settings:
+  base:
+    DOWNRIGHT_HOST_BUNDLE_IDENTIFIER: com.ezzy.downright
 packages:
   # The root package brings its own dependencies with it, including the
   # vendored SwiftMath at Vendor/SwiftMath (a path dependency in Package.swift).
@@ -37,6 +40,8 @@ targets:
       - package: Downright
         product: MarkdownRender
       - package: Downright
+        product: DownrightSpotlightMetadata
+      - package: Downright
         product: drdownright
       - package: Sparkle
         product: Sparkle
@@ -46,7 +51,8 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright
+        DOWNRIGHT_HOST_BUNDLE_IDENTIFIER: com.ezzy.downright
+        PRODUCT_BUNDLE_IDENTIFIER: $(DOWNRIGHT_HOST_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: Downright
         MARKETING_VERSION: 1.0.16
         CURRENT_PROJECT_VERSION: 1
@@ -73,7 +79,7 @@ targets:
         product: MarkdownRender
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.quicklook
+        PRODUCT_BUNDLE_IDENTIFIER: $(DOWNRIGHT_HOST_BUNDLE_IDENTIFIER).quicklook
         PRODUCT_NAME: DownrightQL
         MARKETING_VERSION: 1.0.16
         CURRENT_PROJECT_VERSION: 1
@@ -97,7 +103,7 @@ targets:
         product: MarkdownRender
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.thumbnail
+        PRODUCT_BUNDLE_IDENTIFIER: $(DOWNRIGHT_HOST_BUNDLE_IDENTIFIER).thumbnail
         PRODUCT_NAME: DownrightThumb
         MARKETING_VERSION: 1.0.16
         CURRENT_PROJECT_VERSION: 1
@@ -107,6 +113,22 @@ targets:
         INFOPLIST_FILE: Config/DownrightThumb-Info.plist
         SWIFT_VERSION: 5.0
         MACOSX_DEPLOYMENT_TARGET: 14.0
+  DownrightUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Tests/DownrightUITests
+    dependencies:
+      - target: Downright
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.uitests
+        PRODUCT_NAME: DownrightUITests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 5.0
+        MACOSX_DEPLOYMENT_TARGET: 14.0
+        TEST_TARGET_NAME: Downright.app
+        UITargetAppPath: $(BUILT_PRODUCTS_DIR)/Downright.app
 schemes:
   Downright:
     build:
@@ -114,5 +136,9 @@ schemes:
         Downright: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - DownrightUITests
     archive:
       config: Release
