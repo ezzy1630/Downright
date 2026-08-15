@@ -191,6 +191,11 @@ else
     echo "    updater disabled: no Sparkle Info.plist keys in this dev bundle"
 fi
 
+echo "==> Embedding Spotlight importer"
+APP="$APP" SPOTLIGHT_SCRATCH="$SCRATCH" \
+    SPOTLIGHT_CONFIGURATION="$CONFIGURATION" \
+    "$ROOT/Scripts/bundle-spotlight.sh"
+
 echo "==> Signing (ad-hoc)"
 # Sign Sparkle separately first (its XPC helpers are nested code), then the
 # app without --deep so the framework's signature is preserved.  --deep is a

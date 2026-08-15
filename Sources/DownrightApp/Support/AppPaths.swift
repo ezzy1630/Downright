@@ -6,6 +6,11 @@ enum AppPaths {
     static let bundleIdentifier = "com.ezzy.downright"
 
     static var supportDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["DOWNRIGHT_SUPPORT_DIRECTORY"],
+           !override.isEmpty
+        {
+            return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("Downright", isDirectory: true)

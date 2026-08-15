@@ -40,7 +40,7 @@ not public releases.
 | Preferences | Appearance, typography, editor, keys, advanced | P8 | Settings round-trip and apply live |
 | Accessibility | VoiceOver, keyboard, contrast, motion, transparency | P8 | Accessibility audit has no release blocker |
 | CLI | `down` and `md` open files and stdin | P8 | Terminal launch opens the target document |
-| System integration | Quick Look, Spotlight, Services, Share, App Intents | P8 | Each entry opens the exact file or command |
+| System integration | Quick Look, unopened-file Spotlight metadata, Services, Share, App Intents | P8 | Each entry opens or indexes the exact file or command |
 | AI | Optional on-device Apple Intelligence tools only | P9 | Core path works with AI absent or disabled |
 
 ## Explicitly out of scope

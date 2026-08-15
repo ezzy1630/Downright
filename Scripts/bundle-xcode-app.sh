@@ -96,6 +96,11 @@ while IFS= read -r bundle; do
     rm -rf "$bundle/Contents"
 done < <(find "$APP" -type d -name "*.bundle")
 
+echo "==> Embedding Spotlight importer"
+APP="$APP" SPOTLIGHT_SCRATCH="$SWIFTPM_SCRATCH" \
+    SPOTLIGHT_CONFIGURATION=release \
+    "$ROOT/Scripts/bundle-spotlight.sh"
+
 # Sign inside-out, even for the ad-hoc QA bundle.  Re-sealing a child after its
 # parent invalidates the parent's resource envelope and hides release-only bugs.
 if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then

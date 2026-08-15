@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schema version="1.0"
+        xmlns="http://www.apple.com/metadata"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.apple.com/metadata file:///System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Resources/MetadataSchema.xsd">
+    <types>
+        <type name="net.daringfireball.markdown">
+            <allattrs>kMDItemTitle kMDItemTextContent kMDItemKeywords kMDItemKind</allattrs>
+            <displayattrs>kMDItemTitle kMDItemKeywords kMDItemKind</displayattrs>
+        </type>
+        <type name="com.ezzy.downright.markdown">
+            <allattrs>kMDItemTitle kMDItemTextContent kMDItemKeywords kMDItemKind</allattrs>
+            <displayattrs>kMDItemTitle kMDItemKeywords kMDItemKind</displayattrs>
+        </type>
+    </types>
+</schema>

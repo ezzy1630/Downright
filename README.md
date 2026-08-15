@@ -34,7 +34,7 @@ account requirement, and never uses a WebView.
 |---|---|
 | Optional folder workspace and sibling-file search without a vault | Quick Look previews and Finder thumbnails |
 | Clickable `file.swift:42` references and editor handoff | `down` and `md` terminal commands |
-| Themes that follow macOS Light/Dark mode | HTML/PDF export, Services, Spotlight, and App Intents |
+| Themes that follow macOS Light/Dark mode | HTML/PDF export, Services, Spotlight metadata, and App Intents |
 | First-run setup for app association, CLI, and Quick Look | Optional on-device Apple Intelligence |
 
 Supported files: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`, `.mdc`, `.qmd`,
@@ -127,6 +127,8 @@ MarkdownRender   native decoration and layout
 DownrightApp     windows, commands, panels, file watching
 DownrightQL      Quick Look preview
 DownrightThumb   Finder thumbnails
+DownrightSpotlightMetadata  shared unopened-file metadata extraction
+DownrightSpotlightImporter  macOS filesystem Spotlight importer
 drdownright      shared CLI and integration support
 down             terminal entry point
 ```
@@ -158,6 +160,7 @@ Bundle verification:
 
 ```bash
 Scripts/verify-bundle.sh .build-main/bundle/Downright.app
+Scripts/check-app.sh
 ```
 
 ## Privacy

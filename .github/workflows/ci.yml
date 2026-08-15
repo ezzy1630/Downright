@@ -34,3 +34,21 @@ jobs:
           TEST_SCRATCH: .build-ci-test
           RUN_DRBENCH: "1"
         run: ./Scripts/check.sh
+
+  app-acceptance:
+    # Unit tests exercise the package graph without an activated NSApplication.
+    # Keep this as a separate required lane so a green headless run cannot hide
+    # a stale bundle, missing nested code, or a broken real window.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Select and verify the Swift toolchain
+        run: ./Scripts/select-toolchain.sh
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Build and run the activated-app acceptance suite
+        env:
+          APP_ACCEPTANCE_SCRATCH: .build-ci-app
+          SPOTLIGHT_SCRATCH: .build-ci-app-spm
+        run: ./Scripts/check-app.sh
