@@ -132,13 +132,28 @@ jobs:
           CLI_BIN="$(swift build -c release --scratch-path .build-release-spm --product down --show-bin-path)/down"
           test -x "$CLI_BIN"
           cp "$CLI_BIN" "$APP/Contents/MacOS/down"
-          # XcodeGen's `embed: true` for an SPM framework resolves to a bare
-          # product name and fails, so Sparkle is linked in the project and
-          # copied into the bundle by hand (matching the SwiftPM path).
-          FW=".build-release/Build/Products/Release/Sparkle.framework"
+          # XcodeGen's `embed: true` for an SPM framework has produced both a
+          # direct product and an archive-only BuildProductsPath across Xcode
+          # releases. Prefer the already-embedded archive product, then the
+          # known derived-data locations, rather than assuming one layout.
+          FW=""
+          for candidate in \
+              "$APP/Contents/Frameworks/Sparkle.framework" \
+              ".build-release/Build/Products/Release/Sparkle.framework" \
+              ".build-release/Build/Products/Release/PackageFrameworks/Sparkle.framework" \
+              ".build-release/Build/Intermediates.noindex/ArchiveIntermediates/Downright/BuildProductsPath/Release/Sparkle.framework"; do
+            if [ -d "$candidate" ]; then
+              FW="$candidate"
+              break
+            fi
+          done
+          test -n "$FW"
+          echo "Sparkle source: $FW"
           test -d "$FW"
-          rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
-          cp -R "$FW" "$APP/Contents/Frameworks/"
+          if [ "$FW" != "$APP/Contents/Frameworks/Sparkle.framework" ]; then
+            rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
+            cp -R "$FW" "$APP/Contents/Frameworks/"
+          fi
           Scripts/verify-bundle.sh "$APP" --production
           # The manual embed above put Sparkle in place; prove it.
           test -d "$APP/Contents/Frameworks/Sparkle.framework"

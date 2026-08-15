@@ -57,9 +57,18 @@ echo "==> Embedding Sparkle.framework"
 # SwiftPM path uses, and deterministic across XcodeGen/Xcode versions.
 FRAMEWORKS="$APP/Contents/Frameworks"
 mkdir -p "$FRAMEWORKS"
-if [ -d "$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Sparkle.framework" ]; then
+SPARKLE_SOURCE=""
+for candidate in \
+    "$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Sparkle.framework" \
+    "$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/PackageFrameworks/Sparkle.framework"; do
+    if [ -d "$candidate" ]; then
+        SPARKLE_SOURCE="$candidate"
+        break
+    fi
+done
+if [ -n "$SPARKLE_SOURCE" ]; then
     rm -rf "$FRAMEWORKS/Sparkle.framework"
-    cp -R "$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Sparkle.framework" "$FRAMEWORKS/"
+    cp -R "$SPARKLE_SOURCE" "$FRAMEWORKS/"
 else
     echo "    WARNING: Sparkle.framework not found in Xcode products; bundle has no updater."
 fi
