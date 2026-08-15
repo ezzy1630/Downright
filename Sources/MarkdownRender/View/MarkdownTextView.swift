@@ -118,6 +118,24 @@ public final class MarkdownTextView: NSTextView {
             requestContentResize(.viewport, anchor: anchor)
             setSourceSelectedRanges(selection)
             restoreViewport(to: anchor)
+            // TextKit can make a late caret-visible correction after the mode
+            // setter returns. Repair once after that correction and once after
+            // the deferred viewport resize settles; otherwise a font/measure
+            // change can leave the reader a line-width below the captured
+            // source anchor even though the immediate restore was correct.
+            viewportRepairGeneration &+= 1
+            let repairGeneration = viewportRepairGeneration
+            let repair = { [weak self] in
+                guard let self,
+                      self.viewportRepairGeneration == repairGeneration else { return }
+                self.restoreViewport(to: anchor)
+            }
+            DispatchQueue.main.async(execute: repair)
+            DispatchQueue.main.async { [weak self] in
+                self?.layoutSubtreeIfNeeded()
+                self?.prepareForDisplay()
+                repair()
+            }
             markdownDelegate?.markdownTextView(self, didChangeSourceFocus: sourceFocus)
         }
     }
@@ -440,10 +458,12 @@ public final class MarkdownTextView: NSTextView {
     /// across the entire document when no source presentation is active.
     private var appliedSourceFocus: SourceFocus = .none
     /// A frame shrink was deferred because the viewport was pinned to the bottom
-    /// (shrinking there would clamp the clip view and drop the page).  The
-    /// scroll observer clears this and settles the frame once the viewport
-    /// moves away from the bottom edge.
+    /// (shrinking there would clamp the clip view and drop the page).  A
+    /// one-shot main-queue repair settles it with an explicit source anchor;
+    /// the scroll observer remains a fallback for a user-initiated move.
     private var pendingShrinkRepair = false
+    private var pendingShrinkRepairWorkItem: DispatchWorkItem?
+    private var applyingPendingShrinkRepair = false
     /// Coalesced scroll handler: during a momentum scroll the bounds change
     /// notification fires 30–60×/s, but the gutter, breadcrumb, and density
     /// rail only need to update once per display refresh. We coalesce via
@@ -557,6 +577,7 @@ public final class MarkdownTextView: NSTextView {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         if let resignKeyObserver { NotificationCenter.default.removeObserver(resignKeyObserver) }
         resizeWorkItem?.cancel()
+        pendingShrinkRepairWorkItem?.cancel()
         scrollCoalesceWorkItem?.cancel()
         copiedCodeFeedbackWorkItem?.cancel()
         // Repeating 60fps timers on the main run loop would otherwise keep
@@ -585,8 +606,17 @@ public final class MarkdownTextView: NSTextView {
 
     /// Re-decorates only what the AST diff says changed (§3.5).
     public func update(document: ParsedDocument, dirty: DirtySet) {
-        let selection = sourceSelectedRanges
-        let anchor = localEditViewportAnchor ?? captureViewportAnchor()
+        let isInitialUpdate = updateGeneration == 0
+        // Replacing the shared NSTextStorage while opening a new document can
+        // make AppKit expand the old zero-length caret to the replacement
+        // range. That is a storage-loading side effect, not a user selection;
+        // the controller restores the document's persisted selection after the
+        // first frame has been laid out.
+        let selection = isInitialUpdate
+            ? [NSRange(location: 0, length: 0)]
+            : sourceSelectedRanges
+        let explicitViewportAnchor = localEditViewportAnchor
+        let anchor = explicitViewportAnchor ?? captureViewportAnchor()
         localEditViewportAnchor = nil
         let lockedViewportY = nextDocumentUpdateViewportY
         nextDocumentUpdateViewportY = nil
@@ -594,7 +624,6 @@ public final class MarkdownTextView: NSTextView {
         let followsCaret = followsLocalEdit && configuration.typewriterScrolling
         shouldFollowCaretAfterLocalEdit = false
         let currentMode = mode
-        let isInitialUpdate = updateGeneration == 0
         let oldParagraphCount = paragraphIndex.starts.count
         let isWholesaleUpdate = isInitialUpdate || dirty.isWholesale
         let dirtyScopes = isWholesaleUpdate ? [] : sourceScopes(for: dirty)
@@ -644,12 +673,12 @@ public final class MarkdownTextView: NSTextView {
         } else {
             resizeRequest = .semantic
         }
+        let resizeAnchor = explicitViewportAnchor ?? (lockedViewportY == nil ? anchor : nil)
+        let resizeViewportY = explicitViewportAnchor == nil ? lockedViewportY : nil
         requestContentResize(
             resizeRequest,
-            anchor: resizeRequest == .immediate || followsCaret || lockedViewportY != nil
-                ? nil
-                : anchor,
-            viewportY: lockedViewportY
+            anchor: resizeRequest == .immediate || followsCaret ? nil : resizeAnchor,
+            viewportY: resizeViewportY
         )
 
         // Async parses replace only the tree and decorations. Keep the same
@@ -669,7 +698,9 @@ public final class MarkdownTextView: NSTextView {
         // source anchor and its exact screen-space gap through both this
         // commit and its deferred height repair. Typewriter scrolling owns the
         // camera when enabled, so it remains the one local-edit exception.
-        if let lockedViewportY {
+        if let explicitViewportAnchor {
+            restoreViewport(to: explicitViewportAnchor)
+        } else if let lockedViewportY {
             restoreViewport(y: lockedViewportY)
         } else if !followsCaret {
             restoreViewport(to: anchor)
@@ -679,14 +710,18 @@ public final class MarkdownTextView: NSTextView {
         // local commit; later commits and real navigation cancel the work.
         viewportRepairGeneration &+= 1
         let viewportGeneration = viewportRepairGeneration
-        if followsLocalEdit, !followsCaret {
+        if (explicitViewportAnchor != nil || followsLocalEdit), !followsCaret {
             let repair = { [weak self] in
                 guard let self,
                       self.viewportRepairGeneration == viewportGeneration else { return }
                 self.restoreViewport(to: anchor)
             }
             DispatchQueue.main.async(execute: repair)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: repair)
+            DispatchQueue.main.async { [weak self] in
+                self?.layoutSubtreeIfNeeded()
+                self?.prepareForDisplay()
+                repair()
+            }
         }
     }
 
@@ -743,15 +778,44 @@ public final class MarkdownTextView: NSTextView {
         nextDocumentUpdateViewportY = enclosingScrollView?.contentView.bounds.origin.y
     }
 
+    /// Capture the source camera before a command mutates shared storage.
+    /// Unlike a raw clip y-coordinate, the projected anchor survives changed
+    /// wrapping and deferred TextKit layout.
+    public func prepareForExternalDocumentEdits(_ edits: [TextEdit]) {
+        guard let storage = textStorage, !edits.isEmpty else { return }
+        var anchor = captureViewportAnchor()
+        for edit in edits.sorted(by: { $0.range.location > $1.range.location }) {
+            guard edit.range.location >= 0,
+                  edit.range.upperBound <= storage.length else { continue }
+            anchor = projectViewportAnchor(
+                anchor,
+                across: edit.range,
+                insertedLength: (edit.replacement as NSString).length
+            )
+        }
+        localEditViewportAnchor = anchor
+        // Command edits publish a synchronous parse before control returns to
+        // the event loop. Keep the current rendered projection alive through
+        // the storage transaction; dropping it here briefly exposes raw
+        // Markdown in the whole window. The parse commit replaces this map
+        // before AppKit can draw the next frame.
+    }
+
     /// Undo changes both bytes and selection. Capture before `NSUndoManager`
     /// starts, then repair once more on the next run-loop turn after AppKit has
     /// finished making the restored caret visible.
     public func preserveViewportAcrossUndoRedo() {
-        guard let y = enclosingScrollView?.contentView.bounds.origin.y else { return }
-        nextDocumentUpdateViewportY = y
-        DispatchQueue.main.async { [weak self] in
-            self?.restoreViewport(y: y)
-        }
+        guard let viewportY = enclosingScrollView?.contentView.bounds.origin.y else { return }
+        // Undo restores the exact same document position rather than a source
+        // edit chosen by the user. Keep the raw clip coordinate as the primary
+        // contract; a source anchor can resolve to the document top while
+        // TextKit is temporarily using its identity projection.
+        nextDocumentUpdateViewportY = viewportY
+        // A grouped undo may invoke several inverse closures. Keep the
+        // renderer suspended for the whole transaction, then publish exactly
+        // one parsed/display-map repair after AppKit has finished mutating the
+        // shared storage.
+        contentStorage.suspendCustomLayout()
     }
 
     /// Returns a one-shot repair for transient chrome changes. TextKit may
@@ -994,8 +1058,8 @@ public final class MarkdownTextView: NSTextView {
                     + textContainerInset.height * 2 + viewportHeight * 0.40
             )
             guard abs(frame.height - estimated) > 0.5 else { return }
-            if estimated < frame.height, viewportIsPinnedToBottom {
-                pendingShrinkRepair = true
+            if estimated < frame.height, viewportIsPinnedToBottom, !applyingPendingShrinkRepair {
+                deferShrinkRepair()
                 return
             }
             setFrameSize(NSSize(width: frame.width, height: estimated),
@@ -1008,16 +1072,30 @@ public final class MarkdownTextView: NSTextView {
         let viewportHeight = enclosingScrollView?.contentView.bounds.height ?? 0
         let height = max(used.maxY + textContainerInset.height + viewportHeight * 0.40, viewportHeight)
         guard abs(frame.height - height) > 0.5 else { return }
-        // Never shrink the document under the reader's hands.  When the visible
-        // region reaches the bottom of the frame, shrinking clamps the clip view
-        // and the whole page drops mid-keystroke.  Defer the shrink until the
-        // viewport moves away from the bottom edge; the scroll observer then
-        // settles the over-tall frame via `pendingShrinkRepair`.
-        if height < frame.height, viewportIsPinnedToBottom {
-            pendingShrinkRepair = true
+        // Never shrink the document under the reader's hands without an anchor.
+        // The repair path below deliberately bypasses this guard only after it
+        // has captured the source position that must survive the clamp.
+        if height < frame.height, viewportIsPinnedToBottom, !applyingPendingShrinkRepair {
+            deferShrinkRepair()
             return
         }
         setFrameSize(NSSize(width: frame.width, height: height), preservingReadingPosition: height < frame.height)
+    }
+
+    private func deferShrinkRepair() {
+        pendingShrinkRepair = true
+        guard pendingShrinkRepairWorkItem == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingShrinkRepairWorkItem = nil
+            guard self.pendingShrinkRepair else { return }
+            self.pendingShrinkRepair = false
+            self.applyingPendingShrinkRepair = true
+            self.resizeToFitContent(layoutScope: .document)
+            self.applyingPendingShrinkRepair = false
+        }
+        pendingShrinkRepairWorkItem = workItem
+        DispatchQueue.main.async(execute: workItem)
     }
 
     /// The viewport-scope repair inflates the frame by 40% of a viewport, and
@@ -1127,12 +1205,22 @@ public final class MarkdownTextView: NSTextView {
 
         if pending == .immediate {
             pendingResizeRequest = nil
+            let anchor = pendingResizeAnchor
             pendingResizeAnchor = nil
             let viewportY = pendingResizeViewportY
             pendingResizeViewportY = nil
             resizeNeedsRepair = false
             resizeToFitContent()
-            if let viewportY { restoreViewport(y: viewportY) }
+            // An immediate request can already be in flight when a mode or
+            // chrome transition captures a source anchor. Do not throw that
+            // anchor away merely because the older request won the merge;
+            // doing so restores the raw clip y (or zero) after the relayout
+            // and is the intermittent Document↔Source jump to the top.
+            if let anchor {
+                restoreViewport(to: anchor)
+            } else if let viewportY {
+                restoreViewport(y: viewportY)
+            }
             return
         }
         resizeNeedsRepair = true
@@ -1149,10 +1237,10 @@ public final class MarkdownTextView: NSTextView {
             self.resizeNeedsRepair = pending == .semantic
             self.resizeToFitContent(
                 layoutScope: pending == .semantic ? .viewport : .document)
-            if let viewportY {
-                self.restoreViewport(y: viewportY)
-            } else if let anchor {
+            if let anchor {
                 self.restoreViewport(to: anchor)
+            } else if let viewportY {
+                self.restoreViewport(y: viewportY)
             }
         }
         resizeWorkItem = workItem
@@ -2186,7 +2274,21 @@ public final class MarkdownTextView: NSTextView {
 
     /// Selection converted out of TextKit's hybrid space (see `DisplayMap`).
     public var sourceSelectedRanges: [NSRange] {
-        selectedRanges.map { displayMap.sourceRange(forTextKit: $0.rangeValue) }
+        guard let storage = textStorage else { return [] }
+        let fullSource = NSRange(location: 0, length: storage.length)
+        let fullTextKit = displayMap.textKitRange(forSource: fullSource)
+        return selectedRanges.map { value in
+            let textKitRange = value.rangeValue
+            // A full rendered selection starts before the first visible glyph
+            // and ends after the last one. Its caret-oriented source mapping
+            // would otherwise resolve the start forward past a hidden heading
+            // or list marker, turning Select All into a partial source range.
+            if textKitRange.location <= fullTextKit.location,
+               textKitRange.upperBound >= fullTextKit.upperBound {
+                return fullSource
+            }
+            return displayMap.sourceRange(forTextKit: textKitRange)
+        }
     }
 
     public var sourceSelectedRange: NSRange {
@@ -2228,8 +2330,74 @@ public final class MarkdownTextView: NSTextView {
         // Arrow and page keys move the viewport too, so they interrupt a
         // running scroll animation for the same reason a gesture does.
         interruptAnimatedScroll()
+        // AppKit's default Select All resolves against the rendered TextKit
+        // string. In Document mode that string omits Markdown markers, so the
+        // command leaves `##`, `**`, task brackets, and link syntax outside the
+        // selection. Handle the native chord before the text system projects it
+        // into display coordinates.
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if isEditable, modifiers == [.command],
+           event.charactersIgnoringModifiers?.lowercased() == "a" {
+            selectAll(nil)
+            return
+        }
         if keyEventHandler?(event) == true { return }
         super.keyDown(with: event)
+    }
+
+    /// Keep AppKit's own mouse tracking on the same TextKit 2 hit test as the
+    /// editor's hover, link, and source-offset paths.
+    ///
+    /// `NSTextView.characterIndexForInsertion(at:)` is a TextKit 1-era bridge.
+    /// On a TextKit 2 view backed by a custom content manager it can fall back
+    /// to the current selection or the document end while fragments are being
+    /// materialized. The selection navigator uses the same layout fragments
+    /// that draw the view, so the pointer, caret, and source-coordinate map
+    /// share one geometry path.
+    public override func characterIndexForInsertion(at point: NSPoint) -> Int {
+        guard let textContainer else {
+            return super.characterIndexForInsertion(at: point)
+        }
+        let origin = textContainerOrigin
+        let width = max(1, textContainer.size.width)
+        let localPoint = CGPoint(
+            x: min(max(point.x - origin.x, 0), width),
+            y: max(0, point.y - origin.y)
+        )
+
+        // A point hit can arrive before the viewport controller has laid out
+        // the line under the pointer. Resolve only a small band around it; the
+        // full document remains lazy.
+        let lineHeight = max(1, styleSheet.lineHeight)
+        markdownLayoutManager.ensureLayout(for: NSRect(
+            x: 0,
+            y: max(0, localPoint.y - lineHeight * 2),
+            width: width,
+            height: lineHeight * 4
+        ))
+
+        let documentLocation = contentStorage.documentRange.location
+        let bounds = CGRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: max(frame.height, localPoint.y + lineHeight)
+        )
+        guard let selection = markdownLayoutManager.textSelectionNavigation.textSelections(
+            interactingAt: localPoint,
+            inContainerAt: documentLocation,
+            anchors: [],
+            modifiers: [],
+            selecting: false,
+            bounds: bounds
+        ).first,
+        let range = selection.textRanges.first else {
+            return super.characterIndexForInsertion(at: point)
+        }
+        return markdownLayoutManager.offset(
+            from: documentLocation,
+            to: range.location
+        )
     }
 
     /// The caret moved, so the reveal set may have.  Order matters: capture the
@@ -2960,6 +3128,8 @@ public final class MarkdownTextView: NSTextView {
             // frame whose shrink was deferred so it never dropped the
             // page under the user's hands.
             pendingShrinkRepair = false
+            pendingShrinkRepairWorkItem?.cancel()
+            pendingShrinkRepairWorkItem = nil
             requestContentResize(.scrollRepair)
             return
         }

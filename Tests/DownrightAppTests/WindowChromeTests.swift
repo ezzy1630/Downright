@@ -6,6 +6,19 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct WindowChromeTests {
+    @discardableResult
+    private func pumpMainRunLoop(
+        until condition: () -> Bool,
+        timeout: TimeInterval = 1
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            RunLoop.main.run(mode: .common, before: min(
+                deadline, Date().addingTimeInterval(0.01)))
+        }
+        return condition()
+    }
+
     @Test
     func toolbarChromePolicyKeepsFeedbackSubtleAndContrastAware() {
         #expect(ToolbarChromePolicy.feedbackOpacity(for: .idle, increaseContrast: false) == 0)
@@ -585,7 +598,10 @@ struct WindowChromeTests {
         controller.showFindBar(replace: false)
         controller.window?.layoutIfNeeded()
         controller.dismissFindBar()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        #expect(pumpMainRunLoop {
+            container.frame == beforeFrame
+                && abs(clip.bounds.origin.y - beforeBounds.origin.y) < 0.5
+        })
         controller.window?.layoutIfNeeded()
 
         #expect(container.frame == beforeFrame)
@@ -822,12 +838,15 @@ struct WindowChromeTests {
     @Test
     func statusBarIsOffByDefaultAndCostsNoHeightWhenHidden() {
         #expect(Preferences.Values().showStatusBar == false)
+        let original = Preferences.shared.values
+        defer { Preferences.shared.update { $0 = original } }
+        Preferences.shared.update { $0.showStatusBar = false }
 
         let controller = DocumentWindowController()
         defer { controller.close() }
         _ = controller.window
 
-        #expect(controller.statusBarView.isVisible == Preferences.shared.values.showStatusBar)
+        #expect(controller.statusBarView.isVisible == false)
 
         controller.statusBarView.isVisible = false
         #expect(controller.statusBarView.isHidden)

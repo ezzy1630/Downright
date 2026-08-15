@@ -8,6 +8,24 @@ import Testing
 @Suite("Content resize")
 @MainActor
 struct ContentResizeTests {
+    @discardableResult
+    private func pumpMainQueue(
+        until condition: () -> Bool,
+        timeout: Duration = .seconds(1)
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while !condition() && clock.now < deadline {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+            if !condition() {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        return condition()
+    }
+
     @Test("idle requests merge without losing structural urgency")
     func requestMerging() {
         #expect(ContentResizePolicy.merge(nil, with: .semantic) == .semantic)
@@ -38,12 +56,7 @@ struct ContentResizeTests {
                             isWholesale: false))
         #expect(view.pendingResizeRequestForTesting == .semantic)
 
-        // The pending assertion above proves the semantic request was not run
-        // inline. Do not assert that a wall-clock sleep shorter than the idle
-        // delay resumes on time: a loaded CI main actor may resume only after
-        // the correctly scheduled work item has already fired.
-        try await Task.sleep(for: .milliseconds(120))
-        #expect(view.pendingResizeRequestForTesting == nil)
+        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
     }
 
     @Test("line-count changes use the coalesced structural path")
@@ -93,7 +106,9 @@ struct ContentResizeTests {
                 dirty: DirtySet(
                     ranges: [NSRange(location: (text as NSString).length - 1, length: 1)],
                     isWholesale: false))
-            try await Task.sleep(for: .milliseconds(160))
+            #expect(await pumpMainQueue {
+                container.textView.pendingResizeRequestForTesting == nil
+            })
         }
         #expect(container.textView.frame.height <= settledHeight + 0.5)
     }
@@ -144,7 +159,9 @@ struct ContentResizeTests {
             editOffset += 1
         }
 
-        try await Task.sleep(for: .milliseconds(140))
+        #expect(await pumpMainQueue {
+            container.textView.pendingResizeRequestForTesting == nil
+        })
         #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
     }
 
@@ -251,8 +268,59 @@ struct ContentResizeTests {
         )
         #expect(abs(try screenY() - before) < 0.5, "the commit moved the page")
 
-        try await Task.sleep(for: .milliseconds(160))
+        #expect(await pumpMainQueue {
+            container.textView.pendingResizeRequestForTesting == nil
+        })
         #expect(abs(try screenY() - before) < 0.5, "the deferred resize moved the page")
+    }
+
+    @Test("a shared-storage edit keeps the source camera through TextKit repair")
+    func sharedStorageEditKeepsThePixelViewport() async throws {
+        let paragraph = "A paragraph with enough words to form a stable line of document text."
+        let text = (0..<80).map { "## Section \($0)\n\n\(paragraph)" }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        container.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        container.textView.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 703))
+        container.scrollView.reflectScrolledClipView(clip)
+        let anchor = container.textView.topVisibleOffset
+        let editOffset = min(storage.length, anchor + 4)
+        let before = try #require(container.textView.rect(forOffset: anchor)).minY
+            - clip.bounds.origin.y
+        let edit = TextEdit(
+            range: NSRange(location: editOffset, length: 0),
+            replacement: "x",
+            summary: "External edit"
+        )
+
+        container.textView.prepareForExternalDocumentEdits([edit])
+        storage.replaceCharacters(in: edit.range, with: edit.replacement)
+        container.textView.update(
+            document: MarkdownParser.parse(storage.string),
+            dirty: DirtySet(
+                ranges: [NSRange(location: editOffset, length: 1)],
+                isWholesale: false
+            )
+        )
+        #expect(
+            abs(try #require(container.textView.rect(forOffset: anchor)).minY
+                - clip.bounds.origin.y - before) < 0.5,
+            "the shared-storage edit moved the page"
+        )
+
+        #expect(await pumpMainQueue {
+            container.textView.pendingResizeRequestForTesting == nil
+        })
+        #expect(
+            abs(try #require(container.textView.rect(forOffset: anchor)).minY
+                - clip.bounds.origin.y - before) < 0.5,
+            "the deferred shared-storage repair moved the page"
+        )
     }
 
     @Test("a rendered local edit survives AppKit's deferred caret scroll")
@@ -285,9 +353,10 @@ struct ContentResizeTests {
         // Simulate NSTextView's late make-caret-visible correction.
         clip.scroll(to: .zero)
         container.scrollView.reflectScrolledClipView(clip)
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async { continuation.resume() }
-        }
+        #expect(await pumpMainQueue {
+            guard let rect = container.textView.rect(forOffset: anchor) else { return false }
+            return abs(rect.minY - clip.bounds.origin.y - before) < 0.5
+        })
 
         let after = try #require(container.textView.rect(forOffset: anchor)).minY
             - clip.bounds.origin.y
@@ -320,13 +389,10 @@ struct ContentResizeTests {
         // height pass must both preserve the command-boundary pixel camera.
         clip.scroll(to: .zero)
         container.scrollView.reflectScrolledClipView(clip)
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async { continuation.resume() }
-        }
+        #expect(await pumpMainQueue { abs(clip.bounds.origin.y - 703) < 0.5 })
 
         #expect(abs(clip.bounds.origin.y - 703) < 0.5)
-        try? await Task.sleep(for: .milliseconds(160))
-        #expect(abs(clip.bounds.origin.y - 703) < 0.5)
+        #expect(await pumpMainQueue { abs(clip.bounds.origin.y - 703) < 0.5 })
     }
 
     /// A stale over-tall frame (from an earlier estimate or a shrunk document)
@@ -375,5 +441,45 @@ struct ContentResizeTests {
         view.mode = .source
 
         #expect(view.pendingResizeRequestForTesting == .viewport)
+    }
+
+    @Test("Document and Source mode keep a deep reading position")
+    func modeSwitchPreservesDeepViewportAnchor() async throws {
+        let paragraph = "A paragraph with enough words to keep the source and rendered views tall."
+        let source = (0..<70).map {
+            "## Section \($0)\n\n\(paragraph)"
+        }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: source)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+        view.resizeToFitContent()
+
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 900))
+        container.scrollView.reflectScrolledClipView(clip)
+        let anchor = view.topVisibleOffset
+        let before = try #require(view.rect(forOffset: anchor)).minY - clip.bounds.origin.y
+
+        view.mode = .source
+        #expect(await pumpMainQueue {
+            guard let rect = view.rect(forOffset: anchor) else { return false }
+            return abs(rect.minY - clip.bounds.origin.y - before) < 1
+        })
+        let sourceAfter = try #require(view.rect(forOffset: anchor)).minY - clip.bounds.origin.y
+        #expect(abs(sourceAfter - before) < 1, "Source mode moved the reading position")
+
+        view.mode = .live
+        #expect(await pumpMainQueue {
+            guard let rect = view.rect(forOffset: anchor) else { return false }
+            return abs(rect.minY - clip.bounds.origin.y - before) < 2
+        })
+        let documentAfter = try #require(view.rect(forOffset: anchor)).minY - clip.bounds.origin.y
+        // The rendered heading font and the source mono font have a small
+        // baseline difference; the source anchor must remain in the same
+        // reading band, not land at a new page position.
+        #expect(abs(documentAfter - before) < 2, "Document mode moved the reading position")
     }
 }

@@ -159,6 +159,31 @@ struct PanelAccessibilityTests {
         #expect(view.quickAddEditingForTesting)
     }
 
+    @Test("The task table claims command-N before the app menu")
+    func taskTableClaimsQuickAddKeyEquivalent() {
+        let table = PanelTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        var claimed = false
+        table.onKeyEvent = { event in
+            claimed = event.keyCode == 45
+            return claimed
+        }
+        let event = try? #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .command,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "n",
+            charactersIgnoringModifiers: "n",
+            isARepeat: false,
+            keyCode: 45
+        ))
+        #expect(event != nil)
+        #expect(table.performKeyEquivalent(with: event!))
+        #expect(claimed)
+    }
+
     @Test
     func undoPillReservesTheLastRows() {
         let view = TaskPanelView()

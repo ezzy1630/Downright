@@ -325,8 +325,8 @@ final class RenderTargetsView: NSView, PanelSurface {
         guard !edits.isEmpty else { return }
         actionStatus = "Applied \(edits.count) safe fix\(edits.count == 1 ? "" : "es")."
         isApplyingFixes = true
+        defer { isApplyingFixes = false }
         delegate?.renderTargetsView(self, didApply: edits)
-        isApplyingFixes = false
         reloadPreview()
     }
 

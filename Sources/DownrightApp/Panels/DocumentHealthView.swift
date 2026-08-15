@@ -305,8 +305,8 @@ final class DocumentHealthView: NSView, PanelSurface {
         // Say what happened.  Rows vanishing is not feedback (§11.4).
         actionStatus = "Applied \(fixes.count) safe fix\(fixes.count == 1 ? "" : "es")."
         isApplyingFixes = true
+        defer { isApplyingFixes = false }
         delegate?.documentHealthView(self, didApply: fixes)
-        isApplyingFixes = false
         reloadPreview()
     }
 
@@ -326,8 +326,8 @@ final class DocumentHealthView: NSView, PanelSurface {
         selectedDiagnosticID = nil
         actionStatus = "Ignored “\(ignored.message)”."
         isApplyingFixes = true
+        defer { isApplyingFixes = false }
         reload()
-        isApplyingFixes = false
     }
 
     /// Shows the diff box only when there is a diff.  Offering to "select a

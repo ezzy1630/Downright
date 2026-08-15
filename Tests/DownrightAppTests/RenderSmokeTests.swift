@@ -104,12 +104,6 @@ struct RenderSmokeTests {
     /// their full strength and declare this prerequisite, rather than being
     /// softened into something that passes without it.
     private func viewportLayoutRuns() -> Bool {
-        // GitHub's macOS runner has AppKit but no activated display cycle.
-        // Keep the view-level assertions live for local interactive runs and
-        // classify this known environment limitation instead of trusting a
-        // partial offscreen cache result.
-        if ProcessInfo.processInfo.environment["CI"] == "true" { return false }
-
         // Probe the same fixture as the smoke test. A tiny prose-only sample
         // can draw while a document whose blocks use the renderer's custom
         // fragments remains blank on a headless runner, which made this gate
@@ -268,8 +262,6 @@ struct RenderSmokeTests {
         )
         #expect(sampledOffset == firstOffset, "the sample point must sit inside the first fragment, not the inset")
         #expect(origin.y > 0, "…and the inset it must skip is real")
-
-        if ProcessInfo.processInfo.environment["CI"] == "true" { return }
 
         // The view-level answer needs the viewport pass; see `viewportLayoutRuns`.
         withKnownIssue("NSTextView hit testing needs a viewport layout pass") {

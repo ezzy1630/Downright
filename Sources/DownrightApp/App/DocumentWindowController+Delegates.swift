@@ -181,6 +181,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     }
 
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {
+        guard !isOpeningDocument else { return }
         synchronizePanes(from: view)
         let selection = view.sourceSelectedRange
         markdownDocument.state.selectionLocation = selection.location
@@ -511,7 +512,10 @@ extension DocumentWindowController: FindBarDelegate {
             let text = FindEngine.replacement(
                 for: match, in: markdownDocument.text, query: currentFindQuery, template: replacement
             )
-            markdownDocument.replace(match, with: text, actionName: "Replace")
+            applyInPlaceDocumentEdits(
+                [TextEdit(range: match, replacement: text, summary: "Replace")],
+                actionName: "Replace"
+            )
             runFind(currentFindQuery)
             replaceResults("Replaced 1")
         } else {

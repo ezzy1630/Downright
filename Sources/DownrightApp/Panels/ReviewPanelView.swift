@@ -201,8 +201,8 @@ final class ReviewPanelView: NSView, PanelSurface {
     private func act(_ message: String, _ body: () -> Void) {
         actionStatus = message
         isActing = true
+        defer { isActing = false }
         body()
-        isActing = false
         statusLabel.stringValue = message
         statusLabel.setAccessibilityLabel(message)
     }

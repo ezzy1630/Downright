@@ -25,10 +25,11 @@ extension DocumentWindowController: FrontMatterEditorDelegate {
             editor?.prepareForPresentation(focus: focus)
         }
         // The trailing host performs its own key-loop handoff after layout.
-        // Reassert the semantic field once that handoff and the spring's first
-        // frame have completed, or AX/keyboard users land on the window itself.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak editor] in
+        // Reassert the semantic field on the first settled layout turn, or
+        // AX/keyboard users can land on the window itself.
+        DispatchQueue.main.async { [weak self, weak editor] in
             guard let self, let editor, self.frontMatterEditor === editor else { return }
+            self.window?.contentView?.layoutSubtreeIfNeeded()
             viewportRepairs.forEach { $0() }
             editor.focusField(named: focus)
         }

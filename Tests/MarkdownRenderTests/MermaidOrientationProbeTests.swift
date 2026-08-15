@@ -112,6 +112,63 @@ import BeautifulMermaid
     #expect(ink.maxY == rep.pixelsHigh, "\(rep.pixelsHigh - ink.maxY) blank rows on the bottom edge")
 }
 
+/// The bridge bitmap itself must read upright: a label glyph's widest stroke
+/// (the "T" crossbar) must sit in the upper half of the content's row span.
+@Test @MainActor func mermaidBridgeBitmapIsUpright() throws {
+    let sheet = StyleSheet(theme: .fallback, appearance: NSAppearance(named: .aqua) ?? .currentDrawing())
+    let source = """
+    flowchart LR
+        A["Start"] --> B["Process"]
+        B --> C{"Decision"}
+        C -->|yes| D["Done"]
+    """
+    guard let image = MermaidRendererBridge.image(source: source, styleSheet: sheet),
+          let rep = bitmapRep(of: image) else {
+        Issue.record("bridge produced no renderable bitmap")
+        return
+    }
+    #expect(crossbarFraction(of: rep) < 0.5, "bridge bitmap has upside-down labels")
+}
+
+/// Measures where the label's widest dark row falls within the content's row
+/// span, in top-down bitmap order. A "T"-shaped label's crossbar is its widest
+/// stroke; upright text puts it above the content's vertical centre.
+private func crossbarFraction(of rep: NSBitmapImageRep) -> Double {
+    let width = rep.pixelsWide
+    let height = rep.pixelsHigh
+    guard let data = rep.bitmapData, width > 0, height > 0 else { return 0.5 }
+
+    var minY = height
+    var maxY = -1
+    for y in stride(from: 0, to: height, by: 2) {
+        for x in stride(from: 0, to: width, by: 2) {
+            let offset = y * rep.bytesPerRow + x * rep.samplesPerPixel
+            let brightness = Int(data[offset]) + Int(data[offset + 1]) + Int(data[offset + 2])
+            if brightness > 120 {
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+            }
+        }
+    }
+    guard maxY > minY else { return 0.5 }
+
+    var widest = 0
+    var widestY = minY
+    for y in stride(from: minY, through: maxY, by: 2) {
+        var count = 0
+        for x in stride(from: 0, to: width, by: 2) {
+            let offset = y * rep.bytesPerRow + x * rep.samplesPerPixel
+            let brightness = Int(data[offset]) + Int(data[offset + 1]) + Int(data[offset + 2])
+            if brightness > 120 { count += 1 }
+        }
+        if count > widest {
+            widest = count
+            widestY = y
+        }
+    }
+    return Double(widestY - minY) / Double(maxY - minY)
+}
+
 /// The smallest pixel box containing every non-transparent pixel, as
 /// half-open `minX..<maxX` / `minY..<maxY` bounds.
 ///

@@ -69,6 +69,12 @@ public struct StyleSheet {
     public var searchHitCurrent: NSColor
     public var selection: NSColor
 
+    /// The start action uses Apple's blue control colour rather than the
+    /// document theme accent.  The latter is semantic editor colour used for
+    /// carets, links, tasks, and review marks; changing those just to restyle
+    /// the welcome CTA would make a theme switch change document meaning.
+    private let startActionAccent: NSColor
+
     /// The welcome surface has one primary action.  Keep it distinct from the
     /// editor accent so changing the document's semantic accent does not turn
     /// the start window into a bright blue slab.
@@ -78,7 +84,8 @@ public struct StyleSheet {
         // the fill without dropping below WCAG AA.
         for step in 4...14 {
             let amount = CGFloat(step) * 0.05
-            let candidate = accent.blended(withFraction: amount, of: .black) ?? accent
+            let candidate = startActionAccent.blended(withFraction: amount, of: .black)
+                ?? startActionAccent
             if Self.contrastRatio(.white, candidate) >= 5.2 { return candidate }
         }
         return NSColor(calibratedRed: 0.08, green: 0.28, blue: 0.58, alpha: 1)
@@ -165,6 +172,7 @@ public struct StyleSheet {
         let resolver = ColorResolver(appearance: appearance)
         let resolvedText = resolver.resolve(palette.text)
         let boost = increaseContrast
+        startActionAccent = resolver.resolve(ThemeColor("system:systemBlue"))
 
         background = resolver.resolve(palette.background)
         surface = resolver.resolve(palette.surface)

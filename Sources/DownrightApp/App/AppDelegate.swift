@@ -70,12 +70,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let servicesProvider = DownrightServicesProvider()
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
+    /// Launch Services can deliver an open request between NSApplication's
+    /// will-finish and did-finish callbacks. Keep that request alive until the
+    /// app has installed its menus, preferences, and first-run surfaces rather
+    /// than letting a cold "Open With" silently fall through.
+    private var hasFinishedLaunching = false
+    private var pendingOpenURLs: [URL] = []
     private var appearanceObservation: NSKeyValueObservation?
+    private var warningWindowObserver: NSObjectProtocol?
     private static let systemThemeChanged = Notification.Name("AppleInterfaceThemeChangedNotification")
 
     // MARK: - Lifecycle
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        hasFinishedLaunching = false
         reportUnavailableStorage(AppPaths.prepareAll())
         // Counted before anything can read it, so first-run affordances all
         // agree about which launch this is.
@@ -100,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // "Follow system appearance" has to mean *while running*, not "at the
         // next launch".  Nothing else watches the system flipping to Dark.
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.applySelectedTheme() }
+            Task { @MainActor [weak self] in self?.applySelectedTheme() }
         }
         // `NSApp.effectiveAppearance` can lag while a document window still
         // carries the old explicit appearance. The distributed system event is
@@ -120,6 +128,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.reportSettingsWriteFailure(error)
             }
         }
+        // A launch-time fault can be queued before any application window is
+        // visible. Retry when the first window appears instead of leaving the
+        // warning stranded in memory.
+        warningWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.flushWarnings() }
+        }
         // The store refuses to overwrite a file it could not read, so the user
         // is the only one who can fix it — which means they have to be told.
         KeybindingStore.shared.onLoadFailure = { [weak self] error in
@@ -128,6 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // History pruning at launch rather than on a timer: it touches the disk
         // and there is no reason to do it while the user is reading (§8.3).
         SnapshotStore.shared.schedulePrune()
+
+        hasFinishedLaunching = true
 
         // The one-time setup panel: where the download-and-drag user gets their
         // file association, their Quick Look extensions, and `down`.  It never
@@ -141,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the launch has settled rather than when it was created.
             if showingSetup { setupWindow?.window?.makeKeyAndOrderFront(nil) }
         }
+        if drainPendingOpenURLs() { return }
         guard windowControllers.isEmpty else { return }
         // Paths on the command line, for running straight out of `.build`
         // during development.  Launch Services never routes these through
@@ -176,6 +197,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let warningWindowObserver {
+            NotificationCenter.default.removeObserver(warningWindowObserver)
+            self.warningWindowObserver = nil
+        }
         DistributedNotificationCenter.default().removeObserver(
             self, name: Self.systemThemeChanged, object: nil
         )
@@ -209,11 +234,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Opening
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        guard hasFinishedLaunching else {
+            pendingOpenURLs.append(contentsOf: urls)
+            return
+        }
         for url in urls { open(url) }
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
-        open(URL(fileURLWithPath: filename)) != nil
+        guard hasFinishedLaunching else {
+            pendingOpenURLs.append(URL(fileURLWithPath: filename))
+            return true
+        }
+        return open(URL(fileURLWithPath: filename)) != nil
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map(URL.init(fileURLWithPath:))
+        guard hasFinishedLaunching else {
+            pendingOpenURLs.append(contentsOf: urls)
+            return
+        }
+        for url in urls { open(url) }
+    }
+
+    @discardableResult
+    private func drainPendingOpenURLs() -> Bool {
+        guard !pendingOpenURLs.isEmpty else { return false }
+        let urls = pendingOpenURLs
+        pendingOpenURLs.removeAll(keepingCapacity: true)
+        for url in urls { open(url) }
+        return true
     }
 
     @discardableResult
@@ -262,10 +313,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controller
     }
 
+    private func documentWindow(owning window: NSWindow) -> NSWindow? {
+        var candidate: NSWindow? = window
+        while let current = candidate {
+            if windowControllers.contains(where: { $0.window === current }) {
+                return current
+            }
+            candidate = current.parent
+        }
+        return nil
+    }
+
     private var activeDocumentWindow: NSWindow? {
-        if let key = NSApp.keyWindow,
-           windowControllers.contains(where: { $0.window === key }) {
-            return key
+        if let key = NSApp.keyWindow, let document = documentWindow(owning: key) {
+            return document
         }
         return windowControllers.compactMap(\.window).last(where: \.isVisible)
     }
@@ -688,7 +749,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// controller further down the responder chain.
     func handleApplicationCommand(_ command: Command) -> Bool {
         switch command {
-        case .newDocument: newDocument(); return true
+        case .newDocument:
+            if let window = activeDocumentWindow,
+               let controller = window.windowController as? DocumentWindowController,
+               controller.handleNewDocumentCommand() {
+                return true
+            }
+            newDocument()
+            return true
         case .open: showOpenPanel(); return true
         // No document to close, so ⌘W means the window in front — the start
         // window included, which otherwise ignored the key entirely.

@@ -402,6 +402,13 @@ final class PanelBackdrop: NSView {
 /// keyboard but not act on with it is not keyboard-navigable (§11.4).
 final class PanelTableView: NSTableView {
     var onActivate: (() -> Void)?
+    /// Gives the owner the original event before key normalization or the
+    /// responder chain can turn a panel command into an app command.
+    var onKeyEvent: ((NSEvent) -> Bool)?
+    /// Lets a panel claim a row press before NSTableView starts selection
+    /// tracking. This is used by inline action rows whose child labels would
+    /// otherwise swallow the click.
+    var onRowMouseDown: ((Int) -> Bool)?
     /// Handed the normalised key name; return true to swallow the event.
     var onKeyDown: ((String) -> Bool)?
     /// Handed the clicked row (or -1 for the background); return the menu to
@@ -409,6 +416,7 @@ final class PanelTableView: NSTableView {
     var onMenu: ((Int) -> NSMenu?)?
 
     override func keyDown(with event: NSEvent) {
+        if onKeyEvent?(event) == true { return }
         guard let key = KeyBinding.key(for: event) else {
             super.keyDown(with: event)
             return
@@ -419,6 +427,17 @@ final class PanelTableView: NSTableView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if onKeyEvent?(event) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        if onRowMouseDown?(row) == true { return }
+        super.mouseDown(with: event)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

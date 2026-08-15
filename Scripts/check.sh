@@ -97,6 +97,20 @@ if [ "$COUNT" -eq 0 ]; then
     echo "    NO TESTS RAN — see the note at the top of this script"
     exit 1
 fi
+
+# Known issues are deliberate environment boundaries, not a second success
+# path. Keep their inventory explicit so a test cannot quietly become a
+# permanent suppression (or disappear from the gate) while the test count still
+# looks healthy. The two current sites are the headless TextKit viewport hit
+# test and the raster smoke test; an activated-app lane exercises both without
+# this exception.
+KNOWN_ISSUE_SITES=$(rg -n "withKnownIssue\\(" Tests | wc -l | tr -d ' ')
+EXPECTED_KNOWN_ISSUES=2
+echo "    $KNOWN_ISSUE_SITES deliberate known-issue sites"
+if [ "$KNOWN_ISSUE_SITES" -ne "$EXPECTED_KNOWN_ISSUES" ]; then
+    echo "    KNOWN-ISSUE GATE FAILED — expected exactly $EXPECTED_KNOWN_ISSUES deliberate suppressions"
+    exit 1
+fi
 # Exit codes are taken modulo 256, so a status of 256 would surface as success.
 # Report the failure with a literal 1 instead of forwarding the raw status.
 if [ "$TEST_STATUS" -ne 0 ]; then

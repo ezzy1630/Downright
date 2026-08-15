@@ -132,7 +132,11 @@ final class UpdateCoordinator: UpdateDriverHost {
     init(engine: (any UpdateEngine)?) {
         self.engine = engine
         engine?.onBackgroundDownloadCompleted = { [weak self] version in
-            MainActor.assumeIsolated { self?.backgroundDownloadCompleted(version) }
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { self?.backgroundDownloadCompleted(version) }
+            } else {
+                Task { @MainActor [weak self] in self?.backgroundDownloadCompleted(version) }
+            }
         }
     }
 
@@ -160,7 +164,11 @@ final class UpdateCoordinator: UpdateDriverHost {
         }
         self.engine = engine
         engine.onBackgroundDownloadCompleted = { [weak self] displayVersion in
-            MainActor.assumeIsolated { self?.backgroundDownloadCompleted(displayVersion) }
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { self?.backgroundDownloadCompleted(displayVersion) }
+            } else {
+                Task { @MainActor [weak self] in self?.backgroundDownloadCompleted(displayVersion) }
+            }
         }
         do {
             try engine.start()

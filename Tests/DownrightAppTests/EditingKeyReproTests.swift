@@ -6,6 +6,19 @@ import MarkdownCore
 @Suite(.serialized)
 @MainActor
 struct EditingKeyReproTests {
+    @discardableResult
+    private func pumpMainRunLoop(
+        until condition: () -> Bool,
+        timeout: TimeInterval = 1
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            RunLoop.main.run(mode: .common, before: min(
+                deadline, Date().addingTimeInterval(0.01)))
+        }
+        return condition()
+    }
+
     private func makeController(text: String, file fileURL: URL) throws -> DocumentWindowController {
         try text.write(to: fileURL, atomically: true, encoding: .utf8)
         let controller = DocumentWindowController()
@@ -29,6 +42,22 @@ struct EditingKeyReproTests {
         textView.keyDown(with: event)
     }
 
+    private func pressCommandA(into textView: NSTextView) {
+        let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: textView.window?.windowNumber ?? 0,
+            context: nil,
+            characters: "a",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        )!
+        textView.keyDown(with: event)
+    }
+
     private func pressDelete(into textView: NSTextView) {
         let event = NSEvent.keyEvent(
             with: .keyDown,
@@ -43,6 +72,76 @@ struct EditingKeyReproTests {
             keyCode: 51
         )!
         textView.keyDown(with: event)
+    }
+
+    private func pressOptionDelete(into textView: NSTextView) {
+        let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.option],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: textView.window?.windowNumber ?? 0,
+            context: nil,
+            characters: String(UnicodeScalar(NSDeleteCharacter)!),
+            charactersIgnoringModifiers: String(UnicodeScalar(NSDeleteCharacter)!),
+            isARepeat: false,
+            keyCode: 51
+        )!
+        textView.keyDown(with: event)
+    }
+
+    @Test("opening a document does not select all text")
+    func openingDocumentStartsWithCaretOnly() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproInitialSelection-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "# Title\n\nBody text.\n"
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.makeFirstResponder(controller.primaryContainer.textView)
+
+        #expect(pumpMainRunLoop {
+            controller.primaryContainer.textView.selectedRange().length == 0
+        })
+        #expect(controller.primaryContainer.textView.selectedRange().length == 0)
+        #expect(controller.primaryContainer.textView.sourceSelectedRange.length == 0)
+    }
+
+    @Test("opening a second document clears the previous document selection")
+    func openingSecondDocumentClearsPreviousSelection() throws {
+        let firstURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproPreviousSelection-\(UUID().uuidString).md")
+        let secondURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproNextSelection-\(UUID().uuidString).md")
+        defer {
+            try? FileManager.default.removeItem(at: firstURL)
+            try? FileManager.default.removeItem(at: secondURL)
+        }
+        let controller = try makeController(text: "# First\n\nold body\n", file: firstURL)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        pressCommandA(into: view)
+        #expect(view.selectedRange().length > 0)
+
+        try "# Second\n\nnew body\n".write(to: secondURL, atomically: true, encoding: .utf8)
+        try controller.open(secondURL, mode: .live)
+
+        // The open path clears AppKit's stale native selection synchronously,
+        // then restores the new document's saved position on the next frame.
+        // Include the persisted state so this cannot pass before that restore.
+        #expect(pumpMainRunLoop {
+            view.selectedRange().length == 0
+                && controller.markdownDocument.state.selectionLength == 0
+        })
+        #expect(view.selectedRange().length == 0)
+        #expect(view.sourceSelectedRange.length == 0)
     }
 
     private func pressTab(into textView: NSTextView) {
@@ -77,12 +176,14 @@ struct EditingKeyReproTests {
         controller.primaryContainer.textView.setSourceSelectedRanges([
             NSRange(location: body.location, length: 0)
         ])
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        #expect(pumpMainRunLoop {
+            controller.primaryContainer.textView.rect(forOffset: body.location) != nil
+        })
 
         let before = controller.markdownDocument.text
         type("x", into: controller.primaryContainer.textView)
         type("y", into: controller.primaryContainer.textView)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.contains("xyBody text.") })
 
         #expect(controller.primaryContainer.textView.isEditable)
         #expect(controller.markdownDocument.text != before)
@@ -102,14 +203,70 @@ struct EditingKeyReproTests {
         controller.primaryContainer.textView.setSourceSelectedRanges([
             NSRange(location: 0, length: 0)
         ])
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        #expect(pumpMainRunLoop { controller.primaryContainer.textView.rect(forOffset: 0) != nil })
 
         type("x", into: controller.primaryContainer.textView)
         type("y", into: controller.primaryContainer.textView)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.hasPrefix("# xyTitle") })
 
         // Hidden `# ` stays put; typing lands in the visible title.
         #expect(controller.markdownDocument.text.hasPrefix("# xyTitle"))
+    }
+
+    @Test("Select All includes hidden Markdown before a replacement")
+    func selectAllReplacesTheWholeSourceDocument() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproSelectAll-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "## Existing heading\n\nBody.\n"
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        pressCommandA(into: view)
+
+        #expect(view.sourceSelectedRange == NSRange(
+            location: 0, length: (source as NSString).length
+        ))
+
+        for character in "## xyzxyz" { type(character, into: view) }
+        #expect(pumpMainRunLoop { controller.markdownDocument.text == "## xyzxyz" })
+
+        #expect(controller.markdownDocument.text == "## xyzxyz")
+        #expect(view.sourceSelectedRange == NSRange(location: 9, length: 0))
+    }
+
+    @Test("Select All stays source-wide when the live projection is fully elided")
+    func selectAllSurvivesFullyElidedProjection() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproElidedSelectAll-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "A body with no heading is hidden at top-level zoom.\n"
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        // A zero-length caret is intentionally a visibility probe for
+        // structural zoom. Use a non-empty selection here so the projection
+        // can remain fully elided while this test exercises Select All.
+        view.setSourceSelectedRanges([NSRange(location: 0, length: 1)])
+        view.zoomLevel = .h1
+        #expect(view.textStorage?.attribute(.drElided, at: 0, effectiveRange: nil) != nil)
+
+        pressCommandA(into: view)
+        #expect(view.sourceSelectedRange == NSRange(
+            location: 0, length: (source as NSString).length
+        ))
+
+        type("x", into: view)
+        #expect(pumpMainRunLoop { controller.markdownDocument.text == "x" })
+        #expect(controller.markdownDocument.text == "x")
     }
 
     @Test("Real key events keep the caret line fixed through the async parse")
@@ -143,7 +300,7 @@ struct EditingKeyReproTests {
             let currentY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.origin.y
             #expect(abs(currentY - screenY) < 1, "the key event moved the caret line")
         }
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.contains("abc") })
         controller.window?.layoutIfNeeded()
         let settledY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.origin.y
         #expect(abs(settledY - screenY) < 1, "the parse commit moved the caret line")
@@ -164,15 +321,109 @@ struct EditingKeyReproTests {
         controller.primaryContainer.textView.setSourceSelectedRanges([
             NSRange(location: end, length: 0)
         ])
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        #expect(pumpMainRunLoop {
+            controller.primaryContainer.textView.rect(forOffset: end) != nil
+        })
 
         let before = controller.markdownDocument.text
         pressDelete(into: controller.primaryContainer.textView)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        #expect(pumpMainRunLoop { controller.markdownDocument.text == "# Title\n\nBody text." })
 
         #expect(controller.primaryContainer.textView.isEditable)
         #expect(controller.markdownDocument.text != before)
         #expect(controller.markdownDocument.text == "# Title\n\nBody text.")
+    }
+
+    @Test("Option-Delete deletes the previous source word")
+    func deleteWordThroughRealKeyDownMutatesDocument() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproWordDel-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = "alpha beta gamma\n"
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        let gamma = (text as NSString).range(of: "gamma")
+        view.setSourceSelectedRanges([NSRange(location: gamma.upperBound, length: 0)])
+        #expect(pumpMainRunLoop { view.rect(forOffset: gamma.upperBound) != nil })
+
+        pressOptionDelete(into: view)
+        #expect(pumpMainRunLoop { controller.markdownDocument.text == "alpha beta \n" })
+
+        #expect(controller.markdownDocument.text == "alpha beta \n")
+        #expect(view.sourceSelectedRange == NSRange(location: gamma.location, length: 0))
+    }
+
+    @Test("native word movement stays in source coordinates")
+    func nativeWordMovementPreservesSourceCaret() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproWordMove-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = "alpha beta gamma\n"
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        let gamma = (text as NSString).range(of: "gamma")
+        view.setSourceSelectedRanges([NSRange(location: gamma.upperBound, length: 0)])
+        #expect(pumpMainRunLoop { view.rect(forOffset: gamma.upperBound) != nil })
+
+        view.moveWordBackward(nil)
+
+        #expect(view.sourceSelectedRange == NSRange(location: gamma.location, length: 0))
+    }
+
+    @Test("split panes keep their own caret and viewport")
+    func splitPanesKeepInteractionStateIndependent() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproSplit-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = (0..<45).map {
+            "## Section \($0)\n\nParagraph \($0) keeps the two editing surfaces readable."
+        }.joined(separator: "\n\n")
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.setContentSize(NSSize(width: 1000, height: 640))
+        controller.toggleSplitView()
+        controller.window?.layoutIfNeeded()
+        let primary = controller.primaryContainer.textView
+        let split = try #require(controller.splitContainer?.textView)
+        primary.resizeToFitContent()
+        split.resizeToFitContent()
+
+        let firstTarget = (text as NSString).range(of: "Section 10")
+        let secondTarget = (text as NSString).range(of: "Section 35")
+        primary.scroll(toOffset: firstTarget.location, position: .top, animated: false)
+        split.scroll(toOffset: secondTarget.location, position: .top, animated: false)
+        let primaryViewport = primary.enclosingScrollView?.contentView.bounds.origin.y ?? 0
+        let splitSelection = NSRange(location: secondTarget.location + 3, length: 0)
+        split.setSourceSelectedRanges([splitSelection])
+
+        controller.markdownTextViewDidChangeSelection(split)
+        controller.markdownTextViewDidScroll(split)
+
+        #expect(split.sourceSelectedRange == splitSelection)
+        #expect(primary.sourceSelectedRange != splitSelection)
+        #expect(abs((primary.enclosingScrollView?.contentView.bounds.origin.y ?? 0) - primaryViewport) < 1)
+
+        controller.window?.makeFirstResponder(split)
+        let splitViewport = split.enclosingScrollView?.contentView.bounds.origin.y ?? 0
+        controller.toggleSplitView()
+
+        #expect(controller.splitContainer == nil)
+        #expect(controller.window?.firstResponder === primary)
+        #expect(primary.sourceSelectedRange == splitSelection)
+        #expect(abs((primary.enclosingScrollView?.contentView.bounds.origin.y ?? 0) - splitViewport) < 1)
     }
 
     @Test("Tab after live edits cannot stack fragments or move the camera")
@@ -209,7 +460,7 @@ struct EditingKeyReproTests {
         type("i", into: view)
         type("l", into: view)
         pressTab(into: view)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.35))
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.contains("\ntail\t") })
         controller.window?.layoutIfNeeded()
         view.resizeToFitContent()
 
@@ -305,7 +556,7 @@ struct EditingKeyReproTests {
             - clip.bounds.origin.y
 
         #expect(controller.perform(.promoteHeading))
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.35))
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.contains("## Detail 20") })
         controller.window?.layoutIfNeeded()
 
         let actualScreenY = try #require(view.rect(forOffset: target.location)).minY

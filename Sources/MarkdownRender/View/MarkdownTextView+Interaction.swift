@@ -232,12 +232,22 @@ extension MarkdownTextView {
         // its own hit test; every remaining question shares one.
         if semanticCheckbox(at: point) != nil { return true }
         let offset = sourceOffset(at: point)
+        if mode == .live {
+            // Rendered targets are actionable on a normal click. Option-click
+            // still falls through to the editor for caret placement.
+            return attribute(.drCheckbox, atSourceOffset: offset) != nil
+                || attribute(.drLink, atSourceOffset: offset) != nil
+                || attribute(.drReference, atSourceOffset: offset) != nil
+                || attribute(.drPathToken, atSourceOffset: offset) != nil
+                || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
+                || fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter
+        }
+        guard mode == .read else { return false }
         return attribute(.drLink, atSourceOffset: offset) != nil
             || attribute(.drReference, atSourceOffset: offset) != nil
             || attribute(.drPathToken, atSourceOffset: offset) != nil
             || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
-            || (mode != .source && fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter)
-            || (mode != .source && attribute(.drCheckbox, atSourceOffset: offset) != nil)
+            || fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter
     }
 
     private func setPointerCursor(interactive: Bool) {
@@ -293,33 +303,26 @@ extension MarkdownTextView {
 
     // MARK: - Click (§7.1)
 
-    /// Whether a click on `range` should follow the target instead of placing
-    /// the caret.
-    ///
-    /// The pointer already promises activation — a pointing hand, and a hover
-    /// underline on links — and Preview, the reference for quiet reading,
-    /// follows a link on a plain click.  Requiring ⌘ in Live mode meant the
-    /// only mode the document window ever uses ignored its own strongest
-    /// affordance, so the first click every reader makes did nothing.
-    ///
-    /// Two escape hatches keep the text editable: ⌥ always places the caret,
-    /// and once the caret is already inside the span, clicks there behave like
-    /// ordinary text again — so editing link text stays a matter of clicking
-    /// beside it once and then working normally.  Source mode is raw text, so
-    /// there activation stays explicit.
-    private func clickActivates(_ range: NSRange, modifiers: NSEvent.ModifierFlags) -> Bool {
-        if modifiers.contains(.command) { return true }
+    /// Whether a single click is eligible to follow a rendered target. The
+    /// actual activation waits until AppKit finishes tracking the gesture so a
+    /// drag can still select link text and double/triple-clicks can still make
+    /// words or paragraphs.
+    private func clickActivates(
+        _: NSRange,
+        modifiers: NSEvent.ModifierFlags,
+        clickCount: Int
+    ) -> Bool {
         guard mode != .source else { return false }
-        if mode == .read { return true }
-        if modifiers.contains(.option) { return false }
-        let caret = sourceSelectedRange
-        return !(caret.length == 0 && range.contains(offset: caret.location))
+        guard clickCount == 1 else { return false }
+        let editingModifiers: NSEvent.ModifierFlags = [.option, .shift, .control]
+        return mode == .read || modifiers.intersection(editingModifiers).isEmpty
     }
 
     public override func mouseDown(with event: NSEvent) {
         interruptAnimatedScroll()
         let point = convert(event.locationInWindow, from: nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        var activateAfterTracking: (() -> Void)?
 
         if sourceFocusDoneRect?.insetBy(dx: -4, dy: -4).contains(point) == true {
             clearSourceFocus()
@@ -331,7 +334,11 @@ extension MarkdownTextView {
         if mode != .source,
            let hit = fragmentPayload(at: point),
            hit.payload.kind == .frontMatter,
-           clickActivates(hit.payload.sourceRange, modifiers: modifiers) {
+           clickActivates(
+               hit.payload.sourceRange,
+               modifiers: modifiers,
+               clickCount: event.clickCount
+           ) {
             markdownDelegate?.markdownTextView(
                 self,
                 didActivateFrontMatterAt: hit.payload.sourceRange
@@ -364,36 +371,56 @@ extension MarkdownTextView {
         }
 
         if let hit = attribute(.drPathToken, at: point), let token = hit.value as? PathToken,
-           clickActivates(hit.range, modifiers: modifiers) {
-            markdownDelegate?.markdownTextView(self, didActivatePathToken: token, at: hit.range)
-            return
+           clickActivates(hit.range, modifiers: modifiers, clickCount: event.clickCount) {
+            activateAfterTracking = { [weak self] in
+                guard let self else { return }
+                self.markdownDelegate?.markdownTextView(
+                    self, didActivatePathToken: token, at: hit.range
+                )
+            }
         }
         if let hit = attribute(.drLink, at: point), let destination = hit.value as? String,
-           clickActivates(hit.range, modifiers: modifiers) {
-            markdownDelegate?.markdownTextView(self, didActivateLink: destination, at: hit.range, modifiers: modifiers)
-            return
+           clickActivates(hit.range, modifiers: modifiers, clickCount: event.clickCount) {
+            activateAfterTracking = { [weak self] in
+                guard let self else { return }
+                self.markdownDelegate?.markdownTextView(
+                    self,
+                    didActivateLink: destination,
+                    at: hit.range,
+                    modifiers: modifiers
+                )
+            }
         }
         if let hit = attribute(.drReference, at: point),
            let identifier = hit.value as? String,
            let footnote = parsedDocument.footnotes[identifier],
-           clickActivates(hit.range, modifiers: modifiers) {
-            markdownDelegate?.markdownTextView(self, didNavigateTo: footnote.range.location)
-            // `.visible`, not `.center`: centring drags the page even when the
-            // definition is already on screen, which is the "click teleports the
-            // camera" jolt.  Reveal only when the target is actually off screen.
-            scroll(toOffset: footnote.range.location, position: .visible, animated: true)
-            return
+           clickActivates(hit.range, modifiers: modifiers, clickCount: event.clickCount) {
+            activateAfterTracking = { [weak self] in
+                guard let self else { return }
+                self.markdownDelegate?.markdownTextView(self, didNavigateTo: footnote.range.location)
+                // `.visible`, not `.center`: centring drags the page even when
+                // the definition is already on screen, which is the "click
+                // teleports the camera" jolt. Reveal only when the target is
+                // actually off screen.
+                self.scroll(toOffset: footnote.range.location, position: .visible, animated: true)
+            }
         }
         if let payload = fragmentPayload(at: point)?.payload, payload.kind == .image,
-           clickActivates(payload.sourceRange, modifiers: modifiers) {
-            // §7.1: click an image → lightbox.  The render package owns no
-            // windows, so it reports and the app presents.
-            markdownDelegate?.markdownTextView(
-                self,
-                didActivateImage: payload.detail,
-                at: payload.sourceRange
-            )
-            return
+           clickActivates(
+               payload.sourceRange,
+               modifiers: modifiers,
+               clickCount: event.clickCount
+           ) {
+            activateAfterTracking = { [weak self] in
+                guard let self else { return }
+                // §7.1: click an image → lightbox. The render package owns no
+                // windows, so it reports and the app presents.
+                self.markdownDelegate?.markdownTextView(
+                    self,
+                    didActivateImage: payload.detail,
+                    at: payload.sourceRange
+                )
+            }
         }
 
         // A plain click in a fence's padding aims at the code, not at the
@@ -407,9 +434,13 @@ extension MarkdownTextView {
             return
         }
 
-        // `super` owns the whole click/drag gesture.  Delay marker reveal until
+        // `super` owns the whole click/drag gesture.  Make the target first
+        // responder explicitly; relying on the window's default mouse routing
+        // leaves a split-pane click visually correct but sends the next key to
+        // the other pane on some AppKit layouts.  Delay marker reveal until
         // it resolves to a caret or a selection, so selection never causes a
         // transient source flash or moves the glyphs under the pointer.
+        window?.makeFirstResponder(self)
         isTrackingMouseSelection = true
         suppressesCaretReveal = true
         super.mouseDown(with: event)
@@ -427,6 +458,9 @@ extension MarkdownTextView {
             }
         }
         handleSelectionChanged(allowTypewriterScrolling: false)
+        if sourceSelectedRange.length == 0 {
+            activateAfterTracking?()
+        }
     }
 
     private func semanticCheckbox(at point: NSPoint) -> CheckboxHit? {
@@ -820,6 +854,23 @@ extension MarkdownTextView {
         performSourceEdit(range: target, replacement: text)
     }
 
+    /// Select All is a source operation even in rendered Document mode. The
+    /// display map intentionally omits Markdown markers, so AppKit's default
+    /// implementation can select only the visible title/body and leave `##`,
+    /// emphasis delimiters, task markers, or link syntax outside the range.
+    /// Replacing that partial selection is what turned `## xyzxyz` into
+    /// `## ## xyzxyz` in the real editor.
+    public override func selectAll(_ sender: Any?) {
+        guard isEditable, let storage = textStorage else {
+            super.selectAll(sender)
+            return
+        }
+        setSourceSelectedRanges([
+            NSRange(location: 0, length: storage.length)
+        ])
+        handleSelectionChanged(allowTypewriterScrolling: false)
+    }
+
     /// While an input method is composing, marker hiding is suspended in the
     /// composing paragraph so the hybrid and source spaces coincide there and
     /// AppKit's marked-text bookkeeping is exactly right.  A brief reflow at
@@ -858,6 +909,58 @@ extension MarkdownTextView {
         performSourceEdit(range: deletionRange(after: selection.location, in: storage), replacement: "")
     }
 
+    public override func deleteBackwardByDecomposingPreviousCharacter(_ sender: Any?) {
+        deleteBackward(sender)
+    }
+
+    public override func deleteWordBackward(_ sender: Any?) {
+        guard isEditable else { return }
+        if hasMarkedText() || composingParagraph != nil {
+            super.deleteWordBackward(sender)
+            return
+        }
+        let selection = sourceSelectedRange
+        if selection.length > 0 {
+            performSourceEdit(range: selection, replacement: "")
+            return
+        }
+        guard let storage = textStorage,
+              let range = wordDeletionRange(before: selection.location, in: storage) else { return }
+        performSourceEdit(range: range, replacement: "")
+    }
+
+    public override func deleteWordForward(_ sender: Any?) {
+        guard isEditable else { return }
+        if hasMarkedText() || composingParagraph != nil {
+            super.deleteWordForward(sender)
+            return
+        }
+        let selection = sourceSelectedRange
+        if selection.length > 0 {
+            performSourceEdit(range: selection, replacement: "")
+            return
+        }
+        guard let storage = textStorage,
+              let range = wordDeletionRange(after: selection.location, in: storage) else { return }
+        performSourceEdit(range: range, replacement: "")
+    }
+
+    public override func deleteToBeginningOfLine(_ sender: Any?) {
+        deleteToBoundary(sender, paragraph: false, beginning: true)
+    }
+
+    public override func deleteToEndOfLine(_ sender: Any?) {
+        deleteToBoundary(sender, paragraph: false, beginning: false)
+    }
+
+    public override func deleteToBeginningOfParagraph(_ sender: Any?) {
+        deleteToBoundary(sender, paragraph: true, beginning: true)
+    }
+
+    public override func deleteToEndOfParagraph(_ sender: Any?) {
+        deleteToBoundary(sender, paragraph: true, beginning: false)
+    }
+
     public override func insertNewline(_ sender: Any?) {
         guard isEditable else { return }
         if hasMarkedText() || composingParagraph != nil { super.insertNewline(sender); return }
@@ -885,6 +988,90 @@ extension MarkdownTextView {
         guard let storage = textStorage, range.location >= 0,
               range.upperBound <= storage.length else { return "" }
         return storage.attributedSubstring(from: range).string
+    }
+
+    private func deleteToBoundary(
+        _ sender: Any?,
+        paragraph: Bool,
+        beginning: Bool
+    ) {
+        guard isEditable else { return }
+        if hasMarkedText() || composingParagraph != nil {
+            if paragraph {
+                if beginning {
+                    super.deleteToBeginningOfParagraph(sender)
+                } else {
+                    super.deleteToEndOfParagraph(sender)
+                }
+            } else if beginning {
+                super.deleteToBeginningOfLine(sender)
+            } else {
+                super.deleteToEndOfLine(sender)
+            }
+            return
+        }
+        let selection = sourceSelectedRange
+        if selection.length > 0 {
+            performSourceEdit(range: selection, replacement: "")
+            return
+        }
+        guard let storage = textStorage else { return }
+        let string = storage.string as NSString
+        let caret = min(max(selection.location, 0), string.length)
+        let containing = NSRange(location: caret, length: 0)
+        let boundary = paragraph ? string.paragraphRange(for: containing) : string.lineRange(for: containing)
+        let range: NSRange
+        if beginning {
+            range = NSRange(location: boundary.location, length: caret - boundary.location)
+        } else {
+            let end = paragraph
+                ? boundary.upperBound
+                : RangeSet.contentEnd(ofParagraph: boundary, text: string)
+            range = NSRange(location: caret, length: end - caret)
+        }
+        guard range.length > 0 else { return }
+        performSourceEdit(range: range, replacement: "")
+    }
+
+    /// AppKit's word commands are expressed in the text system's hybrid
+    /// offsets. Resolve the word in source space so hidden Markdown markers
+    /// never make Option-Delete edit the wrong byte range.
+    private func wordDeletionRange(before caret: Int, in storage: NSTextStorage) -> NSRange? {
+        let string = storage.string as NSString
+        let clampedCaret = min(max(caret, 0), string.length)
+        guard clampedCaret > 0 else { return nil }
+
+        var word: NSRange?
+        string.enumerateSubstrings(
+            in: NSRange(location: 0, length: clampedCaret),
+            options: [.byWords, .reverse]
+        ) { _, range, _, stop in
+            word = range
+            stop.pointee = true
+        }
+        if let word, word.location < clampedCaret {
+            return NSRange(location: word.location, length: clampedCaret - word.location)
+        }
+        return deletionRange(before: clampedCaret, in: storage)
+    }
+
+    private func wordDeletionRange(after caret: Int, in storage: NSTextStorage) -> NSRange? {
+        let string = storage.string as NSString
+        let clampedCaret = min(max(caret, 0), string.length)
+        guard clampedCaret < string.length else { return nil }
+
+        var word: NSRange?
+        string.enumerateSubstrings(
+            in: NSRange(location: clampedCaret, length: string.length - clampedCaret),
+            options: [.byWords]
+        ) { _, range, _, stop in
+            word = range
+            stop.pointee = true
+        }
+        if let word {
+            return NSRange(location: clampedCaret, length: word.upperBound - clampedCaret)
+        }
+        return deletionRange(after: clampedCaret, in: storage)
     }
 
     /// Read the richest useful clipboard flavour first.  URL is intentionally

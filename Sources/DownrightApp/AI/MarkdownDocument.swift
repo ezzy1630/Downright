@@ -27,14 +27,26 @@ enum SaveError: Error {
 @MainActor
 final class MarkdownUndoManager: UndoManager {
     var onWillApplyUndoRedo: (() -> Void)?
+    var onDidApplyUndoRedo: (() -> Void)?
+    private(set) var isApplyingUndoRedo = false
 
     override func undo() {
         onWillApplyUndoRedo?()
+        isApplyingUndoRedo = true
+        defer {
+            isApplyingUndoRedo = false
+            onDidApplyUndoRedo?()
+        }
         super.undo()
     }
 
     override func redo() {
         onWillApplyUndoRedo?()
+        isApplyingUndoRedo = true
+        defer {
+            isApplyingUndoRedo = false
+            onDidApplyUndoRedo?()
+        }
         super.redo()
     }
 }
@@ -121,6 +133,9 @@ final class MarkdownDocument: NSObject {
 
     /// Fires after every reparse with the set of blocks needing re-decoration.
     var onReparse: ((ParsedDocument, DirtySet) -> Void)?
+    /// Fires before a command mutates the shared storage. Text views use this
+    /// boundary to capture their source camera before AppKit can relayout it.
+    var onWillApplyEdits: (([TextEdit]) -> Void)?
     /// Fired on the main actor when an async reparse becomes pending or
     /// drains.  Drives the toolbar activity cue for sustained work — a parse
     /// that runs past a second should not be silent.
@@ -163,6 +178,7 @@ final class MarkdownDocument: NSObject {
     private var isAbsorbingBurst = false
     private var reparseScheduled = false
     private var isApplyingExternalChange = false
+    private var isApplyingBatch = false
     private var suppressReparse = false
     private let parseCoordinator: MarkdownParseCoordinator
     private var parseTask: Task<Void, Never>?
@@ -189,6 +205,9 @@ final class MarkdownDocument: NSObject {
         }
         storage.delegate = self
         undoManager.groupsByEvent = false
+        undoManager.onDidApplyUndoRedo = { [weak self] in
+            self?.finishUndoRedo()
+        }
         // Clearing marks *is* finishing a review, wherever the call comes from,
         // so the baseline moves with it and the next agent write is measured
         // from what the user just signed off on.
@@ -520,6 +539,16 @@ final class MarkdownDocument: NSObject {
         let previous = (storage.string as NSString).substring(with: range)
         guard previous != replacement else { return false }
 
+        if !isApplyingBatch && !undoManager.isApplyingUndoRedo {
+            onWillApplyEdits?([
+                TextEdit(
+                    range: range,
+                    replacement: replacement,
+                    summary: actionName ?? "Edit"
+                )
+            ])
+        }
+
         let newRange = NSRange(location: range.location, length: (replacement as NSString).length)
         undoManager.beginUndoGrouping()
         undoManager.registerUndo(withTarget: self) { doc in
@@ -545,15 +574,28 @@ final class MarkdownDocument: NSObject {
         // Back to front so earlier offsets stay valid, matching
         // `[TextEdit].applied(to:)`.
         let ordered = edits.sorted { $0.range.location > $1.range.location }
+        var accepted: [TextEdit] = []
         var lastStart = Int.max
-        undoManager.beginUndoGrouping()
         for edit in ordered {
             guard edit.range.upperBound <= lastStart else { continue }
-            replace(edit.range, with: edit.replacement, actionName: nil)
+            accepted.append(edit)
             lastStart = edit.range.location
+        }
+        guard !accepted.isEmpty else { return }
+
+        onWillApplyEdits?(accepted)
+        isApplyingBatch = true
+        defer { isApplyingBatch = false }
+        undoManager.beginUndoGrouping()
+        for edit in accepted {
+            replace(edit.range, with: edit.replacement, actionName: nil)
         }
         undoManager.setActionName(actionName)
         undoManager.endUndoGrouping()
+        // Structural commands are explicit transactions. Converge their tree
+        // before returning so the renderer never spends an event-loop turn in
+        // raw Markdown after the command has already completed.
+        reparseNow()
     }
 
     /// Toggling a checkbox writes the file immediately (§7.1, §8.5).
@@ -561,7 +603,6 @@ final class MarkdownDocument: NSObject {
         ensureParsedCurrent()
         guard let edit = Restructure.toggleTask(parsed, atMarkOffset: offset) else { return }
         apply([edit], actionName: "Toggle Task")
-        reparseNow()
         if url != nil { _ = saveIfNeeded() }
     }
 
@@ -594,6 +635,15 @@ final class MarkdownDocument: NSObject {
     func reparseNow() {
         reparseScheduled = false
         reparseSynchronously(notifying: true, wholesale: false)
+    }
+
+    private func finishUndoRedo() {
+        guard parsed.text != storage.string else { return }
+        // A grouped undo/redo can invoke several inverse closures. Keep the
+        // renderer suspended for the whole transaction, then publish exactly
+        // one parsed/display-map repair after AppKit has finished mutating the
+        // shared storage.
+        reparseNow()
     }
 
     /// Forces convergence before an operation that reads the tree.  Commands
@@ -1007,17 +1057,30 @@ extension MarkdownDocument: NSTextStorageDelegate {
         changeInLength delta: Int
     ) {
         guard editedMask.contains(.editedCharacters) else { return }
-        MainActor.assumeIsolated {
-            guard !suppressReparse else { return }
-            invalidateParseWorkForEdit()
-            if !isApplyingExternalChange {
-                setDirty(true)
-            }
-            if undoManager.isUndoing || undoManager.isRedoing {
-                reparseSynchronously(notifying: true, wholesale: false)
-                return
-            }
-            scheduleReparse()
+        Task { @MainActor [weak self] in
+            self?.handleTextStorageEdit()
         }
+    }
+
+    private func handleTextStorageEdit() {
+        guard !suppressReparse else { return }
+        // An explicit transaction may have already published its synchronous
+        // parse before this delegate hop runs. Do not schedule a second parse
+        // merely because NSTextStorage delivered the callback later.
+        guard parsed.text != storage.string else { return }
+        invalidateParseWorkForEdit()
+        if !isApplyingExternalChange {
+            setDirty(true)
+        }
+        if undoManager.isApplyingUndoRedo || isApplyingBatch {
+            // The enclosing command/undo transaction publishes one coherent
+            // parse after all storage edits have landed.
+            return
+        }
+        if undoManager.isUndoing || undoManager.isRedoing {
+            reparseSynchronously(notifying: true, wholesale: false)
+            return
+        }
+        scheduleReparse()
     }
 }

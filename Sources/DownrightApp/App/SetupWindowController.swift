@@ -348,6 +348,13 @@ final class SetupWindowController: NSWindowController {
         primaryButton.title = "Setting up…"
 
         Task { @MainActor in
+            defer {
+                spinner.stopAnimation(nil)
+                isWorking = false
+                primaryButton.isEnabled = true
+                window?.makeFirstResponder(primaryButton)
+            }
+
             if isChecked(.defaultApplication) {
                 let failure = await SystemIntegration.makeDefaultMarkdownHandler()
                 report(
@@ -371,9 +378,6 @@ final class SetupWindowController: NSWindowController {
 
             await registerQuickLook()
 
-            spinner.stopAnimation(nil)
-            isWorking = false
-            primaryButton.isEnabled = true
             primaryButton.title = "Done"
             primaryButton.action = #selector(finishFromButton)
             secondaryButton.isHidden = true

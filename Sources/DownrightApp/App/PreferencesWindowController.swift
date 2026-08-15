@@ -1258,13 +1258,22 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
 
             let conflicts = KeybindingStore.shared.conflicts(for: binding, excluding: command)
             if !conflicts.isEmpty {
-                let alert = NSAlert()
-                alert.messageText = "\(binding.displayString) is already used"
-                alert.informativeText = "Assigned to \(conflicts.map(\.title).joined(separator: ", ")). Reassign it?"
-                alert.addButton(withTitle: "Reassign")
-                alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-                for conflict in conflicts { KeybindingStore.shared.setBinding(nil, for: conflict) }
+                // A local monitor is still on the event-dispatch stack here.
+                // Tear it down before presenting so the modal loop cannot feed
+                // a key back into the recorder.
+                self.cancelRecording()
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = "\(binding.displayString) is already used"
+                    alert.informativeText = "Assigned to \(conflicts.map(\.title).joined(separator: ", ")). Reassign it?"
+                    alert.addButton(withTitle: "Reassign")
+                    alert.addButton(withTitle: "Cancel")
+                    guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    for conflict in conflicts { KeybindingStore.shared.setBinding(nil, for: conflict) }
+                    KeybindingStore.shared.setBinding(binding, for: command)
+                    if let menu = NSApp.mainMenu { MainMenu.refreshKeyEquivalents(in: menu) }
+                }
+                return nil
             }
             KeybindingStore.shared.setBinding(binding, for: command)
             return nil

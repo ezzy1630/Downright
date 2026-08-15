@@ -57,6 +57,9 @@ final class DocumentWindowController: NSWindowController {
     /// instead of docking in the split.  Kept for as long as it is on screen;
     /// torn down on dismissal.
     private(set) var floatingSurface: FloatingPanelSurface?
+    /// Transparent boundary that lets the native panel glass sample the
+    /// document while keeping the surface out of the document's glass group.
+    private var floatingPanelWindow: FloatingPanelWindow?
     var isTaskPanelFloating: Bool {
         floatingSurface != nil && inspectorHost?.selectedSection == .tasks
     }
@@ -71,6 +74,12 @@ final class DocumentWindowController: NSWindowController {
     /// restored before the original outside click is delivered, so a dismiss
     /// never costs the document caret.
     private weak var floatingFocusRestoreView: NSView?
+    /// A spring settle is also emitted for content-driven refits. Only the
+    /// opening flight is allowed to move first responder into the panel.
+    private var floatingPresentationNeedsFocus = false
+    /// Camera repairs finish when the panel's own spring reports its settled
+    /// state, not after a guessed wall-clock interval.
+    private var floatingDismissViewportRepairs: [() -> Void] = []
     /// Keeps the settled or travelling surface fitted during a live resize.
     private var floatingResizeToken: NSObjectProtocol?
     private var floatingActivationObserver: NSObjectProtocol?
@@ -109,6 +118,11 @@ final class DocumentWindowController: NSWindowController {
     private var isSynchronizingPanes = false
     private var pendingInitialRestoreOffset: Int?
     private var deferredInitialRestoreOffset: Int?
+    /// AppKit expands the old native selection while the shared storage is
+    /// replaced during an open. That storage callback is a lifecycle side
+    /// effect, not a user selection; ignore it until the new document's saved
+    /// selection has been restored on the first laid-out frame.
+    var isOpeningDocument = false
     /// The clip position before the first-frame restore was scheduled. If a
     /// user scrolls or edits before that async turn, their position owns the
     /// camera and the saved-document restore must stand down.
@@ -201,6 +215,8 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Opening
 
     func open(_ url: URL, mode: RenderMode) throws {
+        isOpeningDocument = true
+        defer { isOpeningDocument = false }
         resetTransientChrome()
         try markdownDocument.open(url)
         let requestedMode = mode.normalizedForEditing
@@ -222,6 +238,13 @@ final class DocumentWindowController: NSWindowController {
         primaryContainer.textView.foldedHeadingSlugs = markdownDocument.state.foldedHeadings
         // Structure-only tree is ready; full decoration follows via onReparse.
         primaryContainer.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
+        // AppKit keeps the old text view's native selection while the shared
+        // storage is replaced. That selection belongs to the previous file,
+        // not to this open operation; the deferred restore below will apply
+        // this document's persisted caret/selection after the first frame.
+        primaryContainer.textView.setSourceSelectedRanges([
+            NSRange(location: 0, length: 0)
+        ])
 
         primaryContainer.wantsLayer = true
         primaryContainer.alphaValue = activeStyleSheet.reduceMotion ? 1 : 0
@@ -347,7 +370,7 @@ final class DocumentWindowController: NSWindowController {
         guard let deferred = deferredInitialRestoreOffset, deferred > 0 else { return }
         deferredInitialRestoreOffset = nil
         let expectedBeforeDeferredRestore = initialRestoreViewportY ?? clip.bounds.origin.y
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             guard let self,
                   self.initialRestoreGeneration == restoreGeneration,
                   self.window?.isVisible == true,
@@ -655,6 +678,12 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func wireDocument() {
+        markdownDocument.onWillApplyEdits = { [weak self] edits in
+            guard let self else { return }
+            for pane in self.documentPanes {
+                pane.textView.prepareForExternalDocumentEdits(edits)
+            }
+        }
         markdownDocument.onReparse = { [weak self] parsed, dirty in
             guard let self else { return }
             self.primaryContainer.textView.update(document: parsed, dirty: dirty)
@@ -864,13 +893,20 @@ final class DocumentWindowController: NSWindowController {
         [primaryContainer, splitContainer].compactMap { $0 }
     }
 
-    func synchronizePanes(from source: MarkdownTextView) {
+    /// Share document presentation state without making one pane's caret or
+    /// camera overwrite the other pane's. Split panes are two editors over one
+    /// buffer; selection and scroll are local interaction state.
+    func synchronizePanes(
+        from source: MarkdownTextView,
+        selection: Bool = false,
+        viewport: Bool = false
+    ) {
         guard splitContainer != nil, !isSynchronizingPanes else { return }
         isSynchronizingPanes = true
         defer { isSynchronizingPanes = false }
 
-        let selection = source.sourceSelectedRanges
-        let scrollOffset = source.topVisibleOffset
+        let sharedSelection = selection ? source.sourceSelectedRanges : nil
+        let sharedScrollOffset = viewport ? source.topVisibleOffset : nil
         for pane in documentPanes where pane.textView !== source {
             let textView = pane.textView
             if textView.configuration != source.configuration { textView.configuration = source.configuration }
@@ -889,8 +925,12 @@ final class DocumentWindowController: NSWindowController {
                     textView.focusSource(in: range)
                 }
             }
-            textView.setSourceSelectedRanges(selection)
-            textView.scroll(toOffset: scrollOffset, position: .top, animated: false)
+            if let sharedSelection {
+                textView.setSourceSelectedRanges(sharedSelection)
+            }
+            if let sharedScrollOffset {
+                textView.scroll(toOffset: sharedScrollOffset, position: .top, animated: false)
+            }
         }
         markdownDocument.state.zoomLevel = source.zoomLevel
         markdownDocument.state.foldedHeadings = source.foldedHeadingSlugs
@@ -1354,9 +1394,7 @@ final class DocumentWindowController: NSWindowController {
     /// the glass. Ordinary app switching is deliberately not a dismissal;
     /// the surface remains available when the window becomes key again.
     private func presentFloatingSurface(_ surface: FloatingPanelSurface) {
-        guard let window, let target = window.contentView,
-              let overlay = floatingOverlayHost
-        else { return }
+        guard let window, let target = window.contentView else { return }
         let morphsFromControl = usesFloatingControlMorph
         let width = min(
             surface.preferredWidth,
@@ -1372,38 +1410,57 @@ final class DocumentWindowController: NSWindowController {
             height: FloatingPanelSurface.Top.pourSliverHeight
         )
 
-        // Keep the material in the document window's overlay lane. A child
-        // NSPanel gets a separate compositor surface, so its native glass
-        // samples the desktop (and reads as a flat plastic card) instead of
-        // refracting the document beneath it.
-        let restingInTarget = target.convert(window.convertFromScreen(resting), from: nil)
-        surface.frame = overlay.convert(restingInTarget, from: target)
+        // Keep native glass in a transparent child boundary. This gives
+        // AppKit a real compositor surface to sample against the document;
+        // placing the effect inside the document glass group flattens it.
+        let shadowMargin = PanelMetrics.floatingShadowMargin
+        let childFrame = resting.insetBy(dx: -shadowMargin, dy: -shadowMargin)
+        let child = FloatingPanelWindow(frame: childFrame)
+        child.alphaValue = morphsFromControl ? 0 : 1
+        child.appearance = ChromeGlass.materialAppearance(activeStyleSheet)
+        child.floatingSurface = surface
+        child.onOutsideMouseDown = { [weak self] in
+            self?.restoreFloatingFocusAndClose()
+        }
+        let childContent = NSView(frame: NSRect(origin: .zero, size: childFrame.size))
+        childContent.autoresizingMask = [.width, .height]
+        childContent.clipsToBounds = false
+        child.contentView = childContent
+        surface.frame = NSRect(
+            x: shadowMargin,
+            y: shadowMargin,
+            width: resting.width,
+            height: resting.height
+        )
         surface.configureWindowFrames(
             resting: resting,
             sliver: sliver,
             contentHeight: frame.height
         )
-        surface.onWindowFrameChange = { [weak self, weak overlay, weak window, weak surface] frame in
-            guard let self, let overlay, let window, let surface else { return }
-            // A window can transiently lose its content view during a live
-            // resize or activation hand-off. Converting to `.zero` here was
-            // the source of the occasional bottom-left flight: the spring
-            // quite correctly applied the fallback rect it was handed.
-            guard let target = window.contentView,
+        surface.onWindowFrameChange = { [weak child, weak surface] frame in
+            guard let child, let surface,
                   frame.origin.x.isFinite, frame.origin.y.isFinite,
                   frame.width.isFinite, frame.height.isFinite,
-                  frame.width > 1, frame.height > 1
-            else { return }
-            let inTarget = target.convert(window.convertFromScreen(frame), from: nil)
-            self.floatingSurfaceFrame = frame
-            surface.frame = overlay.convert(inTarget, from: target)
+                  frame.width > 1, frame.height > 1 else { return }
+            // Never feed an invalid frame into either the child window or the
+            // surface's local shadow inset during activation or resize.
+            child.setFrame(
+                frame.insetBy(dx: -shadowMargin, dy: -shadowMargin), display: true
+            )
+            surface.frame = NSRect(
+                x: shadowMargin,
+                y: shadowMargin,
+                width: frame.width,
+                height: frame.height
+            )
             surface.needsLayout = true
         }
         surface.onFrameSpringSettled = { [weak self, weak surface] in
             guard let self, let surface, self.floatingSurface === surface else { return }
             if surface.isDismissing {
                 self.removeFloatingSurface()
-            } else {
+            } else if self.floatingPresentationNeedsFocus {
+                self.floatingPresentationNeedsFocus = false
                 self.focusFloatingSurface(surface)
                 self.refreshToolbarSelectionState()
             }
@@ -1415,13 +1472,17 @@ final class DocumentWindowController: NSWindowController {
             progressRing.alphaValue = 0
             surface.prepareAnchorPresentation(from: sourceFrame)
         }
-        overlay.addSubview(surface, positioned: .above, relativeTo: nil)
+        childContent.addSubview(surface)
         surface.layoutSubtreeIfNeeded()
+        window.addChildWindow(child, ordered: .above)
+        child.orderFront(nil)
         surface.refreshGlassAfterWindowAttach()
 
         if !morphsFromControl { surface.setRestingFrame(resting) }
         surface.layoutSubtreeIfNeeded()
         floatingSurface = surface
+        floatingPanelWindow = child
+        floatingPresentationNeedsFocus = morphsFromControl
         if let documentWindow = window as? DocumentWindow {
             documentWindow.floatingSurface = surface
             documentWindow.onFloatingOutsideMouseDown = { [weak self] in
@@ -1442,9 +1503,10 @@ final class DocumentWindowController: NSWindowController {
         }
         floatingSurfaceFrame = resting
         if morphsFromControl {
-            DispatchQueue.main.async { [weak self, weak surface] in
-                guard let self, let surface,
+            DispatchQueue.main.async { [weak self, weak child, weak surface] in
+                guard let self, let child, let surface,
                       self.floatingSurface === surface else { return }
+                child.alphaValue = 1
                 surface.startAnchorPresentation(animated: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + Motion.deliberate * 0.58) {
                     [weak self, weak surface] in
@@ -1516,11 +1578,20 @@ final class DocumentWindowController: NSWindowController {
             NotificationCenter.default.removeObserver(floatingActivationObserver)
             self.floatingActivationObserver = nil
         }
+        floatingPanelWindow?.orderOut(nil)
+        if let parent = window, let child = floatingPanelWindow {
+            parent.removeChildWindow(child)
+        }
         floatingSurface?.onWindowFrameChange = nil
         floatingSurface?.onFrameSpringSettled = nil
         floatingSurface?.removeFromSuperview()
+        let viewportRepairs = floatingDismissViewportRepairs
+        floatingDismissViewportRepairs.removeAll(keepingCapacity: true)
+        floatingPanelWindow = nil
         floatingSurface = nil
+        floatingPresentationNeedsFocus = false
         floatingControlAnchorFrame = .zero
+        viewportRepairs.forEach { $0() }
     }
 
     /// The morph's resting place in window space — the surface's own frame,
@@ -1679,10 +1750,12 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func restoreFloatingPanelWindow() {
-        guard let surface = floatingSurface, surface.window === window else { return }
-        surface.superview?.addSubview(surface, positioned: .above, relativeTo: nil)
-        window?.orderFrontRegardless()
-        if window?.isKeyWindow != true { window?.makeKey() }
+        guard let surface = floatingSurface,
+              let panelWindow = floatingPanelWindow,
+              panelWindow.parent === window,
+              surface.window === panelWindow else { return }
+        panelWindow.orderFrontRegardless()
+        if !panelWindow.isKeyWindow { panelWindow.makeKey() }
     }
 
     private func restoreFloatingFocusAndClose() {
@@ -1716,6 +1789,18 @@ final class DocumentWindowController: NSWindowController {
         panel.reload()
         showInInspector(panel, section: .tasks)
         progressRing.isActive = true
+    }
+
+    /// `⌘N` normally belongs to the application New Document command. While
+    /// Tasks is the active inspector, it is the panel's quick-add command.
+    /// Route this at the document controller because AppKit resolves menu
+    /// equivalents before the focused table receives key events.
+    func handleNewDocumentCommand() -> Bool {
+        guard floatingSurface != nil,
+              inspectorHost?.selectedSection == .tasks,
+              let taskPanel else { return false }
+        taskPanel.beginNewTaskForCommand()
+        return true
     }
 
     /// Closes the panel from any of its doors — Esc, the header close button,
@@ -1790,6 +1875,7 @@ final class DocumentWindowController: NSWindowController {
             return
         }
         progressRing.isActive = false
+        floatingDismissViewportRepairs = documentPanes.map { $0.textView.makeViewportRepair() }
         let restore = floatingFocusRestoreView
         dismissFloatingSurface()
         if restoringFocus {
@@ -1924,10 +2010,12 @@ final class DocumentWindowController: NSWindowController {
         }
         bar.focusSearchField(selectAll: false)
         // AppKit may seed the field once more as first responder activation
-        // settles. Reassert the command's query on the next main-queue turn;
+        // settles. Reassert the command's query on the next settled layout
+        // turn;
         // otherwise ⌘F becomes "find the selection" again in a live window.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak bar] in
+        DispatchQueue.main.async { [weak self, weak bar] in
             guard let bar, bar.window != nil else { return }
+            bar.window?.layoutIfNeeded()
             bar.setQueryText(requestedQuery.text, notify: false)
             if let self, !requestedQuery.isEmpty, self.findBar === bar {
                 self.runFind(requestedQuery)
@@ -2189,7 +2277,12 @@ final class DocumentWindowController: NSWindowController {
 
     func toggleSplitView() {
         if let split = splitViewContainer {
-            synchronizePanes(from: containerTextView)
+            // Preserve the pane the user was actually working in. Removing a
+            // focused split pane without handing its caret and camera back to
+            // the primary leaves the window with no text first responder, so
+            // the next native key command appears to do nothing.
+            let active = containerTextView
+            synchronizePanes(from: active, selection: true, viewport: true)
             focusDimmingViews.removeAll { view in
                 if view.superview === splitContainer {
                     view.removeFromSuperview()
@@ -2210,6 +2303,7 @@ final class DocumentWindowController: NSWindowController {
                 primaryContainer.bottomAnchor.constraint(equalTo: statusBarView.topAnchor),
             ])
             markdownDocument.state.splitViewEnabled = false
+            window?.makeFirstResponder(primaryContainer.textView)
             return
         }
 

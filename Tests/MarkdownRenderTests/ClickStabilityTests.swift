@@ -13,7 +13,7 @@ import Testing
 /// and everything below a paragraph that changed height slides.  When the
 /// paragraph that shrank is *above* the one the reader clicked, the line under
 /// the pointer jumps — which is the "the camera teleports when I click" report.
-@Suite("Click stability")
+@Suite("Click stability", .serialized)
 @MainActor
 struct ClickStabilityTests {
 
@@ -79,8 +79,6 @@ struct ClickStabilityTests {
         let after = try #require(view.rect(forOffset: target))
         let screenYAfter = after.minY - clip.bounds.origin.y
 
-        print("PROBE screenY before=\(screenYBefore) after=\(screenYAfter) "
-            + "docY \(before.minY)->\(after.minY) clipY=\(clip.bounds.origin.y)")
         #expect(
             abs(screenYAfter - screenYBefore) < 1.0,
             "the clicked line moved \(screenYAfter - screenYBefore)pt on screen"
@@ -166,7 +164,46 @@ struct ClickStabilityTests {
 
         click(view, at: ns.range(of: "Paragraph 30 carries").location + 4)
 
-        print("PROBE viewport before=\(yBefore) after=\(clip.bounds.origin.y)")
         #expect(abs(clip.bounds.origin.y - yBefore) < 1.0, "the click scrolled the viewport")
     }
+
+    @Test("point hit testing follows the rendered line")
+    func pointHitTestingUsesTextKitTwoGeometry() throws {
+        let (_, view, text) = Self.harness()
+        let target = (text as NSString).range(of: "Paragraph 30 carries").location + 5
+        let line = try #require(view.rect(forOffset: target))
+        let textKitOffset = view.characterIndexForInsertion(
+            at: NSPoint(x: line.minX + 2, y: line.midY)
+        )
+        let sourceOffset = view.currentDisplayMap.sourceOffset(forTextKit: textKitOffset)
+
+        #expect(
+            abs(sourceOffset - target) <= 8,
+            "point resolved to source offset \(sourceOffset), expected near \(target)"
+        )
+    }
+
+    @Test("point hit testing resolves a rendered link label")
+    func pointHitTestingResolvesRenderedLink() throws {
+        let text = "# Link\n\n[Jump to target](#target)\n\n## Target\n\nReached."
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.mode = .live
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        container.layoutSubtreeIfNeeded()
+
+        let link = (text as NSString).range(of: "Jump to target")
+        let rect = try #require(view.rect(forOffset: link.location + 2))
+        let hit = view.sourceOffset(at: NSPoint(x: rect.midX, y: rect.midY))
+
+        #expect(
+            NSLocationInRange(hit, link),
+            "rendered link point resolved to source offset \(hit), expected \(link)"
+        )
+    }
+
 }

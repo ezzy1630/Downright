@@ -345,7 +345,6 @@ extension DocumentWindowController: CommandResponder {
         }
         documentPanes.forEach { $0.textView.preserveViewportOnNextDocumentUpdate() }
         markdownDocument.apply(edits, actionName: actionName)
-        markdownDocument.reparseNow()
         viewportRepairs.forEach { $0() }
     }
 
@@ -411,20 +410,28 @@ extension DocumentWindowController: CommandResponder {
     private func wrapSelection(with marker: String, name: String) {
         let range = selectionRange()
         let text = markdownDocument.text as NSString
-        guard range.length > 0 else {
-            let insertion = "\(marker)\(marker)"
-            markdownDocument.replace(NSRange(location: range.location, length: 0), with: insertion, actionName: name)
-            textView.setSelectedRange(NSRange(location: range.location + marker.count, length: 0))
-            return
-        }
-        let selected = text.substring(with: range)
+        let selected = range.length > 0 ? text.substring(with: range) : ""
         // Toggling off is the same operation read backwards, which keeps ⌘B on
         // already-bold text doing what everybody expects.
-        if selected.hasPrefix(marker), selected.hasSuffix(marker), selected.count > marker.count * 2 {
-            let inner = String(selected.dropFirst(marker.count).dropLast(marker.count))
-            markdownDocument.replace(range, with: inner, actionName: name)
+        let replacement: String
+        if !selected.isEmpty,
+           selected.hasPrefix(marker),
+           selected.hasSuffix(marker),
+           selected.count > marker.count * 2 {
+            replacement = String(selected.dropFirst(marker.count).dropLast(marker.count))
+        } else if selected.isEmpty {
+            replacement = "\(marker)\(marker)"
         } else {
-            markdownDocument.replace(range, with: marker + selected + marker, actionName: name)
+            replacement = marker + selected + marker
+        }
+        applyInPlaceDocumentEdits(
+            [TextEdit(range: range, replacement: replacement, summary: name)],
+            actionName: name
+        )
+        if selected.isEmpty {
+            textView.setSourceSelectedRanges([
+                NSRange(location: range.location + marker.utf16.count, length: 0)
+            ])
         }
     }
 
@@ -442,7 +449,10 @@ extension DocumentWindowController: CommandResponder {
         // a one-keystroke operation (§6.4 smart paste, applied to ⌘K).
         let destination = clipboard.hasPrefix("http") ? clipboard : ""
         let replacement = "[\(selected)](\(destination))"
-        markdownDocument.replace(range, with: replacement, actionName: "Insert Link")
+        applyInPlaceDocumentEdits(
+            [TextEdit(range: range, replacement: replacement, summary: "Insert Link")],
+            actionName: "Insert Link"
+        )
         // Land the caret on whichever half the user still has to fill in.
         let end = range.location + replacement.utf16.count
         let caret: Int
@@ -453,7 +463,7 @@ extension DocumentWindowController: CommandResponder {
         } else {
             caret = end                             // both filled: carry on typing
         }
-        textView.setSelectedRange(NSRange(location: caret, length: 0))
+        textView.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
     }
 
     /// Returns false when the caret's line is not a list item, which is what

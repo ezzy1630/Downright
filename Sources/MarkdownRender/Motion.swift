@@ -728,7 +728,15 @@ public enum Motion {
                 return false
             }
             let driver = springDriver ?? makeSpringDriver()
-            return driver.arm()
+            let armed = driver.arm()
+            if !armed {
+                // A detached panel can be asked to dismiss after its view has
+                // already left the window. There is no display link left to
+                // emit the settle callback, so land synchronously or the
+                // owner will retain an unopenable surface forever.
+                springsSettleImmediately()
+            }
+            return armed
         }
 
         /// Stop the driver immediately.

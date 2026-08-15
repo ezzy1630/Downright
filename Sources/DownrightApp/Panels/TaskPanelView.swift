@@ -263,7 +263,18 @@ final class TaskPanelView: NSView, PanelSurface {
     private func buildTable() {
         table.dataSource = self
         table.delegate = self
+        // Task selection only drives the jump affordance. The checkbox owns
+        // completion state, so AppKit's cobalt row selection must not flood
+        // the task surface when the label is focused.
+        table.selectionHighlightStyle = .none
         table.onActivate = { [weak self] in self?.jumpToSelection() }
+        table.onKeyEvent = { [weak self] event in self?.handleQuickAddKey(event) ?? false }
+        table.onRowMouseDown = { [weak self] row in
+            guard let self, row >= 0, row < self.rows.count else { return false }
+            guard case .add = self.rows[row] else { return false }
+            self.beginNewTask()
+            return true
+        }
         table.onKeyDown = { [weak self] key in self?.handleListKey(key) ?? false }
         table.onMenu = { [weak self] row in self?.menu(forTableRow: row) }
         table.registerForDraggedTypes([.string])
@@ -497,7 +508,11 @@ final class TaskPanelView: NSView, PanelSurface {
     }
 
     private func updateAccessibility() {
-        setAccessibilityValue(worklist.statusLine.isEmpty ? "No tasks" : worklist.statusLine)
+        if editingAddSection != nil {
+            setAccessibilityValue("New task title")
+        } else {
+            setAccessibilityValue(worklist.statusLine.isEmpty ? "No tasks" : worklist.statusLine)
+        }
     }
 
     // MARK: - Rows
@@ -719,7 +734,12 @@ final class TaskPanelView: NSView, PanelSurface {
         editingAddSection = section
         rebuildRows(animated: false)
         updateEmptyState()
+        updateAccessibility()
         focusAddField(section: section)
+    }
+
+    func beginNewTaskForCommand() {
+        beginNewTask()
     }
 
     private func preferredAddSection() -> Int {
@@ -832,6 +852,20 @@ final class TaskPanelView: NSView, PanelSurface {
 
     // MARK: - Keyboard
 
+    private func handleQuickAddKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Key codes identify physical keys, not the character produced by the
+        // active layout. Use the translated command character so Dvorak and
+        // other non-ANSI layouts cannot turn an unrelated key into Quick Add.
+        let isCommandN = event.charactersIgnoringModifiers?.lowercased() == "n"
+        guard flags.contains(.command),
+              flags.isDisjoint(with: [.shift, .option, .control]),
+              isCommandN,
+              editingAddSection == nil else { return false }
+        beginNewTask()
+        return true
+    }
+
     /// The list's keys.  Space ticks the selected task — or Up Next when
     /// nothing is selected, so the panel is workable from the keyboard the
     /// moment it opens; Return jumps; ←/→ fold and unfold sections and piles.
@@ -883,13 +917,13 @@ final class TaskPanelView: NSView, PanelSurface {
     /// works whichever subview is first responder — an unhandled key bubbles
     /// up the responder chain and lands on the panel.
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags == [.command], event.charactersIgnoringModifiers?.lowercased() == "n",
-           editingAddSection == nil {
-            beginNewTask()
-            return
-        }
+        if handleQuickAddKey(event) { return }
         super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleQuickAddKey(event) { return true }
+        return super.performKeyEquivalent(with: event)
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -1914,8 +1948,14 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
 
     /// Begin editing on press. NSTableView may recycle or select the row
     /// between down and up; waiting for release made Add task intermittent.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !editing else { return super.hitTest(point) }
+        let localPoint = superview.map { convert(point, from: $0) } ?? point
+        return bounds.contains(localPoint) ? self : nil
+    }
+
     override func mouseDown(with event: NSEvent) {
-        guard !editing, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        guard !editing else { return }
         onBeginEdit?()
     }
 

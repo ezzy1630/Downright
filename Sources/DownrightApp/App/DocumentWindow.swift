@@ -39,6 +39,10 @@ final class DocumentWindow: NSWindow {
            event.keyCode == 53,
            floatingSurface != nil,
            event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+            if let textView = firstResponder as? NSTextView, textView.hasMarkedText() {
+                super.sendEvent(event)
+                return
+            }
             onFloatingCancel?()
             return
         }
@@ -47,12 +51,21 @@ final class DocumentWindow: NSWindow {
            let surfaceWindow = surface.window,
            surfaceWindow === self || (childWindows ?? []).contains(where: { $0 === surfaceWindow }),
            let content = contentView {
-            let surfacePoint = surface.convert(event.locationInWindow, from: nil)
+            // `event.locationInWindow` belongs to this document window, while
+            // the surface now lives in a detached child window. Convert through
+            // screen space before asking the panel for local hit geometry.
+            let screenPoint = convertToScreen(
+                NSRect(origin: event.locationInWindow, size: .zero)
+            ).origin
+            let surfaceWindowPoint = surfaceWindow.convertFromScreen(
+                NSRect(origin: screenPoint, size: .zero)
+            ).origin
+            let surfacePoint = surface.convert(surfaceWindowPoint, from: nil)
             let visibleBounds = (surface as? FloatingPanelSurface)?.visibleBodyBoundsForHitTesting
                 ?? surface.bounds
             if visibleBounds.contains(surfacePoint),
                let nativeControl = (surface as? FloatingPanelSurface)?.nativeControl(
-                   atWindowPoint: event.locationInWindow
+                   atWindowPoint: surfaceWindowPoint
                ) {
                 if let field = nativeControl as? NSTextField, field.isEditable {
                     makeFirstResponder(field)

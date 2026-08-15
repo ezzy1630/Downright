@@ -1,5 +1,4 @@
 import AppKit
-import Darwin
 import Foundation
 import MarkdownCore
 import Testing
@@ -57,7 +56,7 @@ struct WorkspaceTests {
         var updates: [Int] = []
         index.onUpdate = { updates.append($0.revision) }
         index.start(rootURL: root)
-        await gate.waitUntilBlocked()
+        #expect(await gate.waitUntilBlocked())
         // A new scan has a new revision.  The old scan may finish later but
         // cannot publish its snapshot.
         index.start(rootURL: root.appendingPathComponent("second"))
@@ -191,29 +190,38 @@ private final class WorkspaceSignal {
 }
 
 private final class WorkspaceReadGate: @unchecked Sendable {
-    private let lock = NSLock()
+    private let condition = NSCondition()
     private var blocked = false
     private var released = false
 
     func wait() {
-        lock.withLock { blocked = true }
-        while true {
-            let done = lock.withLock { released }
-            if done { return }
-            Darwin.usleep(1_000)
+        condition.lock()
+        blocked = true
+        condition.broadcast()
+        let deadline = Date().addingTimeInterval(5)
+        while !released && condition.wait(until: deadline) {
+            // The condition may wake spuriously; re-check the release flag.
         }
+        condition.unlock()
     }
 
-    func waitUntilBlocked() async {
-        while true {
-            let ready = lock.withLock { blocked }
-            if ready { return }
-            await Task.yield()
+    func waitUntilBlocked() async -> Bool {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            condition.lock()
+            let ready = blocked
+            condition.unlock()
+            if ready { return true }
+            try? await Task.sleep(for: .milliseconds(1))
         }
+        return false
     }
 
     func release() {
-        lock.withLock { released = true }
+        condition.lock()
+        released = true
+        condition.broadcast()
+        condition.unlock()
     }
 }
 

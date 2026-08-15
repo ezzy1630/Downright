@@ -1,6 +1,77 @@
 import AppKit
 import MarkdownRender
 
+/// Transparent child boundary for detached glass. The child window gives
+/// `NSGlassEffectView` a real compositor surface, so the document beneath the
+/// task panel remains available to the native lens instead of being flattened
+/// by the document window's glass container.
+@MainActor
+final class FloatingPanelWindow: NSPanel {
+    weak var floatingSurface: FloatingPanelSurface?
+    var onOutsideMouseDown: (() -> Void)?
+    private var mouseMonitor: Any?
+
+    init(frame: NSRect) {
+        super.init(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        becomesKeyOnlyIfNeeded = true
+        hidesOnDeactivate = false
+        // This is a child of the document window, not a global HUD. A floating
+        // level survives Cmd-Tab above unrelated applications; child ordering
+        // already keeps the glass above its document.
+        isFloatingPanel = false
+        level = .normal
+        collectionBehavior = [.moveToActiveSpace]
+        ignoresMouseEvents = false
+        isReleasedWhenClosed = false
+        setAccessibilityRole(.window)
+        setAccessibilityLabel("Floating panel")
+
+        // A nonactivating child panel does not receive every first click in
+        // `sendEvent`; route the close target explicitly in both windows.
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self, let surface = self.floatingSurface else { return event }
+            let screenPoint = event.window.map {
+                $0.convertPoint(toScreen: event.locationInWindow)
+            } ?? NSEvent.mouseLocation
+            let panelPoint = self.convertPoint(fromScreen: screenPoint)
+            guard surface.closeControlHitZoneContainsWindowPoint(panelPoint) else {
+                return event
+            }
+            surface.requestClose()
+            return nil
+        }
+    }
+
+    deinit {
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown,
+           let floatingSurface {
+            let point = floatingSurface.convert(event.locationInWindow, from: nil)
+            if !floatingSurface.visibleBodyBoundsForHitTesting.contains(point) {
+                onOutsideMouseDown?()
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
+}
+
 /// A floating panel body. The body owns the material and geometry; the
 /// inspector host (when present) owns the one title/switcher header inside it.
 /// That split is intentional: a floating Tasks panel and a floating History
@@ -170,23 +241,13 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         revealSpring.snap(to: sliverWindowFrame.height)
         applyReveal()
         guard animated, !styleSheet.reduceMotion else {
-            if styleSheet.reduceMotion, !animated {
-                revealSpring.target(restingWindowFrame.height)
-                // Reduce Motion still gets a real first frame: the body is
-                // born from the toolbar-sized sliver, then arrives as a
-                // discrete state change on the next turn. This avoids both
-                // a moving animation and a full-card flash before layout.
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, !self.isDismissing else { return }
-                    self.revealSpring.snap(to: self.restingWindowFrame.height)
-                    self.applyReveal()
-                    self.onFrameSpringSettled?()
-                }
-            } else {
-                revealSpring.snap(to: restingWindowFrame.height)
-                applyReveal()
-                onFrameSpringSettled?()
-            }
+            // Reduce Motion is a discrete state change. The reveal and its
+            // settled callback must be complete before the caller continues;
+            // a next-turn hop briefly leaves the panel in its toolbar sliver
+            // and lets focus/height assertions observe the wrong state.
+            revealSpring.snap(to: restingWindowFrame.height)
+            applyReveal()
+            onFrameSpringSettled?()
             return
         }
         revealSpring.target(restingWindowFrame.height)
@@ -559,15 +620,12 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         1
     }
 
-    private static func clearGlassDimmingColor(_ styleSheet: StyleSheet) -> NSColor {
-        // Apple pairs clear glass with localized dimming. This thin veil
-        // quiets prose directly behind task labels without flattening the
-        // native optical layer or reducing its refraction.
-        let base: NSColor = isDarkBackground(styleSheet.background) ? .black : .white
-        // Keep the veil just strong enough to protect label contrast. A heavy
-        // wash reads as acrylic and masks the document's refracted glyphs; the
-        // native clear effect is already the strongest public lensing surface.
-        return base.withAlphaComponent(styleSheet.increaseContrast ? 0.18 : 0.06)
+    private static func clearGlassDimmingColor(_: StyleSheet) -> NSColor {
+        // The child window already gives the native effect its optical
+        // boundary. Do not paint a veil above that effect: even a small fill
+        // suppresses the document's visible lensing and makes the panel read
+        // as a dark acrylic card.
+        .clear
     }
 
     private static func isDarkBackground(_ color: NSColor) -> Bool {

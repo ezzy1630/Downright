@@ -59,6 +59,32 @@ struct AsyncParseTests {
         #expect(textSeenAtLock == ["two lines\nsecond\n", "one\n"])
     }
 
+    @Test @MainActor
+    func groupedUndoLocksOnceForSeveralInverseEdits() {
+        let document = MarkdownDocument()
+        let source = "alpha\nbeta\n"
+        document.adopt(text: source, displayURL: nil)
+        let alpha = (source as NSString).range(of: "alpha")
+        let beta = (source as NSString).range(of: "beta")
+        document.apply([
+            TextEdit(range: alpha, replacement: "ALPHA", summary: "Uppercase"),
+            TextEdit(range: beta, replacement: "BETA", summary: "Uppercase"),
+        ], actionName: "Uppercase")
+        #expect(document.text == "ALPHA\nBETA\n")
+
+        var viewportLocks = 0
+        var editLocks = 0
+        document.onWillApplyUndoRedo = { viewportLocks += 1 }
+        document.onWillApplyEdits = { _ in editLocks += 1 }
+
+        document.undoManager.undo()
+
+        #expect(viewportLocks == 1)
+        #expect(editLocks == 0)
+        #expect(document.text == source)
+        #expect(document.parsed.text == source)
+    }
+
     @Test
     func injectedWorkerRunsPureParseAndDiff() async {
         let worker = MarkdownParseWorker { text, previous, revision in
