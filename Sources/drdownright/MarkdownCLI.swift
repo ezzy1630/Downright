@@ -6,7 +6,7 @@ import MarkdownCore
 /// Parsing and pure document operations live in a library so they can be
 /// exercised without launching an app or touching the user's files.
 public enum MarkdownCLI {
-    public static let version = "1.0.3"
+    public static let version = "1.0.4"
 
     /// Settings are user-owned configuration. Bound reads so a special file or
     /// unexpectedly large document cannot make `down hook` consume unbounded
