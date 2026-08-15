@@ -266,6 +266,15 @@ struct FloatingTaskPanelTests {
 
         let controller = DocumentWindowController()
         try controller.open(file, mode: .live)
+        // These assertions cover the animated arrival path. The explicit
+        // false override keeps a runner's global Reduce Motion preference from
+        // replacing that path; the dedicated Reduce Motion test below covers
+        // the accessibility branch independently.
+        controller.activeStyleSheet = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSApp.effectiveAppearance,
+            reduceMotionOverride: false
+        )
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1280, height: 900)
         let frameWidth = min(1200, max(640, visibleFrame.width - 40))

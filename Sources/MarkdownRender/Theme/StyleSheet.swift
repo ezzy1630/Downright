@@ -114,8 +114,11 @@ public struct StyleSheet {
         self.appearance = appearance
 
         let workspace = NSWorkspace.shared
-        reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
-            || reduceMotionOverride == true
+        // A non-nil override is used by deterministic previews and tests. It
+        // must be able to force either accessibility branch; otherwise a
+        // headless runner's inherited Reduce Motion setting can silently turn
+        // an animation geometry test into a different state machine.
+        reduceMotion = reduceMotionOverride ?? workspace.accessibilityDisplayShouldReduceMotion
         increaseContrast = workspace.accessibilityDisplayShouldIncreaseContrast
         reduceTransparency = workspace.accessibilityDisplayShouldReduceTransparency
 

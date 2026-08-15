@@ -264,10 +264,15 @@ struct RenderSmokeTests {
         #expect(origin.y > 0, "…and the inset it must skip is real")
 
         // The view-level answer needs the viewport pass; see `viewportLayoutRuns`.
+        // Capture the answer once. TextKit can finish its display pass between
+        // the known-issue predicate and the expectation, which otherwise
+        // makes the predicate describe a different observation than the one
+        // that failed.
+        let observedTopVisibleOffset = textView.topVisibleOffset
         withKnownIssue("NSTextView hit testing needs a viewport layout pass") {
-            #expect(textView.topVisibleOffset < later)
+            #expect(observedTopVisibleOffset < later)
         } when: {
-            !viewportLayoutRuns() || textView.topVisibleOffset >= later
+            !viewportLayoutRuns() || observedTopVisibleOffset >= later
         }
     }
 
