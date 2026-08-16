@@ -94,8 +94,10 @@ notarise and staple the DMG. Credentials come from either a stored
 `notarytool` keychain profile or the App Store Connect API key variables.
 
 The GitHub Actions pipeline (`.github/workflows/release.yml`) is the supported
-path: it signs every nested executable individually (no `codesign --deep`),
-notarises with the App Store Connect API key, staples, runs
+path for the rolling production channel: every push to `main` publishes the
+reviewed commit as the newest customer-facing build. Feature-branch pushes run
+CI but do not publish. The pipeline signs every nested executable
+individually (no `codesign --deep`), notarises with the App Store Connect API key, staples, runs
 `codesign --verify --deep --strict` / `spctl` / `stapler validate`, publishes
 the GitHub Release, and deploys the appcast to GitHub Pages.
 
@@ -109,13 +111,13 @@ curl -fsSL https://downright.cc/install | bash
 npx --yes downright-installer
 ```
 
-Both commands install the latest signed DMG into `/Applications`, verify the
+Both commands install the latest signed main-channel DMG into `/Applications`, verify the
 published DMG checksum and mounted app signature, register the Finder
 integrations, and leave Sparkle updates enabled. The npm launcher requires
 Node.js 18 or newer; the curl installer has no Node.js dependency.
 
 Each successful invocation downloads `Downright.dmg`, so GitHub records it in
-the stable DMG asset count. The installer itself is not a separate unique-user
+the rolling DMG asset count. The installer itself is not a separate unique-user
 metric; GitHub counts asset requests, not completed installs or people.
 
 ## Download counts
@@ -127,7 +129,7 @@ Scripts/report-download-counts.sh
 Scripts/report-download-counts.sh --release 1.0.16-8-abcdef0 --json
 ```
 
-Use the sum of the stable and versioned `.dmg` counts as the acquisition metric;
+Use the sum of the rolling and versioned `.dmg` counts as the acquisition metric;
 this includes direct downloads and Homebrew cask installs. Do not add the
 Sparkle ZIP count to it: those archives are update downloads from existing
 installations. GitHub's counter is an asset-request count, not a unique-person
@@ -191,12 +193,18 @@ non-placeholder public key.
 1. Bump `Config/version.env`; run `Scripts/sync-versions.sh fix`.
 2. `Scripts/check.sh` — all suites, version gates, and the Sparkle link-scope
    check pass.
-3. Push a `vX.Y.Z` SemVer tag pointing into `main`. `release.yml` takes over:
+3. Merge or push the reviewed commit to `main`. `release.yml` takes over:
    gates → tests → universal signed/notarized build → zip + DMG → appcast →
    GitHub Release → GitHub Pages. If Pages deployment fails after the Release
    is public, the previous appcast stays active and re-running the deployment
    is safe.
 4. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
+
+Each main-channel build receives an immutable `auto-<full-commit-sha>` release
+tag and unique versioned asset names. The `latest` GitHub Release alias and
+`Downright.dmg` asset move to the newest verified main build; named `vX.Y.Z`
+tags remain available for milestone references but are not required for routine
+publishing.
 
 For a release that must not go through CI, the manual path is
 `bundle-xcode-app.sh` → `sign-and-notarize.sh` → `make-dmg.sh` above; run
