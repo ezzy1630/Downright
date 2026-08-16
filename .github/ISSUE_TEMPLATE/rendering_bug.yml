@@ -1,0 +1,63 @@
+name: Rendering or external-change bug
+description: A Markdown document renders incorrectly or an external rewrite is handled incorrectly.
+labels: [bug, rendering]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove private content. A minimal five-line document is more
+        useful than a full confidential README. For file corruption or a
+        non-byte-identical round trip, say so first.
+
+  - type: textarea
+    id: document
+    attributes:
+      label: Minimal Markdown
+      description: The smallest document that reproduces the problem.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+      description: What should render or happen, and what happened instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Document view
+        - Split view
+        - Source Focus
+        - Quick Look
+        - Finder thumbnail
+        - External-write review
+        - down CLI
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Downright version or commit
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and chip
+      placeholder: "macOS 15.3, M2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: external_process
+    attributes:
+      label: External process, if relevant
+      description: What changed the file, and whether local edits were dirty.

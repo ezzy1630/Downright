@@ -11,6 +11,14 @@
 
 <p align="center"><strong>macOS 14+ · Swift 6 · Native AppKit · MIT</strong></p>
 
+<p align="center">
+  <a href="https://github.com/ezzy1630/Downright/actions/workflows/ci.yml"><img src="https://github.com/ezzy1630/Downright/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/ezzy1630/Downright/releases"><img src="https://img.shields.io/github/v/release/ezzy1630/Downright?display_name=tag&sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-307afe" alt="MIT license"></a>
+</p>
+
+<p align="center"><a href="https://downright.cc/download/">Download the signed macOS release</a> · <a href="https://downright.cc/">downright.cc</a> · <a href="https://github.com/ezzy1630/homebrew-downright">Public Homebrew tap</a></p>
+
 ---
 
 <p align="center">
@@ -82,9 +90,12 @@ brew tap ezzy1630/downright && brew trust --cask ezzy1630/downright/downright &&
 The app keeps its Sparkle updater after a cask install. GitHub records the DMG
 request in the release asset download count.
 
+This is the developer tap. The tap-free `brew install --cask downright`
+command is not advertised until an official Homebrew Cask is accepted.
+
 ## Install with curl or npm
 
-The simplest install command downloads the latest signed release, verifies its
+The simplest install command downloads the latest signed main-channel build, verifies its
 published checksum and app signature, installs it into `/Applications`,
 registers the Finder integrations, and links `down` and `md` when possible:
 
@@ -99,7 +110,9 @@ first-party installer:
 npx --yes downright-installer
 ```
 
-Both paths leave Sparkle updates enabled in the installed app. The curl path
+Both paths leave Sparkle updates enabled in the installed app. Every subsequent
+verified push to `main` becomes the next Sparkle update; feature-branch pushes
+never reach users. The curl path
 needs no Node.js; the npm path is macOS-only and requires Node.js 18+.
 
 For a faster SwiftPM development build without Finder extensions:
@@ -204,7 +217,7 @@ See [Privacy](Docs/PRIVACY.md).
 
 ## Project status
 
-The canonical source version is **1.0.0**; current polish is tracked under
+The current rolling release is tracked in [GitHub Releases](https://github.com/ezzy1630/Downright/releases); current polish is tracked under
 [Unreleased](CHANGELOG.md). The repository contains the app, CLI, Quick Look,
 updater, signing, notarization, DMG, and release automation. See [Status](Docs/STATUS.md)
 for known gaps and implementation notes.

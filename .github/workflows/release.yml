@@ -1,10 +1,11 @@
 name: Release
 
-# Every push to `main` triggers the full production pipeline: gates → tests →
+# Every push to `main` triggers the rolling production pipeline: gates → tests →
 # signed, notarized, stapled universal build → Sparkle-signed appcast → GitHub
-# Release → GitHub Pages deployment. All secrets live in the `release`
-# environment. The workflow gives each commit a unique build identity so
-# Sparkle can order updates without requiring a manual version-tag push.
+# Release → GitHub Pages deployment. Feature-branch pushes are covered by CI;
+# a merge or push to `main` is the release event. All secrets live in the
+# `release` environment, and the newest verified build becomes the download
+# and updater channel.
 
 on:
   push:
@@ -65,9 +66,8 @@ jobs:
             exit 1
           fi
           SHORT_SHA="${GITHUB_SHA:0:12}"
-          # TAG is used in human-facing asset filenames. RELEASE_TAG is the
-          # unique GitHub release tag; it is intentionally not a source version
-          # tag, because every main commit is a release.
+          # TAG is used in immutable asset filenames. RELEASE_TAG identifies
+          # this rolling main-channel build without moving an existing tag.
           TAG="${MARKETING_VERSION}-${BUILD}-${SHORT_SHA}"
           RELEASE_TAG="auto-${GITHUB_SHA}"
           echo "MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"
@@ -395,7 +395,7 @@ jobs:
             > "artifacts/Downright-$TAG-dSYMs.zip.sha256"
           # Auto-assemble release notes from the commits since the previous
           # generated or manually tagged release.
-          PREV_TAG="$(git tag --sort=-creatordate | grep -E '^(auto-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)$' | head -1 || true)"
+          PREV_TAG="$(git tag --sort=-creatordate | grep -E '^(auto-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)$' | grep -v "^${RELEASE_TAG}$" | head -1 || true)"
           if [ -n "$PREV_TAG" ]; then
             COMMITS="$(git log --oneline --no-merges "${PREV_TAG}..HEAD")"
           else
@@ -506,6 +506,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.release_identity.outputs.release_tag }}
+          name: Downright ${{ env.MARKETING_VERSION }} (build ${{ env.BUILD }})
           target_commitish: ${{ github.sha }}
           make_latest: true
           files: |
