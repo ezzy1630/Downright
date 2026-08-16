@@ -71,6 +71,17 @@ and can repeat every step later under **Settings → General → System
 integration**. See [Quick Look](Docs/QUICKLOOK.md) and [Release](Docs/RELEASE.md)
 for details.
 
+## Install with Homebrew
+
+The public tap installs the same production app into `/Applications`:
+
+```bash
+brew tap ezzy1630/downright && brew trust --cask ezzy1630/downright/downright && brew install --cask downright
+```
+
+The app keeps its Sparkle updater after a cask install. GitHub records the DMG
+request in the release asset download count.
+
 For a faster SwiftPM development build without Finder extensions:
 
 ```bash
