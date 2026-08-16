@@ -99,6 +99,21 @@ notarises with the App Store Connect API key, staples, runs
 `codesign --verify --deep --strict` / `spctl` / `stapler validate`, publishes
 the GitHub Release, and deploys the appcast to GitHub Pages.
 
+## Download counts
+
+GitHub records a `download_count` for every release asset. Run:
+
+```bash
+Scripts/report-download-counts.sh
+Scripts/report-download-counts.sh --release 1.0.16-8-abcdef0 --json
+```
+
+Use the sum of the stable and versioned `.dmg` counts as the acquisition metric;
+this includes direct downloads and Homebrew cask installs. Do not add the
+Sparkle ZIP count to it: those archives are update downloads from existing
+installations. GitHub's counter is an asset-request count, not a unique-person
+or completed-install count.
+
 ## DMG packaging
 
 `Scripts/make-dmg.sh` packages a built app into a drag-install DMG (app + an
