@@ -1,0 +1,26 @@
+{
+  "name": "@ezzy/downright-installer",
+  "version": "0.1.0",
+  "description": "Install the signed Downright macOS app from its latest release",
+  "type": "module",
+  "bin": {
+    "downright-install": "bin/downright-install.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "license": "MIT",
+  "homepage": "https://downright.cc/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezzy1630/Downright.git",
+    "directory": "npm/downright-installer"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
