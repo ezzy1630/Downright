@@ -218,6 +218,10 @@ jobs:
         run: |
           set -euo pipefail
           KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          # Publish the cleanup target before any setup command can fail. The
+          # always-run cleanup step needs this even when import or discovery
+          # aborts before the identity is available.
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           PASSWORD="$(openssl rand -hex 24)"
           # Secrets land under the runner's private temp dir, never the shared
           # /tmp. The generated keychain password is not exported: it is not a
@@ -238,7 +242,6 @@ jobs:
           test -n "$IDENTITY"
           echo "Imported signing identity: $IDENTITY"
           rm -f "$CERT_P12"
-          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "DEVELOPER_ID_APPLICATION_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
         env:
           DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
