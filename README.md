@@ -96,7 +96,7 @@ If Node.js 18 or newer is already installed, the npm launcher runs that same
 first-party installer:
 
 ```bash
-npx --yes @ezzy/downright-installer
+npx --yes downright-installer
 ```
 
 Both paths leave Sparkle updates enabled in the installed app. The curl path

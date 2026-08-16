@@ -106,7 +106,7 @@ launcher:
 
 ```bash
 curl -fsSL https://downright.cc/install | bash
-npx --yes @ezzy/downright-installer
+npx --yes downright-installer
 ```
 
 Both commands install the latest signed DMG into `/Applications`, verify the

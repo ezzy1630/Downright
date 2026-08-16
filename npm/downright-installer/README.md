@@ -1,9 +1,9 @@
-# @ezzy/downright-installer
+# downright-installer
 
 Install the signed Downright macOS app into `/Applications`:
 
 ```bash
-npx --yes @ezzy/downright-installer
+npx --yes downright-installer
 ```
 
 The launcher fetches the first-party installer at `https://downright.cc/install`.

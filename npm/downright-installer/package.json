@@ -1,10 +1,10 @@
 {
-  "name": "@ezzy/downright-installer",
-  "version": "0.1.0",
+  "name": "downright-installer",
+  "version": "0.1.1",
   "description": "Install the signed Downright macOS app from its latest release",
   "type": "module",
   "bin": {
-    "downright-install": "bin/downright-install.mjs"
+    "downright-installer": "bin/downright-install.mjs"
   },
   "engines": {
     "node": ">=18"
