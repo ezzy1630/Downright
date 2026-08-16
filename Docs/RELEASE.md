@@ -99,6 +99,25 @@ notarises with the App Store Connect API key, staples, runs
 `codesign --verify --deep --strict` / `spctl` / `stapler validate`, publishes
 the GitHub Release, and deploys the appcast to GitHub Pages.
 
+## One-line release installers
+
+The production website serves the same release installer used by the npm
+launcher:
+
+```bash
+curl -fsSL https://downright.cc/install | bash
+npx --yes downright-installer
+```
+
+Both commands install the latest signed DMG into `/Applications`, verify the
+published DMG checksum and mounted app signature, register the Finder
+integrations, and leave Sparkle updates enabled. The npm launcher requires
+Node.js 18 or newer; the curl installer has no Node.js dependency.
+
+Each successful invocation downloads `Downright.dmg`, so GitHub records it in
+the stable DMG asset count. The installer itself is not a separate unique-user
+metric; GitHub counts asset requests, not completed installs or people.
+
 ## Download counts
 
 GitHub records a `download_count` for every release asset. Run:

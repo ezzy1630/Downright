@@ -82,6 +82,26 @@ brew tap ezzy1630/downright && brew trust --cask ezzy1630/downright/downright &&
 The app keeps its Sparkle updater after a cask install. GitHub records the DMG
 request in the release asset download count.
 
+## Install with curl or npm
+
+The simplest install command downloads the latest signed release, verifies its
+published checksum and app signature, installs it into `/Applications`,
+registers the Finder integrations, and links `down` and `md` when possible:
+
+```bash
+curl -fsSL https://downright.cc/install | bash
+```
+
+If Node.js 18 or newer is already installed, the npm launcher runs that same
+first-party installer:
+
+```bash
+npx --yes downright-installer
+```
+
+Both paths leave Sparkle updates enabled in the installed app. The curl path
+needs no Node.js; the npm path is macOS-only and requires Node.js 18+.
+
 For a faster SwiftPM development build without Finder extensions:
 
 ```bash
