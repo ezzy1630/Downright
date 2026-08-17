@@ -21,6 +21,7 @@ struct StartWindowTests {
         #expect(window.titleVisibility == .hidden)
         #expect(window.contentView?.accessibilityLabel() == "Downright start window")
         #expect(window.initialFirstResponder != nil)
+        #expect(window.contentView?.subviews.contains(where: { $0 is NSScrollView }) == false)
 
         let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
         #expect(labels.contains("Open File"))

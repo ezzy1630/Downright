@@ -174,6 +174,10 @@ final class UpdateCoordinator: UpdateDriverHost {
             try engine.start()
             if startupFailure != nil { machine.reduce(.dismissed) }
             startupFailure = nil
+            // MainMenu is built before Sparkle starts. Revalidate its command
+            // now that the live updater can answer capability checks; without
+            // this notification the menu can remain inert for the whole launch.
+            notifyStateChanged()
         } catch {
             // Startup failure (bad feed, missing signing key): surface once,
             // quietly — the pill carries the warning until the app restarts.
