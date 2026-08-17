@@ -1,0 +1,50 @@
+<!--
+  This is the artwork for the Finder canvas, not a marketing banner. Finder
+  renders the DMG background at its logical window size, so keep the source at
+  the same 720x450 size as the window configured by make-dmg.sh.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="450" viewBox="0 0 720 450">
+  <defs>
+    <radialGradient id="paper-wash" cx="84%" cy="10%" r="82%">
+      <stop offset="0" stop-color="#dceaff" stop-opacity="0.72"/>
+      <stop offset="0.52" stop-color="#f8f5ef" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#f8f5ef" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="underline" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#307afe" stop-opacity="0.34"/>
+      <stop offset="0.52" stop-color="#307afe" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#307afe" stop-opacity="0.34"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="720" height="450" fill="#f8f5ef"/>
+  <rect width="720" height="450" fill="url(#paper-wash)"/>
+
+  <g
+    fill="#292522"
+    font-family="Noteworthy, 'Chalkboard SE', 'Marker Felt', 'Bradley Hand', 'Comic Sans MS', sans-serif"
+    text-anchor="middle">
+    <text x="360" y="76" font-size="30" font-weight="600" transform="rotate(-2 360 76)">one tiny move</text>
+    <text x="360" y="184" font-size="35" font-weight="600" transform="rotate(-4 360 184)">drag Downright to</text>
+    <text x="360" y="211" fill="#766e66" font-size="14" font-weight="500" transform="rotate(-2 360 211)">Applications</text>
+  </g>
+
+  <!-- Hand-drawn underline and double arrow echo the original gesture. -->
+  <path d="M236 96C300 107 420 107 484 95" fill="none" stroke="url(#underline)" stroke-linecap="round" stroke-width="3"/>
+  <path d="M240 102C304 111 416 111 480 100" fill="none" stroke="#307afe" stroke-linecap="round" stroke-width="1.2" opacity="0.27"/>
+
+  <g fill="none" stroke="#307afe" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M244 276C293 212 402 198 520 257" stroke-width="3.8" opacity="0.92"/>
+    <path d="M246 287C302 224 407 211 515 265" stroke-width="1.6" opacity="0.32"/>
+    <path d="M498 245l25 13-23 8" stroke-width="3.8"/>
+    <circle cx="244" cy="274" r="4" fill="#307afe" stroke="none" opacity="0.76"/>
+  </g>
+
+  <g
+    fill="#766e66"
+    font-family="Noteworthy, 'Chalkboard SE', 'Marker Felt', 'Bradley Hand', 'Comic Sans MS', sans-serif"
+    text-anchor="middle">
+    <text x="360" y="373" font-size="13" font-weight="500" letter-spacing="0.8">then open Downright once</text>
+    <text x="360" y="395" fill="#9b9288" font-size="11" letter-spacing="0.55">updates happen automatically</text>
+  </g>
+</svg>

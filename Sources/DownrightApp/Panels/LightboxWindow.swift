@@ -186,6 +186,16 @@ private final class LightboxContentView: NSView {
         zoom(by: 1 + event.magnification, about: convert(event.locationInWindow, from: nil))
     }
 
+    override func smartMagnify(with event: NSEvent) {
+        let anchor = convert(event.locationInWindow, from: nil)
+        if abs(scale - fitScale) < 0.001 {
+            let targetScale = fitScale < 1 ? CGFloat(1.0) : CGFloat(2.0)
+            zoom(by: targetScale / max(0.01, scale), about: anchor)
+        } else {
+            resetZoom()
+        }
+    }
+
     override func mouseDown(with event: NSEvent) { didDrag = false }
 
     override func mouseDragged(with event: NSEvent) {
@@ -226,6 +236,18 @@ private final class LightboxContentView: NSView {
         case "0": resetZoom()
         case "1":
             setZoom(scale: 1, offset: .zero)
+        case "left":
+            offset.width += 40
+            needsDisplay = true
+        case "right":
+            offset.width -= 40
+            needsDisplay = true
+        case "up":
+            offset.height -= 40
+            needsDisplay = true
+        case "down":
+            offset.height += 40
+            needsDisplay = true
         default: super.keyDown(with: event)
         }
     }

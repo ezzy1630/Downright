@@ -36,6 +36,7 @@ final class CommandPaletteView: NSView, PanelSurface {
     private var model: CommandPaletteModel
     private let recentStore: CommandPaletteRecentStore
     private var keyMonitor: Any?
+    private var actions: [ButtonAction] = []
 
     convenience init() {
         self.init(styleSheet: .current, recentStore: UserDefaultsCommandPaletteRecentStore())
@@ -98,6 +99,48 @@ final class CommandPaletteView: NSView, PanelSurface {
         searchField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(searchField)
 
+        let filterChips: [(title: String, prefix: String)] = [
+            ("All", ""),
+            ("Commands", "> "),
+            ("Headings", "# "),
+            ("Symbols", "@ "),
+            ("Tasks", "task: "),
+            ("Files", "file: ")
+        ]
+        let filterStack = NSStackView()
+        filterStack.orientation = .horizontal
+        filterStack.spacing = 6
+        filterStack.alignment = .centerY
+        filterStack.translatesAutoresizingMaskIntoConstraints = false
+
+        for chip in filterChips {
+            let action = ButtonAction { [weak self] in
+                guard let self else { return }
+                self.searchField.stringValue = chip.prefix
+                self.model.updateQuery(chip.prefix)
+                self.reloadResults()
+                self.window?.makeFirstResponder(self.searchField)
+                if let editor = self.searchField.currentEditor() {
+                    editor.selectedRange = NSRange(location: chip.prefix.count, length: 0)
+                }
+            }
+            actions.append(action)
+            let btn = ToolbarInteractiveButton(frame: .zero)
+            btn.attributedTitle = NSAttributedString(string: chip.title, attributes: [
+                .font: PanelFont.system(11, weight: .medium),
+                .foregroundColor: styleSheet.textSecondary,
+            ])
+            btn.feedbackInsetX = 4
+            btn.feedbackInsetY = 2
+            btn.feedbackCornerRadius = 4
+            btn.isBordered = false
+            btn.bezelStyle = .accessoryBarAction
+            btn.target = action
+            btn.action = #selector(ButtonAction.fire(_:))
+            filterStack.addArrangedSubview(btn)
+        }
+        addSubview(filterStack)
+
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("command"))
         tableView.addTableColumn(column)
         tableView.headerView = nil
@@ -144,9 +187,13 @@ final class CommandPaletteView: NSView, PanelSurface {
             searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             searchField.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             searchField.heightAnchor.constraint(equalToConstant: 32),
+            filterStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            filterStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            filterStack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
+            filterStack.heightAnchor.constraint(equalToConstant: 20),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
+            scrollView.topAnchor.constraint(equalTo: filterStack.bottomAnchor, constant: 6),
             scrollView.bottomAnchor.constraint(equalTo: hintLabel.topAnchor, constant: -8),
             prefixLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             prefixLabel.centerYAnchor.constraint(equalTo: hintLabel.centerYAnchor),
@@ -272,7 +319,7 @@ extension CommandPaletteView: NSTableViewDataSource, NSTableViewDelegate {
         let identifier = NSUserInterfaceItemIdentifier("commandPaletteRow")
         let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? CommandPaletteRowView
             ?? CommandPaletteRowView(identifier: identifier)
-        cell.configure(result, styleSheet: styleSheet)
+        cell.configure(result, query: searchField.stringValue, styleSheet: styleSheet)
         return cell
     }
 
@@ -325,9 +372,30 @@ private final class CommandPaletteRowView: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(_ result: QuickOpenResult, styleSheet: StyleSheet) {
-        titleLabel.stringValue = result.title
-        titleLabel.textColor = styleSheet.text
+    func configure(_ result: QuickOpenResult, query: String, styleSheet: StyleSheet) {
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ">", with: "")
+            .replacingOccurrences(of: "@", with: "")
+            .replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: "task:", with: "")
+            .replacingOccurrences(of: "file:", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanQuery.isEmpty,
+           let match = FuzzyMatcher.match(needle: cleanQuery, in: result.title) {
+            let attr = NSMutableAttributedString(string: result.title, attributes: [
+                .font: PanelFont.rowEmphasised,
+                .foregroundColor: styleSheet.text,
+            ])
+            for idx in match.positions {
+                if idx < attr.length {
+                    attr.addAttribute(.foregroundColor, value: styleSheet.accent, range: NSRange(location: idx, length: 1))
+                }
+            }
+            titleLabel.attributedStringValue = attr
+        } else {
+            titleLabel.stringValue = result.title
+            titleLabel.textColor = styleSheet.text
+        }
         metadataLabel.stringValue = result.subtitle.isEmpty ? result.kind.rawValue.capitalized : result.subtitle
         metadataLabel.textColor = styleSheet.textFaint
         toolTip = result.subtitle.isEmpty ? result.title : "\(result.title)\n\(result.subtitle)"

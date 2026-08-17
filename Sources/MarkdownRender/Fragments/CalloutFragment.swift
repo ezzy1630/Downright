@@ -78,7 +78,8 @@ final class CalloutFragment: DownrightFragment {
         let band = bandRect(at: point, reservedInset: reservedInset)
 
         if kind != nil {
-            cg.fillRect(continuous(band), color: color.withAlphaComponent(0.055),
+            let tintAlpha: CGFloat = style.theme.appearance == .light ? 0.042 : 0.060
+            cg.fillRect(continuous(band), color: color.withAlphaComponent(tintAlpha),
                         radius: RenderMetrics.calloutCornerRadius)
         }
         cg.fillRect(ruleRect(band, width: ruleWidth), color: color, radius: ruleWidth / 2)

@@ -585,7 +585,8 @@ final class TableRowFragment: DownrightFragment {
             // hierarchy as code and failed-object blocks.
             cg.fillRect(frame, color: style.surface.withAlphaComponent(0.62))
         } else if context?.hoveredTableRow == row.range {
-            cg.fillRect(frame, color: style.text.withAlphaComponent(0.04))
+            let hoverAlpha: CGFloat = style.theme.appearance == .light ? 0.038 : 0.055
+            cg.fillRect(frame, color: style.text.withAlphaComponent(hoverAlpha), radius: 3)
         }
 
         if layout.isStacked {

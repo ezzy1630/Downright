@@ -138,6 +138,16 @@ every release; Sparkle orders updates by it.
 - The start window is 600pt tall rather than 576 to fit the two-line rows, and
   the no-recents placeholder is now derived from the height a full list
   occupies instead of a fixed 150pt that was already 100pt short of it.
+- The welcome window's two entry actions now share one readable control well;
+  drag-and-drop feedback appears only while a supported file is over the
+  window, and an update failure collapses to a quiet, discoverable warning
+  instead of competing with the primary actions.
+- Update failures now lead with a clear "your files are safe" message, fit the
+  panel to the shorter failure state, and keep technical details behind an
+  explicit disclosure.
+- The rolling DMG now carries a Finder-aligned install window with a hand-drawn
+  background and drag-to-Applications arrangement, while retaining a valid
+  headless packaging path for CI.
 
 - The start window's **Take the Tour** button now retires: immediately once the
   tour has been opened, and after three launches regardless. It was permanent,

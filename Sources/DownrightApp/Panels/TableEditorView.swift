@@ -448,8 +448,20 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         let nextRow: Int
         let targetColumn: Int
         if nextColumn >= data.columnCount {
-            nextRow = min(values.count - 1, row + 1)
-            targetColumn = 0
+            if row + 1 >= values.count {
+                addRow(nil)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.select(row: self.values.count - 1, column: 0)
+                    if let next = self.tableView.view(atColumn: 0, row: self.values.count - 1, makeIfNecessary: true) {
+                        self.window?.makeFirstResponder(next)
+                    }
+                }
+                return
+            } else {
+                nextRow = row + 1
+                targetColumn = 0
+            }
         } else if nextColumn < 0 {
             nextRow = max(0, row - 1)
             targetColumn = max(0, data.columnCount - 1)
@@ -460,6 +472,27 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         select(row: nextRow, column: targetColumn)
         if let next = tableView.view(atColumn: targetColumn, row: nextRow, makeIfNecessary: true) {
             window?.makeFirstResponder(next)
+        }
+    }
+
+    private func advanceDown(from field: TableEditorCell) {
+        let row = field.tag / 10_000
+        let column = field.tag % 10_000
+        guard !values.isEmpty, let _ = data else { return }
+        if row + 1 >= values.count {
+            addRow(nil)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.select(row: self.values.count - 1, column: column)
+                if let next = self.tableView.view(atColumn: column, row: self.values.count - 1, makeIfNecessary: true) {
+                    self.window?.makeFirstResponder(next)
+                }
+            }
+        } else {
+            select(row: row + 1, column: column)
+            if let next = tableView.view(atColumn: column, row: row + 1, makeIfNecessary: true) {
+                window?.makeFirstResponder(next)
+            }
         }
     }
 
@@ -479,6 +512,10 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         field.onAdvance = { [weak self, weak field] forward in
             guard let self, let field else { return }
             self.advance(from: field, forward: forward)
+        }
+        field.onAdvanceDown = { [weak self, weak field] in
+            guard let self, let field else { return }
+            self.advanceDown(from: field)
         }
         field.setAccessibilityLabel("Table row \(row + 1), column \(column + 1)")
         field.setAccessibilityRole(.textField)
@@ -533,14 +570,18 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
 
 private final class TableEditorCell: NSTextField {
     var onAdvance: ((Bool) -> Void)?
+    var onAdvanceDown: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         let isTab = event.keyCode == 48
         let isReturn = event.keyCode == 36 || event.keyCode == 76
-        guard isTab || isReturn else {
-            super.keyDown(with: event)
+        if isTab {
+            onAdvance?(!event.modifierFlags.contains(.shift))
+            return
+        } else if isReturn {
+            onAdvanceDown?()
             return
         }
-        onAdvance?(!event.modifierFlags.contains(.shift))
+        super.keyDown(with: event)
     }
 }

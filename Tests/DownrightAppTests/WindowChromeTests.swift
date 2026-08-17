@@ -246,7 +246,11 @@ struct WindowChromeTests {
         #expect(!find.isOn, "find should rest unlit with its panel closed")
         #expect(cluster.arrangedSubviews.contains { $0 is ActivityIndicatorView })
         #expect(cluster.arrangedSubviews.contains { $0 is TaskProgressRing })
-        #expect(cluster.arrangedSubviews.contains { $0 is UpdateStatusPill })
+        let updatePill = try #require(
+            cluster.arrangedSubviews.first { $0 is UpdateStatusPill } as? UpdateStatusPill,
+            "update status pill is not in the trailing cluster"
+        )
+        #expect(updatePill.title.isEmpty, "the custom pill must not draw NSButton's title")
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "contents" })
         #expect(!toolbar.items.contains { $0.itemIdentifier.rawValue == "inspector" })
         let overflow = try #require(

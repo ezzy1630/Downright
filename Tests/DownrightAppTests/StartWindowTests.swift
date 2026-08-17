@@ -25,12 +25,12 @@ struct StartWindowTests {
         let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
         #expect(labels.contains("Open File"))
         #expect(labels.contains("New Document"))
-        // Ellipsis on the start screen reads as truncated text.
-        #expect(labels.contains(where: { $0.contains("…") || $0.contains("...") }) == false)
+        let text = textFields(in: window.contentView).map(\.stringValue)
+        #expect(text.contains("You can also drop a file anywhere") == false)
     }
 
     @Test
-    func primaryActionsSizeToTheirOwnContent() throws {
+    func primaryActionsUseBalancedControlWells() throws {
         let controller = StartWindowController(recents: [])
         defer { controller.close() }
 
@@ -55,17 +55,13 @@ struct StartWindowTests {
 
         #expect(abs(openCenter.y - createCenter.y) < 0.5)
         #expect(createCenter.x > openCenter.x)
-        // Each button hugs its own content.  A fixed constant clipped "New
-        // Document" mid-word (a fixed 164pt missed it); an equal-width pin
-        // stretched "Open File"'s label-to-shortcut gap into whitespace and
-        // left "New Document" with zero headroom.  Both regressions fail
-        // here: neither button may be stretched beyond its own intrinsic
-        // width, and neither may fall short of it.
-        #expect(abs(open.frame.width - open.intrinsicContentSize.width) < 1)
-        #expect(abs(create.frame.width - create.intrinsicContentSize.width) < 1)
-        // "New Document" is the longer label, so its button is wider; a
-        // re-introduced shared constant would flatten this ordering.
-        #expect(open.frame.width < create.frame.width)
+        // Open and New are peer entry points. Keep their wells equal so the
+        // longer title does not accidentally become the visual primary.
+        #expect(abs(open.frame.width - StartLayout.actionButtonWidth) < 1)
+        #expect(abs(create.frame.width - StartLayout.actionButtonWidth) < 1)
+        #expect(abs(open.frame.width - create.frame.width) < 1)
+        #expect(open.frame.height == StartLayout.buttonHeight)
+        #expect(create.frame.height == StartLayout.buttonHeight)
     }
 
     @Test
@@ -91,8 +87,14 @@ struct StartWindowTests {
         // Matching the two buttons' widths used to stretch this from the
         // 12pt design constant to ~48pt of dead air.
         let gap = shortcut.frame.minX - title.frame.maxX
-        #expect(gap >= 10)
+        // The compact keycap group keeps a deliberate 8pt optical gap after
+        // the title without making the shortcut feel detached from its label.
+        #expect(gap >= 8)
         #expect(gap <= 22)
+        #expect(shortcut.frame.width >= 30)
+        #expect(shortcut.frame.height >= 20)
+        let shortcutInOpen = shortcut.convert(shortcut.bounds, to: open)
+        #expect(shortcutInOpen.maxX <= open.bounds.maxX - 12)
     }
 
     @Test
@@ -132,6 +134,33 @@ struct StartWindowTests {
         let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
         #expect(labels.contains("Open Editing Keys"))
         #expect(labels.contains(where: { $0.contains("92C5F190") }) == false)
+    }
+
+    @Test
+    func recentRowsUseDocumentIconsAndContextMenuForClearing() throws {
+        let recent = RecentDocument(
+            path: "/tmp/downright-start-context.md",
+            displayName: "note",
+            firstHeading: "Planning",
+            lastOpened: Date(),
+            wordCount: 1
+        )
+        let controller = StartWindowController(recents: [recent])
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let labels = buttons(in: window.contentView).compactMap { $0.accessibilityLabel() }
+        #expect(labels.contains("Clear recent files") == false)
+
+        let documentIcons = imageViews(in: window.contentView).filter {
+            $0.accessibilityLabel() == "Markdown document"
+        }
+        #expect(documentIcons.count == 1)
+
+        let menus = menus(in: window.contentView)
+        #expect(menus.contains { $0.items.map(\.title) == ["Clear Recent Files…"] })
     }
 
     @Test
@@ -320,7 +349,9 @@ struct StartWindowTests {
             path: path,
             displayName: "note",
             firstHeading: "Planning",
-            lastOpened: Date().addingTimeInterval(-7_200),
+            lastOpened: Calendar.current.date(
+                byAdding: .day, value: -1, to: Date()
+            ) ?? Date().addingTimeInterval(-86_400),
             wordCount: 3
         )
         let controller = StartWindowController(recents: [older])
@@ -469,9 +500,22 @@ struct StartWindowTests {
         return button + view.subviews.flatMap { buttons(in: $0) }
     }
 
-    private func textFields(in view: NSView) -> [NSTextField] {
+    private func textFields(in view: NSView?) -> [NSTextField] {
+        guard let view else { return [] }
         let direct = (view as? NSTextField).map { [$0] } ?? []
         return direct + view.subviews.flatMap { textFields(in: $0) }
+    }
+
+    private func imageViews(in view: NSView?) -> [NSImageView] {
+        guard let view else { return [] }
+        let direct = (view as? NSImageView).map { [$0] } ?? []
+        return direct + view.subviews.flatMap { imageViews(in: $0) }
+    }
+
+    private func menus(in view: NSView?) -> [NSMenu] {
+        guard let view else { return [] }
+        let direct = view.menu.map { [$0] } ?? []
+        return direct + view.subviews.flatMap { menus(in: $0) }
     }
 }
 
@@ -497,6 +541,43 @@ struct RecentRowSubtitleTests {
     func headingAndFolder() {
         let row = recent(path: "/w/watchtest/notes.md", name: "notes", heading: "Agent output")
         #expect(RecentRowCopy.subtitle(for: row, title: "notes") == "Agent output  ·  watchtest")
+    }
+
+    @Test("A stale joined heading is repaired for the welcome row")
+    func malformedJoinedHeading() {
+        let row = recent(
+            path: "/tmp/downright-live-selection-2.md",
+            name: "downright-live-selection-2",
+            heading: "ThiDownright renderer showcase"
+        )
+        #expect(
+            RecentRowCopy.subtitle(for: row, title: "downright-live-selection-2")
+                == "Downright renderer showcase  ·  tmp"
+        )
+    }
+
+    @Test("Recent timestamps use calendar labels")
+    func calendarTimestamps() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date()).addingTimeInterval(12 * 60 * 60)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let older = calendar.date(byAdding: .day, value: -3, to: today)!
+
+        #expect(RecentRowCopy.timestamp(for: RecentDocument(
+            path: "/today.md", displayName: "today", firstHeading: "",
+            lastOpened: today, wordCount: 0
+        )) == "Today")
+        #expect(
+            RecentRowCopy.timestamp(for: RecentDocument(
+                path: "/yesterday.md", displayName: "yesterday", firstHeading: "",
+                lastOpened: yesterday, wordCount: 0
+            )) == "Yesterday"
+        )
+        let olderLabel = RecentRowCopy.timestamp(for: RecentDocument(
+            path: "/older.md", displayName: "older", firstHeading: "",
+            lastOpened: older, wordCount: 0
+        ))
+        #expect(olderLabel.contains("ago") == false)
     }
 
     /// `README` in `Downright/` whose first heading is "Downright" would read
