@@ -2,7 +2,7 @@ import AppKit
 import MarkdownRender
 import QuickLookThumbnailing
 
-/// Six rows fit the compact start window without vertical scroll or dead space.
+/// Six rows fit the compact start window without a scrolling container.
 private let startRecentDisplayLimit = 6
 
 /// Internal rather than private so the start window's tests can assert against
@@ -10,13 +10,10 @@ private let startRecentDisplayLimit = 6
 /// broke the moment a recent row grew a second line, which told nobody anything
 /// about the window being fixed-size, which is what it meant to check.
 enum StartLayout {
-    // A fixed, non-resizable welcome surface.  44pt side gutters keep the
-    // column calm without dead air; the extra height (vs. the old 500) lets the
-    // six recent rows breathe under the hero.
-    // Taller than the old 576 because each recent row now carries two lines:
-    // what the document is called and what it is actually about.  The extra
-    // 44pt buys six of those instead of six filenames.
-    static let windowSize = NSSize(width: 680, height: 600)
+    // A fixed, non-resizable welcome surface. The 44pt side gutters keep the
+    // column calm, while the extra height gives six two-line recent rows room
+    // to breathe under the hero without making the surface scroll.
+    static let windowSize = NSSize(width: 680, height: 640)
     static let horizontalInset: CGFloat = 44
     static let bottomInset: CGFloat = 36
     static let sectionSpacing: CGFloat = 20
@@ -206,18 +203,9 @@ private final class StartView: NSView {
         setAccessibilityRole(.group)
         setAccessibilityLabel("Downright start window")
 
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.borderType = .noBorder
-        scroll.scrollerStyle = .overlay
-        addSubview(scroll)
-
         let canvas = StartCanvasView()
         canvas.translatesAutoresizingMaskIntoConstraints = false
-        scroll.documentView = canvas
+        addSubview(canvas)
 
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.orientation = .vertical
@@ -237,16 +225,10 @@ private final class StartView: NSView {
         centerX.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            canvas.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            canvas.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
-            canvas.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            canvas.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            canvas.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
+            canvas.leadingAnchor.constraint(equalTo: leadingAnchor),
+            canvas.trailingAnchor.constraint(equalTo: trailingAnchor),
+            canvas.topAnchor.constraint(equalTo: topAnchor),
+            canvas.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             contentStack.leadingAnchor.constraint(
                 greaterThanOrEqualTo: canvas.leadingAnchor,
