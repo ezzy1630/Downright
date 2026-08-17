@@ -145,7 +145,12 @@ Scripts/make-dmg.sh                       # finds the latest built app
 OUT_DIR=~/Desktop Scripts/make-dmg.sh /path/to/Downright.app
 ```
 
-It writes `dist/Downright-<MARKETING_VERSION>.dmg` and verifies the image.
+It writes `dist/Downright-<MARKETING_VERSION>.dmg` and verifies the image. The
+Finder window uses the hand-drawn `Scripts/dmg-background.svg`, rasterised at
+the exact 720×450 Finder canvas so the cute lettering and drag gesture stay
+aligned with the icons, and persists the icon positions plus `/Applications`
+alias when Finder is available. Set `DMG_LAYOUT=0` for a headless/default-window
+package; the image remains a valid drag installer either way.
 Run it on the *signed and notarised* app. Gatekeeper trusts the ticket stapled
 inside the app, and the release workflow additionally notarises and staples the
 DMG itself so users can run straight from the image. The DMG is a convenience
