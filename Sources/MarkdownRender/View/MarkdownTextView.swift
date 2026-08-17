@@ -2539,6 +2539,55 @@ public final class MarkdownTextView: NSTextView {
         return rect
     }
 
+    /// Whether a point is inside the laid-out glyph segments for a source
+    /// range. TextKit's insertion hit test intentionally returns the nearest
+    /// boundary, which is useful for placing a caret but too permissive for
+    /// activating inline targets.
+    func renderedTextContains(_ point: NSPoint, sourceRange: NSRange) -> Bool {
+        guard sourceRange.length > 0,
+              let clamped = clampToStorage(sourceRange) else { return false }
+        let textKitRange = displayMap.textKitRange(forSource: clamped)
+        guard textKitRange.length > 0 else { return false }
+        let origin = contentStorage.documentRange.location
+        guard let start = contentStorage.location(origin, offsetBy: textKitRange.location),
+              let end = contentStorage.location(origin, offsetBy: textKitRange.upperBound),
+              let range = NSTextRange(location: start, end: end) else { return false }
+
+        markdownLayoutManager.ensureLayout(for: range)
+        let pointInTextContainer = NSPoint(
+            x: point.x - textContainerOrigin.x,
+            y: point.y - textContainerOrigin.y
+        )
+        guard let fragment = markdownLayoutManager.textLayoutFragment(for: pointInTextContainer) else {
+            return false
+        }
+        let fragmentFrame = fragment.layoutFragmentFrame
+        for line in fragment.textLineFragments {
+            let intersection = NSIntersectionRange(line.characterRange, textKitRange)
+            guard intersection.length > 0 else { continue }
+            let lineBounds = line.typographicBounds
+            let lineOrigin = CGPoint(
+                x: fragmentFrame.minX + lineBounds.minX,
+                y: fragmentFrame.minY + lineBounds.minY
+            )
+            let startIndex = intersection.location - line.characterRange.location
+            let endIndex = intersection.upperBound - line.characterRange.location
+            let startPoint = line.locationForCharacter(at: startIndex)
+            let endPoint = line.locationForCharacter(at: endIndex)
+            let minX = lineOrigin.x + min(startPoint.x, endPoint.x)
+            let maxX = lineOrigin.x + max(startPoint.x, endPoint.x)
+            let minY = lineOrigin.y
+            let maxY = lineOrigin.y + lineBounds.height
+            if pointInTextContainer.x >= minX,
+               pointInTextContainer.x <= maxX,
+               pointInTextContainer.y >= minY,
+               pointInTextContainer.y <= maxY {
+                return true
+            }
+        }
+        return false
+    }
+
     public var topVisibleOffset: Int {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin

@@ -189,10 +189,18 @@ private final class UpdatePanelHeader: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = NSApp.applicationIconImage
         iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.wantsLayer = true
+        iconView.layer?.cornerRadius = 10
+        iconView.layer?.cornerCurve = .continuous
+        iconView.layer?.masksToBounds = true
+        iconView.layer?.shadowColor = NSColor.black.cgColor
+        iconView.layer?.shadowOpacity = 0.20
+        iconView.layer?.shadowOffset = CGSize(width: 0, height: -1.5)
+        iconView.layer?.shadowRadius = 4
         addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = PanelFont.title
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         addSubview(titleLabel)
 
         versionsLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -205,12 +213,12 @@ private final class UpdatePanelHeader: NSView {
             iconView.widthAnchor.constraint(equalToConstant: 44),
             iconView.heightAnchor.constraint(equalToConstant: 44),
 
-            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 14),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 2),
 
             versionsLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            versionsLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            versionsLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
+            versionsLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
+            versionsLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
     }
 
@@ -218,7 +226,7 @@ private final class UpdatePanelHeader: NSView {
 
     func apply(sheet: StyleSheet) {
         titleLabel.textColor = sheet.text
-        versionsLabel.textColor = sheet.textFaint
+        versionsLabel.textColor = sheet.textSecondary
     }
 
     func update(coordinator: UpdateCoordinator) {
@@ -238,6 +246,9 @@ private final class UpdatePanelHeader: NSView {
         if let target {
             titleLabel.stringValue = "Update Downright to \(target.0)"
             versionsLabel.stringValue = "Installed \(installed) (\(build))  →  \(target.0) (\(target.1))"
+        } else if case .upToDate = coordinator.phase {
+            titleLabel.stringValue = "Downright is Up to Date"
+            versionsLabel.stringValue = "Version \(installed) (\(build))"
         } else {
             titleLabel.stringValue = "Downright Updates"
             versionsLabel.stringValue = "Version \(installed) (\(build))"
@@ -398,7 +409,7 @@ private final class UpdatePanelContent {
         case .checking:
             return UpdateStatusMessageView(
                 text: "Checking for updates…",
-                detail: nil,
+                detail: "Connecting to the update server…",
                 spinner: true,
                 sheet: sheet
             )
@@ -418,6 +429,8 @@ private final class UpdatePanelContent {
                 text: "Downright needs to quit to finish installing.",
                 detail: "If a document still has unsaved changes, save it and the update continues on quit. Retry Quit asks again now.",
                 spinner: false,
+                iconName: "clock.arrow.circlepath",
+                iconColor: sheet.accent,
                 sheet: sheet
             )
         case .installing:
@@ -435,6 +448,8 @@ private final class UpdatePanelContent {
                     "You're on the latest version. Last check: \(UpdatePanelDateFormatter.string(from: $0))"
                 } ?? "You're on the latest version.",
                 spinner: false,
+                iconName: "checkmark.circle.fill",
+                iconColor: sheet.accent,
                 sheet: sheet
             )
         case .failed:
@@ -475,7 +490,7 @@ private final class UpdateNotesView: NSView {
         if let metadata {
             let sizeLabel = NSTextField(labelWithString: UpdateNotesView.sizeText(metadata.contentLength))
             sizeLabel.font = PanelFont.secondary
-            sizeLabel.textColor = sheet.textFaint
+            sizeLabel.textColor = sheet.textSecondary
             stack.addArrangedSubview(sizeLabel)
         }
 
@@ -491,6 +506,19 @@ private final class UpdateNotesView: NSView {
         notesTitle.textColor = sheet.textSecondary
         stack.addArrangedSubview(notesTitle)
 
+        let notesCard = NSView()
+        notesCard.translatesAutoresizingMaskIntoConstraints = false
+        notesCard.wantsLayer = true
+        notesCard.layer?.cornerRadius = 10
+        notesCard.layer?.cornerCurve = .continuous
+        notesCard.layer?.masksToBounds = true
+        notesCard.layer?.backgroundColor = sheet.codeBackground.withAlphaComponent(0.60).cgColor
+        notesCard.layer?.borderWidth = 1
+        notesCard.layer?.borderColor = sheet.rule.cgColor
+        stack.addArrangedSubview(notesCard)
+        notesCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        notesCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
@@ -498,9 +526,14 @@ private final class UpdateNotesView: NSView {
         scroll.borderType = .noBorder
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
-        stack.addArrangedSubview(scroll)
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        notesCard.addSubview(scroll)
+
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: notesCard.leadingAnchor, constant: 6),
+            scroll.trailingAnchor.constraint(equalTo: notesCard.trailingAnchor, constant: -6),
+            scroll.topAnchor.constraint(equalTo: notesCard.topAnchor, constant: 6),
+            scroll.bottomAnchor.constraint(equalTo: notesCard.bottomAnchor, constant: -6),
+        ])
 
         switch notesState {
         case .loaded(let data):
@@ -589,26 +622,50 @@ private final class UpdateProgressView: NSView {
         self.sheet = sheet
         super.init(frame: .zero)
 
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.cornerCurve = .continuous
+        let contrast = sheet.increaseContrast
+        container.layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? 0.04 : 0.02).cgColor
+        container.layer?.borderWidth = 1
+        container.layer?.borderColor = sheet.rule.withAlphaComponent(contrast ? 0.6 : 0.35).cgColor
+        addSubview(container)
+
+        let title = NSTextField(labelWithString: "Downloading update…")
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.textColor = sheet.text
+        title.translatesAutoresizingMaskIntoConstraints = false
+
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.style = .bar
         bar.isIndeterminate = false
         bar.minValue = 0
         bar.maxValue = 100
-        addSubview(bar)
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = PanelFont.secondary
-        detailLabel.textColor = sheet.textFaint
-        addSubview(detailLabel)
+        detailLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        detailLabel.textColor = sheet.textSecondary
+
+        let stack = NSStackView(views: [title, bar, detailLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        container.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bar.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            container.leadingAnchor.constraint(equalTo: leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: trailingAnchor),
+            container.topAnchor.constraint(equalTo: topAnchor),
+            container.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            detailLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            detailLabel.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: 6),
-            detailLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+
+            bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         update(received: received, expected: expected)
         setAccessibilityRole(.progressIndicator)
@@ -638,40 +695,110 @@ private final class UpdateProgressView: NSView {
 
 @MainActor
 private final class UpdateStatusMessageView: NSView {
-    init(text: String, detail: String?, spinner: Bool, sheet: StyleSheet) {
+    init(
+        text: String,
+        detail: String?,
+        spinner: Bool,
+        iconName: String? = nil,
+        iconColor: NSColor? = nil,
+        sheet: StyleSheet
+    ) {
         super.init(frame: .zero)
-        let title = NSTextField(wrappingLabelWithString: text)
-        title.font = PanelFont.system(13, weight: .medium)
-        title.textColor = sheet.text
-        title.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [title])
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.cornerCurve = .continuous
+        let contrast = sheet.increaseContrast
+        container.layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? 0.04 : 0.02).cgColor
+        container.layer?.borderWidth = 1
+        container.layer?.borderColor = sheet.rule.withAlphaComponent(contrast ? 0.6 : 0.35).cgColor
+        addSubview(container)
+
+        let stack = NSStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
-        stack.alignment = .leading
+        stack.alignment = .centerX
         stack.spacing = 8
-        if let detail {
-            let detailLabel = NSTextField(wrappingLabelWithString: detail)
-            detailLabel.font = PanelFont.row
-            detailLabel.textColor = sheet.textSecondary
-            stack.addArrangedSubview(detailLabel)
-        }
-        if spinner {
+        container.addSubview(stack)
+
+        if let iconName {
+            let iconWell = NSView()
+            iconWell.translatesAutoresizingMaskIntoConstraints = false
+            iconWell.wantsLayer = true
+            iconWell.layer?.cornerRadius = 24
+            iconWell.layer?.cornerCurve = .continuous
+            let tint = iconColor ?? sheet.accent
+            iconWell.layer?.backgroundColor = tint.withAlphaComponent(contrast ? 0.18 : 0.12).cgColor
+
+            let icon = NSImageView()
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .semibold)
+            icon.contentTintColor = tint
+            iconWell.addSubview(icon)
+
+            NSLayoutConstraint.activate([
+                iconWell.widthAnchor.constraint(equalToConstant: 48),
+                iconWell.heightAnchor.constraint(equalToConstant: 48),
+                icon.centerXAnchor.constraint(equalTo: iconWell.centerXAnchor),
+                icon.centerYAnchor.constraint(equalTo: iconWell.centerYAnchor),
+            ])
+            stack.addArrangedSubview(iconWell)
+            stack.setCustomSpacing(12, after: iconWell)
+        } else if spinner {
+            let spinWell = NSView()
+            spinWell.translatesAutoresizingMaskIntoConstraints = false
+            spinWell.wantsLayer = true
+            spinWell.layer?.cornerRadius = 24
+            spinWell.layer?.cornerCurve = .continuous
+            spinWell.layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? 0.08 : 0.04).cgColor
+
             let indicator = NSProgressIndicator()
             indicator.style = .spinning
-            indicator.controlSize = .small
+            indicator.controlSize = .regular
             indicator.translatesAutoresizingMaskIntoConstraints = false
             indicator.startAnimation(nil)
-            let row = NSStackView(views: [indicator])
-            row.orientation = .horizontal
-            stack.addArrangedSubview(row)
+            spinWell.addSubview(indicator)
+
+            NSLayoutConstraint.activate([
+                spinWell.widthAnchor.constraint(equalToConstant: 48),
+                spinWell.heightAnchor.constraint(equalToConstant: 48),
+                indicator.centerXAnchor.constraint(equalTo: spinWell.centerXAnchor),
+                indicator.centerYAnchor.constraint(equalTo: spinWell.centerYAnchor),
+            ])
+            stack.addArrangedSubview(spinWell)
+            stack.setCustomSpacing(12, after: spinWell)
         }
-        addSubview(stack)
+
+        let title = NSTextField(wrappingLabelWithString: text)
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.textColor = sheet.text
+        title.alignment = .center
+        title.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(title)
+
+        if let detail {
+            let detailLabel = NSTextField(wrappingLabelWithString: detail)
+            detailLabel.font = .systemFont(ofSize: 12.5, weight: .regular)
+            detailLabel.textColor = sheet.textSecondary
+            detailLabel.alignment = .center
+            detailLabel.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(detailLabel)
+            stack.setCustomSpacing(4, after: title)
+        }
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            container.leadingAnchor.constraint(equalTo: leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: trailingAnchor),
+            container.topAnchor.constraint(equalTo: topAnchor),
+            container.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
         ])
     }
 
@@ -696,6 +823,7 @@ private final class UpdateFailureView: NSView {
         iconWell.translatesAutoresizingMaskIntoConstraints = false
         iconWell.wantsLayer = true
         iconWell.layer?.cornerRadius = 12
+        iconWell.layer?.cornerCurve = .continuous
         iconWell.layer?.masksToBounds = true
         iconWell.layer?.backgroundColor = danger.withAlphaComponent(
             sheet.increaseContrast ? 0.20 : 0.12
@@ -755,6 +883,7 @@ private final class UpdateFailureView: NSView {
         detailPanel.translatesAutoresizingMaskIntoConstraints = false
         detailPanel.wantsLayer = true
         detailPanel.layer?.cornerRadius = 8
+        detailPanel.layer?.cornerCurve = .continuous
         detailPanel.layer?.masksToBounds = true
         detailPanel.layer?.backgroundColor = sheet.codeBackground.withAlphaComponent(0.72).cgColor
         detailPanel.layer?.borderWidth = 1
@@ -790,6 +919,7 @@ private final class UpdateFailureView: NSView {
         detailDisclosure.toolTip = "Show technical details"
         detailDisclosure.wantsLayer = true
         detailDisclosure.layer?.cornerRadius = 7
+        detailDisclosure.layer?.cornerCurve = .continuous
         detailDisclosure.layer?.masksToBounds = true
         detailDisclosure.layer?.backgroundColor = sheet.text.withAlphaComponent(
             sheet.increaseContrast ? 0.12 : 0.07
@@ -913,6 +1043,7 @@ final class UpdatePanelButton: NSButton {
         focusRingType = .default
         wantsLayer = true
         layer?.cornerRadius = 8
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         target = actionTarget
         self.action = #selector(ActionTarget.run(_:))
@@ -922,6 +1053,10 @@ final class UpdatePanelButton: NSButton {
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
     func apply(sheet: StyleSheet) {
         self.sheet = sheet
         let titleColor: NSColor
@@ -929,13 +1064,13 @@ final class UpdatePanelButton: NSButton {
         case .primary:
             titleColor = .white
             contentTintColor = .white
-            layer?.backgroundColor = sheet.accent.cgColor
-            layer?.borderColor = sheet.accent.blended(withFraction: 0.18, of: .white)?.cgColor
+            layer?.backgroundColor = sheet.startWindowPrimaryAction.cgColor
+            layer?.borderColor = sheet.startWindowPrimaryAction.blended(withFraction: 0.18, of: .white)?.cgColor
         case .secondary:
             titleColor = sheet.text
             contentTintColor = sheet.text
-            layer?.backgroundColor = sheet.text.withAlphaComponent(0.12).cgColor
-            layer?.borderColor = sheet.text.withAlphaComponent(0.20).cgColor
+            layer?.backgroundColor = sheet.text.withAlphaComponent(sheet.increaseContrast ? 0.12 : 0.06).cgColor
+            layer?.borderColor = sheet.rule.withAlphaComponent(sheet.increaseContrast ? 0.60 : 0.35).cgColor
         }
         layer?.borderWidth = 1
         attributedTitle = NSAttributedString(

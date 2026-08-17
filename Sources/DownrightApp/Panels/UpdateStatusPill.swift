@@ -82,7 +82,9 @@ final class UpdateStatusPill: NSButton {
         shell.translatesAutoresizingMaskIntoConstraints = false
         shell.wantsLayer = true
         shell.layer?.cornerRadius = Metrics.cornerRadius
+        shell.layer?.cornerCurve = .continuous
         feedbackLayer.cornerRadius = Metrics.cornerRadius
+        feedbackLayer.cornerCurve = .continuous
         feedbackLayer.opacity = 0
         shell.layer?.addSublayer(feedbackLayer)
         addSubview(shell)
