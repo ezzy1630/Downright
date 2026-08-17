@@ -1805,6 +1805,10 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
     private var editing = false
     /// Esc marks the edit so `controlTextDidEndEditing` does not commit it.
     private var cancelled = false
+    /// Return and focus loss can arrive for the same field edit. The row owns
+    /// one commit boundary so either delivery path can finish it, but never
+    /// deliver the title twice.
+    private var commitSent = false
 
     override func hoverDidChange() { applyStyle(animated: window != nil) }
 
@@ -1855,7 +1859,10 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
         self.styleSheet = styleSheet
         let wasEditing = self.editing
         self.editing = editing
-        cancelled = false
+        if editing != wasEditing || !editing {
+            cancelled = false
+            commitSent = false
+        }
         swapEditorChrome(editing: editing, animated: wasEditing != editing)
         if !editing { textField.stringValue = "" }
         setAccessibilityRole(editing ? nil : .button)
@@ -1924,12 +1931,14 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
         if command == #selector(NSResponder.cancelOperation(_:)) {
+            guard editing else { return true }
             cancelled = true
+            commitSent = true
             onCancel?()
             return true
         }
         if command == #selector(NSResponder.insertNewline(_:)) {
-            onCommit?(textField.stringValue)
+            commitIfNeeded()
             return true
         }
         return false
@@ -1938,7 +1947,12 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
     /// Clicking away commits whatever is typed — losing the title the reader
     /// just wrote because they clicked the document would be unforgivable.
     func controlTextDidEndEditing(_ obj: Notification) {
-        guard editing, !cancelled else { return }
+        commitIfNeeded()
+    }
+
+    private func commitIfNeeded() {
+        guard editing, !cancelled, !commitSent else { return }
+        commitSent = true
         onCommit?(textField.stringValue)
     }
 

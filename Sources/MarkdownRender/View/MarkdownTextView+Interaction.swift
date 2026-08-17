@@ -76,7 +76,27 @@ extension MarkdownTextView {
     /// index as well, because an insertion index sits *between* characters and
     /// a link's last glyph would otherwise not be hoverable.
     func attribute(_ key: NSAttributedString.Key, at point: NSPoint) -> (value: Any, range: NSRange)? {
-        attribute(key, atSourceOffset: sourceOffset(at: point))
+        attribute(key, at: point, sourceOffset: sourceOffset(at: point))
+    }
+
+    /// Attribute under a point when the caller already resolved its source
+    /// offset. Inline targets need one extra check: TextKit returns the nearest
+    /// insertion boundary, so the usual `offset - 1` fallback can otherwise
+    /// make the whitespace immediately after a link activate that link.
+    private func attribute(
+        _ key: NSAttributedString.Key,
+        at point: NSPoint,
+        sourceOffset offset: Int
+    ) -> (value: Any, range: NSRange)? {
+        let pointSensitive = key == .drLink || key == .drPathToken || key == .drReference
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        for candidate in [offset, offset - 1]
+            where candidate >= 0 && candidate < storage.length {
+            guard let hit = attributeValue(key, atSourceOffset: candidate) else { continue }
+            if pointSensitive, !renderedTextContains(point, sourceRange: hit.range) { continue }
+            return hit
+        }
+        return nil
     }
 
     /// The same hit test against an offset the caller already resolved.
@@ -92,12 +112,20 @@ extension MarkdownTextView {
     ) -> (value: Any, range: NSRange)? {
         guard let storage = textStorage, storage.length > 0 else { return nil }
         for candidate in [offset, offset - 1] where candidate >= 0 && candidate < storage.length {
-            var range = NSRange(location: 0, length: 0)
-            if let value = storage.attribute(key, at: candidate, effectiveRange: &range) {
-                return (value, range)
-            }
+            if let hit = attributeValue(key, atSourceOffset: candidate) { return hit }
         }
         return nil
+    }
+
+    private func attributeValue(
+        _ key: NSAttributedString.Key,
+        atSourceOffset offset: Int
+    ) -> (value: Any, range: NSRange)? {
+        guard let storage = textStorage, storage.length > 0,
+              offset >= 0, offset < storage.length else { return nil }
+        var range = NSRange(location: 0, length: 0)
+        guard let value = storage.attribute(key, at: offset, effectiveRange: &range) else { return nil }
+        return (value, range)
     }
 
     func fragmentPayload(at point: NSPoint) -> (payload: FragmentPayload, range: NSRange)? {
@@ -136,7 +164,7 @@ extension MarkdownTextView {
         // One TextKit hit test answers every question this method asks.
         let offset = sourceOffset(at: point)
         let payload = fragmentPayload(atSourceOffset: offset)?.payload
-        let linkHit = attribute(.drLink, atSourceOffset: offset)
+        let linkHit = attribute(.drLink, at: point, sourceOffset: offset)
 
         // Code blocks reveal a copy button; images reveal that they open; tables
         // zebra the row under the pointer (§7.1, §11.3).
@@ -175,7 +203,7 @@ extension MarkdownTextView {
         var linkRange: NSRange?
         if let linkHit, linkHit.range.length > 0, payload?.kind != .image {
             linkRange = linkHit.range
-        } else if let pathHit = attribute(.drPathToken, atSourceOffset: offset),
+        } else if let pathHit = attribute(.drPathToken, at: point, sourceOffset: offset),
                   pathHit.range.length > 0,
                   attribute(.drPathExists, atSourceOffset: offset)?.value as? Bool == true {
             // A resolvable path is interactive, so it answers the pointer the
@@ -199,7 +227,7 @@ extension MarkdownTextView {
             nextToolTip = alt.isEmpty ? nil : alt
         } else if payload?.kind == .frontMatter {
             nextToolTip = "Edit front matter"
-        } else if let hit = attribute(.drReference, atSourceOffset: offset),
+        } else if let hit = attribute(.drReference, at: point, sourceOffset: offset),
                   let identifier = hit.value as? String,
                   let footnote = parsedDocument.footnotes[identifier] {
             nextToolTip = parsedDocument.substring(footnote.contentRange)
@@ -235,17 +263,17 @@ extension MarkdownTextView {
         if mode == .live {
             // Rendered targets are actionable on a normal click. Option-click
             // still falls through to the editor for caret placement.
-            return attribute(.drCheckbox, atSourceOffset: offset) != nil
-                || attribute(.drLink, atSourceOffset: offset) != nil
-                || attribute(.drReference, atSourceOffset: offset) != nil
-                || attribute(.drPathToken, atSourceOffset: offset) != nil
+            return attribute(.drCheckbox, at: point, sourceOffset: offset) != nil
+                || attribute(.drLink, at: point, sourceOffset: offset) != nil
+                || attribute(.drReference, at: point, sourceOffset: offset) != nil
+                || attribute(.drPathToken, at: point, sourceOffset: offset) != nil
                 || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
                 || fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter
         }
         guard mode == .read else { return false }
-        return attribute(.drLink, atSourceOffset: offset) != nil
-            || attribute(.drReference, atSourceOffset: offset) != nil
-            || attribute(.drPathToken, atSourceOffset: offset) != nil
+        return attribute(.drLink, at: point, sourceOffset: offset) != nil
+            || attribute(.drReference, at: point, sourceOffset: offset) != nil
+            || attribute(.drPathToken, at: point, sourceOffset: offset) != nil
             || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
             || fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter
     }
@@ -356,12 +384,14 @@ extension MarkdownTextView {
         // so Document mode does not require a trip to Source. In Source mode
         // the literal `[ ]` remains ordinary editable text.
         if let hit = semanticCheckbox(at: point) {
+            guard event.clickCount == 1 else { return }
             markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.markOffset)
             confirmCheckboxToggle(in: hit.blockRange, checked: !hit.checked)
             return
         }
 
         if mode != .source, let hit = attribute(.drCheckbox, at: point) {
+            guard event.clickCount == 1 else { return }
             let wasChecked = (hit.value as? Bool) ?? false
             markdownDelegate?.markdownTextView(self, didToggleCheckboxAtMarkOffset: hit.range.location)
             if let blockRange = fragmentPayload(at: point)?.payload.sourceRange {
@@ -666,7 +696,7 @@ extension MarkdownTextView {
     }
 
     private func contextTarget(at point: NSPoint, offset: Int) -> ContextTarget {
-        if let hit = attribute(.drPathToken, at: point), let token = hit.value as? PathToken {
+        if let hit = attribute(.drPathToken, at: point, sourceOffset: offset), let token = hit.value as? PathToken {
             return ContextTarget(kind: .pathToken(token), sourceRange: hit.range, hitOffset: offset)
         }
         if let hit = fragmentPayload(at: point) {
@@ -693,7 +723,7 @@ extension MarkdownTextView {
                 break
             }
         }
-        if let hit = attribute(.drLink, at: point), let destination = hit.value as? String {
+        if let hit = attribute(.drLink, at: point, sourceOffset: offset), let destination = hit.value as? String {
             return ContextTarget(kind: .link(destination), sourceRange: hit.range, hitOffset: offset)
         }
         if let index = parsedDocument.headings.firstIndex(where: { $0.range.contains(offset: offset) }) {

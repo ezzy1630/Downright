@@ -217,6 +217,37 @@ struct EditingKeyReproTests {
         #expect(controller.markdownDocument.text.contains("xyBody text."))
     }
 
+    @Test("native undo and redo round-trip a rendered edit")
+    func nativeUndoRedoRoundTripTyping() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproUndoRedo-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "# Title\n\nBody text.\n"
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        let body = (source as NSString).range(of: "Body text.")
+        view.setSourceSelectedRanges([NSRange(location: body.location, length: 0)])
+        #expect(pumpMainRunLoop { view.rect(forOffset: body.location) != nil })
+
+        type("x", into: view)
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.contains("xBody text.") })
+        #expect(controller.markdownDocument.undoManager.canUndo)
+
+        controller.markdownDocument.undoManager.undo()
+        #expect(pumpMainRunLoop { controller.markdownDocument.text == source })
+        #expect(controller.markdownDocument.text == source)
+        #expect(controller.markdownDocument.undoManager.canRedo)
+
+        controller.markdownDocument.undoManager.redo()
+        #expect(pumpMainRunLoop { controller.markdownDocument.text.contains("xBody text.") })
+        #expect(controller.markdownDocument.text.contains("xBody text."))
+    }
+
     @Test func typingAtHeadingStartExtendsVisibleTitle() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("EditingKeyReproHeading-\(UUID().uuidString).md")

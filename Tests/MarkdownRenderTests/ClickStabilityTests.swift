@@ -17,6 +17,18 @@ import Testing
 @MainActor
 struct ClickStabilityTests {
 
+    @MainActor
+    private final class Delegate: NSObject, MarkdownTextViewDelegate {
+        var toggledOffsets: [Int] = []
+
+        func markdownTextView(
+            _ view: MarkdownTextView,
+            didToggleCheckboxAtMarkOffset offset: Int
+        ) {
+            toggledOffsets.append(offset)
+        }
+    }
+
     /// A document long enough to scroll, whose paragraphs sit near the wrap
     /// boundary so revealing their markers changes their line count.
     private static func document() -> String {
@@ -197,13 +209,89 @@ struct ClickStabilityTests {
         container.layoutSubtreeIfNeeded()
 
         let link = (text as NSString).range(of: "Jump to target")
-        let rect = try #require(view.rect(forOffset: link.location + 2))
-        let hit = view.sourceOffset(at: NSPoint(x: rect.midX, y: rect.midY))
+        let start = try #require(view.rect(forOffset: link.location))
+        let end = try #require(view.rect(forOffset: link.upperBound))
+        let point = NSPoint(x: (start.minX + end.minX) * 0.5, y: start.midY)
+        let hit = view.sourceOffset(at: point)
 
         #expect(
             NSLocationInRange(hit, link),
             "rendered link point resolved to source offset \(hit), expected \(link)"
         )
+        #expect(view.attribute(.drLink, at: point) != nil)
+    }
+
+    @Test("clicking the whitespace after a link does not keep the link target hot")
+    func whitespaceAfterLinkIsNotInteractive() throws {
+        let text = "[Jump](https://example.com) after"
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.mode = .live
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        container.layoutSubtreeIfNeeded()
+
+        let link = (text as NSString).range(of: "Jump")
+        let gap = try #require(view.rect(forOffset: link.upperBound))
+        let point = NSPoint(x: gap.minX + max(1, gap.width * 0.5), y: gap.midY)
+
+        #expect(view.attribute(.drLink, at: point) == nil)
+    }
+
+    @Test("a checkbox double-click toggles only once")
+    func checkboxDoubleClickDoesNotToggleTwice() throws {
+        let text = "- [ ] First task\n- [x] Second task\n"
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.mode = .live
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        container.layoutSubtreeIfNeeded()
+
+        let delegate = Delegate()
+        view.markdownDelegate = delegate
+        let task = try #require(view.parsedDocument.tasks.first)
+        let textRect = try #require(view.rect(forOffset: task.contentRange.location))
+        let centreY = textRect.minY + min(view.styleSheet.lineHeight, textRect.height) * 0.44
+        let target = ListOrnamentFragment.taskHitRect(
+            textEdge: textRect.minX,
+            centreY: centreY,
+            bodySize: view.styleSheet.bodyFont().pointSize
+        )
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        let location = view.convert(NSPoint(x: target.midX, y: target.midY), to: nil)
+
+        for clickCount in [1, 2] {
+            let event = try #require(NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: location,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: clickCount,
+                clickCount: clickCount,
+                pressure: 1
+            ))
+            view.mouseDown(with: event)
+        }
+
+        #expect(delegate.toggledOffsets == [task.markRange.location])
     }
 
 }
