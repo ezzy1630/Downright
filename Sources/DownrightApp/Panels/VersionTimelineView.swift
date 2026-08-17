@@ -300,8 +300,14 @@ final class VersionTimelineView: NSView {
         hoveredIndex = index
         // The tooltip names the version the pointer is over, which is the one
         // thing a tick cannot say by itself.
-        toolTip = index.flatMap { versions.element(at: $0) }.map {
-            "\(RelativeTime.stamp($0.date)) · \(RelativeTime.long($0.date))"
+        toolTip = index.flatMap { versions.element(at: $0) }.map { record in
+            let kind = kindLabel(record.kind)
+            if let selected = selectedRecord {
+                let diff = Int(record.date.timeIntervalSince(selected.date))
+                let deltaStr = diff == 0 ? "selected" : (diff > 0 ? "+\(diff)s" : "\(diff)s")
+                return "\(kind) (\(deltaStr)) · \(RelativeTime.stamp(record.date)) · \(RelativeTime.long(record.date))"
+            }
+            return "\(kind) · \(RelativeTime.stamp(record.date)) · \(RelativeTime.long(record.date))"
         }
         needsDisplay = true
     }

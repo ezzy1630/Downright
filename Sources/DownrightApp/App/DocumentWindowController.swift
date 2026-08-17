@@ -534,6 +534,9 @@ final class DocumentWindowController: NSWindowController {
         // the leading lane where the outline it expands into belongs.
         primaryContainer.leadingAccessory = densityGutterView
         breadcrumbView.delegate = self
+        breadcrumbView.onZoomChange = { [weak self] level in
+            self?.setSharedZoom(level)
+        }
         breadcrumbView.styleSheet = activeStyleSheet
         densityGutterView.delegate = self
         densityGutterView.styleSheet = activeStyleSheet

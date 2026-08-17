@@ -35,7 +35,15 @@ final class BreadcrumbView: NSView {
         }
     }
 
-    var zoomLevel: ZoomLevel = .everything
+    var zoomLevel: ZoomLevel = .everything {
+        didSet {
+            guard zoomLevel != oldValue else { return }
+            updateZoomButton()
+            needsLayout = true
+        }
+    }
+
+    var onZoomChange: ((ZoomLevel) -> Void)?
 
     /// Ancestor chain, root first.  Indices are into the document's headings.
     var trail: [(index: Int, title: String, level: Int)] = [] {
@@ -49,7 +57,9 @@ final class BreadcrumbView: NSView {
     }
 
     private let sectionButton = ToolbarInteractiveButton(frame: .zero)
+    private let zoomButton = ToolbarInteractiveButton(frame: .zero)
     private var sectionAction: ButtonAction?
+    private var zoomAction: ButtonAction?
     private var isCuePresented = false
 
     var isPresentedForTesting: Bool { !isHidden && isCuePresented }
@@ -100,6 +110,22 @@ final class BreadcrumbView: NSView {
         (sectionButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
         addSubview(sectionButton)
 
+        let zAction = ButtonAction { [weak self] in self?.showZoomMenu() }
+        zoomAction = zAction
+        zoomButton.feedbackInsetX = 2
+        zoomButton.feedbackInsetY = 1
+        zoomButton.feedbackCornerRadius = 4
+        zoomButton.isBordered = false
+        zoomButton.bezelStyle = .accessoryBarAction
+        zoomButton.focusRingType = .default
+        zoomButton.imagePosition = .imageLeading
+        zoomButton.imageScaling = .scaleProportionallyDown
+        zoomButton.target = zAction
+        zoomButton.action = #selector(ButtonAction.fire(_:))
+        (zoomButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
+        zoomButton.isHidden = true
+        addSubview(zoomButton)
+
         setAccessibilityRole(.group)
         setAccessibilityLabel("Current section")
         // Keep the lane in layout even when the cue itself is absent. Toggling
@@ -107,6 +133,7 @@ final class BreadcrumbView: NSView {
         isHidden = false
         alphaValue = 1
         sectionButton.alphaValue = 0
+        updateZoomButton()
         rebuild(animated: false)
     }
 
@@ -225,27 +252,104 @@ final class BreadcrumbView: NSView {
         layer.add(transition, forKey: "section-change")
     }
 
+    private func updateZoomButton() {
+        guard zoomLevel != .everything else {
+            zoomButton.isHidden = true
+            return
+        }
+        zoomButton.isHidden = false
+        let label = switch zoomLevel {
+        case .h1: "Top level"
+        case .h2: "Two levels"
+        case .headings: "Headings"
+        case .skeleton: "Skeleton"
+        case .everything: "Everything"
+        }
+        zoomButton.attributedTitle = NSAttributedString(string: "\(label)", attributes: [
+            .font: PanelFont.system(11.5, weight: .medium),
+            .foregroundColor: styleSheet.accent,
+        ])
+        zoomButton.image = NSImage(
+            systemSymbolName: "line.3.horizontal.decrease.circle.fill",
+            accessibilityDescription: "Structural Zoom"
+        )?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+        zoomButton.contentTintColor = styleSheet.accent
+        zoomButton.toolTip = "Structural Zoom active (\(label)). Click to switch or restore all content."
+        zoomButton.setAccessibilityLabel("Structural zoom: \(label)")
+    }
+
     // MARK: - Layout
 
     override func layout() {
         super.layout()
-        guard let current = trail.last else { return }
-        let titleWidth = styledTitle(current.title).size().width
-        let availableWidth = min(max(44, bounds.width), Metrics.maximumButtonWidth)
-        let width = min(availableWidth, titleWidth + Metrics.horizontalContentAllowance)
-        sectionButton.frame = NSRect(
-            x: 0,
-            y: (bounds.height - Metrics.buttonHeight) / 2,
-            width: max(44, width),
-            height: Metrics.buttonHeight
-        )
+        if let current = trail.last {
+            let titleWidth = styledTitle(current.title).size().width
+            let availableWidth = min(max(44, bounds.width), Metrics.maximumButtonWidth)
+            let width = min(availableWidth, titleWidth + Metrics.horizontalContentAllowance)
+            sectionButton.frame = NSRect(
+                x: 0,
+                y: (bounds.height - Metrics.buttonHeight) / 2,
+                width: max(44, width),
+                height: Metrics.buttonHeight
+            )
+        }
+        if !zoomButton.isHidden {
+            let zoomTextWidth = (zoomButton.attributedTitle.string as NSString).size(withAttributes: [
+                .font: PanelFont.system(11.5, weight: .medium)
+            ]).width + 26
+            let zoomX = isCuePresented && !sectionButton.isHidden
+                ? sectionButton.frame.maxX + 8
+                : 0
+            zoomButton.frame = NSRect(
+                x: zoomX,
+                y: (bounds.height - Metrics.buttonHeight) / 2,
+                width: max(40, zoomTextWidth),
+                height: Metrics.buttonHeight
+            )
+        }
         discardCursorRects()
         window?.invalidateCursorRects(for: self)
     }
 
     override func resetCursorRects() {
-        guard isCuePresented, !sectionButton.isHidden else { return }
-        addCursorRect(sectionButton.frame, cursor: .pointingHand)
+        if isCuePresented, !sectionButton.isHidden {
+            addCursorRect(sectionButton.frame, cursor: .pointingHand)
+        }
+        if !zoomButton.isHidden {
+            addCursorRect(zoomButton.frame, cursor: .pointingHand)
+        }
+    }
+
+    private func showZoomMenu() {
+        let menu = NSMenu()
+        for level in ZoomLevel.allCases {
+            let name: String = switch level {
+            case .h1: "Top Level (H1)"
+            case .h2: "Two Levels (H1–H2)"
+            case .headings: "All Headings"
+            case .skeleton: "Skeleton (Headings, First Sentences, Artifacts)"
+            case .everything: "Everything (Full Document)"
+            }
+            let item = NSMenuItem(
+                title: "Level \(level.rawValue) — \(name)",
+                action: #selector(selectZoomItem(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = level
+            item.state = level == zoomLevel ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: zoomButton.frame.minX, y: zoomButton.frame.minY),
+            in: self
+        )
+    }
+
+    @objc private func selectZoomItem(_ sender: NSMenuItem) {
+        guard let level = sender.representedObject as? ZoomLevel else { return }
+        onZoomChange?(level)
     }
 
     private func showPathMenu() {
