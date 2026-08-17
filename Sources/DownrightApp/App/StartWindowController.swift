@@ -21,7 +21,12 @@ enum StartLayout {
     static let bottomInset: CGFloat = 36
     static let sectionSpacing: CGFloat = 20
     static let contentWidth: CGFloat = 592
-    static let buttonHeight: CGFloat = 38
+    static let buttonHeight: CGFloat = 40
+    // Both peer actions share a generous well: 196pt fits the longest title,
+    // icon, and keycap without truncation while keeping the action group
+    // visually compact inside the 592pt welcome column.
+    static let actionButtonWidth: CGFloat = 196
+    static let actionSpacing: CGFloat = 10
     static let rowHeight: CGFloat = 46
     static let rowSpacing: CGFloat = 2
     static let cornerRadius: CGFloat = 7
@@ -175,7 +180,10 @@ private final class StartView: NSView {
     private let hero: StartHeroView
     private let dropOverlay = StartDropOverlay()
     private let contentStack = NSStackView()
-    private let updatePill = UpdateStatusPill()
+    // The start surface has enough context to make an icon-only warning
+    // discoverable through its tooltip and accessibility label. Keep the
+    // titlebar warning from becoming a second hero CTA.
+    private let updatePill = UpdateStatusPill(presentation: .compactWarning)
     private var sheet: StyleSheet
     private var didPlayEntrance = false
     private var keyObserver: NSObjectProtocol?
@@ -261,7 +269,9 @@ private final class StartView: NSView {
         ])
 
         // The drop affordance is a non-interactive accent frame that appears
-        // while a file is dragged anywhere over the window.
+        // while a file is dragged anywhere over the window. There is no idle
+        // helper copy: the window only spends visual attention on dropping
+        // when a drop is actually possible.
         dropOverlay.translatesAutoresizingMaskIntoConstraints = false
         dropOverlay.isHidden = true
         addSubview(dropOverlay)
@@ -278,8 +288,11 @@ private final class StartView: NSView {
         updatePill.translatesAutoresizingMaskIntoConstraints = false
         addSubview(updatePill)
         NSLayoutConstraint.activate([
-            updatePill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            updatePill.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            // Give the warning its own titlebar lane: the extra inset keeps
+            // the pill off the window edge and visually separates it from the
+            // traffic-light/titlebar chrome at small capture sizes.
+            updatePill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            updatePill.topAnchor.constraint(equalTo: topAnchor, constant: 10),
         ])
     }
 
@@ -421,7 +434,6 @@ private final class StartView: NSView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let urls = droppedURLs(from: sender.draggingPasteboard)
         let ok = !urls.isEmpty
-        hero.setDropActive(ok)
         dropOverlay.setActive(ok)
         return ok ? .copy : []
     }
@@ -431,18 +443,15 @@ private final class StartView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
-        hero.setDropActive(false)
         dropOverlay.setActive(false)
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
-        hero.setDropActive(false)
         dropOverlay.setActive(false)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = droppedURLs(from: sender.draggingPasteboard)
-        hero.setDropActive(false)
         dropOverlay.setActive(false)
         guard !urls.isEmpty else { return false }
         guard owner?.beginHandoff() == true else { return false }
@@ -465,9 +474,9 @@ private final class StartView: NSView {
     }
 }
 
-/// A quiet accent frame that acknowledges a drag before the drop.  It draws
-/// nothing on its own state — just a filled border that appears and fades,
-/// and it never takes a hit so the content underneath stays interactive.
+/// A quiet accent frame that acknowledges a drag before the drop. It is hidden
+/// at rest and becomes a dashed border only while a supported file is over the
+/// window, so the welcome surface never carries a permanent instruction line.
 private final class StartDropOverlay: NSView {
     private var isActive = false
     private var sheet = StartTheme.makeSheet()
@@ -476,7 +485,6 @@ private final class StartDropOverlay: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 14
-        layer?.borderWidth = 1.5
         layer?.opacity = 0
         apply(sheet: sheet)
     }
@@ -488,17 +496,21 @@ private final class StartDropOverlay: NSView {
     func apply(sheet: StyleSheet) {
         self.sheet = sheet
         let contrast = sheet.increaseContrast
-        layer?.borderColor = sheet.accent.cgColor
         layer?.backgroundColor = sheet.accent
-            .withAlphaComponent(contrast ? 0.12 : 0.07).cgColor
+            .withAlphaComponent(contrast ? 0.055 : 0.025).cgColor
+        needsDisplay = true
     }
 
     func setActive(_ active: Bool) {
         guard active != isActive else { return }
         isActive = active
         isHidden = false
+        needsDisplay = true
         let reduce = sheet.reduceMotion
-        let apply = { self.layer?.opacity = active ? 1 : 0 }
+        let apply = {
+            self.layer?.opacity = active ? 1 : 0
+            self.needsDisplay = true
+        }
         if reduce {
             apply()
             if !active { isHidden = true }
@@ -511,6 +523,21 @@ private final class StartDropOverlay: NSView {
                 }
             }
         }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isActive, let context = NSGraphicsContext.current?.cgContext else { return }
+        let rect = bounds.insetBy(dx: 1.5, dy: 1.5)
+        let path = CGPath(roundedRect: rect, cornerWidth: 13, cornerHeight: 13, transform: nil)
+        context.saveGState()
+        context.addPath(path)
+        context.setLineWidth(1.5)
+        context.setLineDash(phase: 0, lengths: [7, 5])
+        context.setStrokeColor(sheet.accent.withAlphaComponent(
+            sheet.increaseContrast ? 0.8 : 0.52
+        ).cgColor)
+        context.strokePath()
+        context.restoreGState()
     }
 }
 
@@ -528,10 +555,9 @@ private final class StartCanvasView: NSView {
 
 // MARK: - Hero
 
-/// The welcome column: brand, one clear sentence, two entry paths, and a quiet
-/// drop hint.  The primary action is the only filled accent shape in the hero
-/// (Von Restorff: one strong cue per screen), and the hint under it is passive
-/// copy, not a third button (Hick: two choices at the decision point).
+/// The welcome column: brand, one clear sentence, and two equally weighted
+/// entry paths. Dragging is communicated by the window-level overlay, not by a
+/// permanent instruction that competes with the actual actions.
 private final class StartHeroView: NSView {
     let openButton: StartActionButton
     private let newButton: StartActionButton
@@ -541,16 +567,11 @@ private final class StartHeroView: NSView {
     private let brandLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
-    private let dropHint = NSTextField(labelWithString: "")
-    private let dropIcon = NSImageView()
     private let brand: BrandMarkView
     private let guide: StartGuideOffer
     /// Whether this window has anything of the user's own to show.
     private let isReturning: Bool
     private var sheet: StyleSheet
-    private var isDropActive = false
-    private static let idleDropHint = "You can also drop a file anywhere"
-
     init(
         owner: StartWindowController, guide: StartGuideOffer,
         isReturning: Bool, sheet: StyleSheet
@@ -560,12 +581,12 @@ private final class StartHeroView: NSView {
         let guideLeads = guide == .primary
         openButton = StartActionButton(
             title: "Open File", icon: "folder", command: .open,
-            kind: guideLeads ? .secondary : .primary, sheet: sheet, target: owner,
+            kind: .secondary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.openPanel(_:))
         )
         newButton = StartActionButton(
             title: "New Document", icon: "doc", command: .newDocument,
-            kind: .secondary, sheet: sheet, target: owner,
+            kind: guideLeads ? .secondary : .primary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.newDocument(_:))
         )
         guideButton = guide == .unavailable ? nil : StartActionButton(
@@ -573,7 +594,7 @@ private final class StartHeroView: NSView {
             kind: guideLeads ? .primary : .secondary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.openGuide(_:))
         )
-        leadButton = (guideLeads ? guideButton : nil) ?? openButton
+        leadButton = (guideLeads ? guideButton : nil) ?? newButton
         brand = BrandMarkView()
         self.sheet = sheet
         super.init(frame: .zero)
@@ -598,50 +619,35 @@ private final class StartHeroView: NSView {
         subtitleLabel.preferredMaxLayoutWidth = StartLayout.contentWidth
         configurePassiveLabel(subtitleLabel)
 
-        // Peer entry paths, with exactly one carrying primary emphasis.
+        // Peer entry paths, with exactly one carrying primary emphasis. On a
+        // normal launch creation is the strongest next step; a first-launch
+        // tour temporarily takes that role because it is the onboarding path.
         let actions = NSStackView(views: [openButton, newButton] + (guideButton.map { [$0] } ?? []))
         actions.orientation = .horizontal
         actions.alignment = .centerY
-        actions.spacing = 8
+        actions.spacing = StartLayout.actionSpacing
         actions.distribution = .fill
 
-        dropIcon.translatesAutoresizingMaskIntoConstraints = false
-        dropIcon.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: nil)
-        dropIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-        dropIcon.setContentHuggingPriority(.required, for: .horizontal)
-
-        dropHint.translatesAutoresizingMaskIntoConstraints = false
-        dropHint.font = .systemFont(ofSize: 12, weight: .regular)
-        dropHint.alignment = .left
-        configurePassiveLabel(dropHint)
-
-        let dropSlot = NSStackView(views: [dropIcon, dropHint])
-        dropSlot.orientation = .horizontal
-        dropSlot.alignment = .centerY
-        dropSlot.spacing = 6
-        dropSlot.translatesAutoresizingMaskIntoConstraints = false
-
-        let stack = NSStackView(views: [brandRow, titleLabel, subtitleLabel, actions, dropSlot])
+        let stack = NSStackView(views: [brandRow, titleLabel, subtitleLabel, actions])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 0
         addSubview(stack)
 
-        // Each action sizes to its own content.  Matching the two widths was
-        // worse than ragged: the shorter "Open File" absorbed the difference as
-        // a wide label-to-shortcut gap, and the longer "New Document" fit with
-        // zero headroom, so any measurement drift clipped it mid-word — the
-        // same failure the old fixed width had.
+        // The two file actions are peer entry points, so they share a control
+        // well. The shortcut keycap remains right-aligned inside each well,
+        // which keeps the labels readable without turning one action into the
+        // visually dominant choice just because its title is longer.
         var constraints: [NSLayoutConstraint] = [
             brand.widthAnchor.constraint(equalToConstant: 38),
             brand.heightAnchor.constraint(equalToConstant: 38),
             openButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight),
             newButton.heightAnchor.constraint(equalToConstant: StartLayout.buttonHeight),
+            openButton.widthAnchor.constraint(equalToConstant: StartLayout.actionButtonWidth),
+            newButton.widthAnchor.constraint(equalToConstant: StartLayout.actionButtonWidth),
             titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: StartLayout.contentWidth),
-            dropSlot.widthAnchor.constraint(equalTo: stack.widthAnchor),
-
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
@@ -654,10 +660,9 @@ private final class StartHeroView: NSView {
         }
         NSLayoutConstraint.activate(constraints)
 
-        stack.setCustomSpacing(16, after: brandRow)
+        stack.setCustomSpacing(12, after: brandRow)
         stack.setCustomSpacing(4, after: titleLabel)
-        stack.setCustomSpacing(20, after: subtitleLabel)
-        stack.setCustomSpacing(9, after: actions)
+        stack.setCustomSpacing(18, after: subtitleLabel)
 
         apply(sheet: sheet)
         setAccessibilityRole(.group)
@@ -712,26 +717,7 @@ private final class StartHeroView: NSView {
         )
         subtitleLabel.stringValue = subheadline
         subtitleLabel.textColor = sheet.textSecondary
-        dropHint.textColor = isDropActive ? sheet.accent : sheet.textSecondary
-        dropIcon.contentTintColor = isDropActive ? sheet.accent : sheet.textFaint
-        if !isDropActive { dropHint.stringValue = Self.idleDropHint }
         needsDisplay = true
-    }
-
-    func setDropActive(_ active: Bool) {
-        guard active != isDropActive else { return }
-        isDropActive = active
-        let reduceMotion = sheet.reduceMotion
-        let changes = {
-            self.dropHint.textColor = active ? self.sheet.accent : self.sheet.textSecondary
-            self.dropIcon.contentTintColor = active ? self.sheet.accent : self.sheet.textFaint
-            self.dropHint.stringValue = active ? "Release to open" : Self.idleDropHint
-        }
-        if reduceMotion {
-            changes()
-        } else {
-            Motion.run(reduceMotion: false, duration: Motion.quick, curve: .easeOut) { _ in changes() }
-        }
     }
 }
 
@@ -745,35 +731,26 @@ private func configurePassiveLabel(_ field: NSTextField) {
 
 // MARK: - Recents
 
-/// The recents list: a quiet header (label, count, clear) over equal-height
-/// rows.  Uniform row height and tight spacing make the list read as one
-/// gestalt group; the title carries the weight and the trailing detail stays
-/// faint so names are found pre-attentively.
+/// The recents list: a quiet header (label, shortcut hint) over equal-height
+/// rows. Uniform row height and tight spacing make the list read as one gestalt
+/// group; the title carries the weight, the timestamp owns a fixed trailing
+/// column, and the ordinal keycap appears only for the row under attention.
 private final class RecentDocumentsPanel: NSView {
     private weak var owner: StartWindowController?
     private let headerLabel = NSTextField(labelWithString: "Recent files")
     private let countLabel = NSTextField(labelWithString: "")
-    private let clearButton: StartTextButton
     private let divider = NSView()
     private let list = NSStackView()
     private var rowViews: [RecentDocumentButton] = []
     private var displayedRecents: [RecentDocument] = []
     private var sheet: StyleSheet
-    private var clearAction: ButtonAction?
 
     init(recents: [RecentDocument], owner: StartWindowController, sheet: StyleSheet) {
         self.owner = owner
         self.sheet = sheet
-        let clear = StartTextButton(title: "Clear")
-        self.clearButton = clear
         super.init(frame: .zero)
 
-        let action = ButtonAction { [weak owner] in owner?.onClearRecents?() }
-        clearAction = action
-        clear.target = action
-        clear.action = #selector(ButtonAction.fire(_:))
-        clear.setAccessibilityLabel("Clear recent files")
-        clear.toolTip = "Clear the recent files list"
+        menu = Self.makeContextMenu(owner: owner)
 
         // A hairline rule separates the decide phase (hero) from the continue
         // phase (recents); two kinds of work should not share one silent gap.
@@ -796,9 +773,6 @@ private final class RecentDocumentsPanel: NSView {
         header.translatesAutoresizingMaskIntoConstraints = false
         addSubview(header)
 
-        clearButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(clearButton)
-
         list.translatesAutoresizingMaskIntoConstraints = false
         list.orientation = .vertical
         list.alignment = .width
@@ -811,12 +785,10 @@ private final class RecentDocumentsPanel: NSView {
             divider.topAnchor.constraint(equalTo: topAnchor),
             divider.heightAnchor.constraint(equalToConstant: 1),
 
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            // Keep the section label on the same vertical grid as each file
+            // title; the document glyph lives in the small leading gutter.
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 36),
             header.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 12),
-
-            clearButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            clearButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            clearButton.leadingAnchor.constraint(greaterThanOrEqualTo: header.trailingAnchor, constant: 12),
 
             list.leadingAnchor.constraint(equalTo: leadingAnchor),
             list.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -846,7 +818,6 @@ private final class RecentDocumentsPanel: NSView {
             .withAlphaComponent(sheet.increaseContrast ? 0.6 : 0.4).cgColor
         headerLabel.textColor = sheet.textSecondary
         countLabel.textColor = sheet.textFaint
-        clearButton.apply(sheet: sheet)
         for row in rowViews {
             row.apply(sheet: sheet)
         }
@@ -887,8 +858,6 @@ private final class RecentDocumentsPanel: NSView {
         let shown = min(recents.count, StartWindowController.recentDisplayLimit)
         countLabel.stringValue = shown > 1 ? "⌘1–\(shown)" : ""
         countLabel.isHidden = countLabel.stringValue.isEmpty
-        clearButton.isHidden = recents.isEmpty
-
         if recents.isEmpty {
             let empty = RecentEmptyState(sheet: sheet)
             empty.translatesAutoresizingMaskIntoConstraints = false
@@ -920,68 +889,18 @@ private final class RecentDocumentsPanel: NSView {
             }
         }
     }
-}
 
-/// A quiet text button (header-level Clear) with its own hover: faint at rest,
-/// a step brighter under the pointer, always a plain label — never a bezel.
-private final class StartTextButton: NSButton {
-    private var isHovered = false
-    private var sheet: StyleSheet = StartTheme.makeSheet()
-
-    init(title: String) {
-        super.init(frame: .zero)
-        self.title = title
-        isBordered = false
-        setButtonType(.momentaryChange)
-        focusRingType = .none
-        font = .systemFont(ofSize: 11.5, weight: .regular)
-        setAccessibilityRole(.button)
-        wantsLayer = true
-        addTrackingArea(NSTrackingArea(
-            rect: .zero,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        ))
-        apply(sheet: sheet)
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: ceil(title.size(withAttributes: [.font: font ?? .systemFont(ofSize: 11.5)]).width), height: 20)
-    }
-
-    override var acceptsFirstResponder: Bool { true }
-
-    override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: bounds.insetBy(dx: -3, dy: -2), xRadius: 5, yRadius: 5).fill()
-    }
-
-    override var focusRingMaskBounds: NSRect { bounds.insetBy(dx: -3, dy: -2) }
-
-    func apply(sheet: StyleSheet) {
-        self.sheet = sheet
-        attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11.5, weight: .regular),
-                .foregroundColor: isHovered ? sheet.textSecondary : sheet.textFaint,
-            ]
+    fileprivate static func makeContextMenu(owner: StartWindowController) -> NSMenu {
+        let menu = NSMenu()
+        let clear = NSMenuItem(
+            title: "Clear Recent Files…",
+            action: #selector(StartWindowController.clearRecents(_:)),
+            keyEquivalent: ""
         )
+        clear.target = owner
+        menu.addItem(clear)
+        return menu
     }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        apply(sheet: sheet)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        apply(sheet: sheet)
-    }
-
-    override func highlight(_ flag: Bool) {}
 }
 
 private final class RecentEmptyState: NSView {
@@ -1044,7 +963,8 @@ private final class StartActionButton: NSButton {
     private let iconView = NSImageView()
     private let titleLabel: NSTextField
     private let shortcutLabel = NSTextField(labelWithString: "")
-    private var shortcutGap: NSLayoutConstraint!
+    private let contentGroup = NSStackView()
+    private var shortcutWidth: NSLayoutConstraint!
     private var isHovered = false
     private var isPressed = false
     private var sheet: StyleSheet
@@ -1083,45 +1003,55 @@ private final class StartActionButton: NSButton {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
-        shell.addSubview(iconView)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.lineBreakMode = .byClipping
+        titleLabel.usesSingleLineMode = true
+        titleLabel.lineBreakMode = .byTruncatingTail
         configurePassiveLabel(titleLabel)
-        shell.addSubview(titleLabel)
-
         shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
-        shortcutLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        shortcutLabel.lineBreakMode = .byClipping
+        shortcutLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        shortcutLabel.alignment = .center
+        shortcutLabel.usesSingleLineMode = true
+        shortcutLabel.lineBreakMode = .byTruncatingTail
+        shortcutLabel.wantsLayer = true
+        shortcutLabel.layer?.cornerRadius = 5
+        shortcutLabel.layer?.masksToBounds = true
         configurePassiveLabel(shortcutLabel)
-        shell.addSubview(shortcutLabel)
+        contentGroup.orientation = .horizontal
+        contentGroup.alignment = .centerY
+        contentGroup.spacing = 10
+        contentGroup.detachesHiddenViews = true
+        contentGroup.translatesAutoresizingMaskIntoConstraints = false
+        contentGroup.addArrangedSubview(iconView)
+        contentGroup.addArrangedSubview(titleLabel)
+        contentGroup.addArrangedSubview(shortcutLabel)
+        contentGroup.setCustomSpacing(12, after: titleLabel)
+        shell.addSubview(contentGroup)
 
-        shortcutGap = shortcutLabel.leadingAnchor.constraint(
-            greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: Self.shortcutGapWidth
-        )
+        shortcutWidth = shortcutLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 30)
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
             shell.trailingAnchor.constraint(equalTo: trailingAnchor),
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            iconView.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 14),
-            iconView.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 14),
-            iconView.heightAnchor.constraint(equalToConstant: 14),
+            contentGroup.leadingAnchor.constraint(greaterThanOrEqualTo: shell.leadingAnchor, constant: 12),
+            contentGroup.trailingAnchor.constraint(lessThanOrEqualTo: shell.trailingAnchor, constant: -12),
+            contentGroup.centerXAnchor.constraint(equalTo: shell.centerXAnchor),
+            contentGroup.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
 
-            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 7),
-            titleLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-
-            shortcutGap,
-            shortcutLabel.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -14),
-            shortcutLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+            shortcutWidth,
+            // A low keycap is enough to signal the binding without becoming a
+            // second control inside the control.
+            shortcutLabel.heightAnchor.constraint(equalToConstant: 20),
         ])
 
         // The label must never be the thing that gives: a clipped "New Documen"
         // is worse than a wider button.
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        shortcutLabel.setContentHuggingPriority(.required, for: .horizontal)
         shortcutLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         isEnabled = true
@@ -1145,9 +1075,6 @@ private final class StartActionButton: NSButton {
         updateSurface(animated: false)
     }
 
-    /// Space between the label and the shortcut when there is a shortcut.
-    private static let shortcutGapWidth: CGFloat = 12
-
     /// Re-reads the binding.  A command with no binding shows no hint and the
     /// button closes up around its label.
     func refreshShortcut() {
@@ -1156,7 +1083,7 @@ private final class StartActionButton: NSButton {
             .map(\.displayString) ?? ""
         shortcutLabel.stringValue = hint
         shortcutLabel.isHidden = hint.isEmpty
-        shortcutGap.constant = hint.isEmpty ? 0 : Self.shortcutGapWidth
+        shortcutWidth.isActive = !hint.isEmpty
         setAccessibilityHelp(hint.isEmpty ? nil : hint)
         invalidateIntrinsicContentSize()
         needsLayout = true
@@ -1171,10 +1098,10 @@ private final class StartActionButton: NSButton {
         // the under-reported intrinsic made the shell ~4pt too narrow — the
         // label-to-shortcut gap collapsed below its constant and the longer
         // label clipped.  fittingSize is what the label actually renders at.
-        let titleW = titleLabel.fittingSize.width
-        let shortW = shortcutLabel.isHidden ? 0 : shortcutLabel.fittingSize.width
-        // Trailing shortcut sits at the far edge; leave room so labels never clip.
-        return NSSize(width: ceil(14 + 14 + 7 + titleW + shortcutGap.constant + shortW + 14), height: 34)
+        // The content group is centered in the well, so intrinsic sizing is
+        // only used by the optional tour button; Open/New receive equal wells
+        // from StartHeroView.
+        return NSSize(width: ceil(contentGroup.fittingSize.width + 24), height: 34)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1269,6 +1196,7 @@ private final class StartActionButton: NSButton {
         let contrast = sheet.increaseContrast
         let isFocused = window?.firstResponder === self && window?.isKeyWindow == true
         let changes = {
+            let engaged = self.isPressed || self.isHovered || isFocused
             if self.kind == .primary {
                 let accent = sheet.startWindowPrimaryAction
                 let fill: NSColor
@@ -1285,6 +1213,11 @@ private final class StartActionButton: NSButton {
                 self.titleLabel.textColor = .white
                 self.shortcutLabel.textColor = .white
                 self.iconView.contentTintColor = .white
+                self.shortcutLabel.layer?.backgroundColor = NSColor.white.withAlphaComponent(
+                    self.isPressed ? 0.18 : (engaged ? 0.12 : 0.08)
+                ).cgColor
+                self.shortcutLabel.layer?.borderWidth = engaged ? 1 : 0
+                self.shortcutLabel.layer?.borderColor = NSColor.white.withAlphaComponent(0.20).cgColor
             } else {
                 let fillAlpha: CGFloat = self.isPressed ? 0.11 : (self.isHovered ? 0.075 : 0.045)
                 self.shell.layer?.backgroundColor = sheet.text
@@ -1293,21 +1226,30 @@ private final class StartActionButton: NSButton {
                 self.shell.layer?.borderColor = (isFocused ? sheet.accent : sheet.rule)
                     .withAlphaComponent(isFocused ? 0.9 : (contrast ? 0.55 : 0.35)).cgColor
                 self.titleLabel.textColor = sheet.text
-                self.shortcutLabel.textColor = sheet.textSecondary
-                self.iconView.contentTintColor = self.isHovered ? sheet.text : sheet.textSecondary
+                self.shortcutLabel.textColor = engaged ? sheet.text : sheet.textSecondary
+                self.iconView.contentTintColor = engaged ? sheet.text : sheet.textSecondary
+                self.shortcutLabel.layer?.backgroundColor = sheet.text.withAlphaComponent(
+                    contrast
+                        ? (engaged ? 0.12 : 0.07)
+                        : (engaged ? 0.10 : 0.055)
+                ).cgColor
+                self.shortcutLabel.layer?.borderWidth = engaged ? 1 : 0
+                self.shortcutLabel.layer?.borderColor = sheet.text.withAlphaComponent(
+                    engaged ? 0.18 : 0.10
+                ).cgColor
             }
             self.shell.layer?.setAffineTransform(
                 self.isPressed
-                    ? CGAffineTransform(scaleX: 0.98, y: 0.98)
+                    ? CGAffineTransform(scaleX: 0.985, y: 0.985)
                     : self.isHovered
-                        ? CGAffineTransform(scaleX: 1.01, y: 1.01)
+                        ? CGAffineTransform(scaleX: 1.004, y: 1.004)
                         : .identity
             )
         }
         if animated {
             Motion.run(
                 reduceMotion: sheet.reduceMotion,
-                duration: Motion.quick,
+                duration: Motion.hover,
                 curve: .easeOut
             ) { _ in changes() }
         } else {
@@ -1319,9 +1261,16 @@ private final class StartActionButton: NSButton {
 // MARK: - Recent row
 
 enum RecentRowCopy {
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
+    private static let monthDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        return formatter
+    }()
+    private static let monthDayYearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("MMM d yyyy")
         return formatter
     }()
 
@@ -1367,7 +1316,15 @@ enum RecentRowCopy {
     }
 
     static func timestamp(for recent: RecentDocument) -> String {
-        relativeFormatter.localizedString(for: recent.lastOpened, relativeTo: Date())
+        let calendar = Calendar.current
+        if calendar.isDateInToday(recent.lastOpened) { return "Today" }
+        if calendar.isDateInYesterday(recent.lastOpened) { return "Yesterday" }
+        let now = Date()
+        let year = calendar.component(.year, from: recent.lastOpened)
+        let currentYear = calendar.component(.year, from: now)
+        return year == currentYear
+            ? monthDayFormatter.string(from: recent.lastOpened)
+            : monthDayYearFormatter.string(from: recent.lastOpened)
     }
 
     static func folder(for recent: RecentDocument) -> String {
@@ -1384,7 +1341,7 @@ enum RecentRowCopy {
     /// exists to solve.  It is skipped only when it would repeat the title
     /// back, in which case the folder is the more informative thing to say.
     static func subtitle(for recent: RecentDocument, title: String) -> String {
-        let heading = recent.firstHeading.trimmingCharacters(in: .whitespacesAndNewlines)
+        let heading = cleanedHeading(recent.firstHeading)
         let place = folder(for: recent)
         guard !heading.isEmpty, !echoes(heading, of: title) else { return place }
         // `README` in `Downright/` under the heading "Downright" would otherwise
@@ -1393,6 +1350,18 @@ enum RecentRowCopy {
         // Both, when the folder is what disambiguates two same-named documents
         // and the heading is what explains them.
         return "\(heading)  ·  \(place)"
+    }
+
+    /// A malformed editor write once persisted a partial prose prefix directly
+    /// against a capitalized heading (`ThiDownright …`). Keep that stale
+    /// metadata from leaking into the welcome surface while leaving ordinary
+    /// headings, including `This …`, untouched.
+    private static func cleanedHeading(_ rawHeading: String) -> String {
+        let heading = rawHeading.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard heading.hasPrefix("Thi"),
+              heading.dropFirst(3).first?.isUppercase == true
+        else { return heading }
+        return String(heading.dropFirst(3))
     }
 
     /// Whether the heading would just restate the title.  Compared without case
@@ -1442,11 +1411,12 @@ enum RecentRowCopy {
 private final class RecentDocumentButton: NSButton {
     let documentPath: String
     private let shell = NSView()
-    private let ordinalLabel = NSTextField(labelWithString: "")
+    private let documentIcon = NSImageView()
     private let titleLabel: NSTextField
+    private let titleRow = NSStackView()
     private let subtitleLabel: NSTextField
     private let detailLabel: NSTextField
-    private let chevron = NSImageView()
+    private let shortcutLabel = NSTextField(labelWithString: "")
     private var isHovered = false
     private var isPressed = false
     private var sheet: StyleSheet
@@ -1472,6 +1442,7 @@ private final class RecentDocumentButton: NSButton {
         setAccessibilityRole(.button)
         setAccessibilityLabel("Open \(title)")
         setAccessibilityValue("\(subtitleLabel.stringValue), \(detailLabel.stringValue)")
+        setAccessibilityHelp(ordinal <= 9 ? "Press ⌘\(ordinal) to open" : nil)
         wantsLayer = true
         toolTip = recent.path
 
@@ -1481,19 +1452,16 @@ private final class RecentDocumentButton: NSButton {
         shell.layer?.masksToBounds = true
         addSubview(shell)
 
-        // The ordinal, not a document glyph.  Six identical `doc` icons carried
-        // no information — they only said "these are files", which the names
-        // already said — and this slot instead teaches ⌘1…⌘6, which is the
-        // fastest way out of this window and the one thing about it worth
-        // learning.  The header spells the shortcut out once so the bare digit
-        // is never a riddle.
-        ordinalLabel.translatesAutoresizingMaskIntoConstraints = false
-        ordinalLabel.stringValue = ordinal <= 9 ? "\(ordinal)" : ""
-        ordinalLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        ordinalLabel.alignment = .center
-        configurePassiveLabel(ordinalLabel)
-        ordinalLabel.setAccessibilityHidden(true)
-        shell.addSubview(ordinalLabel)
+        documentIcon.translatesAutoresizingMaskIntoConstraints = false
+        documentIcon.image = NSImage(
+            systemSymbolName: "doc.text",
+            accessibilityDescription: "Markdown document"
+        )
+        documentIcon.symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: 14, weight: .regular
+        )
+        documentIcon.setAccessibilityLabel("Markdown document")
+        shell.addSubview(documentIcon)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
@@ -1515,19 +1483,37 @@ private final class RecentDocumentButton: NSButton {
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
         detailLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
-        detailLabel.lineBreakMode = .byClipping
+        detailLabel.alignment = .right
+        detailLabel.usesSingleLineMode = true
+        detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.maximumNumberOfLines = 1
         configurePassiveLabel(detailLabel)
         shell.addSubview(detailLabel)
 
-        chevron.translatesAutoresizingMaskIntoConstraints = false
-        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Open")
-        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-        chevron.wantsLayer = true
-        chevron.layer?.opacity = 0
-        shell.addSubview(chevron)
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+        shortcutLabel.stringValue = ordinal <= 9 ? "⌘\(ordinal)" : ""
+        shortcutLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        shortcutLabel.alignment = .center
+        shortcutLabel.usesSingleLineMode = true
+        shortcutLabel.lineBreakMode = .byTruncatingTail
+        shortcutLabel.wantsLayer = true
+        shortcutLabel.layer?.cornerRadius = 4
+        shortcutLabel.layer?.masksToBounds = true
+        shortcutLabel.isHidden = true
+        configurePassiveLabel(shortcutLabel)
+        shortcutLabel.setAccessibilityLabel("Keyboard shortcut \(shortcutLabel.stringValue)")
 
-        let text = NSStackView(views: [titleLabel, subtitleLabel])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 7
+        titleRow.detachesHiddenViews = true
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.addArrangedSubview(titleLabel)
+        titleRow.addArrangedSubview(shortcutLabel)
+
+        menu = RecentDocumentsPanel.makeContextMenu(owner: target)
+
+        let text = NSStackView(views: [titleRow, subtitleLabel])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 1
@@ -1540,26 +1526,28 @@ private final class RecentDocumentButton: NSButton {
             shell.topAnchor.constraint(equalTo: topAnchor),
             shell.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            ordinalLabel.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 10),
-            ordinalLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            ordinalLabel.widthAnchor.constraint(equalToConstant: 14),
+            documentIcon.leadingAnchor.constraint(equalTo: shell.leadingAnchor, constant: 11),
+            documentIcon.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
+            documentIcon.widthAnchor.constraint(equalToConstant: 18),
+            documentIcon.heightAnchor.constraint(equalToConstant: 18),
 
-            text.leadingAnchor.constraint(equalTo: ordinalLabel.trailingAnchor, constant: 9),
+            text.leadingAnchor.constraint(equalTo: documentIcon.trailingAnchor, constant: 7),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: detailLabel.leadingAnchor, constant: -16),
             text.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
 
-            detailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: text.trailingAnchor, constant: 16),
-            detailLabel.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
+            shortcutLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
+            shortcutLabel.heightAnchor.constraint(equalToConstant: 22),
+            detailLabel.widthAnchor.constraint(equalToConstant: 74),
+            detailLabel.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -12),
             detailLabel.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-
-            chevron.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -12),
-            chevron.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: 10),
-            chevron.heightAnchor.constraint(equalToConstant: 10),
         ])
 
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detailLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        shortcutLabel.setContentHuggingPriority(.required, for: .horizontal)
+        shortcutLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         addTrackingArea(NSTrackingArea(
             rect: .zero,
@@ -1665,17 +1653,22 @@ private final class RecentDocumentButton: NSButton {
             self.shell.layer?.backgroundColor = fill.cgColor
             self.shell.layer?.borderWidth = isFocused ? 1.5 : 0
             self.shell.layer?.borderColor = sheet.accent.cgColor
-            // The ordinal lifts to the accent on engagement, which is what
-            // makes the shortcut register as a shortcut rather than a bullet.
-            self.ordinalLabel.textColor = engaged ? sheet.accent : sheet.textFaint
+            // The header teaches the ordinal shortcuts once. The row only
+            // reveals its own keycap when it is the target of attention, so
+            // the timestamp column remains clean at rest.
+            self.shortcutLabel.isHidden = !engaged
+            self.documentIcon.contentTintColor = engaged ? sheet.text : sheet.textSecondary
             self.titleLabel.textColor = sheet.text
-            self.subtitleLabel.textColor = engaged ? sheet.textSecondary : sheet.textFaint
+            self.subtitleLabel.textColor = engaged ? sheet.text : sheet.textSecondary
             self.detailLabel.textColor = engaged ? sheet.textSecondary : sheet.textFaint
-            self.chevron.contentTintColor = sheet.accent
-            self.chevron.layer?.opacity = engaged ? 1 : 0
-            self.chevron.layer?.setAffineTransform(
-                engaged ? .identity : CGAffineTransform(translationX: 4, y: 0)
-            )
+            self.shortcutLabel.textColor = engaged ? sheet.accent : sheet.textFaint
+            self.shortcutLabel.layer?.backgroundColor = sheet.text.withAlphaComponent(
+                engaged ? (contrast ? 0.14 : 0.12) : (contrast ? 0.10 : 0.08)
+            ).cgColor
+            self.shortcutLabel.layer?.borderWidth = 1
+            self.shortcutLabel.layer?.borderColor = sheet.text.withAlphaComponent(
+                engaged ? 0.24 : 0.16
+            ).cgColor
             self.shell.layer?.setAffineTransform(
                 self.isPressed
                     ? CGAffineTransform(scaleX: 0.992, y: 0.992)

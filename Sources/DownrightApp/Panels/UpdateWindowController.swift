@@ -2,6 +2,13 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
+private enum UpdateWindowLayout {
+    static let width: CGFloat = 560
+    static let regularHeight: CGFloat = 600
+    static let failureHeight: CGFloat = 360
+    static let minimumHeight: CGFloat = 320
+}
+
 /// The one nonmodal update surface.  Documents stay usable while it is open;
 /// it never activates the app over another application, and closing it is
 /// always safe (any pending Sparkle choice resolves to "later").
@@ -18,16 +25,23 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
     convenience init(coordinator: UpdateCoordinator) {
         let view = UpdatePanelView(coordinator: coordinator)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 600),
+            contentRect: NSRect(
+                x: 0, y: 0,
+                width: UpdateWindowLayout.width,
+                height: UpdateWindowLayout.regularHeight
+            ),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Updates"
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .visible
+        // The panel has its own branded header. Leaving the native title visible
+        // puts a second "Updates" label directly above it in the full-content
+        // titlebar and makes the icon/title stack look collided.
+        window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-        window.minSize = NSSize(width: 480, height: 480)
+        window.minSize = NSSize(width: 480, height: UpdateWindowLayout.minimumHeight)
         window.isRestorable = false
         window.contentView = view
         window.center()
@@ -103,6 +117,11 @@ private final class UpdatePanelView: NSView {
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refresh()
+    }
+
     private static func makeSheet() -> StyleSheet {
         StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
     }
@@ -111,6 +130,7 @@ private final class UpdatePanelView: NSView {
         super.viewDidChangeEffectiveAppearance()
         sheet = Self.makeSheet()
         window?.backgroundColor = sheet.background
+        layer?.backgroundColor = sheet.background.cgColor
         header.apply(sheet: sheet)
         footer.apply(sheet: sheet)
     }
@@ -139,6 +159,20 @@ private final class UpdatePanelView: NSView {
             contentView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
         footer.update(coordinator: coordinator)
+        resizeForContent(content.kind)
+    }
+
+    private func resizeForContent(_ kind: UpdatePanelContent.Kind) {
+        guard let window else { return }
+        let desiredHeight: CGFloat = kind == .failed
+            ? UpdateWindowLayout.failureHeight
+            : UpdateWindowLayout.regularHeight
+        guard abs(window.frame.height - desiredHeight) > 0.5 else { return }
+
+        var frame = window.frame
+        frame.origin.y += (frame.height - desiredHeight) / 2
+        frame.size.height = desiredHeight
+        window.setFrame(frame, display: true, animate: false)
     }
 }
 
@@ -649,43 +683,130 @@ private final class UpdateStatusMessageView: NSView {
 @MainActor
 private final class UpdateFailureView: NSView {
     private let detailDisclosure = NSButton(title: "Technical Details", target: nil, action: nil)
+    private let detailPanel = NSView()
+    private let detailLabel = NSTextField(labelWithString: "")
 
     init(coordinator: UpdateCoordinator, sheet: StyleSheet) {
         super.init(frame: .zero)
         guard case .failed(let failure, _) = coordinator.phase else { return }
 
+        let danger = sheet.calloutColor(.danger)
+
+        let iconWell = NSView()
+        iconWell.translatesAutoresizingMaskIntoConstraints = false
+        iconWell.wantsLayer = true
+        iconWell.layer?.cornerRadius = 12
+        iconWell.layer?.masksToBounds = true
+        iconWell.layer?.backgroundColor = danger.withAlphaComponent(
+            sheet.increaseContrast ? 0.20 : 0.12
+        ).cgColor
+
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle.fill",
+            accessibilityDescription: "Update unavailable"
+        )
+        icon.contentTintColor = danger
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        icon.setAccessibilityRole(.image)
+        icon.setAccessibilityLabel("Update unavailable")
+        iconWell.addSubview(icon)
+        NSLayoutConstraint.activate([
+            iconWell.widthAnchor.constraint(equalToConstant: 40),
+            iconWell.heightAnchor.constraint(equalToConstant: 40),
+            icon.centerXAnchor.constraint(equalTo: iconWell.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: iconWell.centerYAnchor),
+        ])
+
+        let status = NSTextField(labelWithString: "Update unavailable")
+        status.font = PanelFont.header
+        status.textColor = danger
+
+        let summary = NSTextField(wrappingLabelWithString: failure.message)
+        summary.font = PanelFont.system(15, weight: .semibold)
+        summary.textColor = sheet.text
+        summary.maximumNumberOfLines = 2
+        summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let reassurance = NSTextField(wrappingLabelWithString: "Your files are safe. Nothing was changed on disk.")
+        reassurance.font = PanelFont.row
+        reassurance.textColor = sheet.textSecondary
+        reassurance.maximumNumberOfLines = 2
+        reassurance.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let messageStack = NSStackView(views: [status, summary, reassurance])
+        messageStack.orientation = .vertical
+        messageStack.alignment = .leading
+        messageStack.spacing = 4
+        messageStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let hero = NSStackView(views: [iconWell, messageStack])
+        hero.orientation = .horizontal
+        hero.alignment = .centerY
+        hero.spacing = 12
+
+        detailLabel.stringValue = failure.technicalDetail ?? "Error code \(failure.code)"
+        detailLabel.font = PanelFont.monospaced(10.5)
+        detailLabel.textColor = sheet.textFaint
+        detailLabel.lineBreakMode = .byCharWrapping
+        detailLabel.maximumNumberOfLines = 3
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailPanel.translatesAutoresizingMaskIntoConstraints = false
+        detailPanel.wantsLayer = true
+        detailPanel.layer?.cornerRadius = 8
+        detailPanel.layer?.masksToBounds = true
+        detailPanel.layer?.backgroundColor = sheet.codeBackground.withAlphaComponent(0.72).cgColor
+        detailPanel.layer?.borderWidth = 1
+        detailPanel.layer?.borderColor = sheet.rule.withAlphaComponent(0.65).cgColor
+        detailPanel.isHidden = true
+        detailPanel.addSubview(detailLabel)
+        NSLayoutConstraint.activate([
+            detailLabel.leadingAnchor.constraint(equalTo: detailPanel.leadingAnchor, constant: 10),
+            detailLabel.trailingAnchor.constraint(equalTo: detailPanel.trailingAnchor, constant: -10),
+            detailLabel.topAnchor.constraint(equalTo: detailPanel.topAnchor, constant: 8),
+            detailLabel.bottomAnchor.constraint(equalTo: detailPanel.bottomAnchor, constant: -8),
+        ])
+
         let stack = NSStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = 14
         addSubview(stack)
-
-        let summary = NSTextField(wrappingLabelWithString: failure.message)
-        summary.font = PanelFont.system(13, weight: .medium)
-        summary.textColor = sheet.accent
-        summary.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(summary)
-
-        let explanation = NSTextField(wrappingLabelWithString: "Nothing has been changed on disk. You can try again, or check later.")
-        explanation.font = PanelFont.row
-        explanation.textColor = sheet.textSecondary
-        stack.addArrangedSubview(explanation)
 
         detailDisclosure.translatesAutoresizingMaskIntoConstraints = false
         detailDisclosure.setButtonType(.pushOnPushOff)
-        detailDisclosure.bezelStyle = .inline
+        detailDisclosure.isBordered = false
         detailDisclosure.font = PanelFont.secondary
+        detailDisclosure.contentTintColor = sheet.textSecondary
+        detailDisclosure.image = NSImage(
+            systemSymbolName: "chevron.right",
+            accessibilityDescription: "Show technical details"
+        )
+        detailDisclosure.imagePosition = .imageLeading
+        detailDisclosure.imageHugsTitle = true
+        detailDisclosure.alignment = .left
+        detailDisclosure.toolTip = "Show technical details"
+        detailDisclosure.wantsLayer = true
+        detailDisclosure.layer?.cornerRadius = 7
+        detailDisclosure.layer?.masksToBounds = true
+        detailDisclosure.layer?.backgroundColor = sheet.text.withAlphaComponent(
+            sheet.increaseContrast ? 0.12 : 0.07
+        ).cgColor
+        detailDisclosure.layer?.borderWidth = 1
+        detailDisclosure.layer?.borderColor = sheet.text.withAlphaComponent(0.14).cgColor
+        detailDisclosure.attributedTitle = NSAttributedString(
+            string: detailDisclosure.title,
+            attributes: [
+                .font: detailDisclosure.font as Any,
+                .foregroundColor: sheet.textSecondary,
+            ]
+        )
+        detailDisclosure.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        detailDisclosure.setContentHuggingPriority(.required, for: .horizontal)
         detailDisclosure.target = self
         detailDisclosure.action = #selector(toggleDetail)
-        stack.addArrangedSubview(detailDisclosure)
-
-        let detailLabel = NSTextField(wrappingLabelWithString: failure.technicalDetail ?? "\(failure.code)")
-        detailLabel.font = PanelFont.monospaced(10.5)
-        detailLabel.textColor = sheet.textFaint
-        detailLabel.isHidden = true
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(detailLabel)
 
         let copy = UpdatePanelButton(title: "Copy Diagnostics", kind: .secondary) {
             NSPasteboard.general.clearContents()
@@ -695,22 +816,49 @@ private final class UpdateFailureView: NSView {
             )
         }
         copy.setAccessibilityLabel("Copy diagnostics")
-        stack.addArrangedSubview(copy)
+        copy.heightAnchor.constraint(equalToConstant: 28).isActive = true
+
+        let diagnosticsActions = NSStackView(views: [detailDisclosure, copy])
+        diagnosticsActions.orientation = .horizontal
+        diagnosticsActions.alignment = .centerY
+        diagnosticsActions.spacing = 8
+
+        stack.addArrangedSubview(hero)
+        stack.addArrangedSubview(diagnosticsActions)
+        stack.addArrangedSubview(detailPanel)
+
+        // Keep the body on one horizontal grid when the disclosure opens. A
+        // hidden NSView has no fitting width, so relying on stack alignment
+        // alone lets AppKit shrink the whole stack to the diagnostic label.
+        for view in [hero, diagnosticsActions, detailPanel] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     @objc private func toggleDetail() {
-        guard let detail = subviews.first?.subviews.compactMap({ $0 as? NSTextField }).last else { return }
-        detail.isHidden.toggle()
-        detailDisclosure.state = detail.isHidden ? .off : .on
+        detailPanel.isHidden.toggle()
+        detailDisclosure.state = detailPanel.isHidden ? .off : .on
+        detailDisclosure.image = NSImage(
+            systemSymbolName: detailPanel.isHidden ? "chevron.right" : "chevron.down",
+            accessibilityDescription: detailPanel.isHidden
+                ? "Show technical details"
+                : "Hide technical details"
+        )
+        detailDisclosure.toolTip = detailPanel.isHidden
+            ? "Show technical details"
+            : "Hide technical details"
+        needsLayout = true
+        superview?.needsLayout = true
     }
 }
 
@@ -743,6 +891,7 @@ final class UpdatePanelButton: NSButton {
     enum Kind: Equatable { case primary, secondary }
 
     private let kind: Kind
+    private let buttonTitle: String
     var isPrimary: Bool { kind == .primary }
     private var sheet: StyleSheet
     /// `target` is weak; without a strong reference the action object would
@@ -751,15 +900,20 @@ final class UpdatePanelButton: NSButton {
 
     init(title: String, kind: Kind, sheet: StyleSheet? = nil, action: @escaping () -> Void) {
         self.kind = kind
+        self.buttonTitle = title
         self.sheet = sheet ?? StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
         let actionTarget = ActionTarget(action)
         self.actionTarget = actionTarget
         super.init(frame: .zero)
         self.title = title
-        bezelStyle = .rounded
-        font = PanelFont.system(12, weight: .medium)
+        setButtonType(.momentaryPushIn)
+        isBordered = false
+        font = PanelFont.system(12, weight: .semibold)
         controlSize = .regular
         focusRingType = .default
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
         target = actionTarget
         self.action = #selector(ActionTarget.run(_:))
         setAccessibilityRole(.button)
@@ -770,14 +924,27 @@ final class UpdatePanelButton: NSButton {
 
     func apply(sheet: StyleSheet) {
         self.sheet = sheet
+        let titleColor: NSColor
         switch kind {
         case .primary:
+            titleColor = .white
             contentTintColor = .white
-            bezelColor = sheet.accent
+            layer?.backgroundColor = sheet.accent.cgColor
+            layer?.borderColor = sheet.accent.blended(withFraction: 0.18, of: .white)?.cgColor
         case .secondary:
+            titleColor = sheet.text
             contentTintColor = sheet.text
-            bezelColor = sheet.surface
+            layer?.backgroundColor = sheet.text.withAlphaComponent(0.12).cgColor
+            layer?.borderColor = sheet.text.withAlphaComponent(0.20).cgColor
         }
+        layer?.borderWidth = 1
+        attributedTitle = NSAttributedString(
+            string: buttonTitle,
+            attributes: [
+                .font: font as Any,
+                .foregroundColor: titleColor,
+            ]
+        )
     }
 }
 

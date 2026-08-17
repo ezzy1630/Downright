@@ -11,13 +11,23 @@ import MarkdownRender
 /// badge.  All motion honors Reduce Motion.
 @MainActor
 final class UpdateStatusPill: NSButton {
+    enum Presentation {
+        case standard
+        /// The start window already has a strong task hierarchy. An update
+        /// failure stays actionable, but collapses to a quiet warning button
+        /// instead of competing with Open/New.
+        case compactWarning
+    }
+
     private enum Metrics {
         static let height: CGFloat = 26
         static let cornerRadius: CGFloat = 13
         static let horizontalPadding: CGFloat = 11
         static let iconSize: CGFloat = 13
+        static let compactWarningWidth: CGFloat = 34
     }
 
+    private let presentation: Presentation
     private let shell = NSView()
     /// The same hover/press wash every neighbouring toolbar control uses, so
     /// the pill answers the pointer instead of sitting inert among controls
@@ -45,7 +55,17 @@ final class UpdateStatusPill: NSButton {
             // unambiguous; the pill's own width constraint collapses it.
             return NSSize(width: 1, height: Metrics.height)
         }
-        let textWidth = ceil(label.attributedStringValue.size().width)
+        if presentation == .compactWarning, currentModel == .warning {
+            return NSSize(width: Metrics.compactWarningWidth, height: Metrics.height)
+        }
+        // NSTextField's attributed-string measurement can under-report a
+        // fallback glyph such as the warning copy at small sizes. fittingSize
+        // reflects the actual cell layout; retain the explicit measurement as
+        // a lower-bound guard for custom fonts/themes.
+        let textWidth = ceil(max(
+            label.fittingSize.width,
+            label.attributedStringValue.size().width
+        )) + 2
         let iconWidth: CGFloat = {
             if case .progress = currentModel { return Metrics.iconSize + 3 }
             return Metrics.iconSize + 3
@@ -53,7 +73,8 @@ final class UpdateStatusPill: NSButton {
         return NSSize(width: Metrics.horizontalPadding * 2 + iconWidth + textWidth, height: Metrics.height)
     }
 
-    init() {
+    init(presentation: Presentation = .standard) {
+        self.presentation = presentation
         self.sheet = UpdateStatusPill.makeSheet()
         super.init(frame: .zero)
         wantsLayer = true
@@ -74,6 +95,7 @@ final class UpdateStatusPill: NSButton {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = PanelFont.system(11.5, weight: .semibold)
         label.maximumNumberOfLines = 1
+        label.usesSingleLineMode = true
         label.isEditable = false
         label.isSelectable = false
         label.isBezeled = false
@@ -88,6 +110,9 @@ final class UpdateStatusPill: NSButton {
         shell.addSubview(progressIndicator)
 
         isBordered = false
+        // The pill owns its content through `shell` and `label`; leaving the
+        // NSButton title in place draws a second, colliding string underneath.
+        title = ""
         setButtonType(.momentaryChange)
         focusRingType = .default
         target = self
@@ -244,6 +269,7 @@ final class UpdateStatusPill: NSButton {
             iconView.contentTintColor = sheet.accent
             label.textColor = sheet.textSecondary
             label.stringValue = "Update \(version)"
+            label.isHidden = false
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
@@ -257,6 +283,7 @@ final class UpdateStatusPill: NSButton {
             iconView.contentTintColor = sheet.accent
             label.textColor = sheet.text
             label.stringValue = "Restart to Update"
+            label.isHidden = false
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
@@ -268,6 +295,7 @@ final class UpdateStatusPill: NSButton {
         case .progress(let title, let fraction):
             label.textColor = sheet.textSecondary
             label.stringValue = title
+            label.isHidden = false
             iconView.isHidden = true
             progressIndicator.isHidden = false
             if let fraction {
@@ -289,19 +317,32 @@ final class UpdateStatusPill: NSButton {
             iconView.contentTintColor = warning
             label.textColor = warning
             label.stringValue = "Update Failed"
+            label.isHidden = presentation == .compactWarning
+            toolTip = presentation == .compactWarning
+                ? "Update failed — click for details"
+                : "Open the update panel"
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
-            shell.layer?.backgroundColor = warning
-                .panelAlpha(contrast ? 0.22 : 0.12, increaseContrast: false).cgColor
-            shell.layer?.borderWidth = contrast ? 1 : 0
-            shell.layer?.borderColor = warning.cgColor
+            if presentation == .compactWarning {
+                shell.layer?.backgroundColor = warning
+                    .panelAlpha(contrast ? 0.12 : 0.07, increaseContrast: false).cgColor
+                shell.layer?.borderWidth = 1
+                shell.layer?.borderColor = warning
+                    .withAlphaComponent(contrast ? 0.55 : 0.32).cgColor
+            } else {
+                shell.layer?.backgroundColor = warning
+                    .panelAlpha(contrast ? 0.22 : 0.12, increaseContrast: false).cgColor
+                shell.layer?.borderWidth = contrast ? 1 : 0
+                shell.layer?.borderColor = warning.cgColor
+            }
 
         case .informational(let version):
             iconView.image = NSImage(systemSymbolName: "info.circle.fill", accessibilityDescription: "Update information")
             iconView.contentTintColor = sheet.accent
             label.textColor = sheet.textSecondary
             label.stringValue = "Update \(version)"
+            label.isHidden = false
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
