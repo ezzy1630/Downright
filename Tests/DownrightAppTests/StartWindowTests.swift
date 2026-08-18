@@ -495,6 +495,45 @@ struct StartWindowTests {
         #expect(openedURL?.path == first.path)
     }
 
+    @Test
+    func heroStaysStickyAndAnchoredRegardlessOfRecentCount() throws {
+        let emptyController = StartWindowController(recents: [])
+        defer { emptyController.close() }
+        let emptyWindow = try #require(emptyController.window)
+        emptyWindow.contentView?.layoutSubtreeIfNeeded()
+        let emptyOpen = try #require(
+            buttons(in: emptyWindow.contentView).first { $0.accessibilityLabel() == "Open File" }
+        )
+        let emptyOpenFrame = emptyOpen.convert(emptyOpen.bounds, to: nil)
+
+        let oneRecent = RecentDocument(
+            path: "/tmp/single.md",
+            displayName: "single",
+            firstHeading: "Single Doc",
+            lastOpened: Date(),
+            wordCount: 10
+        )
+        let singleController = StartWindowController(recents: [oneRecent])
+        defer { singleController.close() }
+        let singleWindow = try #require(singleController.window)
+        singleWindow.contentView?.layoutSubtreeIfNeeded()
+        let singleOpen = try #require(
+            buttons(in: singleWindow.contentView).first { $0.accessibilityLabel() == "Open File" }
+        )
+        let singleOpenFrame = singleOpen.convert(singleOpen.bounds, to: nil)
+
+        // The top position of the hero actions must remain fixed and sticky regardless of recent file count.
+        #expect(abs(emptyOpenFrame.minY - singleOpenFrame.minY) < 1.0)
+    }
+
+    @Test
+    func keycapBadgesAreCenteredAndSymmetrical() throws {
+        let formatted = KeycapFormatter.format(shortcut: "⌘N", color: .white)
+        #expect(formatted.string == "⌘N")
+        let paragraph = formatted.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        #expect(paragraph?.alignment == .center)
+    }
+
     private func buttons(in view: NSView?) -> [NSButton] {
         guard let view else { return [] }
         let button = (view as? NSButton).map { [$0] } ?? []

@@ -13,9 +13,10 @@ enum StartLayout {
     // A fixed, well-proportioned welcome surface. The 556pt content column
     // maps cleanly to the 2x reference capture while leaving a quiet 28pt
     // window margin on either side.
-    static let windowSize = NSSize(width: 612, height: 540)
+    static let windowSize = NSSize(width: 612, height: 560)
     static let horizontalInset: CGFloat = 28
-    static let bottomInset: CGFloat = 28
+    static let topInset: CGFloat = 42
+    static let bottomInset: CGFloat = 24
     static let sectionSpacing: CGFloat = 18
     static let contentWidth: CGFloat = 556
     static let buttonHeight: CGFloat = 40
@@ -39,18 +40,20 @@ enum StartLayout {
 enum KeycapFormatter {
     static func format(shortcut: String, color: NSColor) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        for char in shortcut {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+
+        for (index, char) in shortcut.enumerated() {
+            let isLast = index == shortcut.count - 1
             if char == "⌘" || char == "⇧" || char == "⌥" || char == "⌃" {
                 result.append(NSAttributedString(
                     string: String(char),
                     attributes: [
-                        .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                        .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold),
                         .foregroundColor: color,
-                        .baselineOffset: -0.3,
-                        // The small optical pause is intentional. A raw
-                        // `⌘O` reads as one ligature at this size; the badge
-                        // should read as two adjacent keys.
-                        .kern: 1.4,
+                        .paragraphStyle: paragraph,
+                        .baselineOffset: 0.0,
+                        .kern: isLast ? 0.0 : 1.2,
                     ]
                 ))
             } else {
@@ -61,12 +64,62 @@ enum KeycapFormatter {
                             ? NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
                             : NSFont.systemFont(ofSize: 11.5, weight: .semibold),
                         .foregroundColor: color,
-                        .baselineOffset: 0.1,
+                        .paragraphStyle: paragraph,
+                        .baselineOffset: 0.0,
                     ]
                 ))
             }
         }
         return result
+    }
+}
+
+/// An optical, symmetrical keycap badge that draws its shortcut text perfectly centered
+/// horizontally and vertically with continuous rounded corners and smooth borders.
+private final class KeycapBadgeField: NSTextField {
+    private var minWidthConstraint: NSLayoutConstraint!
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        alignment = .center
+        usesSingleLineMode = true
+        lineBreakMode = .byClipping
+        configurePassiveLabel(self)
+        minWidthConstraint = widthAnchor.constraint(greaterThanOrEqualToConstant: 30)
+        minWidthConstraint.isActive = true
+        heightAnchor.constraint(equalToConstant: 20).isActive = true
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func setMinWidth(_ minWidth: CGFloat) {
+        minWidthConstraint.constant = minWidth
+        invalidateIntrinsicContentSize()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let textSize = attributedStringValue.size()
+        let width = max(minWidthConstraint.constant, ceil(textSize.width) + 12)
+        return NSSize(width: width, height: 20)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let attrString = attributedStringValue
+        guard !attrString.string.isEmpty else { return }
+        let textSize = attrString.size()
+        let centeredRect = NSRect(
+            x: floor((bounds.width - textSize.width) / 2),
+            y: floor((bounds.height - textSize.height) / 2),
+            width: ceil(textSize.width),
+            height: ceil(textSize.height)
+        )
+        attrString.draw(in: centeredRect)
     }
 }
 
@@ -253,8 +306,6 @@ private final class StartView: NSView {
         contentStack.addArrangedSubview(hero)
         contentStack.addArrangedSubview(recentPanel)
 
-        let centerY = contentStack.centerYAnchor.constraint(equalTo: canvas.centerYAnchor, constant: -2)
-        centerY.priority = .defaultHigh
         let centerX = contentStack.centerXAnchor.constraint(equalTo: canvas.centerXAnchor)
         centerX.priority = .defaultHigh
 
@@ -272,13 +323,12 @@ private final class StartView: NSView {
                 lessThanOrEqualTo: canvas.trailingAnchor,
                 constant: -StartLayout.horizontalInset
             ),
-            contentStack.topAnchor.constraint(greaterThanOrEqualTo: canvas.topAnchor, constant: Self.titlebarClearance),
+            contentStack.topAnchor.constraint(equalTo: canvas.topAnchor, constant: StartLayout.topInset),
             contentStack.bottomAnchor.constraint(
                 lessThanOrEqualTo: canvas.bottomAnchor,
                 constant: -StartLayout.bottomInset
             ),
             centerX,
-            centerY,
             contentStack.widthAnchor.constraint(equalToConstant: StartLayout.contentWidth),
             hero.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             recentPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -1001,9 +1051,8 @@ private final class StartActionButton: NSButton {
     private let shell = NSView()
     private let iconView = NSImageView()
     private let titleLabel: NSTextField
-    private let shortcutLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = KeycapBadgeField()
     private let contentGroup = NSStackView()
-    private var shortcutWidth: NSLayoutConstraint!
     private var shortcutHint: String = ""
     private var isHovered = false
     private var isPressed = false
@@ -1042,6 +1091,7 @@ private final class StartActionButton: NSButton {
         addSubview(shell)
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1049,19 +1099,13 @@ private final class StartActionButton: NSButton {
         titleLabel.usesSingleLineMode = true
         titleLabel.lineBreakMode = .byTruncatingTail
         configurePassiveLabel(titleLabel)
+
         shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
-        shortcutLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        shortcutLabel.alignment = .center
-        shortcutLabel.usesSingleLineMode = true
-        shortcutLabel.lineBreakMode = .byTruncatingTail
-        shortcutLabel.wantsLayer = true
-        shortcutLabel.layer?.cornerRadius = 5
-        shortcutLabel.layer?.cornerCurve = .continuous
-        shortcutLabel.layer?.masksToBounds = true
-        configurePassiveLabel(shortcutLabel)
+        shortcutLabel.setMinWidth(30)
+
         contentGroup.orientation = .horizontal
         contentGroup.alignment = .centerY
-        contentGroup.spacing = 10
+        contentGroup.spacing = 8
         contentGroup.detachesHiddenViews = true
         contentGroup.translatesAutoresizingMaskIntoConstraints = false
         contentGroup.addArrangedSubview(iconView)
@@ -1070,7 +1114,6 @@ private final class StartActionButton: NSButton {
         contentGroup.setCustomSpacing(12, after: titleLabel)
         shell.addSubview(contentGroup)
 
-        shortcutWidth = shortcutLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 32)
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
             shell.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1084,10 +1127,6 @@ private final class StartActionButton: NSButton {
 
             iconView.widthAnchor.constraint(equalToConstant: 16),
             iconView.heightAnchor.constraint(equalToConstant: 16),
-            shortcutWidth,
-            // A low keycap is enough to signal the binding without becoming a
-            // second control inside the control.
-            shortcutLabel.heightAnchor.constraint(equalToConstant: 20),
         ])
 
         // The label must never be the thing that gives: a clipped "New Documen"
@@ -1126,7 +1165,6 @@ private final class StartActionButton: NSButton {
         shortcutHint = hint
         shortcutLabel.stringValue = hint
         shortcutLabel.isHidden = hint.isEmpty
-        shortcutWidth.isActive = !hint.isEmpty
         setAccessibilityHelp(hint.isEmpty ? nil : hint)
         invalidateIntrinsicContentSize()
         needsLayout = true
@@ -1469,7 +1507,7 @@ private final class RecentDocumentButton: NSButton {
     private let titleLabel: NSTextField
     private let subtitleLabel: NSTextField
     private let detailLabel: NSTextField
-    private let shortcutLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = KeycapBadgeField()
     private var isHovered = false
     private var isPressed = false
     private var sheet: StyleSheet
@@ -1544,16 +1582,8 @@ private final class RecentDocumentButton: NSButton {
 
         shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
         shortcutLabel.stringValue = ordinal <= 9 ? "⌘\(ordinal)" : ""
-        shortcutLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        shortcutLabel.alignment = .center
-        shortcutLabel.usesSingleLineMode = true
-        shortcutLabel.lineBreakMode = .byTruncatingTail
-        shortcutLabel.wantsLayer = true
-        shortcutLabel.layer?.cornerRadius = 5
-        shortcutLabel.layer?.cornerCurve = .continuous
-        shortcutLabel.layer?.masksToBounds = true
+        shortcutLabel.setMinWidth(28)
         shortcutLabel.isHidden = ordinal > 9
-        configurePassiveLabel(shortcutLabel)
         shortcutLabel.setAccessibilityLabel("Keyboard shortcut \(shortcutLabel.stringValue)")
 
         let trailingStack = NSStackView(views: [detailLabel, shortcutLabel])
@@ -1586,9 +1616,6 @@ private final class RecentDocumentButton: NSButton {
             text.leadingAnchor.constraint(equalTo: documentIcon.trailingAnchor, constant: 7),
             text.trailingAnchor.constraint(lessThanOrEqualTo: trailingStack.leadingAnchor, constant: -12),
             text.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
-
-            shortcutLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 28),
-            shortcutLabel.heightAnchor.constraint(equalToConstant: 20),
 
             trailingStack.trailingAnchor.constraint(equalTo: shell.trailingAnchor, constant: -12),
             trailingStack.centerYAnchor.constraint(equalTo: shell.centerYAnchor),
