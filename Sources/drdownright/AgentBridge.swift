@@ -94,7 +94,8 @@ public enum AgentBridge {
     /// The shell command a hook runs.  `notify` reads the payload on stdin, so
     /// the hook needs no `jq`, no shell quoting, and no per-tool special casing.
     public static func hookCommand(executable: String = "down") -> String {
-        "\(executable) notify"
+        let quoted = executable.contains(" ") ? "\"\(executable)\"" : executable
+        return "\(quoted) notify"
     }
 
     /// One `PostToolUse` entry in Claude Code's settings schema.

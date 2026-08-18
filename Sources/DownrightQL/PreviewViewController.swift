@@ -489,7 +489,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             self.memoryBaselineBytes = Self.residentBytes()
             let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                guard self.previewMemoryBytes > self.memoryCeiling else { return }
+                let resident = Self.residentBytes()
+                guard self.previewMemoryBytes > self.memoryCeiling || resident > 95 * 1024 * 1024 else { return }
                 MainActor.assumeIsolated { self.fallBackToPlainText() }
             }
             RunLoop.main.add(timer, forMode: .common)
