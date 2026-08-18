@@ -180,6 +180,7 @@ final class ImageRenderCache {
 
     private let cache = BoundedImageCache<Key>(countLimit: 96, totalCostLimit: 32 * 1024 * 1024)
     private var freshness: [URL: Freshness] = [:]
+    private var failedLoads: Set<Key> = []
     /// Decodes in flight, keyed by the same identity `cachedImage` looks up,
     /// so a page of repeated images (or a split view showing one document
     /// twice) starts one decode instead of one per fragment.  Every caller's
@@ -241,12 +242,23 @@ final class ImageRenderCache {
         let cached = cache.cached(key)
         lock.lock()
         let changed = freshness[url] != current
-        if changed { freshness[url] = current }
+        if changed {
+            freshness[url] = current
+            failedLoads.remove(key)
+        }
+        let isFailed = failedLoads.contains(key)
         lock.unlock()
+        if isFailed, !changed { return nil }
         if let cached, !changed { return cached }
         guard let image = Self.downsampledImage(at: url, maxPixelDimension: key.maxPixelDimension) else {
+            lock.lock()
+            failedLoads.insert(key)
+            lock.unlock()
             return nil
         }
+        lock.lock()
+        failedLoads.remove(key)
+        lock.unlock()
         cache.store(image, for: key, keyCost: url.path.utf8.count)
         return image
     }

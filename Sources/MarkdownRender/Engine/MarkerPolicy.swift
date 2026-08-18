@@ -148,11 +148,22 @@ public enum MarkerPolicy {
             }
             let markerStart = cursor
             var sawQuote = false
-            while cursor < lineEnd, text.character(at: cursor) == 0x3E {
+            while cursor < lineEnd {
+                while cursor < lineEnd {
+                    let c = text.character(at: cursor)
+                    guard c == 0x20 || c == 0x09 else { break }
+                    cursor += 1
+                }
+                guard cursor < lineEnd, text.character(at: cursor) == 0x3E else { break }
                 sawQuote = true
                 cursor += 1
-                if cursor < lineEnd, text.character(at: cursor) == 0x20 { cursor += 1 }
-                while cursor < lineEnd, text.character(at: cursor) == 0x09 { cursor += 1 }
+            }
+            if sawQuote {
+                while cursor < lineEnd {
+                    let c = text.character(at: cursor)
+                    guard c == 0x20 || c == 0x09 else { break }
+                    cursor += 1
+                }
             }
             if sawQuote, cursor > markerStart {
                 result.append(NSRange(location: markerStart, length: cursor - markerStart))

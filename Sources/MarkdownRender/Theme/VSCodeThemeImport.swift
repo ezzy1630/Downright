@@ -330,6 +330,8 @@ enum JSONCSanitizer {
     static func strip(_ data: Data) -> Data {
         var bytes = [UInt8](data)
         let n = bytes.count
+
+        // Pass 1: Replace all comments outside of strings with spaces.
         var i = 0
         var inString = false
         while i < n {
@@ -342,7 +344,7 @@ enum JSONCSanitizer {
             }
             if c == 0x22 { inString = true; i += 1; continue }
             if c == 0x2F, i + 1 < n, bytes[i + 1] == 0x2F { // //
-                while i < n, bytes[i] != 0x0A { bytes[i] = 0x20; i += 1 }
+                while i < n, bytes[i] != 0x0A, bytes[i] != 0x0D { bytes[i] = 0x20; i += 1 }
                 continue
             }
             if c == 0x2F, i + 1 < n, bytes[i + 1] == 0x2A { // /*
@@ -356,11 +358,26 @@ enum JSONCSanitizer {
                         i += 2
                         break
                     }
-                    if bytes[i] != 0x0A { bytes[i] = 0x20 }
+                    if bytes[i] != 0x0A, bytes[i] != 0x0D { bytes[i] = 0x20 }
                     i += 1
                 }
                 continue
             }
+            i += 1
+        }
+
+        // Pass 2: Replace trailing commas with spaces.
+        i = 0
+        inString = false
+        while i < n {
+            let c = bytes[i]
+            if inString {
+                if c == 0x5C { i += 2; continue }
+                if c == 0x22 { inString = false }
+                i += 1
+                continue
+            }
+            if c == 0x22 { inString = true; i += 1; continue }
             if c == 0x2C {                                  // trailing comma
                 var j = i + 1
                 while j < n, bytes[j] == 0x20 || bytes[j] == 0x09 || bytes[j] == 0x0A || bytes[j] == 0x0D { j += 1 }
