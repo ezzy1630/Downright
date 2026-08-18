@@ -38,6 +38,7 @@ public enum MarkdownCLI {
         case export(format: ExportFormat, output: String?, paths: [String])
         case check(json: Bool, target: BuiltInRenderTarget?, paths: [String])
         case outline(json: Bool, paths: [String])
+        case doctor(json: Bool, appPath: String?)
         case notify(NotifyOptions)
         case watch(WatchOptions, paths: [String])
         case hook(HookOptions)
@@ -50,6 +51,9 @@ public enum MarkdownCLI {
         public var background = false
         public var wait = false
         public var edit = false
+        public var line: Int? = nil
+        public var reveal = false
+        public var review = false
 
         public init() {}
     }
@@ -103,6 +107,7 @@ public enum MarkdownCLI {
         case unknownOption(String)
         case missingValue(String)
         case invalidFormat(String)
+        case invalidLine(String)
         case unexpectedArgument(String)
 
         public var description: String {
@@ -110,6 +115,7 @@ public enum MarkdownCLI {
             case .unknownOption(let value): return "unknown option \(value)"
             case .missingValue(let value): return "missing value for \(value)"
             case .invalidFormat(let value): return "unsupported export format \(value)"
+            case .invalidLine(let value): return "line must be a positive integer, got \(value)"
             case .unexpectedArgument(let value): return "unexpected argument \(value)"
             }
         }
@@ -125,6 +131,7 @@ public enum MarkdownCLI {
         case "export": return try parseExport(Array(arguments.dropFirst()))
         case "check": return try parseCheck(Array(arguments.dropFirst()))
         case "outline": return try parseOutline(Array(arguments.dropFirst()))
+        case "doctor": return try parseDoctor(Array(arguments.dropFirst()))
         case "open": return try parseOpen(Array(arguments.dropFirst()))
         case "notify": return try parseNotify(Array(arguments.dropFirst()))
         case "watch": return try parseWatch(Array(arguments.dropFirst()))
@@ -143,6 +150,7 @@ public enum MarkdownCLI {
           down export [--format html] [-o path] [file ...]
           down check [--json] [--target name] [file or folder ...]
           down outline [--json] [file ...]
+          down doctor [--json] [--app path]
           down notify [--focus] [--dry-run]
           down watch [--focus] [--debounce ms] [file or folder ...]
           down hook [--print | --install | --uninstall] [--scope user|project]
@@ -169,6 +177,9 @@ public enum MarkdownCLI {
           -b, --background  do not bring Downright to the front
           -w, --wait        wait for the app to exit
           -e, --edit        open in Live mode instead of Read mode
+          --line N          open at one-based line N
+          --reveal          reveal the file in Finder instead of opening it
+          --review          open in Live mode with the Review panel visible
           -h, --help        show this message
           -v, --version     show the version
 
@@ -187,31 +198,59 @@ public enum MarkdownCLI {
     private static func parseOpen(_ arguments: [String]) throws -> Action {
         var options = OpenOptions()
         var paths: [String] = []
-        var parsingOptions = true
-        for argument in arguments {
-            if parsingOptions, argument == "--" {
-                parsingOptions = false
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--":
+                paths.append(contentsOf: arguments[(index + 1)...])
+                index = arguments.count
                 continue
-            }
-            if parsingOptions {
-                switch argument {
-                case "-n", "--new": options.newWindow = true
-                case "-b", "--background": options.background = true
-                case "-w", "--wait": options.wait = true
-                case "-e", "--edit": options.edit = true
-                case "-h", "--help": return .help
-                case "-v", "--version": return .version
-                default:
-                    if argument.hasPrefix("-") && argument.count > 1 {
-                        throw ParseError.unknownOption(argument)
-                    }
-                    paths.append(argument)
+            case "-n", "--new": options.newWindow = true
+            case "-b", "--background": options.background = true
+            case "-w", "--wait": options.wait = true
+            case "-e", "--edit": options.edit = true
+            case "--line":
+                index += 1
+                guard index < arguments.count else { throw ParseError.missingValue(argument) }
+                let value = arguments[index]
+                guard let line = Int(value), line > 0 else {
+                    throw ParseError.invalidLine(value)
                 }
-            } else {
+                options.line = line
+            case "--reveal": options.reveal = true
+            case "--review": options.review = true; options.edit = true
+            case "-h", "--help": return .help
+            case "-v", "--version": return .version
+            default:
+                if argument.hasPrefix("-") && argument.count > 1 {
+                    throw ParseError.unknownOption(argument)
+                }
                 paths.append(argument)
             }
+            index += 1
         }
         return .open(options, paths: paths)
+    }
+
+    private static func parseDoctor(_ arguments: [String]) throws -> Action {
+        var json = false
+        var appPath: String?
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--json": json = true
+            case "--app":
+                index += 1
+                guard index < arguments.count else { throw ParseError.missingValue("--app") }
+                appPath = arguments[index]
+            case "-h", "--help": return .help
+            case "-v", "--version": return .version
+            default: throw ParseError.unknownOption(arguments[index])
+            }
+            index += 1
+        }
+        return .doctor(json: json, appPath: appPath)
     }
 
     private static func parseRead(_ arguments: [String]) throws -> Action {

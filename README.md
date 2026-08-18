@@ -126,14 +126,21 @@ open .build-main/bundle/Downright.app
 
 ```bash
 down PLAN.md                              # open a file
+down open --line 42 --review PLAN.md      # open an agent plan at a line for review
+down open --reveal PLAN.md                # reveal a document in Finder
 printf '# Draft\n' | down                 # open piped Markdown
 down read --json README.md                # inspect without launching the app
 down outline --json README.md             # emit document structure
 down export --format html -o out.html README.md
 down check --target github Docs/sample.md # validate a render target
+down doctor                               # diagnose app, CLI, Quick Look, and updater setup
 ```
 
-`md` is installed as an alias for `down`. Run `down --help` for every command.
+`md` is installed as an alias for `down`. `down doctor --json` emits a
+machine-readable support report without modifying the machine; use
+`down doctor --app path/to/Downright.app` to inspect a development bundle.
+Run
+`down --help` for every command.
 
 ## Keyboard essentials
 

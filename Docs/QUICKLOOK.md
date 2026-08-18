@@ -44,6 +44,20 @@ qlmanage -r && qlmanage -r cache && killall Finder
 
 Settings → General → System integration repeats every step at any time.
 
+For a read-only terminal diagnosis of an installed bundle, its code-signing
+and Gatekeeper state, CLI aliases, Quick Look registrations, Markdown file
+associations, and Sparkle configuration, run:
+
+```bash
+down doctor
+down doctor --json > downright-doctor.json
+# Development bundle:
+down doctor --app .build-main/bundle/Downright.app --json
+```
+
+The command reports missing setup; it does not repair registrations, change
+the default application, or contact a service.
+
 ## What the preview does
 
 - Read-mode rendering with the app's full typography.

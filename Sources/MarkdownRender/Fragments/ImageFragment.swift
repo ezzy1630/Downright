@@ -1,6 +1,20 @@
 import AppKit
 import MarkdownCore
 
+/// Lets an image's async-load completion reach its text view without carrying
+/// a non-Sendable reference across the background queue.  The completion runs
+/// on the main actor, where the weak view is valid; the box only exists to
+/// make the handoff honest under strict concurrency.
+private final class ImageLoadCompletionBox: @unchecked Sendable {
+    weak var view: MarkdownTextView?
+    let sourceRange: NSRange
+
+    init(view: MarkdownTextView?, sourceRange: NSRange) {
+        self.view = view
+        self.sourceRange = sourceRange
+    }
+}
+
 /// Images (§11.3): rounded corners, a restrained shadow, alt text as a
 /// caption.  Clicking opens a lightbox, which the view posts through the
 /// delegate rather than presenting itself — the render package owns no windows.
@@ -11,6 +25,9 @@ final class ImageFragment: DownrightFragment {
 
     private enum LoadResult {
         case loaded(NSImage)
+        /// Not in the cache yet; a background decode is in flight and will
+        /// invalidate this fragment's layout when it lands.
+        case loading
         case missing
         case blocked
     }
@@ -50,12 +67,26 @@ final class ImageFragment: DownrightFragment {
                 cg.setLineWidth(1)
                 cg.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
             }
+        } else if case .loading = result {
+            // A quiet placeholder while the background decode runs.  It is
+            // replaced within a frame for a local file; the loader invalidates
+            // this fragment, so the picture lands without the reader watching
+            // the page jump.
+            cg.saveGState()
+            cg.setFillColor(style.codeBackground.withAlphaComponent(0.55).cgColor)
+            cg.addPath(CGPath(
+                roundedRect: rect,
+                cornerWidth: RenderMetrics.imageCornerRadius,
+                cornerHeight: RenderMetrics.imageCornerRadius,
+                transform: nil))
+            cg.fillPath()
+            cg.restoreGState()
         } else {
             // §8.4's trust instrument applied to images: a picture the agent
             // says it wrote and did not is visibly absent, not silently blank.
             let failure: FailedObject = switch result {
             case .blocked: blocked
-            case .missing, .loaded: missing
+            case .missing, .loaded, .loading: missing
             }
             drawFailedObject(failure, in: rect, style: style, in: cg)
         }
@@ -136,10 +167,38 @@ final class ImageFragment: DownrightFragment {
         guard LocalAssetPolicy.allows(
             request, authorizer: context?.localAssetAuthorizer
         ) else { return .blocked }
-        guard let image = MarkdownFragmentImageCaches.images.image(
-            for: request.url, maxPixelDimension: targetPixelDimension
-        ) else { return .missing }
+        let dimension = targetPixelDimension
+        guard let image = MarkdownFragmentImageCaches.images.cachedImage(
+            for: request.url, maxPixelDimension: dimension
+        ) else {
+            // Never read the file here: this runs during draw and layout on
+            // the main thread.  Schedule a background decode and draw a
+            // placeholder until it lands.
+            scheduleAsyncLoad(request.url, dimension: dimension)
+            return .loading
+        }
         return .loaded(image)
+    }
+
+    /// Asks the background loader for this image.  When it arrives the
+    /// fragment's layout is invalidated, so `overrideHeight` re-evaluates to
+    /// the picture's real size and the frame redraws it in place.
+    ///
+    /// The cache dedupes decodes by URL, so repeated misses during a slow
+    /// load share one background read; a failed load is retried on the next
+    /// layout pass because the cache still misses.
+    private func scheduleAsyncLoad(_ url: URL, dimension: Int) {
+        let box = ImageLoadCompletionBox(view: context?.textView, sourceRange: payload.sourceRange)
+        MarkdownFragmentImageCaches.images.loadImageAsync(
+            for: url, maxPixelDimension: dimension
+        ) { _ in
+            // A nil result means the file is missing; the fragment keeps its
+            // placeholder and the next layout pass retries.
+            guard let view = box.view else { return }
+            // `invalidateFragments` re-lays-out the range (so `overrideHeight`
+            // re-evaluates to the picture's real size) and marks it for redraw.
+            view.invalidateFragments(in: box.sourceRange)
+        }
     }
 
     private var viewportHeightCap: CGFloat {

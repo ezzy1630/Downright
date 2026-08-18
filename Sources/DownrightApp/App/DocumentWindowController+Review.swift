@@ -38,6 +38,13 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
         installTrailing(panel, title: Command.reviewPanel.panelTitle)
     }
 
+    /// Command-line review requests are idempotent: reopening an already
+    /// visible panel should leave it visible rather than toggling it closed.
+    func ensureReviewPanelVisible() {
+        guard reviewPanel == nil else { return }
+        showReviewPanel()
+    }
+
     func configureReviewPanel(_ panel: ReviewPanelView) {
         panel.sourceText = markdownDocument.text
         guard let url = markdownDocument.url else {

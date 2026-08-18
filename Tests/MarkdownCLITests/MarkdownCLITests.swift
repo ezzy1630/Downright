@@ -15,6 +15,19 @@ struct MarkdownCLITests {
             == .check(json: true, target: .gitHub, paths: ["doc.md"]))
         #expect(try MarkdownCLI.parse(["outline", "--json", "doc.md"])
             == .outline(json: true, paths: ["doc.md"]))
+
+        var openOptions = MarkdownCLI.OpenOptions()
+        openOptions.line = 42
+        openOptions.review = true
+        openOptions.edit = true
+        #expect(try MarkdownCLI.parse(["open", "--line", "42", "--review", "doc.md"])
+            == .open(openOptions, paths: ["doc.md"]))
+        var revealOptions = MarkdownCLI.OpenOptions()
+        revealOptions.reveal = true
+        #expect(try MarkdownCLI.parse(["open", "--reveal", "doc.md"])
+            == .open(revealOptions, paths: ["doc.md"]))
+        #expect(try MarkdownCLI.parse(["doctor", "--json"]) == .doctor(json: true, appPath: nil))
+        #expect(try MarkdownCLI.parse(["doctor", "--app", "/tmp/Downright.app"]) == .doctor(json: false, appPath: "/tmp/Downright.app"))
     }
 
     @Test func badArgumentsHaveActionableErrors() {
@@ -23,6 +36,15 @@ struct MarkdownCLITests {
         }
         #expect(throws: MarkdownCLI.ParseError.missingValue("-o")) {
             try MarkdownCLI.parse(["export", "-o"])
+        }
+        #expect(throws: MarkdownCLI.ParseError.missingValue("--line")) {
+            try MarkdownCLI.parse(["open", "--line"])
+        }
+        #expect(throws: MarkdownCLI.ParseError.invalidLine("0")) {
+            try MarkdownCLI.parse(["open", "--line", "0"])
+        }
+        #expect(throws: MarkdownCLI.ParseError.missingValue("--app")) {
+            try MarkdownCLI.parse(["doctor", "--app"])
         }
     }
 
@@ -175,6 +197,21 @@ struct MarkdownCLITests {
         #expect(MarkdownCLI.compatibilityDiagnostics(for: markdown, target: .commonMark)
             .contains { $0.capability == .footnotes })
         #expect(MarkdownCLI.renderTarget(named: "CommonMark") == .commonMark)
+    }
+
+    @Test func doctorPluginParsingOnlyAcceptsOurEnabledRegistration() {
+        #expect(DownDoctor.pluginIsEnabled(
+            listing: "+ com.ezzy.downright.quicklook(1.0)\n- com.other.quicklook(1.0)",
+            identifier: "com.ezzy.downright.quicklook"
+        ))
+        #expect(!DownDoctor.pluginIsEnabled(
+            listing: "- com.ezzy.downright.quicklook(1.0)",
+            identifier: "com.ezzy.downright.quicklook"
+        ))
+        #expect(!DownDoctor.pluginIsEnabled(
+            listing: "+ com.other.quicklook(1.0)",
+            identifier: "com.ezzy.downright.quicklook"
+        ))
     }
 
     @Test func folderCheckSkipsBuildTrees() throws {
