@@ -70,6 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let servicesProvider = DownrightServicesProvider()
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
+    /// Set by `down --line`; applies to command-line documents in this launch only.
+    private var launchLine: Int?
+    /// Set by `down --review`; applies to command-line documents in this launch only.
+    private var launchReview = false
     /// Launch Services can deliver an open request between NSApplication's
     /// will-finish and did-finish callbacks. Keep that request alive until the
     /// app has installed its menus, preferences, and first-run surfaces rather
@@ -175,16 +179,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func openCommandLineFiles() -> Bool {
         var opened = 0
-        var arguments = ProcessInfo.processInfo.arguments.dropFirst().makeIterator()
-        while let argument = arguments.next() {
+        let arguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
             // `-NSDocumentRevisionsDebugMode YES` and friends arrive here too.
             if argument.hasPrefix("-") {
-                if argument == "--mode" { _ = arguments.next() }
+                if argument == "--mode" || argument == "--downright-line" {
+                    index += 2
+                } else {
+                    index += 1
+                }
                 continue
             }
             let url = URL(fileURLWithPath: argument).standardizedFileURL
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            if open(url) != nil { opened += 1 }
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                index += 1
+                continue
+            }
+            if open(url, mode: launchMode, line: launchLine, review: launchReview) != nil { opened += 1 }
+            index += 1
         }
         return opened > 0
     }
@@ -227,8 +241,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func parseLaunchArguments() {
         let arguments = ProcessInfo.processInfo.arguments
-        guard let index = arguments.firstIndex(of: "--mode"), index + 1 < arguments.count else { return }
-        launchMode = RenderMode(rawValue: arguments[index + 1])
+        if let index = arguments.firstIndex(of: "--mode"), index + 1 < arguments.count {
+            launchMode = RenderMode(rawValue: arguments[index + 1])
+        }
+        if let index = arguments.firstIndex(of: "--downright-line"), index + 1 < arguments.count {
+            launchLine = Int(arguments[index + 1])
+        }
+        launchReview = arguments.contains("--downright-review")
     }
 
     // MARK: - Opening
@@ -271,6 +290,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func open(
         _ url: URL,
         mode: RenderMode? = nil,
+        line: Int? = nil,
+        review: Bool = false,
         disposition: DocumentOpenDisposition = .tab,
         tabbingWith explicitHost: NSWindow? = nil
     ) -> DocumentWindowController? {
@@ -283,6 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
             dismissStartWindow()
+            existing.applyCommandLineOpen(line: line, review: review)
             return existing
         }
 
@@ -310,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             tabHost.addTabbedWindow(window, ordered: .above)
         }
         controller.window?.makeKeyAndOrderFront(nil)
+        controller.applyCommandLineOpen(line: line, review: review)
         return controller
     }
 

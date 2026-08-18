@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import drdownright
 
@@ -109,12 +110,31 @@ func launch(_ paths: [String], options: MarkdownCLI.OpenOptions) -> Int32 {
     if options.background { openArguments.append("-g") }
     if options.wait { openArguments.append("-W") }
     openArguments.append(contentsOf: paths)
-    if options.edit { openArguments.append(contentsOf: ["--args", "--mode", "live"]) }
+    var appArguments: [String] = []
+    if options.edit { appArguments.append(contentsOf: ["--mode", "live"]) }
+    if let line = options.line { appArguments.append(contentsOf: ["--downright-line", String(line)]) }
+    if options.review { appArguments.append("--downright-review") }
+    if !appArguments.isEmpty { openArguments.append(contentsOf: ["--args"] + appArguments) }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     process.arguments = openArguments
     do { try process.run(); process.waitUntilExit(); return process.terminationStatus }
     catch { return 70 }
+}
+
+/// Reveals files in Finder without requiring Downright to be installed.
+@discardableResult
+func reveal(_ paths: [String]) -> Int32 {
+    guard !paths.isEmpty else { return 64 }
+    guard !paths.contains("-") else {
+        writeError("--reveal requires file paths, not stdin", status: 64)
+    }
+    let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL }
+    for url in urls where !FileManager.default.fileExists(atPath: url.path) {
+        writeError("\(url.path): no such file", status: 66)
+    }
+    NSWorkspace.shared.activateFileViewerSelecting(urls)
+    return 0
 }
 
 /// The command an installed hook should run.
@@ -211,7 +231,19 @@ case .outline(let json, let paths):
             }
         }
     }
+case .doctor(let json, let appPath):
+    let report = DownDoctor.run(appPath: appPath)
+    if json {
+        guard let output = try? DownDoctor.json(report) else { writeError("cannot encode doctor report", status: 70) }
+        print(output)
+    } else {
+        print(DownDoctor.humanReadable(report))
+    }
+    exit(report.hasFailures ? 1 : 0)
 case .open(let options, let paths):
+    if options.reveal {
+        exit(reveal(paths))
+    }
     var paths = paths
     if paths.contains("-") {
         guard let piped = stdinFile() else { writeError("stdin is not available", status: 66) }

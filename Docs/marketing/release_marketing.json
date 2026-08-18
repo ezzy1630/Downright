@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-18T01:16:10.032Z",
+  "source": {
+    "repository": "https://github.com/ezzy1630/Downright",
+    "commit": "92ff9615cd4da8f568a5ece60a027ef6ab580dfd",
+    "sourceDate": "2026-08-17",
+    "changelogSection": "Unreleased"
+  },
+  "release": {
+    "version": "1.0.16 (build 8)",
+    "status": "draft",
+    "title": "Downright 1.0.16",
+    "summary": "First-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decis...",
+    "highlights": [
+      {
+        "section": "Added",
+        "item": "First-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decision to make — registers its Quick Look extensions with Launch Services and pluginkit and resets Quick Look's caches so existing .md files pick up real Finder icons. Everything here previously lived only in Scripts/install.sh, which runs for people building from source and for nobody else: the shipping path of download the DMG, drag to Applications, double-click performed none of it."
+      },
+      {
+        "section": "Added",
+        "item": "Settings → General → System integration repeats every setup step, names the app currently holding the Markdown association, and opens the Quick Look pane of System Settings for the one switch macOS will not let an app throw."
+      },
+      {
+        "section": "Added",
+        "item": "Recent files say what they are about. Each row carries a second line with the document's first heading, so notes.md reads as \"Agent output\" and a folder of identically-named agent output stops being a column of interchangeable rows. The folder is shown behind it, or alone when there is no heading; neither is repeated when the two would say the same thing."
+      },
+      {
+        "section": "Changed",
+        "item": "The floating Tasks panel's empty state was clipped at the bottom — the card was sized to a fixed minimum taller than its content, and the centered \"Add task\" button rode past the rounded lower edge. The panel now measures the empty chrome's full height (state, gap, button, and the bottom margin) so the card fits the whole thing."
+      },
+      {
+        "section": "Changed",
+        "item": "Finder thumbnails are drawn as pages rather than squares, from a fixed sRGB palette, with task progress shown as a bar. Below 72pt they draw ruled lines instead of text that would only be a smudge at that size."
+      },
+      {
+        "section": "Fixed",
+        "item": "Fixed footnote recovery inside fenced example code. The source scanner no longer ends a fence on an info string ( ruby inside ` ), which used to leak footnote-looking lines out of code blocks."
+      },
+      {
+        "section": "Fixed",
+        "item": "Fixed a main-thread freeze in the image lightbox. Remote (and large local) images now decode off the main thread; a slow server no longer hangs the app inside the click handler."
+      },
+      {
+        "section": "Fixed",
+        "item": "Fixed watcher events after close. A file-watcher event already in flight when its document closed scheduled one more external-write pass on the closed document; and an in-place link hop whose target vanished mid-flight now reopens the previous document instead of leaving a window that no longer tracks external writes."
+      }
+    ]
+  },
+  "channels": {
+    "github": {
+      "title": "Downright 1.0.16 — First-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decis...",
+      "body": "Downright 1.0.16 (build 8)\n\nFirst-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decis...\n\n- First-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decision to make — registers its Quick Look extensions with Launch Services and pluginkit and resets Quick Look's caches so existing .md files pick up real Finder icons. Everything here previously lived only in Scripts/install.sh, which runs for people building from source and for nobody else: the shipping path of download the DMG, drag to Applications, double-click performed none of it.\n- Settings → General → System integration repeats every setup step, names the app currently holding the Markdown association, and opens the Quick Look pane of System Settings for the one switch macOS will not let an app throw.\n- Recent files say what they are about. Each row carries a second line with the document's first heading, so notes.md reads as \"Agent output\" and a folder of identically-named agent output stops being a column of interchangeable rows. The folder is shown behind it, or alone when there is no heading; neither is repeated when the two would say the same thing.\n- The floating Tasks panel's empty state was clipped at the bottom — the card was sized to a fixed minimum taller than its content, and the centered \"Add task\" button rode past the rounded lower edge. The panel now measures the empty chrome's full height (state, gap, button, and the bottom margin) so the card fits the whole thing.\n- Finder thumbnails are drawn as pages rather than squares, from a fixed sRGB palette, with task progress shown as a bar. Below 72pt they draw ruled lines instead of text that would only be a smudge at that size.\n- Fixed footnote recovery inside fenced example code. The source scanner no longer ends a fence on an info string ( ruby inside ` ), which used to leak footnote-looking lines out of code blocks.\n- Fixed a main-thread freeze in the image lightbox. Remote (and large local) images now decode off the main thread; a slow server no longer hangs the app inside the click handler.\n- Fixed watcher events after close. A file-watcher event already in flight when its document closed scheduled one more external-write pass on the closed document; and an in-place link hop whose target vanished mid-flight now reopens the previous document instead of leaving a window that no longer tracks external writes.\n\nDownload: https://downright.cc/download/"
+    },
+    "website": {
+      "heading": "Downright 1.0.16",
+      "excerpt": "First-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decis...",
+      "sourceMarkdown": "/releases/1.0.16.md"
+    },
+    "social": {
+      "draft": "Downright 1.0.16: First-run setup panel. Downright now installs itself. On first launch it offers to become the default Markdown app and to install the down command line tool, and — with no decis... Read the source-backed release notes and download the signed macOS build at downright.cc/download/.",
+      "reviewRequired": true
+    }
+  },
+  "measurement": {
+    "downloadMetric": "GitHub Downright.dmg asset requests; not unique people or completed installs",
+    "telemetry": "none",
+    "attribution": "Use tagged links or landing-page referrers only; do not add device identifiers"
+  },
+  "humanReview": [
+    "Confirm every highlighted claim against the shipped app and release artifact.",
+    "Replace the draft download URL only after the signed public artifact is verified.",
+    "Approve channel copy before publication; this script never posts externally."
+  ]
+}
