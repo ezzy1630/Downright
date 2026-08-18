@@ -636,9 +636,9 @@ final class MarkdownDocument: NSObject {
         startAsyncReparse()
     }
 
-    func reparseNow() {
+    func reparseNow(wholesale: Bool = false) {
         reparseScheduled = false
-        reparseSynchronously(notifying: true, wholesale: false)
+        reparseSynchronously(notifying: true, wholesale: wholesale)
     }
 
     private func finishUndoRedo() {
@@ -910,7 +910,7 @@ final class MarkdownDocument: NSObject {
         adoptExternalBuffer(incoming)
         setDirty(false)
 
-        reparseNow()
+        reparseNow(wholesale: true)
         changes.apply(hunks: hunks, newText: incoming, oldText: baseline ?? previousText)
 
         let restored = ScrollAnchoring.offset(for: anchor, in: parsed)

@@ -6,6 +6,24 @@ import MarkdownCore
 @Suite(.serialized)
 struct AsyncParseTests {
     @Test @MainActor
+    func externalAbsorbPublishesWholesaleRender() {
+        let document = MarkdownDocument()
+        let initial = "# One\n\nA calm paragraph.\n"
+        let incoming = "# One\n\nA rewritten paragraph with a different shape.\n"
+        document.adopt(text: initial, displayURL: nil)
+
+        var observedDirty: DirtySet?
+        document.onReparse = { _, dirty in observedDirty = dirty }
+        document.applyExternalText(
+            incoming,
+            hunks: TextDiff.hunks(old: initial, new: incoming)
+        )
+
+        #expect(document.text == incoming)
+        #expect(observedDirty?.isWholesale == true)
+    }
+
+    @Test @MainActor
     func semanticEditConvergesBeforeReadingTree() {
         let document = MarkdownDocument()
         document.adopt(text: "# Heading\n", displayURL: nil)
