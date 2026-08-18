@@ -51,7 +51,10 @@ final class DownrightActivatedAppTests: XCTestCase {
         isProductionUpdaterSmoke = hostInfo["CFBundleIdentifier"] as? String == "com.ezzy.downright"
             && hostInfo["SUFeedURL"] as? String != nil
         app = XCUIApplication(url: host)
-        app.launchArguments = [fixture.path]
+        // A prior menu-bar session can leave AppKit with no restorable window.
+        // Ignore that user-state input so this test always exercises the exact
+        // fixture launch and does not depend on whichever Downright ran before it.
+        app.launchArguments = [fixture.path, "-ApplePersistenceIgnoreState", "YES"]
         if isProductionUpdaterSmoke {
             // The release smoke intentionally drives the manual menu check;
             // automatic checks must not race that interaction on a fresh CI
@@ -75,6 +78,7 @@ final class DownrightActivatedAppTests: XCTestCase {
 
     func testActivatedBundleRendersAndKeepsSourceEditingLive() throws {
         app.launch()
+        app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
 
         let window = app.windows.firstMatch
@@ -115,6 +119,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
 
         app.launch()
+        app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
 
         let applicationMenu = app.menuBars.menuBarItems["Downright"]
