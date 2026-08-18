@@ -67,7 +67,8 @@ struct HTMLExporter {
 
         case .heading(let level):
             let text = renderInlines(block.inlines, in: block.contentRange)
-            let slug = document.headings.first { $0.range == block.range }?.slug ?? Slugs.make(text)
+            let rawText = document.substring(block.contentRange)
+            let slug = document.headings.first { $0.range == block.range }?.slug ?? Slugs.make(rawText)
             return "<h\(level) id=\"\(escape(slug))\">\(text)</h\(level)>\n"
 
         case .paragraph:

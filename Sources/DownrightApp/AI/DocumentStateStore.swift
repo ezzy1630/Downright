@@ -242,8 +242,9 @@ enum ScrollAnchoring {
     /// Builds an anchor for a source offset.  Used when the buffer is about to
     /// be replaced under the reader (§8.1) and when closing the document.
     static func anchor(for offset: Int, in document: ParsedDocument) -> ScrollAnchor {
-        guard !document.headings.isEmpty else {
-            let fraction = document.length > 0 ? Double(offset) / Double(document.length) : 0
+        guard let firstHeading = document.headings.first, offset >= firstHeading.range.location else {
+            let preambleLength = document.headings.first?.range.location ?? document.length
+            let fraction = preambleLength > 0 ? min(1.0, max(0.0, Double(offset) / Double(preambleLength))) : 0
             return ScrollAnchor(headingSlug: "", headingIndex: 0, fractionThroughSection: fraction)
         }
 
@@ -268,7 +269,10 @@ enum ScrollAnchoring {
         guard !document.headings.isEmpty else {
             return Int(anchor.fractionThroughSection * Double(document.length))
         }
-        guard !anchor.headingSlug.isEmpty else { return 0 }
+        guard !anchor.headingSlug.isEmpty else {
+            let preambleLength = document.headings.first?.range.location ?? document.length
+            return Int(anchor.fractionThroughSection * Double(preambleLength))
+        }
 
         let candidates = document.headings.enumerated().filter { $0.element.slug == anchor.headingSlug }
         let heading: HeadingNode

@@ -343,7 +343,7 @@ final class UpdateCoordinator: UpdateDriverHost {
             downloadCancellation?.call(())
             machine.reduce(.downloadCancelled)
         } else {
-            downloadedUpdate = nil
+            // Dismissing a passive panel preserves downloadedUpdate so the restart pill remains available.
         }
         notifyStateChanged()
     }

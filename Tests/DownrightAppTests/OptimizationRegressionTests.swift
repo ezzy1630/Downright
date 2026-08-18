@@ -89,4 +89,39 @@ struct OptimizationRegressionTests {
             WorkspaceSearchQuery(text: "oversized"), in: snapshot
         ).isEmpty)
     }
+
+    @Test
+    func scrollAnchoringHandlesPreambleOffsets() {
+        let text = "Introductory preamble paragraph before any heading.\n\n# Heading 1\nSection 1 text\n"
+        let doc = MarkdownParser.parse(text)
+        let anchor = ScrollAnchoring.anchor(for: 10, in: doc)
+        #expect(anchor.headingSlug == "")
+        #expect(anchor.headingIndex == 0)
+        let restoredOffset = ScrollAnchoring.offset(for: anchor, in: doc)
+        #expect(restoredOffset >= 8 && restoredOffset <= 12)
+    }
+
+    @Test
+    func snapshotStoreObjectInventoryPreservesShardDirectories() {
+        let inventory = SnapshotStore.shared.objectInventory()
+        for item in inventory {
+            #expect(item.hash.count == 64)
+            #expect(item.url.lastPathComponent.count == 64)
+        }
+    }
+
+    @Test
+    func markdownParseCoordinatorAcceptsZeroRevisionOnSubmit() async {
+        let coordinator = MarkdownParseCoordinator(worker: MarkdownParseWorker())
+        let request = MarkdownParseRequest(
+            text: "# Title\nContent",
+            previous: .empty,
+            revision: .zero
+        )
+        await coordinator.submit(request)
+        let result = await coordinator.nextResult()
+        #expect(result?.document.headings.count == 1)
+        #expect(result?.document.headings.first?.title == "Title")
+        #expect(result?.revision == .zero)
+    }
 }

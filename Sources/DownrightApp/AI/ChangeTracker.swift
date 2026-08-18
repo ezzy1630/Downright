@@ -381,7 +381,7 @@ final class ChangeTracker {
     /// gutter to consume without knowing about `Mark`.  Includes visited marks;
     /// the caller dims them.
     func ranges(of kind: ChangeKind) -> [NSRange] {
-        marks.filter { $0.kind == kind }.map(\.range)
+        decoratedMarks.filter { $0.kind == kind }.map(\.range)
     }
 
     // MARK: - Fading

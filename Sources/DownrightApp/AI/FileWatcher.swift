@@ -261,7 +261,7 @@ final class FileWatcher {
     private func startPolling() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval, leeway: .milliseconds(400))
-        timer.setEventHandler { [weak self] in self?.check() }
+        timer.setEventHandler { [weak self] in self?.scheduleCheck() }
         timer.resume()
         pollTimer = timer
     }
@@ -286,7 +286,15 @@ final class FileWatcher {
         let previous = lastSnapshot
         lastSnapshot = now
 
-        // A rename inside the directory reaches us as a deletion: the path stops
+        // An atomic save deletes the original file before renaming the new one
+        // in; if we act on the deletion we would close the document or report
+        // it gone.  Check if a file with the same inode/size exists in the
+        // directory before treating this as a true removal.  (This is also what
+        // lets a file renamed in Finder keep its open window.)
+        //
+        // Sibling scan: if the path went away, scan the parent directory for a
+        // file matching the *old* inode and size.  This catches external renames
+        // (`mv doc.md archive.md`) that would otherwise leave the watcher
         // resolving and the app used to stop watching for good.  The inode is
         // still there under a new name, so look for it before declaring the
         // document gone.
@@ -308,17 +316,10 @@ final class FileWatcher {
         }
 
         if Date() < suppressUntil {
-            // A change inside the suppression window.  Our own save is already
-            // reflected in `lastSnapshot`: `acknowledgeOwnWrite()` moves the
-            // baseline to exactly what we wrote *before* the coalesced check can
-            // run here, so reaching this branch means the snapshot differs from
-            // what we wrote.  That is a genuine external write racing our save
-            // (the format-on-save / agent-rewrites-right-after-us case), and
-            // swallowing it lets the next save clobber it invisibly.  Surface
-            // it; record the state so the intended match-check below can absorb
-            // a late retransmission of the very same filesystem state.
-            suppressedSnapshot = now
-            DispatchQueue.main.async { [handler] in handler(event) }
+            // Still inside the suppression window for our own write.
+            // Defer notification until the suppression window closes and
+            // acknowledgeOwnWrite has had an opportunity to update lastSnapshot.
+            scheduleCheck()
             return
         }
 

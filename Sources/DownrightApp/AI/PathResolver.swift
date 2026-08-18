@@ -169,11 +169,21 @@ enum ExternalEditor: String, CaseIterable, Codable {
 
         switch self {
         case .xcode:
-            runTool("/usr/bin/xed", arguments: line.map { ["-l", String($0), file.path] } ?? [file.path])
+            runTool(firstExecutable(in: ["/usr/bin/xed"]), fallbackFile: file, arguments: line.map { ["-l", String($0), file.path] } ?? [file.path])
         case .sublime:
-            runTool("/usr/local/bin/subl", arguments: ["\(file.path)\(line.map { ":\($0)" } ?? "")"])
+            let tool = firstExecutable(in: [
+                "/usr/local/bin/subl",
+                "/opt/homebrew/bin/subl",
+                "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+            ])
+            runTool(tool, fallbackFile: file, arguments: ["\(file.path)\(line.map { ":\($0)" } ?? "")"])
         case .bbedit:
-            runTool("/usr/local/bin/bbedit", arguments: line.map { ["+\($0)", file.path] } ?? [file.path])
+            let tool = firstExecutable(in: [
+                "/usr/local/bin/bbedit",
+                "/opt/homebrew/bin/bbedit",
+                "/Applications/BBEdit.app/Contents/Helpers/bbedit_tool",
+            ])
+            runTool(tool, fallbackFile: file, arguments: line.map { ["+\($0)", file.path] } ?? [file.path])
         case .nova:
             NSWorkspace.shared.open(file)
         case .envEditor:
@@ -185,9 +195,13 @@ enum ExternalEditor: String, CaseIterable, Codable {
         }
     }
 
-    private func runTool(_ path: String, arguments: [String]) {
-        guard FileManager.default.isExecutableFile(atPath: path) else {
-            NSWorkspace.shared.open(URL(fileURLWithPath: arguments.last ?? "/"))
+    private func firstExecutable(in paths: [String]) -> String? {
+        paths.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private func runTool(_ path: String?, fallbackFile: URL, arguments: [String]) {
+        guard let path, FileManager.default.isExecutableFile(atPath: path) else {
+            NSWorkspace.shared.open(fallbackFile)
             return
         }
         let process = Process()
@@ -208,11 +222,12 @@ enum ExternalEditor: String, CaseIterable, Codable {
         let command = "\(editor) \(lineArg)\(shellQuoted(file.path))"
         // Inside the AppleScript string literal, backslash is an escape
         // character too: a raw `\` in the path would swallow the next
-        // character (or break the literal).  Escape both, and only, of the
-        // characters AppleScript gives meaning to.
+        // character (or break the literal). Escape backslashes, quotes, and newlines.
         let appleScriptString = command
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
         let script = """
         tell application "Terminal"
             activate
