@@ -24,6 +24,11 @@ command -v xcodebuild >/dev/null || {
 APP_ACCEPTANCE_SCRATCH="${APP_ACCEPTANCE_SCRATCH:-.build-app-acceptance}"
 SPOTLIGHT_SCRATCH="${SPOTLIGHT_SCRATCH:-.build-app-acceptance-spm}"
 CONFIGURATION="${APP_ACCEPTANCE_CONFIGURATION:-Debug}"
+SPOTLIGHT_CONFIGURATION="${APP_ACCEPTANCE_SPOTLIGHT_CONFIGURATION:-}"
+APP_ACCEPTANCE_PRODUCTION="${APP_ACCEPTANCE_PRODUCTION:-0}"
+APP_ACCEPTANCE_MARKETING_VERSION="${APP_ACCEPTANCE_MARKETING_VERSION:-}"
+APP_ACCEPTANCE_BUILD_NUMBER="${APP_ACCEPTANCE_BUILD_NUMBER:-}"
+DOWNRIGHT_UPDATER_SMOKE="${DOWNRIGHT_UPDATER_SMOKE:-0}"
 LOG_TAG="$(printf '%s' "$APP_ACCEPTANCE_SCRATCH" | tr -c 'A-Za-z0-9._-' '-')"
 LOG_DIR="${TMPDIR:-/tmp}"
 BUILD_LOG="$LOG_DIR/downright-app-build-$LOG_TAG.log"
@@ -33,10 +38,36 @@ DESTINATION="platform=macOS,arch=$HOST_ARCH"
 
 # shellcheck disable=SC1091
 source "$ROOT/Config/version.env"
-BUILD_NUMBER="$("$ROOT/Scripts/build-number.sh")"
+MARKETING_VERSION="${APP_ACCEPTANCE_MARKETING_VERSION:-$MARKETING_VERSION}"
+if [ -n "$APP_ACCEPTANCE_BUILD_NUMBER" ]; then
+    BUILD_NUMBER="$APP_ACCEPTANCE_BUILD_NUMBER"
+else
+    BUILD_NUMBER="$("$ROOT/Scripts/build-number.sh")"
+fi
+if [ -z "$SPOTLIGHT_CONFIGURATION" ]; then
+    SPOTLIGHT_CONFIGURATION="$(printf '%s' "$CONFIGURATION" | tr '[:upper:]' '[:lower:]')"
+fi
+HOST_BUNDLE_IDENTIFIER="com.ezzy.downright.acceptance"
+
+case "$APP_ACCEPTANCE_PRODUCTION" in
+    0) ;;
+    1)
+        HOST_BUNDLE_IDENTIFIER="com.ezzy.downright"
+        : "${SPARKLE_ED25519_PUBLIC_KEY:?check-app: production mode requires SPARKLE_ED25519_PUBLIC_KEY}"
+        ;;
+    *)
+        echo "check-app: APP_ACCEPTANCE_PRODUCTION must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
 
 echo "==> Generating Downright.xcodeproj"
 xcodegen generate --spec project.yml
+
+if [ "$APP_ACCEPTANCE_PRODUCTION" = "1" ]; then
+    echo "==> Preparing production updater configuration"
+    "$ROOT/Scripts/prepare-release-info-plist.sh"
+fi
 
 echo "==> Building the activated-app host and UI test bundle"
 xcodebuild \
@@ -53,7 +84,7 @@ xcodebuild \
     CODE_SIGNING_REQUIRED=NO \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-    DOWNRIGHT_HOST_BUNDLE_IDENTIFIER="com.ezzy.downright.acceptance" \
+    DOWNRIGHT_HOST_BUNDLE_IDENTIFIER="$HOST_BUNDLE_IDENTIFIER" \
     build-for-testing 2>&1 | tee "$BUILD_LOG"
 
 APP="$ROOT/$APP_ACCEPTANCE_SCRATCH/Build/Products/$CONFIGURATION/Downright.app"
@@ -84,7 +115,7 @@ done < <(find "$APP" -type d -name "*.bundle")
 echo "==> Embedding the filesystem Spotlight importer"
 APP="$APP" \
     SPOTLIGHT_SCRATCH="$SPOTLIGHT_SCRATCH" \
-    SPOTLIGHT_CONFIGURATION=debug \
+    SPOTLIGHT_CONFIGURATION="$SPOTLIGHT_CONFIGURATION" \
     "$ROOT/Scripts/bundle-spotlight.sh"
 
 # Flattening invalidated the Xcode extension seals, and build-for-testing signed
@@ -98,7 +129,11 @@ echo "==> Re-sealing the acceptance host"
 codesign --force --sign - "$APP"
 
 echo "==> Verifying the exact acceptance bundle"
-"$ROOT/Scripts/verify-bundle.sh" "$APP"
+if [ "$APP_ACCEPTANCE_PRODUCTION" = "1" ]; then
+    "$ROOT/Scripts/verify-bundle.sh" "$APP" --production
+else
+    "$ROOT/Scripts/verify-bundle.sh" "$APP"
+fi
 
 echo "==> Running activated-app acceptance tests"
 XCTESTRUN="$(find "$ROOT/$APP_ACCEPTANCE_SCRATCH/Build/Products" -maxdepth 1 -name '*.xctestrun' -print -quit)"
@@ -121,6 +156,7 @@ fi
     echo "check-app: xctestrun manifest has no exact UI target app path: $XCTESTRUN" >&2
     exit 1
 }
+DOWNRIGHT_UPDATER_SMOKE="$DOWNRIGHT_UPDATER_SMOKE" \
 xcodebuild \
     test-without-building \
     -xctestrun "$XCTESTRUN" \

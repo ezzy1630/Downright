@@ -432,14 +432,16 @@ final class SnapshotStore {
         }
     }
 
-    private func objectInventory() -> [(url: URL, size: Int, date: Date, hash: String)] {
+    func objectInventory() -> [(url: URL, size: Int, date: Date, hash: String)] {
         var objects: [(url: URL, size: Int, date: Date, hash: String)] = []
         guard let e = fm.enumerator(
             at: objectsDirectory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
         ) else { return objects }
         for case let url as URL in e {
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true,
+                  url.lastPathComponent.count == 64,
                   let size = values.fileSize else { continue }
             objects.append((url, size, values.contentModificationDate ?? .distantPast, url.lastPathComponent))
         }

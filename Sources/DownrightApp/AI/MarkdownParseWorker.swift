@@ -75,7 +75,9 @@ actor MarkdownParseCoordinator {
 
     func submit(_ request: MarkdownParseRequest) {
         guard !isSuspended, !isShutdown else { return }
-        guard pending?.revision ?? .zero < request.revision else { return }
+        if let pendingRevision = pending?.revision {
+            guard pendingRevision < request.revision else { return }
+        }
         pending = request
         publishBusy()
         wake?.resume()

@@ -50,10 +50,12 @@ final class SparkleUpdateEngine: UpdateEngine {
     init?(userDriver: DownrightUpdateDriver) {
         self.driver = userDriver
         let host = Bundle.main
-        // No feed URL means this bundle is updater-disabled (a dev/ad-hoc
-        // build); Sparkle cannot be constructed usefully, so the engine
-        // refuses to exist and the coordinator stays quiet.
-        guard host.object(forInfoDictionaryKey: "SUFeedURL") as? String != nil else {
+        // A dev/ad-hoc bundle, or a release bundle with incomplete updater
+        // metadata, cannot be constructed usefully. Refuse to hand partial
+        // configuration to Sparkle; the coordinator stays in its normal
+        // disabled state and the production bundle gate catches the release
+        // mistake before users ever receive it.
+        guard UpdateConfiguration.isValid(infoDictionary: host.infoDictionary ?? [:]) else {
             return nil
         }
         let updater = SPUUpdater(

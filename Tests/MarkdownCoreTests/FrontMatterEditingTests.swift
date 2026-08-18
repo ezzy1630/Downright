@@ -80,4 +80,10 @@ import Testing
         let block = FrontMatterEditing.set(MarkdownParser.parse("---\ndescription: |\n---\n"), key: "description", value: .text("B"))
         #expect(block.fallback == .blockScalarNotSupported)
     }
+
+    @Test func rendersNumberWithoutPointZero() throws {
+        let source = "---\ncount: 1\n---\n"
+        let proposal = try #require(FrontMatterEditing.set(MarkdownParser.parse(source), key: "count", value: .number(42.0)).proposal)
+        #expect(proposal.applying(to: source) == "---\ncount: 42\n---\n")
+    }
 }

@@ -155,9 +155,10 @@ final class ThumbnailProvider: QLThumbnailProvider {
         if !subtitle.isEmpty {
             cursor -= size.height * 0.045
             let available = cursor - content.minY - badgeReserve
-            if available > titleSize {
+            let subtitleSize = max(6, size.height * 0.058)
+            if available >= subtitleSize * 1.2 {
                 _ = drawText(
-                    subtitle, font: .systemFont(ofSize: max(6, size.height * 0.058)), color: bodyInk,
+                    subtitle, font: .systemFont(ofSize: subtitleSize), color: bodyInk,
                     in: NSRect(x: content.minX, y: content.minY + badgeReserve,
                                width: content.width, height: available),
                     topAt: cursor, lines: 4

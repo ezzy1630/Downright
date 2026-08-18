@@ -82,6 +82,32 @@ struct MarkdownCLITests {
         #expect(!html.lowercased().contains("href=\"vscode:"))
     }
 
+    @Test func htmlExportRejectsObfuscatedSchemes() {
+        let html = MarkdownCLI.html(for: "[bad](javascript/foo:alert(1))")
+        #expect(!html.contains("href=\"javascript/foo:alert(1)\""))
+    }
+
+    @Test func checkAndOutlineSupportDoubleDash() throws {
+        #expect(try MarkdownCLI.parse(["check", "--", "-notes.md"])
+            == .check(json: false, target: nil, paths: ["-notes.md"]))
+        #expect(try MarkdownCLI.parse(["outline", "--", "-draft.md"])
+            == .outline(json: false, paths: ["-draft.md"]))
+    }
+
+    @Test func outlineCalculatesLinesOnCRAndCRLF() {
+        let cr = "Line 1\r# Heading 1\rLine 3\r## Heading 2\r"
+        let outlineCR = MarkdownCLI.outline(for: cr)
+        #expect(outlineCR.count == 2)
+        #expect(outlineCR[0].line == 2)
+        #expect(outlineCR[1].line == 4)
+
+        let crlf = "Line 1\r\n# Heading 1\r\nLine 3\r\n## Heading 2\r\n"
+        let outlineCRLF = MarkdownCLI.outline(for: crlf)
+        #expect(outlineCRLF.count == 2)
+        #expect(outlineCRLF[0].line == 2)
+        #expect(outlineCRLF[1].line == 4)
+    }
+
     @Test func htmlExportNeverRetainsExternalImageSources() {
         let html = MarkdownCLI.html(for: """
         ![relative](images/photo.png)

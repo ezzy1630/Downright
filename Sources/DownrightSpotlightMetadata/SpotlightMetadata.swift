@@ -75,8 +75,10 @@ public enum SpotlightMetadataImporter {
         guard accepts(url) else {
             throw CocoaError(.fileReadUnsupportedScheme)
         }
-        let (text, _) = try DocumentIO.read(contentsOf: url)
-        return metadata(forText: text, url: url)
+        guard let head = DocumentIO.readHead(contentsOf: url, limit: 2 * 1024 * 1024) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return metadata(forText: head, url: url)
     }
 
     public static func accepts(_ url: URL) -> Bool {

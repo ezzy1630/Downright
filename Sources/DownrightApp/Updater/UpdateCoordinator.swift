@@ -18,6 +18,25 @@ final class Capability<T> {
     func discard() { body = nil }
 }
 
+/// The minimum configuration needed before Downright asks Sparkle to run.
+/// Invalid release metadata must fail closed as a normal disabled-updater
+/// state, not reach a partially configured Sparkle instance.
+enum UpdateConfiguration {
+    static func isValid(infoDictionary: [String: Any]) -> Bool {
+        guard let feedString = infoDictionary["SUFeedURL"] as? String,
+              let feedURL = URL(string: feedString),
+              feedURL.scheme?.lowercased() == "https",
+              feedURL.host?.isEmpty == false,
+              let publicKey = infoDictionary["SUPublicEDKey"] as? String,
+              let publicKeyData = Data(base64Encoded: publicKey),
+              publicKeyData.count == 32
+        else {
+            return false
+        }
+        return true
+    }
+}
+
 /// What the update status pill displays right now.
 enum UpdatePillModel: Equatable {
     /// "Update 1.1" — an update is available for the user to act on.
@@ -115,13 +134,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// Dev/ad-hoc bundles omit `SUFeedURL` (and the whole Sparkle block) from
     /// their Info.plist, which disables the updater without a compile flag.
     private var isConfigured: Bool {
-        guard let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
-              !feed.isEmpty,
-              let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
-              !key.isEmpty,
-              !key.hasPrefix("PLACEHOLDER_")
-        else { return false }
-        return true
+        UpdateConfiguration.isValid(infoDictionary: Bundle.main.infoDictionary ?? [:])
     }
 
     private init() {}
@@ -195,6 +208,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// discarded, which is the only acceptable way for a teardown to happen.
     func tearDownForTesting() {
         discardAllCapabilities()
+        engine?.onBackgroundDownloadCompleted = nil
         machine = UpdateStateMachine()
         downloadedUpdate = nil
         panel = nil
@@ -239,9 +253,9 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// Update / Update & Relaunch — "do it now".
     func userDidChooseInstall() {
         if readyReply?.isArmed == true {
-            readyReply?.call(.install)
+            consume(&readyReply, value: .install)
         } else if choiceReply?.isArmed == true {
-            choiceReply?.call(.install)
+            consume(&choiceReply, value: .install)
         } else if downloadedUpdate != nil {
             // A background download with no pending prompt: asking Sparkle to
             // check again presents the already-downloaded update for install.
@@ -254,7 +268,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// scheduled for the next runloop turn.
     func userDidRetry() {
         guard case .failed = machine.phase else { return }
-        acknowledgement?.call(())
+        consume(&acknowledgement, value: ())
         discardAllCapabilities()
         machine.reduce(.dismissed)
         downloadedUpdate = nil
@@ -267,13 +281,20 @@ final class UpdateCoordinator: UpdateDriverHost {
         if choiceReply?.isArmed == true {
             // The update is dismissed until Sparkle reminds the user later;
             // the machine leaves `.available` so the pill stops offering it.
-            choiceReply?.call(.later)
+            consume(&choiceReply, value: .later)
             machine.reduce(.dismissed)
             closePanel()
         } else if readyReply?.isArmed == true {
             // Already downloaded: it still installs on quit, so the pill keeps
             // its "Restart to Update" state and only the panel goes away.
-            readyReply?.call(.later)
+            consume(&readyReply, value: .later)
+            closePanel()
+        } else if case .upToDate = machine.phase {
+            // Keep the no-update result visible until the user has had a
+            // chance to read it. This acknowledgement is deliberately delayed
+            // until the explicit OK action, or until window dismissal handles
+            // the close-button path below.
+            userDidAcknowledge()
             closePanel()
         } else {
             closePanel()
@@ -282,32 +303,32 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func userDidChooseSkip() {
-        choiceReply?.call(.skip)
+        consume(&choiceReply, value: .skip)
         machine.reduce(.dismissed)
         closePanel()
         notifyStateChanged()
     }
 
     func userDidCancelCheck() {
-        checkCancellation?.call(())
+        consume(&checkCancellation, value: ())
         machine.reduce(.checkCancelled)
         closePanel()
         notifyStateChanged()
     }
 
     func userDidCancelDownload() {
-        downloadCancellation?.call(())
+        consume(&downloadCancellation, value: ())
         machine.reduce(.downloadCancelled)
         closePanel()
         notifyStateChanged()
     }
 
     func userDidRetryTermination() {
-        retryTermination?.call(())
+        consume(&retryTermination, value: ())
     }
 
     func userDidAcknowledge() {
-        acknowledgement?.call(())
+        consume(&acknowledgement, value: ())
     }
 
     func userDidRequestLearnMore(_ metadata: UpdateMetadata) {
@@ -324,26 +345,30 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// left with a capability it will wait on forever.
     func userDidDismissPanel() {
         if choiceReply?.isArmed == true {
-            choiceReply?.call(.later)
+            consume(&choiceReply, value: .later)
             machine.reduce(.dismissed)
         } else if readyReply?.isArmed == true {
-            readyReply?.call(.later)
+            consume(&readyReply, value: .later)
         } else if acknowledgement?.isArmed == true {
-            acknowledgement?.call(())
+            consume(&acknowledgement, value: ())
         } else if retryTermination?.isArmed == true {
             // An install-in-progress keeps going; the panel can go away.
-            retryTermination?.discard()
+            discard(&retryTermination)
         } else if checkCancellation?.isArmed == true {
             // Closing the panel mid-check cancels it; Sparkle calls nothing
             // after a cancelled check, so the machine leaves `.checking` here.
-            checkCancellation?.call(())
+            consume(&checkCancellation, value: ())
             machine.reduce(.checkCancelled)
         } else if downloadCancellation?.isArmed == true {
             // Closing the panel mid-download cancels it.
-            downloadCancellation?.call(())
+            consume(&downloadCancellation, value: ())
             machine.reduce(.downloadCancelled)
         } else {
-            downloadedUpdate = nil
+            if case .readyToRelaunch = phase {
+                // Keep background downloadedUpdate so the restart titlebar pill remains visible.
+            } else {
+                downloadedUpdate = nil
+            }
         }
         notifyStateChanged()
     }
@@ -358,18 +383,23 @@ final class UpdateCoordinator: UpdateDriverHost {
     private var acknowledgement: Capability<Void>?
 
     private func discardAllCapabilities() {
-        checkCancellation?.discard()
-        downloadCancellation?.discard()
-        choiceReply?.discard()
-        readyReply?.discard()
-        retryTermination?.discard()
-        acknowledgement?.discard()
-        checkCancellation = nil
-        downloadCancellation = nil
-        choiceReply = nil
-        readyReply = nil
-        retryTermination = nil
-        acknowledgement = nil
+        discard(&checkCancellation)
+        discard(&downloadCancellation)
+        discard(&choiceReply)
+        discard(&readyReply)
+        discard(&retryTermination)
+        discard(&self.acknowledgement)
+    }
+
+    private func discard<T>(_ capability: inout Capability<T>?) {
+        capability?.discard()
+        capability = nil
+    }
+
+    private func consume<T>(_ capability: inout Capability<T>?, value: T) {
+        let pending = capability
+        capability = nil
+        pending?.call(value)
     }
 
     // MARK: - UpdateDriverHost
@@ -377,7 +407,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     func driverDidBeginUserCheck(cancellation: @escaping () -> Void) {
         releaseNotes = .none
         currentCycleIsUserInitiated = true
-        checkCancellation?.discard()
+        discard(&checkCancellation)
         checkCancellation = Capability(cancellation)
         machine.reduce(.userInitiatedCheckBegan)
         showPanel()
@@ -391,9 +421,9 @@ final class UpdateCoordinator: UpdateDriverHost {
         reply: @escaping (UpdateUserChoice) -> Void
     ) {
         releaseNotes = .none
-        checkCancellation?.discard()
-        checkCancellation = nil
-        choiceReply?.discard()
+        discard(&checkCancellation)
+        discard(&choiceReply)
+        discard(&readyReply)
         choiceReply = Capability(reply)
         downloadedUpdate = nil
         currentCycleIsUserInitiated = userInitiated
@@ -416,16 +446,18 @@ final class UpdateCoordinator: UpdateDriverHost {
 
     func driverDidFindNoUpdate(userInitiated: Bool, acknowledgement: @escaping () -> Void) {
         releaseNotes = .none
-        checkCancellation?.discard()
-        checkCancellation = nil
+        discard(&checkCancellation)
+        discard(&choiceReply)
+        discard(&readyReply)
         currentCycleIsUserInitiated = false
-        self.acknowledgement?.discard()
+        discard(&self.acknowledgement)
         self.acknowledgement = Capability(acknowledgement)
         machine.reduce(.updateNotFound(userInitiated: userInitiated))
         if userInitiated {
             showPanel()
-            // Up-to-date is a terminal display state: acknowledge once shown.
-            userDidAcknowledge()
+            // Keep the result panel open until the user dismisses it. Sparkle
+            // waits for this acknowledgement, which is exactly what lets the
+            // custom UI communicate a useful no-update result.
         } else {
             // Quiet background check; nothing to show, acknowledge immediately.
             userDidAcknowledge()
@@ -437,7 +469,7 @@ final class UpdateCoordinator: UpdateDriverHost {
         releaseNotes = .none
         let userInitiated = currentCycleIsUserInitiated
         currentCycleIsUserInitiated = false
-        self.acknowledgement?.discard()
+        discard(&self.acknowledgement)
         self.acknowledgement = Capability(acknowledgement)
         guard userInitiated else {
             // A background check that could not reach the feed is a non-event.
@@ -457,7 +489,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func driverDidBeginDownload(cancellation: @escaping () -> Void) {
-        downloadCancellation?.discard()
+        discard(&downloadCancellation)
         downloadCancellation = Capability(cancellation)
         machine.reduce(.downloadInitiated)
         // Automatic background downloads proceed silently on the pill.
@@ -486,7 +518,9 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func driverDidBecomeReadyToRelaunch(reply: @escaping (UpdateUserChoice) -> Void) {
-        readyReply?.discard()
+        discard(&downloadCancellation)
+        discard(&choiceReply)
+        discard(&readyReply)
         readyReply = Capability(reply)
         machine.reduce(.readyToInstallAndRelaunch)
         // A background download that became ready stays on the "Restart to
@@ -496,7 +530,8 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func driverDidBeginInstallation(applicationTerminated: Bool, retryTermination: @escaping () -> Void) {
-        self.retryTermination?.discard()
+        discard(&self.retryTermination)
+        discard(&downloadCancellation)
         self.retryTermination = Capability(retryTermination)
         machine.reduce(.installingUpdate(applicationTerminated: applicationTerminated))
         if !applicationTerminated {
@@ -506,7 +541,7 @@ final class UpdateCoordinator: UpdateDriverHost {
     }
 
     func driverDidFinishInstallation(relaunched: Bool, acknowledgement: @escaping () -> Void) {
-        self.acknowledgement?.discard()
+        discard(&self.acknowledgement)
         self.acknowledgement = Capability(acknowledgement)
         machine.reduce(.updateInstalled(relaunched: relaunched))
         currentCycleIsUserInitiated = false

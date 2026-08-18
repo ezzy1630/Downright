@@ -464,12 +464,12 @@ final class ToolbarPresentationControl: Motion.SpringSurfaceView {
         documentButton = ToolbarModeButton(
             title: "Document",
             typography: .document,
-            accessibilityLabel: "Rendered document"
+            accessibilityLabel: "Document"
         )
         sourceButton = ToolbarModeButton(
             title: "Source",
             typography: .source,
-            accessibilityLabel: "Source Focus"
+            accessibilityLabel: "Source"
         )
         self.onChange = onChange
         self.performHapticFeedback = performHapticFeedback

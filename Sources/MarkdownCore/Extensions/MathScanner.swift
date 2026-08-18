@@ -61,13 +61,21 @@ enum MathScanner {
         var i = start + 2
         while i + 1 < end {
             if text.character(at: i) == 0x5C, text.character(at: i + 1) == closer {
-                let content = NSRange(location: start + 2, length: i - (start + 2))
-                guard content.length > 0 else { return nil }
-                return MathMatch(
-                    range: NSRange(location: start, length: i + 2 - start),
-                    contentRange: content,
-                    isDisplay: isDisplay
-                )
+                var backslashCount = 0
+                var p = i
+                while p >= start + 2, text.character(at: p) == 0x5C {
+                    backslashCount += 1
+                    p -= 1
+                }
+                if backslashCount % 2 == 1 {
+                    let content = NSRange(location: start + 2, length: i - (start + 2))
+                    guard content.length > 0 else { return nil }
+                    return MathMatch(
+                        range: NSRange(location: start, length: i + 2 - start),
+                        contentRange: content,
+                        isDisplay: isDisplay
+                    )
+                }
             }
             i += 1
         }

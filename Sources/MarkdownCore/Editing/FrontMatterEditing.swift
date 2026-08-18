@@ -238,7 +238,11 @@ public enum FrontMatterEditing {
         case let .boolean(value): rendered = value ? "true" : "false"
         case let .number(value):
             guard value.isFinite else { return nil }
-            rendered = String(value).replacingOccurrences(of: ".0", with: "", options: .anchored)
+            if value.rounded() == value, abs(value) <= Double(Int64.max) {
+                rendered = String(Int64(value))
+            } else {
+                rendered = String(value)
+            }
         case let .list(items):
             rendered = "[" + items.map { item in
                 needsQuote(item) ? doubleQuoted(item) : item

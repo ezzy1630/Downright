@@ -140,8 +140,11 @@ enum TableFormatter {
 
     /// Source range covering the whole table including its delimiter row.
     static func sourceRange(of table: TableData, fallback: NSRange) -> NSRange {
-        var range = fallback
-        for row in table.rows { range = range.union(row.range) }
+        guard let first = table.rows.first?.range else {
+            return table.delimiterRange.length > 0 ? table.delimiterRange : fallback
+        }
+        var range = first
+        for row in table.rows.dropFirst() { range = range.union(row.range) }
         if table.delimiterRange.length > 0 { range = range.union(table.delimiterRange) }
         return range
     }

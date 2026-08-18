@@ -521,6 +521,21 @@ final class ThemeTests {
         #expect(object?["b"] as? [Int] == [1, 2])
     }
 
+    @Test("The JSONC sanitiser handles trailing comma followed by comment")
+    func jsoncSanitizerTrailingCommaWithComment() {
+        let source = """
+        {
+          "colors": {
+            "focusBorder": "#007acc", // primary border
+          }
+        }
+        """
+        let cleaned = String(decoding: JSONCSanitizer.strip(Data(source.utf8)), as: UTF8.self)
+        let object = (try? JSONSerialization.jsonObject(with: Data(cleaned.utf8))) as? [String: Any]
+        let colors = object?["colors"] as? [String: Any]
+        #expect(colors?["focusBorder"] as? String == "#007acc")
+    }
+
     @Test("Scope matching prefers the selector that generalises the query")
     func scopeMatching() {
         let entries = [

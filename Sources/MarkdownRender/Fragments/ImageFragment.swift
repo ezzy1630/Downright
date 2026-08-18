@@ -191,12 +191,10 @@ final class ImageFragment: DownrightFragment {
         let box = ImageLoadCompletionBox(view: context?.textView, sourceRange: payload.sourceRange)
         MarkdownFragmentImageCaches.images.loadImageAsync(
             for: url, maxPixelDimension: dimension
-        ) { _ in
-            // A nil result means the file is missing; the fragment keeps its
-            // placeholder and the next layout pass retries.
-            guard let view = box.view else { return }
-            // `invalidateFragments` re-lays-out the range (so `overrideHeight`
-            // re-evaluates to the picture's real size) and marks it for redraw.
+        ) { image in
+            // A nil result means the file is missing or unreadable; only invalidate
+            // layout when an image is successfully loaded to avoid infinite layout loops.
+            guard image != nil, let view = box.view else { return }
             view.invalidateFragments(in: box.sourceRange)
         }
     }

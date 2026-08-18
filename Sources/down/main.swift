@@ -109,6 +109,7 @@ func launch(_ paths: [String], options: MarkdownCLI.OpenOptions) -> Int32 {
     if options.newWindow { openArguments.append("-n") }
     if options.background { openArguments.append("-g") }
     if options.wait { openArguments.append("-W") }
+    openArguments.append("--")
     openArguments.append(contentsOf: paths)
     var appArguments: [String] = []
     if options.edit { appArguments.append(contentsOf: ["--mode", "live"]) }
@@ -187,18 +188,18 @@ case .export(_, let output, let paths):
 case .check(let json, let target, let paths):
     let inputs = readInputs(expandedMarkdownPaths(paths), maximumBytes: 10 * 1_024 * 1_024)
     var findings = 0
-    for (index, input) in inputs {
-        let base = input == "stdin" ? nil : URL(fileURLWithPath: index).deletingLastPathComponent()
-        let diagnostics = MarkdownCLI.diagnostics(for: input, baseURL: base)
-        let compatibility = target.map { MarkdownCLI.compatibilityDiagnostics(for: input, target: $0) } ?? []
+    for (path, content) in inputs {
+        let base = path == "stdin" ? nil : URL(fileURLWithPath: path).deletingLastPathComponent()
+        let diagnostics = MarkdownCLI.diagnostics(for: content, baseURL: base)
+        let compatibility = target.map { MarkdownCLI.compatibilityDiagnostics(for: content, target: $0) } ?? []
         findings += diagnostics.count + compatibility.count
         if json {
             var values = diagnostics.map {
-                ["path": index, "id": $0.id, "severity": $0.severity.rawValue, "category": $0.category.rawValue, "message": $0.message, "location": $0.range.location] as [String: Any]
+                ["path": path, "id": $0.id, "severity": $0.severity.rawValue, "category": $0.category.rawValue, "message": $0.message, "location": $0.range.location] as [String: Any]
             }
             values += compatibility.map {
                 [
-                    "path": index,
+                    "path": path,
                     "id": $0.id,
                     "severity": $0.severity.rawValue,
                     "category": "compatibility",
@@ -210,9 +211,9 @@ case .check(let json, let target, let paths):
             guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) else { writeError("cannot encode JSON", status: 70) }
             FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data("\n".utf8))
         } else {
-            for diagnostic in diagnostics { print("\(index):\(diagnostic.range.location + 1): \(diagnostic.severity.rawValue): \(diagnostic.message) [\(diagnostic.id)]") }
+            for diagnostic in diagnostics { print("\(path):\(diagnostic.range.location + 1): \(diagnostic.severity.rawValue): \(diagnostic.message) [\(diagnostic.id)]") }
             for diagnostic in compatibility {
-                print("\(index):\(diagnostic.range.location + 1): warning: \(diagnostic.title) [target:\(target?.rawValue ?? "unknown")]")
+                print("\(path):\(diagnostic.range.location + 1): warning: \(diagnostic.title) [target:\(target?.rawValue ?? "unknown")]")
             }
         }
     }
@@ -249,7 +250,7 @@ case .open(let options, let paths):
         guard let piped = stdinFile() else { writeError("stdin is not available", status: 66) }
         paths = paths.filter { $0 != "-" }
         paths.append(piped.path)
-    } else if let piped = stdinFile() {
+    } else if paths.isEmpty, let piped = stdinFile() {
         paths.append(piped.path)
     }
     guard !paths.isEmpty else { print(MarkdownCLI.usage()); exit(64) }

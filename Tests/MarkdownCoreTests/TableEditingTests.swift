@@ -113,4 +113,20 @@ import Testing
         let invalid = TableEditing.propose(MarkdownParser.parse(source), operation: .setCell(row: 99, column: 0, text: "x"))
         #expect(invalid.fallback == .invalidRow)
     }
+
+    @Test func tableFormatterWithLeadingPreambleDoesNotStartAtZero() throws {
+        let source = "# Heading\n\nSome introductory paragraph.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"
+        let doc = MarkdownParser.parse(source)
+        var foundTable: TableData?
+        doc.root.walk { block in
+            if case .table(let data) = block.content {
+                foundTable = data
+            }
+        }
+        let table = try #require(foundTable)
+        let range = TableFormatter.sourceRange(of: table, fallback: NSRange(location: 0, length: 0))
+        let model = TableFormatter.model(of: table, in: source as NSString)
+        #expect(range.location > 20)
+        #expect(model.lineTerminators == ["\n", "\n", "\n"])
+    }
 }

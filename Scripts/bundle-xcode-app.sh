@@ -31,6 +31,8 @@ xcodegen generate --spec project.yml
 
 if [ "$PRODUCTION" = "1" ]; then
     "$ROOT/Scripts/prepare-release-info-plist.sh"
+elif [ ! -f "$ROOT/Config/Release-Info.plist" ]; then
+    cp "$ROOT/Config/Downright-Info.plist" "$ROOT/Config/Release-Info.plist"
 fi
 
 echo "==> Building Downright.app ($CONFIGURATION, build $BUILD)"

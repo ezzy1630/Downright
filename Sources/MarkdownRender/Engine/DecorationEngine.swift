@@ -403,7 +403,10 @@ public final class DecorationEngine {
             }
             if let title, !title.isEmpty {
                 let source = state.document.substring(block.range) as NSString
-                let found = source.range(of: title)
+                let bracket = source.range(of: "]")
+                let searchStart = bracket.location != NSNotFound ? bracket.location + 1 : 0
+                let searchRange = NSRange(location: searchStart, length: source.length - searchStart)
+                let found = source.range(of: title, options: [], range: searchRange)
                 if found.location != NSNotFound {
                     apply([
                         .font: NSFont.systemFont(ofSize: styleSheet.bodyFont().pointSize, weight: .semibold),

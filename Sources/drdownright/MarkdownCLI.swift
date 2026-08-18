@@ -288,6 +288,9 @@ public enum MarkdownCLI {
                     throw ParseError.unexpectedArgument("unknown render target \(arguments[index])")
                 }
                 target = value
+            case "--":
+                paths.append(contentsOf: arguments[(index + 1)...])
+                index = arguments.count
             case "-h", "--help": return .help
             case "-v", "--version": return .version
             default:
@@ -302,15 +305,21 @@ public enum MarkdownCLI {
     private static func parseOutline(_ arguments: [String]) throws -> Action {
         var json = false
         var paths: [String] = []
-        for argument in arguments {
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
             switch argument {
             case "--json": json = true
+            case "--":
+                paths.append(contentsOf: arguments[(index + 1)...])
+                index = arguments.count
             case "-h", "--help": return .help
             case "-v", "--version": return .version
             default:
                 if argument != "-", argument.hasPrefix("-") { throw ParseError.unknownOption(argument) }
                 paths.append(argument)
             }
+            index += 1
         }
         return .outline(json: json, paths: paths)
     }
@@ -481,20 +490,14 @@ public enum MarkdownCLI {
     }
 
     public static func outline(for markdown: String) -> [OutlineItem] {
-        let source = markdown as NSString
-        var cursor = 0
-        var line = 1
-        return MarkdownParser.parse(markdown, options: .structureOnly).headings.map { heading in
-            while cursor < min(heading.range.location, source.length) {
-                if source.character(at: cursor) == 0x0A { line += 1 }
-                cursor += 1
-            }
-            return OutlineItem(
+        let parsed = MarkdownParser.parse(markdown, options: .structureOnly)
+        return parsed.headings.map { heading in
+            OutlineItem(
                 level: heading.level,
                 title: heading.title,
                 slug: heading.slug,
                 location: heading.range.location,
-                line: line
+                line: parsed.line(at: heading.range.location)
             )
         }
     }
@@ -607,13 +610,13 @@ public enum MarkdownCLI {
     private static let linkSchemeAllowlist: Set<String> = ["http", "https", "mailto"]
 
     private static func linkDestinationIsSafe(_ destination: String) -> Bool {
-        let lower = destination.lowercased()
-        guard let colon = lower.firstIndex(of: ":") else { return true }
-        let prefix = lower[..<colon]
-        guard !prefix.isEmpty,
-              prefix.rangeOfCharacter(from: CharacterSet(charactersIn: "/?#\\")) == nil
-        else { return true }
-        return linkSchemeAllowlist.contains(String(prefix))
+        let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let colon = trimmed.firstIndex(of: ":") else { return true }
+        let prefix = String(trimmed[..<colon])
+        if prefix.rangeOfCharacter(from: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+-.")).inverted) != nil {
+            return !prefix.contains("javascript") && !prefix.contains("data") && !prefix.contains("vbscript")
+        }
+        return linkSchemeAllowlist.contains(prefix)
     }
 
     private static func imageSourceIsSafe(_ source: String) -> Bool {

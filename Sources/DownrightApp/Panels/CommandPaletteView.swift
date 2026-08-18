@@ -63,6 +63,12 @@ final class CommandPaletteView: NSView, PanelSurface {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    deinit {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {

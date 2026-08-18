@@ -162,12 +162,48 @@ enum FrontMatterScanner {
             v = String(v.dropFirst().dropLast())
         } else if v.hasPrefix("["), v.hasSuffix("]") {
             let inner = String(v.dropFirst().dropLast())
-            v = inner
-                .split(separator: ",")
+            v = splitInlineArray(inner)
                 .map { normalise($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { !$0.isEmpty }
                 .joined(separator: ", ")
         }
         return v
+    }
+
+    private static func splitInlineArray(_ inner: String) -> [String] {
+        var items: [String] = []
+        var current = ""
+        var inDoubleQuotes = false
+        var inSingleQuotes = false
+        var isEscaped = false
+
+        for ch in inner {
+            if isEscaped {
+                current.append(ch)
+                isEscaped = false
+                continue
+            }
+            if ch == "\\" {
+                current.append(ch)
+                isEscaped = true
+                continue
+            }
+            if ch == "\"" && !inSingleQuotes {
+                inDoubleQuotes.toggle()
+                current.append(ch)
+            } else if ch == "'" && !inDoubleQuotes {
+                inSingleQuotes.toggle()
+                current.append(ch)
+            } else if ch == "," && !inDoubleQuotes && !inSingleQuotes {
+                items.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        if !current.isEmpty {
+            items.append(current)
+        }
+        return items
     }
 }
