@@ -34,12 +34,14 @@ enum CalloutScanner {
         // Consume the quote markers themselves; a nested `> >` callout is still
         // a callout for the innermost quote.
         var sawMarker = false
-        while i < end, text.character(at: i) == 0x3E {
+        while i < end {
+            while i < end, isSpace(text.character(at: i)) { i += 1 }
+            guard i < end, text.character(at: i) == 0x3E else { break }
             sawMarker = true
             i += 1
-            if i < end, text.character(at: i) == 0x20 { i += 1 }
         }
         guard sawMarker else { return nil }
+        while i < end, isSpace(text.character(at: i)) { i += 1 }
 
         guard i + 2 < end, text.character(at: i) == 0x5B, text.character(at: i + 1) == 0x21 else { return nil }
         var j = i + 2

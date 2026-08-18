@@ -117,6 +117,31 @@ import Testing
         let c = MarkdownParser.parse("# A\n\nalpha!\n\nbeta\n")
         #expect(Set(c.root.children.map(\.subtreeHash)) != aHashes)
     }
+
+    @Test func containerReconciliationWithShiftedOffsetsDoesNotDirtyUnchangedContainer() {
+        let old = MarkdownParser.parse("""
+        # Title
+
+        > Quote paragraph 1
+        > Quote paragraph 2
+
+        Footer
+        """)
+        let new = MarkdownParser.parse("""
+        # Title
+
+        Inserted preamble line that shifts all offsets downstream.
+
+        > Quote paragraph 1
+        > Quote paragraph 2
+
+        Footer
+        """)
+        let dirty = ASTDiff.dirtySet(old: old, new: new)
+        #expect(!dirty.isWholesale)
+        #expect(dirty.ranges.count == 1)
+        #expect(new.substring(dirty.ranges[0]) == "Inserted preamble line that shifts all offsets downstream.")
+    }
 }
 
 @Suite struct TextDiffTests {

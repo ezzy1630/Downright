@@ -76,6 +76,19 @@ import Testing
         #expect(doc.frontMatter?["abstract"] == "folded one folded two")
         #expect(doc.frontMatter?["ok"] == "yes")
     }
+
+    @Test func parsesInlineArrayWithCommasInsideQuotes() {
+        let doc = MarkdownParser.parse("""
+        ---
+        tags: ["alpha, beta", "gamma, delta"]
+        title: "Hello, World"
+        ---
+
+        Body
+        """)
+        #expect(doc.frontMatter?["tags"] == "alpha, beta, gamma, delta")
+        #expect(doc.frontMatter?["title"] == "Hello, World")
+    }
 }
 
 @Suite struct MathTests {
@@ -148,6 +161,13 @@ import Testing
         }
         #expect(doc.substring(latex) == "x = 1\n")
     }
+
+    @Test func matrixDoubleBackslashDoesNotTriggerEscapedCloser() {
+        let text = "Formula \\( \\begin{pmatrix} 1 \\\\ ) 2 \\end{pmatrix} \\) works\n"
+        let matches = inlineMath(text)
+        #expect(matches.count == 1)
+        #expect(matches[0] == " \\begin{pmatrix} 1 \\\\ ) 2 \\end{pmatrix} ")
+    }
 }
 
 @Suite struct CalloutTests {
@@ -161,6 +181,24 @@ import Testing
         #expect(kind == .warning)
         #expect(title == "Be careful")
         #expect(doc.substring(doc.root.children[0].markerRange!) == "> [!WARNING] Be careful")
+    }
+
+    @Test func handlesMultipleSpacesAndTabsAfterQuoteMarker() {
+        let multipleSpaces = MarkdownParser.parse(">  [!NOTE] Spaced\n> Body\n")
+        guard case .callout(let kind1, let title1) = multipleSpaces.root.children.first!.content else {
+            Issue.record("expected callout for multiple spaces")
+            return
+        }
+        #expect(kind1 == .note)
+        #expect(title1 == "Spaced")
+
+        let tabbed = MarkdownParser.parse(">\t[!TIP] Tabbed\n> Body\n")
+        guard case .callout(let kind2, let title2) = tabbed.root.children.first!.content else {
+            Issue.record("expected callout for tabbed marker")
+            return
+        }
+        #expect(kind2 == .tip)
+        #expect(title2 == "Tabbed")
     }
 
     @Test func isCaseInsensitiveAndTitleIsOptional() {
@@ -209,6 +247,11 @@ import Testing
             }
         }
         return out
+    }
+
+    @Test func rejectsWikilinksAcrossLoneCR() {
+        let text = "[[Target\rLabel]]"
+        #expect(wikilinks(text).isEmpty)
     }
 
     @Test func matchesBothForms() {

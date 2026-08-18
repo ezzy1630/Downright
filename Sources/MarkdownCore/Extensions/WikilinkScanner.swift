@@ -68,8 +68,9 @@ enum WikilinkScanner {
     }
 
     private static func containsNewline(_ text: NSString, range: NSRange) -> Bool {
-        for index in range.location..<range.upperBound where text.character(at: index) == 0x0A {
-            return true
+        for index in range.location..<range.upperBound {
+            let ch = text.character(at: index)
+            if ch == 0x0A || ch == 0x0D { return true }
         }
         return false
     }

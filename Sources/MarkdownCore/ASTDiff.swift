@@ -26,13 +26,13 @@ public enum ASTDiff {
         if larger > 0, abs(oldTop.count - newTop.count) * 2 > larger { return .wholesale }
 
         var ranges: [NSRange] = []
-        guard reconcile(old: oldTop, new: newTop, into: &ranges, text: new.text as NSString) else { return .wholesale }
+        guard reconcile(old: oldTop, new: newTop, into: &ranges, oldText: old.text as NSString, newText: new.text as NSString) else { return .wholesale }
         return DirtySet(ranges: coalesce(ranges), isWholesale: false)
     }
 
     /// Returns false when the diff gave up and the caller should go wholesale.
     private static func reconcile(
-        old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], text: NSString
+        old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], oldText: NSString, newText: NSString
     ) -> Bool {
         guard let script = Myers.diff(old.map(\.subtreeHash), new.map(\.subtreeHash)) else {
             return false
@@ -43,7 +43,7 @@ public enum ASTDiff {
         var newRun: [MDBlock] = []
 
         func flush() {
-            pair(old: oldRun, new: newRun, into: &ranges, text: text)
+            pair(old: oldRun, new: newRun, into: &ranges, oldText: oldText, newText: newText)
             oldRun.removeAll(keepingCapacity: true)
             newRun.removeAll(keepingCapacity: true)
         }
@@ -68,7 +68,7 @@ public enum ASTDiff {
     /// container's own bytes (markers, blank quote lines) changed underneath
     /// unchanged children, the container itself is dirtied too.
     private static func pair(
-        old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], text: NSString
+        old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], oldText: NSString, newText: NSString
     ) {
         for index in new.indices {
             guard index < old.count else {
@@ -87,9 +87,9 @@ public enum ASTDiff {
                !before.children.isEmpty,
                !after.children.isEmpty {
                 var nested: [NSRange] = []
-                if reconcile(old: before.children, new: after.children, into: &nested, text: text) {
-                    if SubtreeHasher.frameworkHash(before, in: text)
-                        != SubtreeHasher.frameworkHash(after, in: text) {
+                if reconcile(old: before.children, new: after.children, into: &nested, oldText: oldText, newText: newText) {
+                    if SubtreeHasher.frameworkHash(before, in: oldText)
+                        != SubtreeHasher.frameworkHash(after, in: newText) {
                         ranges.append(after.range)
                     }
                     ranges.append(contentsOf: nested)
