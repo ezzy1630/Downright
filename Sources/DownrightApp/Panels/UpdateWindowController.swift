@@ -5,7 +5,7 @@ import MarkdownRender
 private enum UpdateWindowLayout {
     static let width: CGFloat = 540
     static let regularHeight: CGFloat = 480
-    static let failureHeight: CGFloat = 340
+    static let compactHeight: CGFloat = 340
     static let minimumHeight: CGFloat = 320
 }
 
@@ -76,7 +76,7 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 // MARK: - Root view
 
 @MainActor
-private final class UpdatePanelView: NSView {
+final class UpdatePanelView: NSView {
     private weak var coordinator: UpdateCoordinator?
     private let header = UpdatePanelHeader()
     private let contentContainer = NSView()
@@ -133,6 +133,10 @@ private final class UpdatePanelView: NSView {
         layer?.backgroundColor = sheet.background.cgColor
         header.apply(sheet: sheet)
         footer.apply(sheet: sheet)
+        // Content views capture their colors when they are created. Rebuild
+        // them after the panel enters a window or the system appearance
+        // changes, otherwise a dark panel can retain light-theme body text.
+        if window != nil { refresh() }
     }
 
     func refresh() {
@@ -164,9 +168,12 @@ private final class UpdatePanelView: NSView {
 
     private func resizeForContent(_ kind: UpdatePanelContent.Kind) {
         guard let window else { return }
-        let desiredHeight: CGFloat = kind == .failed
-            ? UpdateWindowLayout.failureHeight
-            : UpdateWindowLayout.regularHeight
+        let desiredHeight: CGFloat = switch kind {
+        case .checking, .extracting, .waiting, .installing, .upToDate, .failed:
+            UpdateWindowLayout.compactHeight
+        case .available, .downloading, .ready, .informational:
+            UpdateWindowLayout.regularHeight
+        }
         guard abs(window.frame.height - desiredHeight) > 0.5 else { return }
 
         var frame = window.frame
@@ -259,7 +266,7 @@ private final class UpdatePanelHeader: NSView {
 // MARK: - Footer
 
 @MainActor
-private final class UpdatePanelFooter: NSView {
+final class UpdatePanelFooter: NSView {
     private let leadingStack = NSStackView()
     private let trailingStack = NSStackView()
     private var buttons: [UpdatePanelButton] = []
@@ -302,12 +309,9 @@ private final class UpdatePanelFooter: NSView {
     }
 
     func update(coordinator: UpdateCoordinator) {
-        for button in buttons {
-            leadingStack.removeArrangedSubview(button)
-            trailingStack.removeArrangedSubview(button)
-            button.removeFromSuperview()
-        }
-        buttons = []
+        removeButtons(from: leadingStack)
+        removeButtons(from: trailingStack)
+        buttons.removeAll(keepingCapacity: true)
 
         func addLeading(title: String, action: @escaping () -> Void) {
             let button = UpdatePanelButton(title: title, kind: .secondary) { action() }
@@ -371,6 +375,16 @@ private final class UpdatePanelFooter: NSView {
             }
         case .idle:
             break
+        }
+    }
+
+    /// An arranged subview belongs to exactly one stack. Asking another stack
+    /// to remove it is an AppKit programming error and raises an exception;
+    /// rebuild each column from its own arranged-subview list instead.
+    private func removeButtons(from stack: NSStackView) {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
     }
 }
@@ -646,9 +660,9 @@ private final class UpdateProgressView: NSView {
         container.layer?.cornerRadius = 12
         container.layer?.cornerCurve = .continuous
         let contrast = sheet.increaseContrast
-        container.layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? 0.04 : 0.02).cgColor
+        container.layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? 0.10 : 0.06).cgColor
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = sheet.rule.withAlphaComponent(contrast ? 0.6 : 0.35).cgColor
+        container.layer?.borderColor = sheet.rule.withAlphaComponent(contrast ? 0.75 : 0.50).cgColor
         addSubview(container)
 
         let title = NSTextField(labelWithString: "Downloading update…")
@@ -739,6 +753,8 @@ private final class UpdateStatusMessageView: NSView {
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
+        stack.setContentHuggingPriority(.required, for: .vertical)
+        stack.setContentCompressionResistancePriority(.required, for: .vertical)
         container.addSubview(stack)
 
         if let iconName {
@@ -817,6 +833,7 @@ private final class UpdateStatusMessageView: NSView {
             stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
+            container.heightAnchor.constraint(greaterThanOrEqualToConstant: 132),
         ])
     }
 

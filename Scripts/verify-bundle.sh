@@ -11,8 +11,8 @@
 #   * the host app and each .appex carry their own copy of every SwiftPM
 #     resource bundle their code reaches for, at a path the resolvers look in
 #   * host and extensions share the marketing/build versions
-#   * --production: the Info.plist carries the exact feed URL and a real
-#     (non-placeholder) Ed25519 public key
+#   * --production: the stable bundle identity, signed feed, updater safety
+#     flags, and Ed25519 public key all carry the release contract
 set -euo pipefail
 
 APP="${1:?usage: verify-bundle.sh /path/to/Downright.app [--production]}"
@@ -204,10 +204,30 @@ check "$(echo "$HOST_BUILD" | grep -Eq '^[0-9]+([.][0-9]+)*$' && echo 1 || echo 
 
 # --- Production configuration ------------------------------------------------
 if [ "$PRODUCTION" = "1" ]; then
+    BUNDLE_ID="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
     FEED="$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
     KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
+    AUTO_CHECKS="$(/usr/libexec/PlistBuddy -c "Print :SUEnableAutomaticChecks" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
+    AUTO_UPDATE="$(/usr/libexec/PlistBuddy -c "Print :SUAutomaticallyUpdate" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
+    SIGNED_FEED="$(/usr/libexec/PlistBuddy -c "Print :SURequireSignedFeed" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
+    VERIFY_BEFORE_EXTRACTION="$(/usr/libexec/PlistBuddy -c "Print :SUVerifyUpdateBeforeExtraction" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
+    INTERVAL="$(/usr/libexec/PlistBuddy -c "Print :SUScheduledCheckInterval" "$CONTENTS/Info.plist" 2>/dev/null || echo "")"
+    # A 32-byte Ed25519 public key is 44 base64 characters with one trailing
+    # padding character.  Checking the shape catches accidental secret-name
+    # injection, truncation, and placeholder values before signing starts.
+    KEY_SHAPE='^[A-Za-z0-9+/]{43}=$'
+    INTERVAL_OK=0
+    if echo "$INTERVAL" | grep -Eq '^[0-9]+$' && [ "$INTERVAL" -gt 0 ]; then
+        INTERVAL_OK=1
+    fi
+    check "$([ "$BUNDLE_ID" = "com.ezzy.downright" ] && echo 1 || echo 0)" "production bundle identifier stable"
     check "$([ "$FEED" = "https://ezzy1630.github.io/Downright/appcast.xml" ] && echo 1 || echo 0)" "production feed URL exact"
-    check "$([ -n "$KEY" ] && ! echo "$KEY" | grep -q '^PLACEHOLDER_' && echo 1 || echo 0)" "non-placeholder SUPublicEDKey present"
+    check "$(echo "$KEY" | grep -Eq "$KEY_SHAPE" && echo 1 || echo 0)" "SUPublicEDKey is a 32-byte Ed25519 key"
+    check "$([ "$AUTO_CHECKS" = "true" ] && echo 1 || echo 0)" "automatic update checks enabled"
+    check "$([ "$AUTO_UPDATE" = "true" ] && echo 1 || echo 0)" "automatic update installation enabled"
+    check "$([ "$SIGNED_FEED" = "true" ] && echo 1 || echo 0)" "signed appcast required"
+    check "$([ "$VERIFY_BEFORE_EXTRACTION" = "true" ] && echo 1 || echo 0)" "update verified before extraction"
+    check "$INTERVAL_OK" "scheduled update interval is positive"
 else
     check 1 "updater-disabled configuration (dev bundle)"
 fi

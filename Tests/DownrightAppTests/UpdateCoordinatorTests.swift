@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import DownrightApp
@@ -213,6 +214,34 @@ struct UpdateCapabilityTests {
     }
 }
 
+// MARK: - Production configuration
+
+@Suite
+struct UpdateConfigurationTests {
+    @Test func acceptsValidHTTPSFeedAndEd25519Key() {
+        let info: [String: Any] = [
+            "SUFeedURL": "https://updates.example.test/appcast.xml",
+            "SUPublicEDKey": Data(repeating: 0, count: 32).base64EncodedString(),
+        ]
+
+        #expect(UpdateConfiguration.isValid(infoDictionary: info))
+    }
+
+    @Test(arguments: [
+        "https://updates.example.test/appcast.xml",
+        "http://updates.example.test/appcast.xml",
+        "not a URL",
+    ])
+    func rejectsInvalidFeedOrKey(feed: String) {
+        let info: [String: Any] = [
+            "SUFeedURL": feed,
+            "SUPublicEDKey": "PLACEHOLDER_DOWNRIGHT_ED25519_PUBLIC_KEY",
+        ]
+
+        #expect(!UpdateConfiguration.isValid(infoDictionary: info))
+    }
+}
+
 // MARK: - Coordinator flows
 
 @Suite(.serialized)
@@ -280,7 +309,10 @@ struct UpdateCoordinatorFlowTests {
         let (coordinator, _) = makeCoordinator()
         var acks = 0
         coordinator.driverDidFindNoUpdate(userInitiated: true) { acks += 1 }
-        // Up-to-date acknowledges immediately; a second dismiss is a no-op.
+        // The result stays visible until the user dismisses it; a second
+        // dismissal must not acknowledge Sparkle twice.
+        #expect(acks == 0)
+        coordinator.userDidChooseLater()
         coordinator.userDidDismissPanel()
         #expect(acks == 1)
     }
@@ -559,6 +591,85 @@ struct UpdateCoordinatorFlowTests {
         coordinator.driverDidReceiveData(500)
         coordinator.driverDidReceiveExpectedLength(1_000)
         #expect(received >= 2)
+    }
+}
+
+@Suite(.serialized)
+@MainActor
+struct UpdatePanelFooterTests {
+    /// Sparkle first presents the checking state, then replaces its Cancel
+    /// button with the result actions. The footer has two columns, so this
+    /// transition must remove each button from its owning stack only.
+    @Test func rebuildsAfterCheckIntoAvailableState() {
+        _ = NSApplication.shared
+        let engine = FakeUpdateEngine()
+        let coordinator = UpdateCoordinator(engine: engine)
+        coordinator.suppressUIForTesting = true
+        try? engine.start()
+
+        let footer = UpdatePanelFooter(
+            frame: NSRect(x: 0, y: 0, width: 540, height: 34)
+        )
+        coordinator.driverDidBeginUserCheck(cancellation: {})
+        footer.update(coordinator: coordinator)
+
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded) { _ in }
+        footer.update(coordinator: coordinator)
+
+        #expect(coordinator.phase == .available(sampleMetadata, stage: .notDownloaded))
+    }
+}
+
+@Suite(.serialized)
+@MainActor
+struct UpdatePanelTransitionTests {
+    /// Every Sparkle callback can rebuild the panel. Keep this smoke test on
+    /// the real AppKit view tree so a future state-specific layout regression
+    /// fails in CI before a release can ship it.
+    @Test func rendersEveryUpdaterPhaseWithoutThrowing() {
+        _ = NSApplication.shared
+        let engine = FakeUpdateEngine()
+        let coordinator = UpdateCoordinator(engine: engine)
+        coordinator.suppressUIForTesting = true
+        try? engine.start()
+
+        let panel = UpdatePanelView(coordinator: coordinator)
+        let render = { panel.refresh() }
+
+        coordinator.driverDidBeginUserCheck(cancellation: {})
+        render()
+
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded) { _ in }
+        render()
+
+        coordinator.driverDidBeginDownload(cancellation: {})
+        coordinator.driverDidReceiveExpectedLength(1_000)
+        coordinator.driverDidReceiveData(250)
+        render()
+
+        coordinator.driverDidBeginExtraction()
+        coordinator.driverDidReceiveExtractionProgress(0.5)
+        render()
+
+        coordinator.driverDidBecomeReadyToRelaunch { _ in }
+        render()
+
+        coordinator.driverDidBeginInstallation(applicationTerminated: false) { }
+        render()
+
+        coordinator.driverDidBeginInstallation(applicationTerminated: true) { }
+        render()
+
+        coordinator.driverDidBeginUserCheck(cancellation: {})
+        coordinator.driverDidFindNoUpdate(userInitiated: true) { }
+        render()
+
+        coordinator.driverDidBeginUserCheck(cancellation: {})
+        coordinator.driverDidEncounterError(NSError(domain: "sparkle", code: 2001)) { }
+        render()
+
+        coordinator.driverDidFindUpdate(informationalMetadata, stage: .notDownloaded) { _ in }
+        render()
     }
 }
 

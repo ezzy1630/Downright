@@ -48,6 +48,15 @@ final class DownrightActivatedAppTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: host.path), "test host is missing: \(host.path)")
         app = XCUIApplication(url: host)
         app.launchArguments = [fixture.path]
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_UPDATER_SMOKE"] == "1" {
+            // The release smoke intentionally drives the manual menu check;
+            // automatic checks must not race that interaction on a fresh CI
+            // machine and make the result nondeterministic.
+            app.launchArguments += [
+                "-SUEnableAutomaticChecks", "NO",
+                "-SUAutomaticallyUpdate", "NO",
+            ]
+        }
         app.launchEnvironment["DOWNRIGHT_SUPPORT_DIRECTORY"] = support.path
         app.launchEnvironment["DOWNRIGHT_DEBUG_LAYOUT"] = "1"
         app.launchEnvironment["DOWNRIGHT_DEBUG_CAPTURE"] = captureDirectory.path
@@ -92,6 +101,48 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(XCTAttachment(screenshot: window.screenshot()))
     }
 
+    /// Release-only smoke coverage for the path that previously crashed:
+    /// launch a production-configured app built as an older version, invoke
+    /// the real menu command, let Sparkle drive the custom panel through its
+    /// result transition, then dismiss without installing anything.
+    func testProductionUpdaterCheckDoesNotCrash() throws {
+        guard ProcessInfo.processInfo.environment["DOWNRIGHT_UPDATER_SMOKE"] == "1" else {
+            throw XCTSkip("production updater smoke is enabled only by the release gate")
+        }
+
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+
+        let applicationMenu = app.menuBars.menuBarItems["Downright"]
+        XCTAssertTrue(applicationMenu.waitForExistence(timeout: 10), "the application menu was not built")
+        applicationMenu.click()
+
+        let checkForUpdates = app.menuItems["Check for Updates…"]
+        XCTAssertTrue(checkForUpdates.waitForExistence(timeout: 10), "the updater menu command is missing")
+        XCTAssertTrue(checkForUpdates.isEnabled, "the production updater command is disabled")
+        checkForUpdates.click()
+
+        let updatesWindow = app.windows["Updates"]
+        XCTAssertTrue(updatesWindow.waitForExistence(timeout: 30), "the updater panel never appeared")
+        add(XCTAttachment(screenshot: updatesWindow.screenshot()))
+
+        // The public feed should offer an update because this smoke bundle is
+        // deliberately built with a lower version. Accept a no-update result
+        // too: it still exercises the same footer rebuild and proves the app
+        // survives a healthy, already-current channel.
+        guard let dismissButton = waitForButton(
+            in: updatesWindow,
+            titles: ["Later", "OK", "Cancel", "Cancel Download"],
+            timeout: 30
+        ) else {
+            add(XCTAttachment(screenshot: updatesWindow.screenshot()))
+            XCTFail("the updater panel exposed no safe dismissal action")
+            return
+        }
+        dismissButton.click()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "the app stopped after the updater check")
+    }
+
     private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
@@ -99,5 +150,21 @@ final class DownrightActivatedAppTests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
         return false
+    }
+
+    private func waitForButton(
+        in window: XCUIElement,
+        titles: [String],
+        timeout: TimeInterval
+    ) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for title in titles {
+                let button = window.buttons[title]
+                if button.exists { return button }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        return nil
     }
 }
