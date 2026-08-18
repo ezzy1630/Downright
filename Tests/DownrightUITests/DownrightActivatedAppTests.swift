@@ -8,6 +8,7 @@ final class DownrightActivatedAppTests: XCTestCase {
     private var root: URL!
     private var fixture: URL!
     private var captureDirectory: URL!
+    private var isProductionUpdaterSmoke = false
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -46,9 +47,12 @@ final class DownrightActivatedAppTests: XCTestCase {
             ? siblingHost
             : runner
         XCTAssertTrue(FileManager.default.fileExists(atPath: host.path), "test host is missing: \(host.path)")
+        let hostInfo = Bundle(url: host)?.infoDictionary ?? [:]
+        isProductionUpdaterSmoke = hostInfo["CFBundleIdentifier"] as? String == "com.ezzy.downright"
+            && hostInfo["SUFeedURL"] as? String != nil
         app = XCUIApplication(url: host)
         app.launchArguments = [fixture.path]
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_UPDATER_SMOKE"] == "1" {
+        if isProductionUpdaterSmoke {
             // The release smoke intentionally drives the manual menu check;
             // automatic checks must not race that interaction on a fresh CI
             // machine and make the result nondeterministic.
@@ -106,8 +110,8 @@ final class DownrightActivatedAppTests: XCTestCase {
     /// the real menu command, let Sparkle drive the custom panel through its
     /// result transition, then dismiss without installing anything.
     func testProductionUpdaterCheckDoesNotCrash() throws {
-        guard ProcessInfo.processInfo.environment["DOWNRIGHT_UPDATER_SMOKE"] == "1" else {
-            throw XCTSkip("production updater smoke is enabled only by the release gate")
+        guard isProductionUpdaterSmoke else {
+            throw XCTSkip("production updater smoke requires the production host bundle")
         }
 
         app.launch()
