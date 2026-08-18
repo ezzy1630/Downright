@@ -3,9 +3,9 @@ import MarkdownCore
 import MarkdownRender
 
 private enum UpdateWindowLayout {
-    static let width: CGFloat = 560
-    static let regularHeight: CGFloat = 600
-    static let failureHeight: CGFloat = 360
+    static let width: CGFloat = 540
+    static let regularHeight: CGFloat = 480
+    static let failureHeight: CGFloat = 340
     static let minimumHeight: CGFloat = 320
 }
 
@@ -98,18 +98,18 @@ private final class UpdatePanelView: NSView {
         addSubview(footer)
 
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            header.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -22),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: 18),
 
-            contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
+            contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -22),
+            contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 14),
 
-            footer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            footer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            footer.topAnchor.constraint(equalTo: contentContainer.bottomAnchor, constant: 12),
-            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            footer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
+            footer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -22),
+            footer.topAnchor.constraint(equalTo: contentContainer.bottomAnchor, constant: 14),
+            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
         ])
         refresh()
         viewDidChangeEffectiveAppearance()
@@ -260,100 +260,115 @@ private final class UpdatePanelHeader: NSView {
 
 @MainActor
 private final class UpdatePanelFooter: NSView {
-    private let buttonsStack = NSStackView()
-    private var buttons: [NSButton] = []
+    private let leadingStack = NSStackView()
+    private let trailingStack = NSStackView()
+    private var buttons: [UpdatePanelButton] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        buttonsStack.translatesAutoresizingMaskIntoConstraints = false
-        buttonsStack.orientation = .horizontal
-        buttonsStack.alignment = .centerY
-        buttonsStack.spacing = 8
-        addSubview(buttonsStack)
+        leadingStack.translatesAutoresizingMaskIntoConstraints = false
+        leadingStack.orientation = .horizontal
+        leadingStack.alignment = .centerY
+        leadingStack.spacing = 10
+
+        trailingStack.translatesAutoresizingMaskIntoConstraints = false
+        trailingStack.orientation = .horizontal
+        trailingStack.alignment = .centerY
+        trailingStack.spacing = 10
+
+        addSubview(leadingStack)
+        addSubview(trailingStack)
+
         NSLayoutConstraint.activate([
-            buttonsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            buttonsStack.topAnchor.constraint(equalTo: topAnchor),
-            buttonsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            leadingStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            leadingStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            leadingStack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
+            leadingStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+
+            trailingStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trailingStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trailingStack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
+            trailingStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            trailingStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingStack.trailingAnchor, constant: 16),
+
+            heightAnchor.constraint(equalToConstant: 34),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     func apply(sheet: StyleSheet) {
-        for button in buttons { (button as? UpdatePanelButton)?.apply(sheet: sheet) }
+        for button in buttons { button.apply(sheet: sheet) }
     }
 
     func update(coordinator: UpdateCoordinator) {
         for button in buttons {
-            buttonsStack.removeArrangedSubview(button)
+            leadingStack.removeArrangedSubview(button)
+            trailingStack.removeArrangedSubview(button)
             button.removeFromSuperview()
         }
         buttons = []
 
-        func add(title: String, key: String, kind: UpdatePanelButton.Kind = .secondary, action: @escaping () -> Void) {
+        func addLeading(title: String, action: @escaping () -> Void) {
+            let button = UpdatePanelButton(title: title, kind: .secondary) { action() }
+            button.setAccessibilityLabel(title)
+            buttons.append(button)
+            leadingStack.addArrangedSubview(button)
+        }
+
+        func addTrailing(title: String, kind: UpdatePanelButton.Kind = .secondary, action: @escaping () -> Void) {
             let button = UpdatePanelButton(title: title, kind: kind) { action() }
             button.setAccessibilityLabel(title)
             buttons.append(button)
-            if kind == .secondary,
-               buttonsStack.arrangedSubviews.contains(where: { ($0 as? UpdatePanelButton)?.isPrimary == true }) {
-                buttonsStack.insertArrangedSubview(button, at: 0)
-            } else {
-                buttonsStack.addArrangedSubview(button)
-            }
+            trailingStack.addArrangedSubview(button)
         }
 
         switch coordinator.phase {
         case .checking:
-            add(title: "Cancel", key: "xmark", action: { coordinator.userDidCancelCheck() })
+            addTrailing(title: "Cancel", action: { coordinator.userDidCancelCheck() })
         case .idle where coordinator.downloadedUpdate != nil:
-            add(title: "Update & Relaunch", key: "arrow.clockwise.circle.fill", kind: .primary) {
+            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
+            addTrailing(title: "Update & Relaunch", kind: .primary) {
                 coordinator.userDidChooseInstall()
             }
-            add(title: "Later", key: "") { coordinator.userDidChooseLater() }
         case .available(let metadata, let stage):
-            let installTitle = stage == .notDownloaded ? "Update" : "Update & Relaunch"
-            add(title: installTitle, key: "arrow.down.circle.fill", kind: .primary) {
-                coordinator.userDidChooseInstall()
-            }
-            add(title: "Later", key: "") { coordinator.userDidChooseLater() }
             if !metadata.isCritical {
-                add(title: "Skip This Version", key: "") { coordinator.userDidChooseSkip() }
+                addLeading(title: "Skip This Version") { coordinator.userDidChooseSkip() }
+            }
+            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
+            let installTitle = stage == .notDownloaded ? "Update" : "Update & Relaunch"
+            addTrailing(title: installTitle, kind: .primary) {
+                coordinator.userDidChooseInstall()
             }
         case .downloading:
-            add(title: "Cancel Download", key: "xmark") { coordinator.userDidCancelDownload() }
+            addTrailing(title: "Cancel Download") { coordinator.userDidCancelDownload() }
         case .extracting:
             break
         case .readyToRelaunch:
-            add(title: "Update & Relaunch", key: "arrow.clockwise.circle.fill", kind: .primary) {
+            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
+            addTrailing(title: "Update & Relaunch", kind: .primary) {
                 coordinator.userDidChooseInstall()
             }
-            add(title: "Later", key: "") { coordinator.userDidChooseLater() }
         case .waitingForTermination:
-            add(title: "Retry Quit", key: "arrow.clockwise", kind: .primary) {
+            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
+            addTrailing(title: "Retry Quit", kind: .primary) {
                 coordinator.userDidRetryTermination()
             }
-            // Later dismisses the panel; the pending install still happens on
-            // quit (the windowWillClose path discards the retry capability).
-            add(title: "Later", key: "") { coordinator.userDidChooseLater() }
         case .installing:
             break
         case .informational(let metadata):
-            add(title: "Learn More", key: "arrow.up.right.square", kind: .primary) {
+            addLeading(title: "Skip This Version") { coordinator.userDidChooseSkip() }
+            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
+            addTrailing(title: "Learn More", kind: .primary) {
                 coordinator.userDidRequestLearnMore(metadata)
             }
-            add(title: "Later", key: "") { coordinator.userDidChooseLater() }
-            add(title: "Skip This Version", key: "") { coordinator.userDidChooseSkip() }
         case .upToDate:
-            // userDidChooseLater closes the panel (nothing is armed in the
-            // up-to-date state; the acknowledgement was already delivered).
-            add(title: "OK", key: "", kind: .primary) { coordinator.userDidChooseLater() }
+            addTrailing(title: "OK", kind: .primary) { coordinator.userDidChooseLater() }
         case .failed(_, let retryable):
+            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
             if retryable {
-                add(title: "Retry", key: "arrow.clockwise", kind: .primary) { coordinator.userDidRetry() }
+                addTrailing(title: "Retry", kind: .primary) { coordinator.userDidRetry() }
             }
-            // Later closes the panel; closing fires windowWillClose, which
-            // delivers the pending acknowledgement exactly once.
-            add(title: "Later", key: "") { coordinator.userDidChooseLater() }
         case .idle:
             break
         }
@@ -512,12 +527,15 @@ private final class UpdateNotesView: NSView {
         notesCard.layer?.cornerRadius = 10
         notesCard.layer?.cornerCurve = .continuous
         notesCard.layer?.masksToBounds = true
-        notesCard.layer?.backgroundColor = sheet.codeBackground.withAlphaComponent(0.60).cgColor
+        let contrast = sheet.increaseContrast
+        notesCard.layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? 0.05 : 0.025).cgColor
         notesCard.layer?.borderWidth = 1
-        notesCard.layer?.borderColor = sheet.rule.cgColor
+        notesCard.layer?.borderColor = sheet.rule.withAlphaComponent(contrast ? 0.70 : 0.45).cgColor
+        notesCard.setContentHuggingPriority(.defaultLow, for: .vertical)
+        notesCard.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         stack.addArrangedSubview(notesCard)
         notesCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        notesCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        notesCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -529,10 +547,10 @@ private final class UpdateNotesView: NSView {
         notesCard.addSubview(scroll)
 
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: notesCard.leadingAnchor, constant: 6),
-            scroll.trailingAnchor.constraint(equalTo: notesCard.trailingAnchor, constant: -6),
-            scroll.topAnchor.constraint(equalTo: notesCard.topAnchor, constant: 6),
-            scroll.bottomAnchor.constraint(equalTo: notesCard.bottomAnchor, constant: -6),
+            scroll.leadingAnchor.constraint(equalTo: notesCard.leadingAnchor, constant: 8),
+            scroll.trailingAnchor.constraint(equalTo: notesCard.trailingAnchor, constant: -8),
+            scroll.topAnchor.constraint(equalTo: notesCard.topAnchor, constant: 8),
+            scroll.bottomAnchor.constraint(equalTo: notesCard.bottomAnchor, constant: -8),
         ])
 
         switch notesState {
@@ -592,11 +610,11 @@ private final class UpdateNotesView: NSView {
     static func releaseNotesTextView(for data: Data, sheet: StyleSheet) -> NSTextView {
         let sample = String(data: data.prefix(1_024), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if sample.hasPrefix("<"),
-           let attributed = try? NSAttributedString(
-               data: data,
-               options: [.documentType: NSAttributedString.DocumentType.html],
-               documentAttributes: nil
-           ) {
+            let attributed = try? NSAttributedString(
+                data: data,
+                options: [.documentType: NSAttributedString.DocumentType.html],
+                documentAttributes: nil
+            ) {
             let textView = NSTextView(frame: .zero)
             textView.textStorage?.setAttributedString(attributed)
             textView.isEditable = false
@@ -946,7 +964,6 @@ private final class UpdateFailureView: NSView {
             )
         }
         copy.setAccessibilityLabel("Copy diagnostics")
-        copy.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
         let diagnosticsActions = NSStackView(views: [detailDisclosure, copy])
         diagnosticsActions.orientation = .horizontal
@@ -1024,9 +1041,15 @@ final class UpdatePanelButton: NSButton {
     private let buttonTitle: String
     var isPrimary: Bool { kind == .primary }
     private var sheet: StyleSheet
-    /// `target` is weak; without a strong reference the action object would
-    /// deallocate the moment the button is created.
     private let actionTarget: ActionTarget
+    private var isHovered = false
+    private var isPressed = false
+
+    override var intrinsicContentSize: NSSize {
+        let textWidth = (attributedTitle.size().width).rounded(.up)
+        let width = max(76, textWidth + 30)
+        return NSSize(width: width, height: 32)
+    }
 
     init(title: String, kind: Kind, sheet: StyleSheet? = nil, action: @escaping () -> Void) {
         self.kind = kind
@@ -1035,19 +1058,30 @@ final class UpdatePanelButton: NSButton {
         let actionTarget = ActionTarget(action)
         self.actionTarget = actionTarget
         super.init(frame: .zero)
-        self.title = title
+        self.title = ""
         setButtonType(.momentaryPushIn)
         isBordered = false
-        font = PanelFont.system(12, weight: .semibold)
-        controlSize = .regular
-        focusRingType = .default
+        focusRingType = .none
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 7
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         target = actionTarget
         self.action = #selector(ActionTarget.run(_:))
         setAccessibilityRole(.button)
+        setAccessibilityLabel(title)
+
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 32).isActive = true
+        widthAnchor.constraint(greaterThanOrEqualToConstant: 76).isActive = true
+
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+
         apply(sheet: self.sheet)
     }
 
@@ -1057,27 +1091,71 @@ final class UpdatePanelButton: NSButton {
         addCursorRect(bounds, cursor: .pointingHand)
     }
 
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        isPressed = true
+        updateVisuals()
+        super.mouseDown(with: event)
+        isPressed = false
+        updateVisuals()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateVisuals()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateVisuals()
+    }
+
     func apply(sheet: StyleSheet) {
         self.sheet = sheet
+        updateVisuals()
+    }
+
+    private func updateVisuals() {
+        let sheet = self.sheet
+        let contrast = sheet.increaseContrast
+        let isFocused = window?.firstResponder === self && window?.isKeyWindow == true
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+
         let titleColor: NSColor
         switch kind {
         case .primary:
             titleColor = .white
             contentTintColor = .white
-            layer?.backgroundColor = sheet.startWindowPrimaryAction.cgColor
-            layer?.borderColor = sheet.startWindowPrimaryAction.blended(withFraction: 0.18, of: .white)?.cgColor
+            let base = sheet.startWindowPrimaryAction
+            let fill: NSColor
+            if isPressed {
+                fill = base.blended(withFraction: 0.18, of: .black) ?? base
+            } else if isHovered {
+                fill = base.blended(withFraction: 0.08, of: .white) ?? base
+            } else {
+                fill = base
+            }
+            layer?.backgroundColor = fill.cgColor
+            layer?.borderWidth = isFocused ? 2 : 1
+            layer?.borderColor = (isFocused ? NSColor.white : base.blended(withFraction: 0.20, of: .white))?.withAlphaComponent(isFocused ? 0.9 : 0.4).cgColor
         case .secondary:
             titleColor = sheet.text
             contentTintColor = sheet.text
-            layer?.backgroundColor = sheet.text.withAlphaComponent(sheet.increaseContrast ? 0.12 : 0.06).cgColor
-            layer?.borderColor = sheet.rule.withAlphaComponent(sheet.increaseContrast ? 0.60 : 0.35).cgColor
+            let alpha: CGFloat = isPressed ? 0.14 : (isHovered ? 0.09 : 0.05)
+            layer?.backgroundColor = sheet.text.withAlphaComponent(contrast ? max(alpha, 0.12) : alpha).cgColor
+            layer?.borderWidth = isFocused ? 2 : 1
+            layer?.borderColor = (isFocused ? sheet.accent : sheet.rule)
+                .withAlphaComponent(isFocused ? 0.9 : (contrast ? 0.60 : 0.35)).cgColor
         }
-        layer?.borderWidth = 1
+
         attributedTitle = NSAttributedString(
             string: buttonTitle,
             attributes: [
-                .font: font as Any,
+                .font: PanelFont.system(13, weight: kind == .primary ? .semibold : .medium),
                 .foregroundColor: titleColor,
+                .paragraphStyle: paragraph,
             ]
         )
     }
