@@ -9,9 +9,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE="latest"
 JSON=0
+ALL=0
 
 usage() {
-    echo "usage: Scripts/report-download-counts.sh [--release latest|TAG] [--json]" >&2
+    echo "usage: Scripts/report-download-counts.sh [--release latest|TAG] [--all] [--json]" >&2
 }
 
 while [ "$#" -gt 0 ]; do
@@ -23,6 +24,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --json)
             JSON=1
+            shift
+            ;;
+        --all)
+            ALL=1
             shift
             ;;
         -h|--help)
@@ -39,6 +44,11 @@ done
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
+CURL_ARGS=(-fsSL -H 'Accept: application/vnd.github+json')
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CURL_ARGS+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+fi
+
 REMOTE="$(git -C "$ROOT" config --get remote.origin.url || true)"
 REPOSITORY="$(printf '%s' "$REMOTE" | sed -E 's#^https://github.com/##; s#^git@github.com:##; s#\.git$##')"
 case "$REPOSITORY" in
@@ -46,13 +56,55 @@ case "$REPOSITORY" in
     *) echo "could not derive a GitHub repository from origin" >&2; exit 1 ;;
 esac
 
+if [ "$ALL" = "1" ]; then
+    # The releases endpoint defaults to 30 results. Keep following pages so
+    # the README counter remains cumulative as the project grows.
+    RELEASES_FILE="$(mktemp)"
+    trap 'rm -f "$RELEASES_FILE"' EXIT
+    PAGE=1
+    while :; do
+        RESPONSE="$(curl "${CURL_ARGS[@]}" \
+            "https://api.github.com/repos/$REPOSITORY/releases?per_page=100&page=$PAGE")"
+        COUNT="$(printf '%s' "$RESPONSE" | jq 'length')"
+        [ "$COUNT" -gt 0 ] || break
+        printf '%s\n' "$RESPONSE" >> "$RELEASES_FILE"
+        [ "$COUNT" -lt 100 ] && break
+        PAGE=$((PAGE + 1))
+    done
+
+    RELEASES="$(jq -s 'add // []' "$RELEASES_FILE")"
+    RELEASE_COUNT="$(printf '%s' "$RELEASES" | jq 'length')"
+    STABLE_DMGS="$(printf '%s' "$RELEASES" | jq -r '[.[] | .assets[]? | select(.name == "Downright.dmg") | .download_count] | add // 0')"
+    VERSIONED_DMGS="$(printf '%s' "$RELEASES" | jq -r '[.[] | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9]+-[0-9a-f]+)?\\.dmg$")) | .download_count] | add // 0')"
+    ACQUISITION_DMGS=$((STABLE_DMGS + VERSIONED_DMGS))
+    UPDATE_ZIPS="$(printf '%s' "$RELEASES" | jq -r '[.[] | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9]+-[0-9a-f]+)?\\.zip$")) | .download_count] | add // 0')"
+
+    if [ "$JSON" = "1" ]; then
+        printf '%s' "$RELEASES" | jq --arg repository "$REPOSITORY" \
+            --argjson stable_dmg_downloads "$STABLE_DMGS" \
+            --argjson versioned_dmg_downloads "$VERSIONED_DMGS" \
+            --argjson acquisition_downloads "$ACQUISITION_DMGS" \
+            --argjson sparkle_update_downloads "$UPDATE_ZIPS" \
+            '{repository: $repository, release: "all", release_count: length, downloads: {acquisition_dmgs: $acquisition_downloads, stable_dmg: $stable_dmg_downloads, versioned_dmgs: $versioned_dmg_downloads, sparkle_update_zips: $sparkle_update_downloads}, assets: [.[] | .tag_name as $release | .assets[]? | {release: $release, name, download_count, browser_download_url}]}'
+        exit 0
+    fi
+
+    echo "Repository: $REPOSITORY"
+    echo "Releases:   $RELEASE_COUNT"
+    echo "Acquisition downloads (all DMGs): $ACQUISITION_DMGS"
+    echo "  Stable DMGs:                     $STABLE_DMGS"
+    echo "  Versioned DMGs:                  $VERSIONED_DMGS"
+    echo "Update downloads (Sparkle ZIPs):   $UPDATE_ZIPS"
+    exit 0
+fi
+
 if [ "$RELEASE" = "latest" ]; then
     API_URL="https://api.github.com/repos/$REPOSITORY/releases/latest"
 else
     API_URL="https://api.github.com/repos/$REPOSITORY/releases/tags/$RELEASE"
 fi
 
-RESPONSE="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API_URL")"
+RESPONSE="$(curl "${CURL_ARGS[@]}" "$API_URL")"
 TAG="$(printf '%s' "$RESPONSE" | jq -r '.tag_name // empty')"
 [ -n "$TAG" ] || { echo "release not found: $RELEASE" >&2; exit 1; }
 

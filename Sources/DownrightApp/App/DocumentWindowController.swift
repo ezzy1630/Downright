@@ -30,7 +30,7 @@ final class DocumentWindowController: NSWindowController {
     // support extensions live in sibling files, and `private` is file-scoped.
     var primaryContainer: MarkdownContainerView!
     var splitContainer: MarkdownContainerView?
-    var splitViewContainer: NSSplitView?
+    var splitViewContainer: ThemedSplitView?
 
     // Persistent chrome
     let breadcrumbView = BreadcrumbView()
@@ -198,7 +198,7 @@ final class DocumentWindowController: NSWindowController {
         window.isRestorable = false
         window.minSize = NSSize(width: 520, height: 400)
         self.init(window: window)
-        applyWindowAppearance(for: ThemeStore.shared.current)
+        window.applyThemeAppearance(for: ThemeStore.shared.current)
         window.backgroundColor = activeStyleSheet.background
         window.delegate = self
         buildInterface()
@@ -769,7 +769,7 @@ final class DocumentWindowController: NSWindowController {
     private func observeTheme() {
         themeObservation = ThemeStore.shared.observe { [weak self] theme in
             guard let self, let window = self.window else { return }
-            self.applyWindowAppearance(for: theme)
+            window.applyThemeAppearance(for: theme)
             self.activeStyleSheet = Self.makeStyleSheet(theme: theme, appearance: window.effectiveAppearance)
             self.applyStyleSheet()
         }
@@ -783,21 +783,6 @@ final class DocumentWindowController: NSWindowController {
         )
     }
 
-    private func applyWindowAppearance(for theme: Theme) {
-        // Following macOS means native controls inherit macOS directly. Do not
-        // pin each window to the selected theme's appearance: that severs the
-        // system appearance chain even when the theme pair changes correctly.
-        if Preferences.shared.values.followsSystemAppearance {
-            window?.appearance = nil
-            return
-        }
-        switch theme.appearance {
-        case .light: window?.appearance = NSAppearance(named: .aqua)
-        case .dark: window?.appearance = NSAppearance(named: .darkAqua)
-        case .auto: window?.appearance = nil
-        }
-    }
-
     @objc private func accessibilityDisplayOptionsDidChange() {
         guard let window else { return }
         activeStyleSheet = Self.makeStyleSheet(
@@ -808,7 +793,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     @objc private func preferencesDidChange() {
-        applyWindowAppearance(for: ThemeStore.shared.current)
+        window?.applyThemeAppearance(for: ThemeStore.shared.current)
         activeStyleSheet = Self.makeStyleSheet(
             theme: ThemeStore.shared.current,
             appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance
@@ -860,6 +845,7 @@ final class DocumentWindowController: NSWindowController {
     func applyStyleSheet() {
         primaryContainer.styleSheet = activeStyleSheet
         splitContainer?.styleSheet = activeStyleSheet
+        splitViewContainer?.styleSheet = activeStyleSheet
         breadcrumbView.styleSheet = activeStyleSheet
         densityGutterView.styleSheet = activeStyleSheet
         statusBarView.styleSheet = activeStyleSheet
@@ -2349,9 +2335,7 @@ final class DocumentWindowController: NSWindowController {
         second.textView.scroll(toOffset: source.topVisibleOffset, position: .top, animated: false)
         splitContainer = second
 
-        let split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
+        let split = ThemedSplitView(styleSheet: activeStyleSheet)
         split.translatesAutoresizingMaskIntoConstraints = false
 
         primaryContainer.removeFromSuperview()

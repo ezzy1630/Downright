@@ -400,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onNew = { [weak self] in self?.newDocument() }
         controller.onOpenGuide = { [weak self] in self?.openWelcomeDocument() }
         controller.onClearRecents = { [weak self] in self?.clearRecentDocuments(nil) }
+        controller.onRemoveRecent = { [weak self] path in self?.removeRecentDocument(path) }
         startWindow = controller
         controller.showWindow(nil)
     }
@@ -669,6 +670,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func clearRecentDocuments(_ sender: Any?) {
         DocumentStateStore.shared.clearRecents()
         startWindow?.reloadRecents([])
+    }
+
+    /// Forgetting one file re-reads the list rather than removing a row in
+    /// place: the store also drops entries whose file is gone, so the panel
+    /// after the write is the only list that is actually true.
+    private func removeRecentDocument(_ path: String) {
+        DocumentStateStore.shared.removeRecent(path: path)
+        startWindow?.reloadRecents(
+            DocumentStateStore.shared.recents(limit: StartWindowController.recentDisplayLimit)
+        )
     }
 
     @objc func selectLightTheme(_ sender: NSMenuItem) {

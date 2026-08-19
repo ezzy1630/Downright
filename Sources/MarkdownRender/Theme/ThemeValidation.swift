@@ -72,7 +72,9 @@ extension Theme {
             ("palette.calloutWarningOnBackground", palette.calloutWarning, palette.background, 2.0),
             ("palette.calloutSuccessOnBackground", palette.calloutSuccess, palette.background, 2.0),
             ("palette.calloutDangerOnBackground", palette.calloutDanger, palette.background, 2.0),
-        ]
+        ] + (palette.calloutImportant.map {
+            [("palette.calloutImportantOnBackground", $0, palette.background, CGFloat(2.0))]
+        } ?? [])
         return roles.compactMap { path, foreground, background, minimum in
             guard foreground.isValid, background.isValid else { return nil }
             let ratio = ThemeContrast.ratio(

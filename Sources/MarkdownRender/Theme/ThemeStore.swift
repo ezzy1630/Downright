@@ -222,8 +222,9 @@ extension Theme {
             changeRemoved: ThemeColor("system:systemRed"), changeModified: ThemeColor("system:systemBlue"),
             pathMissing: ThemeColor("system:systemRed"), searchHit: ThemeColor("system:systemBlue"),
             searchHitCurrent: ThemeColor("system:systemBlue"), calloutNote: ThemeColor("system:systemBlue"),
-            calloutWarning: ThemeColor("system:systemBlue"), calloutSuccess: ThemeColor("system:systemGreen"),
-            calloutDanger: ThemeColor("system:systemRed")
+            calloutWarning: ThemeColor("system:systemOrange"), calloutSuccess: ThemeColor("system:systemGreen"),
+            calloutDanger: ThemeColor("system:systemRed"),
+            calloutImportant: ThemeColor("system:systemPurple")
         ),
         code: CodeTheme(
             keyword: ThemeColor("system:systemPink"), string: ThemeColor("system:systemRed"),

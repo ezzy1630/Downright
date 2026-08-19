@@ -62,7 +62,9 @@ final class ThemeTests {
     func everyColourParses() {
         for theme in bundled() {
             #expect(theme.invalidColorPaths() == [], "\(theme.name) has unparseable colours")
-            #expect(theme.allColors().count == 24 + 17, "\(theme.name): unexpected colour count")
+            // 28 palette roles + 14 code tokens.  The count is the guard: a
+            // colour dropped from the schema would otherwise still validate.
+            #expect(theme.allColors().count == 28 + 14, "\(theme.name): unexpected colour count")
             for (path, color) in theme.allColors() {
                 #expect(color.validated() != nil, "\(theme.name).\(path) = \(color.raw)")
             }

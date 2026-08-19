@@ -1,0 +1,56 @@
+name: Refresh download counter
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: download-counter
+  cancel-in-progress: true
+
+jobs:
+  update:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Calculate the cumulative DMG count
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/download-counter"
+          Scripts/report-download-counts.sh --all --json > "$RUNNER_TEMP/download-counter/report.json"
+          TOTAL="$(jq -er '.downloads.acquisition_dmgs' "$RUNNER_TEMP/download-counter/report.json")"
+          jq -n --arg total "$TOTAL" \
+            '{schemaVersion: 1, label: "DMG downloads", message: $total, color: "307afe"}' \
+            > "$RUNNER_TEMP/download-counter/downloads.json"
+
+      - name: Publish the Shields endpoint
+        env:
+          BADGE_BRANCH: automation/download-count
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan "$BADGE_BRANCH"
+          git rm -rf --ignore-unmatch .
+          cp "$RUNNER_TEMP/download-counter/downloads.json" downloads.json
+          git add downloads.json
+          git commit -m "chore: refresh DMG download counter"
+          git push --force origin "HEAD:$BADGE_BRANCH"

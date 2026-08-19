@@ -14,6 +14,7 @@
 <p align="center">
   <a href="https://github.com/ezzy1630/Downright/actions/workflows/ci.yml"><img src="https://github.com/ezzy1630/Downright/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://github.com/ezzy1630/Downright/releases"><img src="https://img.shields.io/github/v/release/ezzy1630/Downright?display_name=tag&sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/ezzy1630/Downright/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fezzy1630%2FDownright%2Fautomation%2Fdownload-count%2Fdownloads.json&cacheSeconds=3600" alt="DMG downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-307afe" alt="MIT license"></a>
 </p>
 
