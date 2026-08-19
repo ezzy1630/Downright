@@ -623,6 +623,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      # `xmllint` left the ubuntu-latest image, and the verifier hard-requires
+      # it to prove the feed is well-formed.  Without this the gate aborts in
+      # ten seconds and every release goes red with the channel actually fine —
+      # which is worse than no gate, because a real failure looks identical.
+      - name: Install xmllint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-utils
+
       - name: Verify the public Sparkle channel
         env:
           VERIFY_PUBLIC_UPDATE_ATTEMPTS: "45"
