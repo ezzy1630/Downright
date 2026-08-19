@@ -4,6 +4,8 @@ Downright is free, MIT licensed, and built in public. It has no account requirem
 
 Sponsorship pays for the unglamorous work that keeps a native Mac app dependable: signed and notarized releases, macOS compatibility, accessibility fixes, performance work, documentation, and time spent investigating bug reports. It also helps cover the recurring cost of shipping outside the Mac App Store.
 
+The first goal is 10 monthly sponsors to cover the Apple Developer membership and the routine infrastructure behind signed, notarized releases.
+
 Sponsor on GitHub if Downright has made Markdown easier to live with on your Mac:
 
 [github.com/sponsors/ezzy1630](https://github.com/sponsors/ezzy1630)

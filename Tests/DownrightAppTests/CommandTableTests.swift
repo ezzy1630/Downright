@@ -109,10 +109,19 @@ struct CommandTableTests {
         #expect(titles["Enter Full Screen"]?.1 == [.control, .command])
         for expected in [
             "Delete", "Find", "Spelling and Grammar", "Substitutions", "Transformations", "Speech",
-            "Downright Help", "Markdown Reference", "Report an Issue",
+            "Downright Help", "Markdown Reference", "Report an Issue", "Star Downright on GitHub",
+            "Support Downright",
         ] {
             #expect(titles[expected] != nil, "the menu bar is missing \(expected)")
         }
+    }
+
+    @Test func supportMenuItemOpensGitHubSponsors() {
+        _ = NSApplication.shared
+        let helpMenu = MainMenu.build().items.compactMap(\.submenu).first { $0.title == "Help" }
+        let item = helpMenu?.items.first { $0.title == "Support Downright" }
+        #expect(item?.representedObject as? String == "https://github.com/sponsors/ezzy1630")
+        #expect(item?.target === HelpLinkTarget.shared)
     }
 
     // MARK: - Key binding serialisation (the file-destroying bug)

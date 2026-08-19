@@ -324,9 +324,10 @@ enum MainMenu {
                 .standard([
                     .link("Report an Issue", "https://github.com/ezzy1630/Downright/issues/new"),
                     StandardItem(
-                        title: "Downright on GitHub",
+                        title: "Star Downright on GitHub",
                         selector: #selector(AppDelegate.openProjectPage(_:))
                     ),
+                    .link("Support Downright", "https://github.com/sponsors/ezzy1630"),
                 ]),
             ]
         }
