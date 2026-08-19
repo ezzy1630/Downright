@@ -285,6 +285,14 @@ struct AppLayerTests {
     }
 
     @Test
+    func legacyPreferencesRestoreSystemAppearanceFollowing() throws {
+        let legacy = Data(#"{"followsSystemAppearance":false}"#.utf8)
+        let decoded = try JSONDecoder().decode(Preferences.Values.self, from: legacy)
+
+        #expect(decoded.followsSystemAppearance)
+    }
+
+    @Test
     func choosingAThemeDoesNotChangeTheAppearanceMode() {
         var values = Preferences.Values()
         values.followsSystemAppearance = true
