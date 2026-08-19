@@ -197,7 +197,9 @@ development by:
   Markdown
 
 Sponsorship helps cover signing, distribution, ongoing macOS compatibility,
-and the time required to keep Downright polished.
+and the time required to keep Downright polished. The
+[sponsorship policy](Docs/SPONSORING.md) explains what support does and does not
+change.
 
 ## Development
 
