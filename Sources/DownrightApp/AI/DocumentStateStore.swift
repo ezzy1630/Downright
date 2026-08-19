@@ -217,6 +217,17 @@ final class DocumentStateStore {
         }
     }
 
+    /// Drops one entry and leaves the rest alone.  Matched on the canonical
+    /// path for the same reason `noteOpened` stores one: a file reached through
+    /// a symlink is the same recent everywhere, so forgetting it once has to
+    /// forget it however it was reached.
+    func removeRecent(path: String) {
+        let canonical = Self.canonicalPath(path)
+        let list = recents(limit: 200).filter { Self.canonicalPath($0.path) != canonical }
+        guard let data = try? JSONEncoder.snapshotEncoder.encode(list) else { return }
+        try? data.write(to: recentsURL, options: .atomic)
+    }
+
     func clearRecents() {
         try? fm.removeItem(at: recentsURL)
     }

@@ -78,9 +78,7 @@ final class CompareWindowController: NSWindowController {
             )
         }
 
-        let split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
+        let split = ThemedSplitView(styleSheet: styleSheet)
         split.translatesAutoresizingMaskIntoConstraints = false
         split.addArrangedSubview(pane(titled: leftTitle, content: leftContainer))
         split.addArrangedSubview(pane(titled: rightTitle, content: rightContainer))

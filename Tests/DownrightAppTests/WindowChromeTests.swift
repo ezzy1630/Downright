@@ -284,6 +284,26 @@ struct WindowChromeTests {
     }
 
     @Test
+    func splitDividerIsThemedChromeRatherThanSystemGrey() throws {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+
+        controller.toggleSplitView()
+        let split = try #require(controller.splitViewContainer)
+
+        // The seam between two panes of prose is a rule like any other, and
+        // AppKit's default grey reads as nothing against a themed page.
+        #expect(split.dividerColor == controller.activeStyleSheet.rule)
+
+        // It also has to keep up: a theme change that repaints the panes but
+        // leaves the hairline behind is the same bug one repaint later.
+        let dark = try #require(ThemeStore.shared.themes.first { $0.name == "Warm Dark" })
+        let sheet = StyleSheet(theme: dark, appearance: NSAppearance(named: .darkAqua) ?? .currentDrawing())
+        split.styleSheet = sheet
+        #expect(split.dividerColor == sheet.rule)
+    }
+
+    @Test
     func documentBarsReserveSpaceAboveTheDocument() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }

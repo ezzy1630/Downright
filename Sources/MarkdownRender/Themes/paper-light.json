@@ -26,9 +26,10 @@
     "searchHit": "#2f6fb0",
     "searchHitCurrent": "#245fb8",
     "calloutNote": "#2f6fb0",
-    "calloutWarning": "#2f6fb0",
+    "calloutWarning": "#945c0a",
     "calloutSuccess": "#2f7a46",
-    "calloutDanger": "#b03a34"
+    "calloutDanger": "#b03a34",
+    "calloutImportant": "#7a5cb8"
   },
   "code": {
     "keyword": "#8e4f7d",

@@ -92,7 +92,7 @@ public struct StyleSheet {
     }
 
     private let headingColors: [NSColor]
-    private let calloutColors: [NSColor]      // note, warning, success, danger
+    private let calloutColors: [NSColor]      // note, warning, success, danger, important
     private let changeColors: [NSColor]       // added, removed, modified
     private let codeColors: [SyntaxToken: NSColor]
 
@@ -210,6 +210,7 @@ public struct StyleSheet {
             resolver.resolve(palette.calloutWarning),
             resolver.resolve(palette.calloutSuccess),
             resolver.resolve(palette.calloutDanger),
+            resolver.resolve(palette.calloutImportant ?? palette.calloutDanger),
         ]
         changeColors = [
             resolver.resolve(palette.changeAdded),
@@ -358,14 +359,22 @@ public struct StyleSheet {
 
     public func headingColor(level: Int) -> NSColor { headingColors[StyleSheet.clampLevel(level) - 1] }
 
-    /// Fourteen callout kinds share four palette slots, grouped by what the
-    /// reader is meant to *do*: absorb, act carefully, confirm, or stop.
+    /// Fourteen callout kinds share five palette slots, grouped by what the
+    /// reader is meant to *do*: absorb, act carefully, confirm, stop, or take
+    /// note of emphasis.
+    ///
+    /// The severities follow GitHub, which is the flavour these callouts came
+    /// from and the one most machine-written Markdown is authored against:
+    /// `caution` is graver than `warning`, and `important` is emphasis rather
+    /// than danger.  The HTML exporter already grouped `caution` with `danger`;
+    /// this is the renderer agreeing with it.
     public func calloutColor(_ kind: CalloutKind) -> NSColor {
         switch kind {
         case .note, .info, .abstract, .quote, .example: return calloutColors[0]
-        case .warning, .caution, .question, .todo: return calloutColors[1]
+        case .warning, .question, .todo: return calloutColors[1]
         case .tip, .success: return calloutColors[2]
-        case .important, .danger, .bug: return calloutColors[3]
+        case .caution, .danger, .bug: return calloutColors[3]
+        case .important: return calloutColors[4]
         }
     }
 

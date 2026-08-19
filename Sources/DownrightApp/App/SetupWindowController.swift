@@ -131,6 +131,13 @@ final class SetupWindowController: NSWindowController {
         window.isRestorable = false
         super.init(window: window)
 
+        // The card is painted in theme colours but its buttons are drawn by
+        // AppKit, so the appearance has to be settled before anything reads a
+        // colour — including the sheet the labels below are built from.
+        let theme = ThemeStore.shared.current
+        window.applyThemeAppearance(for: theme)
+        sheet = StyleSheet(theme: theme, appearance: window.effectiveAppearance)
+
         window.delegate = self
         let content = buildContent()
         window.contentView = content

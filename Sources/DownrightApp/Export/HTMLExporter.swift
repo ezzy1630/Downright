@@ -526,6 +526,8 @@ struct HTMLExporter {
         .callout-caution .callout-title, .callout-danger .callout-title { color: \(hex(palette.calloutDanger)); }
         .callout-tip, .callout-success { border-left-color: \(hex(palette.calloutSuccess)); }
         .callout-note .callout-title, .callout-info .callout-title { color: \(hex(palette.calloutNote)); }
+        .callout-important { border-left-color: \(hex(palette.calloutImportant ?? palette.calloutDanger)); }
+        .callout-important .callout-title { color: \(hex(palette.calloutImportant ?? palette.calloutDanger)); }
         /* Subtle tint plus a left rule, never a heavy bordered card (§11.3). */
         .code {
           position: relative; margin: 1.4em 0;
