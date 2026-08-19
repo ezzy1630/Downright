@@ -26,7 +26,7 @@
     "searchHit": "#268bd2",
     "searchHitCurrent": "#006d9c",
     "calloutNote": "#268bd2",
-    "calloutWarning": "#268bd2",
+    "calloutWarning": "#a67d00",
     "calloutSuccess": "#788b00",
     "calloutDanger": "#dc322f"
   },

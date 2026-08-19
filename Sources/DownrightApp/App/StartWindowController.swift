@@ -126,8 +126,11 @@ private final class KeycapBadgeField: NSTextField {
 /// The start window draws from the app's selected theme so the welcome surface
 /// agrees with the editor it hands off to.  One factory, three users.
 private enum StartTheme {
-    static func makeSheet() -> StyleSheet {
-        StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
+    /// Pass the view's own appearance once it is in a window: the start window
+    /// pins itself to the theme, so `NSApp`'s answer is only right before that
+    /// lands.
+    static func makeSheet(appearance: NSAppearance? = nil) -> StyleSheet {
+        StyleSheet(theme: ThemeStore.shared.current, appearance: appearance ?? NSApp.effectiveAppearance)
     }
 }
 
@@ -151,10 +154,30 @@ final class StartWindowController: NSWindowController {
     var onNew: (() -> Void)?
     var onOpenGuide: (() -> Void)?
     var onClearRecents: (() -> Void)?
+    var onRemoveRecent: ((String) -> Void)?
 
     /// Quiet text-button target for the recents header's Clear action.
     @objc func clearRecents(_ sender: Any?) {
         onClearRecents?()
+    }
+
+    // Row actions carry their path on the menu item, so one menu shape serves
+    // every row and nothing has to ask which one was clicked.
+
+    @objc func showRecentInFinder(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    @objc func copyRecentPath(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+    }
+
+    @objc func removeRecent(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        onRemoveRecent?(path)
     }
 
     private var startView: StartView? { window?.contentView as? StartView }
@@ -450,6 +473,7 @@ private final class StartView: NSView {
     /// throughout — the first responder is set before the animation runs.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        window?.applyThemeAppearance(for: ThemeStore.shared.current)
         window?.backgroundColor = sheet.background
         keyObserver.map(NotificationCenter.default.removeObserver)
         keyObserver = nil
@@ -475,7 +499,8 @@ private final class StartView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        sheet = Self.makeSheet()
+        window?.applyThemeAppearance(for: ThemeStore.shared.current)
+        sheet = StartTheme.makeSheet(appearance: effectiveAppearance)
         window?.backgroundColor = sheet.background
         hero.apply(sheet: sheet)
         recentPanel.apply(sheet: sheet)
@@ -956,8 +981,28 @@ private final class RecentDocumentsPanel: NSView {
         }
     }
 
-    fileprivate static func makeContextMenu(owner: StartWindowController) -> NSMenu {
+    /// The panel's own menu carries the one global action; a row adds the three
+    /// that need to know *which* file was clicked.  Right-clicking a single
+    /// entry and being offered nothing but "clear them all" answers a question
+    /// nobody asked, with the most destructive verb in the list.
+    fileprivate static func makeContextMenu(
+        owner: StartWindowController, recentPath: String? = nil
+    ) -> NSMenu {
         let menu = NSMenu()
+        if let recentPath {
+            let rowActions: [(String, Selector)] = [
+                ("Show in Finder", #selector(StartWindowController.showRecentInFinder(_:))),
+                ("Copy Path", #selector(StartWindowController.copyRecentPath(_:))),
+                ("Remove from Recents", #selector(StartWindowController.removeRecent(_:))),
+            ]
+            for (title, action) in rowActions {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = owner
+                item.representedObject = recentPath
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
         let clear = NSMenuItem(
             title: "Clear Recent Files…",
             action: #selector(StartWindowController.clearRecents(_:)),
@@ -1593,7 +1638,7 @@ private final class RecentDocumentButton: NSButton {
         trailingStack.translatesAutoresizingMaskIntoConstraints = false
         shell.addSubview(trailingStack)
 
-        menu = RecentDocumentsPanel.makeContextMenu(owner: target)
+        menu = RecentDocumentsPanel.makeContextMenu(owner: target, recentPath: recent.path)
 
         let text = NSStackView(views: [titleLabel, subtitleLabel])
         text.orientation = .vertical

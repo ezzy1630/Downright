@@ -534,6 +534,41 @@ struct StartWindowTests {
         #expect(paragraph?.alignment == .center)
     }
 
+    @Test
+    func recentRowMenuActsOnTheRowRatherThanTheWholeList() throws {
+        let recent = RecentDocument(
+            path: "/tmp/downright-row-menu-fixture.md",
+            displayName: "fixture",
+            firstHeading: "Fixture",
+            lastOpened: Date(),
+            wordCount: 12
+        )
+        let controller = StartWindowController(recents: [recent])
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // The assertion is that a row's menu is about *that file* and keeps the
+        // list-wide clear last, behind a separator — not that it holds three
+        // particular verbs.
+        let rowMenu = try #require(
+            menus(in: window.contentView)
+                .first { $0.items.contains { $0.title == "Remove from Recents" } }
+        )
+        #expect(rowMenu.items.last?.title == "Clear Recent Files…")
+        let fileActions = rowMenu.items.prefix { !$0.isSeparatorItem }
+        #expect(fileActions.allSatisfy { $0.representedObject as? String == recent.path })
+
+        let remove = try #require(rowMenu.items.first { $0.title == "Remove from Recents" })
+        #expect(remove.target === controller)
+        #expect(remove.action == #selector(StartWindowController.removeRecent(_:)))
+
+        var removed: String?
+        controller.onRemoveRecent = { removed = $0 }
+        controller.removeRecent(remove)
+        #expect(removed == recent.path)
+    }
+
     private func buttons(in view: NSView?) -> [NSButton] {
         guard let view else { return [] }
         let button = (view as? NSButton).map { [$0] } ?? []

@@ -119,16 +119,20 @@ final class UpdatePanelView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        window?.applyThemeAppearance(for: ThemeStore.shared.current)
         refresh()
     }
 
-    private static func makeSheet() -> StyleSheet {
-        StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
+    /// Pass the view's own appearance once it is in a window: the panel pins
+    /// itself to the theme, so `NSApp`'s answer is only right before that lands.
+    private static func makeSheet(appearance: NSAppearance? = nil) -> StyleSheet {
+        StyleSheet(theme: ThemeStore.shared.current, appearance: appearance ?? NSApp.effectiveAppearance)
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        sheet = Self.makeSheet()
+        window?.applyThemeAppearance(for: ThemeStore.shared.current)
+        sheet = Self.makeSheet(appearance: effectiveAppearance)
         window?.backgroundColor = sheet.background
         layer?.backgroundColor = sheet.background.cgColor
         header.apply(sheet: sheet)

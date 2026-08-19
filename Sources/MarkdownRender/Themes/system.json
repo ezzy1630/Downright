@@ -26,7 +26,7 @@
     "searchHit": "system:systemBlue",
     "searchHitCurrent": "system:systemBlue",
     "calloutNote": "system:systemBlue",
-    "calloutWarning": "system:systemBlue",
+    "calloutWarning": "system:systemOrange",
     "calloutSuccess": "system:systemGreen",
     "calloutDanger": "system:systemRed"
   },
