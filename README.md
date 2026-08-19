@@ -6,11 +6,11 @@
 
 <h1 align="center">Downright</h1>
 
-<p align="center"><strong>The native Markdown app for macOS.</strong></p>
+<p align="center"><strong>A beautiful native Markdown editor and reader for macOS.</strong></p>
 
 <p align="center">
-  Read, edit, and review agent-written Markdown exactly as it exists on disk.<br>
-  Native rendering, live external-change diffs, Quick Look, and a powerful CLI.
+  Open ordinary Markdown files as polished Mac documents, edit their exact source,<br>
+  and preview them throughout Finder. Fast, private, offline, and genuinely native.
 </p>
 
 <p align="center">
@@ -45,27 +45,24 @@
   </a>
 </p>
 
-## Markdown has changed
+## Markdown, treated like a Mac document
 
-Coding agents produce plans, implementation notes, reports, and documentation
-faster than anyone can comfortably review them as raw text.
+Downright opens the files you already have, wherever they already live. There
+is no library to import, vault to maintain, account to create, or web view
+pretending to be a desktop app.
 
-Downright turns those files into calm, native macOS documents while preserving
-their exact source. When Codex, Claude Code, or another coding agent rewrites
-the file you are reading, Downright shows precisely what changed—without
-uploading the document, creating a vault, or replacing your filesystem with a
-database.
+The interface and renderer are built with AppKit and TextKit 2. That means
+native selection, keyboard behavior, menus, typography, accessibility, and
+performance, with the original Markdown remaining authoritative on disk.
 
-| Read naturally | Review agent work |
+| Read naturally | Edit precisely |
 |---|---|
-| Native CommonMark and GFM rendering | Live external-change tracking |
-| Math, Mermaid, tables, tasks, callouts, front matter, images, and footnotes | Word-level rendered diffs and conflict safety |
-| One adaptive document and source surface | Local snapshots, version timeline, and undoable task edits |
-| Themes that follow macOS Light and Dark appearances | Outline, structural zoom, and density navigation |
-| Open one file immediately or use an optional folder workspace | Quick Look previews and Finder thumbnails |
-| Search sibling files without creating a vault | `down` and `md` terminal commands |
-| Click `file.swift:42` references and hand off to your editor | HTML/PDF export, Services, Spotlight metadata, and App Intents |
-| Keep every byte of the original Markdown in charge | Optional on-device Apple Intelligence |
+| Native CommonMark and GFM rendering | Exact source remains authoritative |
+| Beautiful typography and six themes | Document and Source views share position and selection |
+| Math, Mermaid, tables, tasks, callouts, images, and footnotes | Safe external-change tracking and conflict protection |
+| Quick Look previews and Finder thumbnails | Local snapshots and a version timeline |
+| Outline, structural zoom, and density navigation | Search sibling files without creating a vault |
+| HTML/PDF export, Services, and Spotlight metadata | `down` and `md` terminal commands |
 
 Supported files: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`, `.mdc`, `.qmd`,
 and `.rmd`.
@@ -125,8 +122,15 @@ path needs no Node.js; the npm path is macOS-only and requires Node.js 18+.
 - **Native and file-first.** TextKit 2, Core Text, SwiftMath, and native Mermaid
   rendering keep the app and Quick Look extensions lean. There is no WebView,
   workspace requirement, sync service, plugin runtime, or chat panel.
-- **Designed for agent workflows.** Open plans from the terminal, follow edits
-  as they land, review word-level changes, and keep a local version timeline.
+- **Polished for everyday use.** Six themes, precise typography, native menus,
+  configurable shortcuts, and Finder integration make Markdown feel at home on
+  macOS.
+
+### Review external edits when you need to
+
+If another app or coding agent rewrites an open file, Downright can show the
+change in place, preserve dirty local edits, and let you review word-level
+differences. It is a useful extra, not a different way of owning your files.
 
 ## Everyday commands
 
@@ -200,6 +204,9 @@ Sponsorship helps cover signing, distribution, ongoing macOS compatibility,
 and the time required to keep Downright polished. The
 [sponsorship policy](Docs/SPONSORING.md) explains what support does and does not
 change.
+
+The first goal is 10 monthly sponsors to cover the Apple Developer membership
+and the routine infrastructure behind signed, notarized releases.
 
 ## Development
 
