@@ -28,7 +28,8 @@
     "calloutNote": "system:systemBlue",
     "calloutWarning": "system:systemOrange",
     "calloutSuccess": "system:systemGreen",
-    "calloutDanger": "system:systemRed"
+    "calloutDanger": "system:systemRed",
+    "calloutImportant": "system:systemPurple"
   },
   "code": {
     "keyword": "system:systemPink",

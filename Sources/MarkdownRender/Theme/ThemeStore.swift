@@ -223,7 +223,8 @@ extension Theme {
             pathMissing: ThemeColor("system:systemRed"), searchHit: ThemeColor("system:systemBlue"),
             searchHitCurrent: ThemeColor("system:systemBlue"), calloutNote: ThemeColor("system:systemBlue"),
             calloutWarning: ThemeColor("system:systemOrange"), calloutSuccess: ThemeColor("system:systemGreen"),
-            calloutDanger: ThemeColor("system:systemRed")
+            calloutDanger: ThemeColor("system:systemRed"),
+            calloutImportant: ThemeColor("system:systemPurple")
         ),
         code: CodeTheme(
             keyword: ThemeColor("system:systemPink"), string: ThemeColor("system:systemRed"),

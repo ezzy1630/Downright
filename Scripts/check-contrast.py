@@ -28,6 +28,7 @@ PALETTE_PAIRS = [
     ("calloutWarning", "background", 3.0, "calloutWarning"),
     ("calloutSuccess", "background", 3.0, "calloutSuccess"),
     ("calloutDanger", "background", 3.0, "calloutDanger"),
+    ("calloutImportant", "background", 3.0, "calloutImportant"),
     ("changeAdded", "background", 3.0, "changeAdded"),
     ("changeRemoved", "background", 3.0, "changeRemoved"),
     ("changeModified", "background", 3.0, "changeModified"),

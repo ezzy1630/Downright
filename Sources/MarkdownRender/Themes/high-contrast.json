@@ -28,7 +28,8 @@
     "calloutNote": "#0000cc",
     "calloutWarning": "#8a4b00",
     "calloutSuccess": "#006600",
-    "calloutDanger": "#cc0000"
+    "calloutDanger": "#cc0000",
+    "calloutImportant": "#7a0080"
   },
   "code": {
     "keyword": "#7a0080",

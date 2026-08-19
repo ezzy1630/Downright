@@ -380,6 +380,10 @@ public struct ThemePalette: Codable, Sendable, Equatable {
     public var calloutWarning: ThemeColor
     public var calloutSuccess: ThemeColor
     public var calloutDanger: ThemeColor
+    /// Added after the palette shipped, so a theme written against the earlier
+    /// schema still decodes.  Absent, `[!IMPORTANT]` keeps falling back to the
+    /// danger colour it used to share.
+    public var calloutImportant: ThemeColor?
 }
 
 public struct CodeTheme: Codable, Sendable, Equatable {
