@@ -40,10 +40,12 @@
 ---
 
 <p align="center">
-  <a href="https://downright.cc/">
-    <img src="Docs/downright-renderer-showcase.png" alt="Downright rendering Markdown with native typography, syntax highlighting, math, Mermaid, tasks, and a density rail." width="1100">
+  <a href="https://downright.cc/assets/downright-one-journey-master.mp4">
+    <img src="Docs/downright-readme-demo.gif" alt="Downright opens a Markdown file from Finder, renders it as a native Mac document, switches to exact source, and reviews an external rewrite." width="800">
   </a>
 </p>
+
+<p align="center"><a href="https://downright.cc/assets/downright-one-journey-master.mp4">Watch the 23-second product film</a></p>
 
 ## Markdown, treated like a Mac document
 

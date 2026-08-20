@@ -12,6 +12,11 @@ final class Preferences {
         var darkThemeName: String = "Warm Dark"
         /// When true the light/dark theme pair follows the system appearance.
         var followsSystemAppearance: Bool = true
+        /// Tracks the one-time repair for settings written before following
+        /// macOS appearance became the stable default. Keeping the marker
+        /// lets a user opt out again after the repair without losing that
+        /// choice on every launch.
+        private var appearancePreferenceVersion: Int = 1
         /// Quick Look is a separate sandboxed process. Its default follows
         /// macOS, with an explicit override for readers who want a fixed mode.
         var previewAppearance: PreviewAppearance = .system
@@ -85,6 +90,11 @@ final class Preferences {
             themeName = get(.themeName, "Paper Light")
             darkThemeName = get(.darkThemeName, "Warm Dark")
             followsSystemAppearance = get(.followsSystemAppearance, true)
+            appearancePreferenceVersion = get(.appearancePreferenceVersion, 0)
+            if appearancePreferenceVersion < 1 {
+                followsSystemAppearance = true
+                appearancePreferenceVersion = 1
+            }
             previewAppearance = get(.previewAppearance, .system)
             typography = get(.typography, TypographyConfig.default)
             textSizeAdjustment = get(.textSizeAdjustment, 0)
