@@ -287,13 +287,11 @@ enum CodeFileExtensions {
 // activity, the panels a reader reaches for, task progress, overflow — that
 // never nudges the centre rail.
 //
-// Contents / Outline and Find are in that cluster rather than inside `···` on
-// purpose.
+// Find is in that cluster rather than inside `···` on purpose.
 // The overflow was the only interactive control on the trailing edge, which
-// put every panel in the app one unlabelled glyph and one menu away in a
-// window with room for three more buttons.  `···` keeps what a reader reaches
-// for occasionally; the two panels they reach for constantly are out where
-// they can be seen and hit.
+// put a frequent document action one unlabelled glyph and one menu away in a
+// window with room for another button.  `···` keeps what a reader reaches for
+// occasionally; Find stays visible because it is used constantly.
 //
 // The cluster ships as a single toolbar item, not five: AppKit pads every
 // custom-view item by its own margin — a tax even a hidden 1pt placeholder
@@ -358,13 +356,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             return item
 
         case Self.clusterItem:
-            let contentsButton = ToolbarActionButton(
-                symbol: "list.bullet.indent", label: Command.documentLens.title,
-                help: "Show or hide the document Contents and Outline",
-                target: self, action: #selector(toolbarShowDocumentLens(_:)),
-                usesGlassSurface: true
-            )
-            contentsButton.styleSheet = activeStyleSheet
             let findButton = ToolbarActionButton(
                 symbol: "magnifyingglass", label: "Find",
                 help: "Find in this document",
@@ -383,7 +374,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = ToolbarTrailingCluster(views: [
                 activityIndicator,
-                contentsButton,
                 findButton,
                 progressRing,
                 pill,

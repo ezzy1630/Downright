@@ -287,14 +287,9 @@ struct WindowChromeTests {
         #expect(find.feedbackInsetY == 0)
         #expect(find.feedbackCornerRadius == 17)
         #expect(!find.isOn, "find should rest unlit with its panel closed")
-        let contents = try #require(
-            cluster.arrangedSubviews.first {
-                ($0 as? ToolbarActionButton)?.accessibilityLabel() == Command.documentLens.title
-            } as? ToolbarActionButton,
-            "contents is not in the trailing cluster"
-        )
-        #expect(contents.toolTip == "Show or hide the document Contents and Outline")
-        #expect(contents.accessibilityHelp() == "Show or hide the document Contents and Outline")
+        #expect(!cluster.arrangedSubviews.contains {
+            ($0 as? ToolbarActionButton)?.accessibilityLabel() == Command.documentLens.title
+        }, "Contents / Outline belongs in menus, not the permanent toolbar")
         #expect(cluster.arrangedSubviews.contains { $0 is ActivityIndicatorView })
         #expect(cluster.arrangedSubviews.contains { $0 is TaskProgressRing })
         let updatePill = try #require(
@@ -314,7 +309,7 @@ struct WindowChromeTests {
         #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })
         #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
         // The cluster leads with the spinner and ends at the menu: activity,
-        // contents, find, ring, pill, overflow — each hidden view costs nothing.
+        // find, ring, pill, overflow — each hidden view costs nothing.
         #expect(cluster.arrangedSubviews.first is ActivityIndicatorView)
         #expect(cluster.arrangedSubviews.last is ToolbarMenuButton)
     }
