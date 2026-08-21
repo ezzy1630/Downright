@@ -548,6 +548,52 @@ struct AppLayerTests {
         )
     }
 
+    /// "Open in your editor" never means "run it": execution-capable targets
+    /// linked from a document must be classified so every open path reveals
+    /// them in Finder instead of handing them to LaunchServices.
+    @Test func executableTargetsAreClassifiedForRevealInsteadOfLaunch() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-exec-classify-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        func write(_ name: String, _ bytes: Data, permissions: Int? = nil) throws -> URL {
+            let url = root.appendingPathComponent(name)
+            try bytes.write(to: url)
+            if let permissions {
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: NSNumber(value: permissions)], ofItemAtPath: url.path
+                )
+            }
+            return url
+        }
+
+        // Application bundles and Terminal-run scripts execute on open.
+        let bundle = root.appendingPathComponent("Evil.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        #expect(DocumentTypes.executesWhenOpened(bundle))
+        #expect(try DocumentTypes.executesWhenOpened(
+            write("run.tool", Data("#!/bin/sh\necho hi\n".utf8))
+        ))
+        // An executable bit with no extension at all is a raw binary/script.
+        #expect(try DocumentTypes.executesWhenOpened(
+            write("deploy", Data("#!/bin/sh\necho hi\n".utf8), permissions: 0o755)
+        ))
+
+        // Documents — including executable-bit scripts with a document-ish
+        // extension, which open in an editor — do not execute.
+        #expect(try !DocumentTypes.executesWhenOpened(write("notes.md", Data("# hi\n".utf8))))
+        #expect(try !DocumentTypes.executesWhenOpened(
+            write("build.sh", Data("#!/bin/sh\n".utf8), permissions: 0o755)
+        ))
+        #expect(try !DocumentTypes.executesWhenOpened(
+            write("diagram.png", Data("\u{89}PNG".utf8))
+        ))
+        let folder = root.appendingPathComponent("assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        #expect(!DocumentTypes.executesWhenOpened(folder))
+    }
+
     @Test @MainActor
     func pathResolverWarmsCacheAndReturnsOnMainQueue() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())

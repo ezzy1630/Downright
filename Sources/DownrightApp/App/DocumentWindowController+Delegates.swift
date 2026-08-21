@@ -96,6 +96,15 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             authorizeLocalEffect(.launchPathOrEditor, target: target) {
                 if DocumentTypes.isMarkdown(target.pathExtension) {
                     (NSApp.delegate as? AppDelegate)?.open(target)
+                } else if DocumentTypes.executesWhenOpened(target) {
+                    // "Open in editor" never means "run this": an application
+                    // bundle or Terminal script linked from a document is
+                    // revealed in Finder instead, so showing where it lives
+                    // stays possible while running it stays a manual act.
+                    NSWorkspace.shared.selectFile(
+                        target.path,
+                        inFileViewerRootedAtPath: target.deletingLastPathComponent().path
+                    )
                 } else {
                     NSWorkspace.shared.open(target)
                 }
@@ -120,6 +129,15 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
                     (NSApp.delegate as? AppDelegate)?.open(target)
                 } else {
                     openInPlace(target)
+                }
+            } else if DocumentTypes.executesWhenOpened(target) {
+                // Same rule as .localFile: reveal execution-capable targets,
+                // never run them from inside a document.
+                authorizeLocalEffect(.launchPathOrEditor, target: target) {
+                    NSWorkspace.shared.selectFile(
+                        target.path,
+                        inFileViewerRootedAtPath: target.deletingLastPathComponent().path
+                    )
                 }
             } else {
                 authorizeLocalEffect(.launchPathOrEditor, target: target) {
