@@ -338,7 +338,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
 
         case Self.modeItem:
             let control = ToolbarPresentationControl { [weak self] selectedSegment in
-                self?.toolbarModeChanged(selectedSegment)
+                self?.changePresentation(to: selectedSegment)
             }
             control.isHidden = false
             toolbarPresentationControl = control
@@ -440,8 +440,56 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         true
     }
 
-    private func toolbarModeChanged(_ selectedSegment: Int) {
+    /// The presentation the document is actually in: `0` Document, `1` Source.
+    /// Read from the text surface rather than the rail, which a swipe in
+    /// flight has scrubbed somewhere between the two.
+    var presentationSegment: Int {
+        primaryContainer.textView.sourceFocus != .none
+            || (splitContainer.map { $0.textView.sourceFocus != .none } ?? false) ? 1 : 0
+    }
+
+    /// Switch presentation.  Shared by the rail and the two-finger swipe, so
+    /// both land on exactly one transition and one cost — the swipe adds no
+    /// rendering of its own precisely because this is not cheap.
+    /// How many lines the open document has.  The swipe asks, because whether
+    /// it can afford to drag the next presentation in under the fingers is a
+    /// question about this document's length.
+    var documentLineCount: Int {
+        markdownDocument.parsed.lineStarts.count
+    }
+
+    /// Switch presentation with no transition of its own.
+    ///
+    /// The live drag takes this rather than `changePresentation(to:)`: it is
+    /// already drawing the transition itself, it drives the rail itself, and it
+    /// performs the switch *behind* a still of the outgoing page — so a second
+    /// animation would flicker and a rail refresh would snap the indicator out
+    /// from under the fingers.  It also has to be able to put the mode back
+    /// when a drag is abandoned, which an animated switch cannot do quietly.
+    func setPresentationSegment(_ segment: Int) {
+        let showSource = segment == 1
+        let started = DispatchTime.now().uptimeNanoseconds
+        for pane in documentPanes {
+            if showSource {
+                pane.textView.focusEntireSource()
+            } else {
+                pane.textView.clearSourceFocus()
+            }
+        }
+        recordPresentationSwitchCost(since: started)
+    }
+
+    /// Feed what the switch actually cost back into the swipe's budget, so the
+    /// estimate is calibrated on this machine and this document rather than on
+    /// the one the constant was measured on.
+    private func recordPresentationSwitchCost(since started: UInt64) {
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        PresentationSwitchBudget.record(cost: elapsed, lines: documentLineCount)
+    }
+
+    func changePresentation(to selectedSegment: Int) {
         let showSource = selectedSegment == 1
+        let started = DispatchTime.now().uptimeNanoseconds
         for pane in documentPanes {
             let outgoing = activeStyleSheet.reduceMotion ? nil : snapshot(of: pane)
             if showSource {
@@ -451,6 +499,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             }
             animatePresentationChange(in: pane, outgoing: outgoing, showSource: showSource)
         }
+        recordPresentationSwitchCost(since: started)
         refreshSourceFocusToolbar()
         // The mode control should change presentation, then return the user to
         // the editor. Leaving first responder on the toolbar makes an editable
@@ -535,7 +584,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     }
 
     @objc private func toolbarToggleSourceFocus(_ sender: Any?) {
-        toolbarModeChanged(primaryContainer.textView.sourceFocus == .none ? 1 : 0)
+        changePresentation(to: primaryContainer.textView.sourceFocus == .none ? 1 : 0)
     }
 
     @objc private func toolbarShowHistory(_ sender: Any?) {
@@ -577,6 +626,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         addCommands([.tidyDocument, .readerProfiles], to: menu)
 
         menu.addItem(sectionHeader("Share"))
+        // The section header has always said Share; until now everything under
+        // it wrote a file the reader then had to go and find.
+        addCommands([.share, .shareAsPDF], to: menu)
         let export = NSMenu(title: "Export")
         addCommands([.exportPDF, .exportHTML, .exportSelectionAsImage], to: export)
         let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")

@@ -139,6 +139,75 @@ final class DocumentWindowController: NSWindowController {
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
+    /// The two-finger Document↔Source swipe over the document surface.  Lazy
+    /// because it closes over the panes and the rail, neither of which exists
+    /// until the window is loaded.
+    lazy var presentationSwipe = PresentationSwipeCoordinator(
+        host: PresentationSwipeCoordinator.Host(
+            panes: { [weak self] in self?.documentPanes ?? [] },
+            styleSheet: { [weak self] in self?.activeStyleSheet ?? .current },
+            selectedSegment: { [weak self] in self?.presentationSegment ?? 0 },
+            commitSegment: { [weak self] segment in
+                self?.changePresentation(to: segment)
+            },
+            trackRail: { [weak self] position in
+                self?.toolbarPresentationControl?.trackSwipe(position: position)
+            },
+            settleRail: { [weak self] segment in
+                self?.toolbarPresentationControl?.settleSwipe(at: segment)
+            },
+            documentLines: { [weak self] in self?.documentLineCount ?? 0 },
+            setSegment: { [weak self] segment in
+                self?.setPresentationSegment(segment)
+            }
+        )
+    )
+    /// ⌘-scroll and ⌥-scroll over the document surface.  Both scales already
+    /// existed and neither was reachable with a mouse: pinch drove text size,
+    /// and structural detail hid behind ⌃⌥⌘1…5.
+    lazy var scrollZoom = ScrollZoomCoordinator(
+        host: ScrollZoomCoordinator.Host(
+            stepTextSize: { [weak self] steps in
+                self?.adjustTextSize(by: CGFloat(steps))
+            },
+            stepDetail: { [weak self] steps in
+                guard let self, steps != 0 else { return }
+                // Routed through the commands rather than the zoom level, so
+                // the gesture, the chord and the View menu can never disagree
+                // about what the ends of the scale are.
+                let command: Command = steps > 0 ? .zoomIn : .zoomOut
+                for _ in 0..<abs(steps) { self.perform(command) }
+            }
+        )
+    )
+    /// The ⇧ two-finger Back/Forward swipe over the document surface.  Lazy
+    /// for the same reason as the presentation swipe: it closes over the panes.
+    lazy var historySwipe = HistorySwipeCoordinator(
+        host: HistorySwipeCoordinator.Host(
+            panes: { [weak self] in self?.documentPanes ?? [] },
+            styleSheet: { [weak self] in self?.activeStyleSheet ?? .current },
+            canMove: { [weak self] direction in
+                guard let self else { return false }
+                switch direction {
+                case .back: return self.jumpHistory.canGoBack
+                case .forward: return self.jumpHistory.canGoForward
+                }
+            },
+            move: { [weak self] direction in
+                switch direction {
+                case .back: self?.goBack()
+                case .forward: self?.goForward()
+                }
+            }
+        )
+    )
+    /// Every gesture the document surface can hand a scroll event to, in the
+    /// order they get to claim it.  The zooms decide on one event and answer
+    /// at once; the two swipes need travel first, and the one that needs ⇧ has
+    /// to be asked before the one that needs nothing held at all.
+    lazy var documentScrollGestures = ScrollGestureChain([
+        scrollZoom, historySwipe, presentationSwipe,
+    ])
     weak var toolbarDocumentIdentityView: ToolbarDocumentIdentityView?
     /// The two panel buttons promoted out of the `···` overflow.  Weak, because
     /// the toolbar item owns its view; the controller only needs them to keep
@@ -2645,6 +2714,10 @@ extension DocumentWindowController: NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        // A resize reflows both presentations, so a swipe in flight is holding
+        // stills that no longer describe the document. Ground it first.
+        presentationSwipe.cancelInFlight()
+        historySwipe.cancelInFlight()
         updateFocusDimmingViews()
         refitFloatingSurface()
     }

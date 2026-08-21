@@ -176,6 +176,17 @@ All bindings are editable in **Settings → Keys**.
 | `⌃⌥⌘1`–`5` | Structural zoom | `⌥⇧↑` / `↓` | Previous / next change |
 | `⌘\` | Split view | `⌘L` | Toggle task at caret |
 
+Two fingers sideways across the document switch between Document and Source.
+The titlebar's mode rail travels with your fingers, so you can see how far is
+far enough; release short of that and it returns having changed nothing. On
+documents short enough to render the other presentation in time — most of them —
+the pages themselves slide past each other under your fingers.
+
+Hold ⇧ and swipe sideways to move back and forward through jump history.
+Pinch to change text size, ⌘-scroll to do the same with a mouse, and ⌥-scroll to
+step through the structural detail levels. Double-tap with two fingers toggles a
+larger text size.
+
 ## Themes and appearance
 
 Downright follows macOS Light and Dark appearances by default. Light and dark

@@ -38,6 +38,18 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             $0.textSizeAdjustment = $0.textSizeAdjustment == 0 ? 3 : 0
         }
     }
+
+    /// Four things can happen on this surface's wheel: ⌘ sizes the text, ⌥
+    /// steps structural detail, ⇧ and two fingers sideways move through jump
+    /// history, and two bare fingers sideways switch Document↔Source.  They
+    /// are asked in that order and the first to claim wins; anything none of
+    /// them has claimed goes straight back, so vertical scrolling — which is
+    /// what almost every one of these events is — is untouched.
+    func markdownTextView(
+        _ view: MarkdownTextView, shouldClaimScrollGesture event: NSEvent
+    ) -> Bool {
+        documentScrollGestures.handle(event)
+    }
     func markdownTextView(
         _ view: MarkdownTextView, didRequestHeadingLevel level: Int?, headingIndex: Int
     ) {

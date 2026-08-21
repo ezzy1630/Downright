@@ -1403,3 +1403,300 @@ extension MarkdownTextView {
         return image
     }
 }
+
+// MARK: - Dropping files and images onto the document (§7.1)
+
+/// Inserting an image is the single most common thing anyone does in a
+/// Markdown editor, and until now the only surface in Downright that accepted
+/// a drop was the Start window.  Everything below is the render half of
+/// closing that: recognising the drag, resolving where under the pointer it
+/// would land *in source coordinates*, drawing that place, and handing the
+/// pasteboard to the app.  Not one line of it writes a file or invents a path
+/// — see `MarkdownTextViewDelegate` for why that split is load-bearing.
+extension MarkdownTextView {
+
+    /// Everything the document surface is willing to be a drop target for, on
+    /// top of whatever `NSTextView` already claims for text drags.
+    ///
+    /// `.fileURL` covers Finder, Preview, and any app that drags a real file.
+    /// The four image types cover the other half of the story — an image
+    /// dragged straight out of a browser or a preview window arrives as bytes
+    /// with no file behind them at all.  They are `CapturedImage`'s
+    /// passthrough set plus TIFF, which is what AppKit itself hands over when
+    /// the source app offers nothing more specific.
+    ///
+    /// Deliberately *not* here: file promises and `public.url`.  Both mean
+    /// "there will be a file, later, if you ask the network or the source app
+    /// for it", and a drop that silently starts a download is not something
+    /// this app should do without the remote-asset trust prompt the reader
+    /// would normally see first.
+    static let documentDropTypes: [NSPasteboard.PasteboardType] = [
+        .fileURL, .png, .tiff,
+        NSPasteboard.PasteboardType("public.jpeg"),
+        NSPasteboard.PasteboardType("public.heic"),
+    ]
+
+    /// `NSTextView` recomputes its drag registration whenever editability or
+    /// `importsGraphics` changes — which happens on every mode switch, because
+    /// `applyModeChrome` assigns `isEditable` from the mode's policy.  Adding
+    /// our types in the initialiser instead would work exactly once and then
+    /// be silently wiped the first time the reader pressed ⇧⌘E.  Overriding
+    /// the method AppKit calls is the only registration that survives.
+    public override func updateDragTypeRegistration() {
+        super.updateDragTypeRegistration()
+        // Additive, and idempotent: whatever `super` decided to register for
+        // text drags is kept, our types are added exactly once, and — this is
+        // the part that has to be explicit — they are *removed* again when the
+        // surface stops being editable.  A drop is a source mutation, and a
+        // read-only surface accepts none; leaving the types behind from a
+        // previous mode would make Read mode editable through the one door
+        // nobody thought to lock.
+        let ours = MarkdownTextView.documentDropTypes
+        var types = registeredDraggedTypes.filter { !ours.contains($0) }
+        if isEditable { types += ours }
+        // `registerForDraggedTypes([])` is not the same as unregistering —
+        // AppKit treats the empty array as "nothing to add" and leaves the
+        // previous list in place, which is how a surface that had just become
+        // read-only kept advertising itself as a drop target.
+        if types.isEmpty {
+            unregisterDraggedTypes()
+        } else {
+            registerForDraggedTypes(types)
+        }
+    }
+
+    /// The drop point, converted once, the only way it may be converted.
+    ///
+    /// `sourceOffset(at:)` routes through `DisplayMap`, and reusing the raw
+    /// TextKit index instead is the bug this feature is most likely to ship
+    /// with — precisely because it would look right.  The layout map pads
+    /// every hidden marker run out with zero-width joiners so hit testing
+    /// stays aligned, so on most documents the two numbers are equal.  They
+    /// come apart wherever a substitution genuinely changes length inside the
+    /// paragraph being dropped into: a footnote reference is four source
+    /// characters drawn as one superscript, and after three of them the image
+    /// lands nine characters early, in the middle of a word.
+    private func drop(for sender: NSDraggingInfo) -> DocumentDrop {
+        DocumentDrop(
+            pasteboard: sender.draggingPasteboard,
+            sourceOffset: sourceOffset(at: convert(sender.draggingLocation, from: nil))
+        )
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let candidate = drop(for: sender)
+        claimsActiveDrag = isEditable
+            && markdownDelegate?.markdownTextView(self, canAcceptDrop: candidate) == true
+        guard claimsActiveDrag else {
+            setDropInsertionOffset(nil)
+            return super.draggingEntered(sender)
+        }
+        setDropInsertionOffset(candidate.sourceOffset)
+        return .copy
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // A drag's pasteboard cannot change while it is in flight, so the
+        // claim made on entry stands for the whole drag.  Only the position
+        // is re-resolved, which is what the reader is actually moving.
+        guard claimsActiveDrag else { return super.draggingUpdated(sender) }
+        setDropInsertionOffset(drop(for: sender).sourceOffset)
+        return .copy
+    }
+
+    public override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDropInsertionOffset(nil)
+        guard claimsActiveDrag else {
+            super.draggingExited(sender)
+            return
+        }
+        claimsActiveDrag = false
+    }
+
+    public override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        claimsActiveDrag ? true : super.prepareForDragOperation(sender)
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard claimsActiveDrag else { return super.performDragOperation(sender) }
+        // Resolve the position one last time from the release point rather
+        // than trusting the last `draggingUpdated`: AppKit coalesces drag
+        // updates, and on a fast flick the release can land a line or two
+        // past the last position the caret was drawn at.
+        let released = drop(for: sender)
+        setDropInsertionOffset(nil)
+        claimsActiveDrag = false
+        return markdownDelegate?.markdownTextView(self, didAcceptDrop: released) == true
+    }
+
+    public override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        setDropInsertionOffset(nil)
+        claimsActiveDrag = false
+        super.concludeDragOperation(sender)
+    }
+
+    /// Moves the drop caret, repainting only the two lines it can have been on.
+    ///
+    /// A full `needsDisplay` here would redraw the whole visible page on every
+    /// `draggingUpdated`, and AppKit sends those continuously while the
+    /// pointer is inside the view even when it has not moved (§12).
+    private func setDropInsertionOffset(_ offset: Int?) {
+        guard offset != dropInsertionOffset else { return }
+        let previous = dropInsertionOffset
+        dropInsertionOffset = offset
+        for candidate in [previous, offset] {
+            guard let candidate, let rect = dropCaretRect(at: candidate) else {
+                needsDisplay = true
+                return
+            }
+            setNeedsDisplay(rect.insetBy(dx: -3, dy: -3))
+        }
+    }
+
+    /// Where the drop caret is drawn for a source offset, in view coordinates.
+    private func dropCaretRect(at sourceOffset: Int) -> NSRect? {
+        let width: CGFloat = 2
+        if let rect = rect(forOffset: sourceOffset) {
+            return NSRect(x: rect.minX - width / 2, y: rect.minY, width: width, height: rect.height)
+        }
+        // The very end of the document has no character to measure, so fall
+        // back to the trailing edge of the last one.  Without this the caret
+        // simply vanishes when the reader aims past the final line, which
+        // reads as "this drop will not work" for the one target that always
+        // does.
+        guard sourceOffset > 0, let rect = rect(forOffset: sourceOffset - 1) else { return nil }
+        return NSRect(x: rect.maxX - width / 2, y: rect.minY, width: width, height: rect.height)
+    }
+
+    /// The insertion indicator, drawn in the accent colour so it reads as the
+    /// same "this is where it goes" mark the caret is, without being mistaken
+    /// for the caret itself — it is twice as wide and it does not blink.
+    func drawDropInsertionCaret(in dirtyRect: NSRect) {
+        guard let offset = dropInsertionOffset, let rect = dropCaretRect(at: offset),
+              rect.intersects(dirtyRect) else { return }
+        styleSheet.accent.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+    }
+}
+
+// MARK: - Quick Look (§7.1)
+
+/// Two ways into one preview: a force click on a path or a local link, and the
+/// Quick Look command.  Both resolve a `ContextTarget` — the same "what is
+/// under here" table the context menu is built from, so a force click and a
+/// right-click can never disagree about what the reader is pointing at — and
+/// hand it to the app, which owns the panel.
+extension MarkdownTextView {
+
+    /// AppKit turns a force click into `quickLook(with:)` —
+    /// `quickLookWithEvent:` in Objective-C, which is the name everything
+    /// written about this uses.  The pressure stages themselves are
+    /// `NSTextView`'s business and are deliberately left alone: implementing
+    /// `pressureChange(with:)` here would mean taking over the gesture
+    /// recognition that produces this call in the first place, for no gain.
+    /// The event already carries the location, and the only decision to make
+    /// is what is underneath it.
+    ///
+    /// Falling through to `super` is the important half.  A force click on an
+    /// ordinary word is the standard macOS Look Up popover, and `NSTextView`
+    /// gives us that for free as long as we hand back every click that is not
+    /// aimed at something we can preview.
+    public override func quickLook(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let target = quickLookTarget(at: point),
+           markdownDelegate?.markdownTextView(self, wantsQuickLookFor: target) == true {
+            return
+        }
+        super.quickLook(with: event)
+    }
+
+    /// A previewable thing under a point, or nil for anything else.
+    ///
+    /// Narrower than `contextTarget(at:offset:)` on purpose: a heading, a
+    /// table, a code block and a bare word all have context menus but none of
+    /// them is a file, and returning one of those would swallow the force
+    /// click that should have opened the dictionary.
+    ///
+    /// The context menu's own answer is preferred, so a force click and a
+    /// right-click name the same thing whenever they can.  It is only the
+    /// *first* answer, though, because it is gated on `renderedTextContains`,
+    /// which refuses a hit whose glyph rectangle it cannot confirm.  That gate
+    /// exists to stop hover underlining the whitespace after a link, and it is
+    /// the right trade for a pointer drifting across a page — but a force
+    /// click is not a drift.  The reader pressed, deliberately, on one word.
+    /// Falling back to the attribute run at the resolved source offset means
+    /// the gesture answers wherever the source says there is a link or a path,
+    /// and it cannot over-fire: prose carries neither attribute, so Look Up
+    /// still gets every ordinary word.
+    func quickLookTarget(at point: NSPoint) -> ContextTarget? {
+        let offset = sourceOffset(at: point)
+        return previewable(contextTarget(at: point, offset: offset))
+            ?? previewableTarget(atSourceOffset: offset)
+    }
+
+    /// What a Quick Look at the current selection would preview.
+    ///
+    /// Public because the app's Quick Look command needs the same answer the
+    /// force click gets, and the attribute runs that hold links, paths, and
+    /// image fragments live here.  A collapsed selection only counts when the
+    /// surface actually has an insertion point the reader placed: in Read mode
+    /// `sourceSelectedRange` is `{0, 0}` whether or not anyone has touched the
+    /// document, and previewing whatever happens to sit at offset zero because
+    /// a key was pressed is not a feature.
+    public func quickLookTargetAtSelection() -> ContextTarget? {
+        let selection = sourceSelectedRange
+        guard selection.length > 0 || primarySourceCaret != nil else { return nil }
+        // Scanned from the start of the selection so a selection that begins
+        // on a link and runs into the prose after it still previews the link.
+        return previewableTarget(atSourceOffset: selection.location)
+    }
+
+    /// The previewable attribute run at a source offset, geometry not
+    /// consulted.  Shared by the force click's fallback and by the command, so
+    /// "the caret is on a link" means one thing in both.
+    private func previewableTarget(atSourceOffset offset: Int) -> ContextTarget? {
+        if let hit = attribute(.drPathToken, atSourceOffset: offset), let token = hit.value as? PathToken {
+            return ContextTarget(kind: .pathToken(token), sourceRange: hit.range, hitOffset: offset)
+        }
+        if let payload = fragmentPayload(atSourceOffset: offset)?.payload, payload.kind == .image {
+            return ContextTarget(
+                kind: .image(payload.detail), sourceRange: payload.sourceRange, hitOffset: offset
+            )
+        }
+        if let hit = attribute(.drLink, atSourceOffset: offset), let destination = hit.value as? String {
+            return ContextTarget(kind: .link(destination), sourceRange: hit.range, hitOffset: offset)
+        }
+        return nil
+    }
+
+    /// Space, but only where it can never be a character.
+    ///
+    /// Space is the keyboard's most dangerous binding to spend, so it is not
+    /// spent in the command table at all — a table entry is remappable, is
+    /// evaluated against a scope the app computes, and would be one refactor
+    /// away from firing while somebody is typing.  The guard that matters is
+    /// `isEditable`, which is the *same fact* that decides whether this view
+    /// has an insertion point, read straight off the view microseconds before
+    /// the decision.  On an editable surface this method returns false before
+    /// it looks at anything else, and the space becomes a space.
+    ///
+    /// ⌘Y — the chord Finder, Mail and Photos all use — is the trigger the
+    /// reader actually gets in Downright today, because Read mode is no longer
+    /// one of `RenderMode.userFacingModes`.  This path stays because the
+    /// package still ships a read-only surface (§10's Quick Look extension),
+    /// and because "Space previews" should be true the moment a read-only
+    /// document view exists again rather than discovered missing then.
+    func handleQuickLookSpace(_ event: NSEvent) -> Bool {
+        guard !isEditable, event.keyCode == 49,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+              let target = quickLookTargetAtSelection() else { return false }
+        return markdownDelegate?.markdownTextView(self, wantsQuickLookFor: target) == true
+    }
+
+    private func previewable(_ target: ContextTarget) -> ContextTarget? {
+        switch target.kind {
+        case .pathToken, .image, .link: return target
+        case .heading, .codeBlock, .table, .selection, .plain: return nil
+        }
+    }
+}

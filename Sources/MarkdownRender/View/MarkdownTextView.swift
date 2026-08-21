@@ -495,6 +495,20 @@ public final class MarkdownTextView: NSTextView {
     /// wipes attributes on every reflow and an underline that vanishes while
     /// the pointer is still sitting on it reads as a bug (§7.1).
     var hoveredLinkRange: NSRange?
+    /// Where a drag hovering over the surface would land, in *source*
+    /// coordinates, or nil when no drag is over it.
+    ///
+    /// Drawn as a drop caret in `draw(_:)` for the same reason the hovered
+    /// link underline is: a drop indicator written into the storage would be
+    /// wiped by the next decoration pass, and a document being dragged over is
+    /// a document whose fragments are still being materialized.
+    var dropInsertionOffset: Int?
+    /// True between `draggingEntered` and the end of the drag when the host
+    /// claimed the pasteboard.  A drag's payload cannot change once it is in
+    /// flight, so the expensive question — which reaches the filesystem — is
+    /// asked once and the answer held, instead of re-asked on every one of the
+    /// dozens of `draggingUpdated` calls a slow drag across a page produces.
+    var claimsActiveDrag = false
     /// Set while an input method is composing.  Substitutions are suspended in
     /// that paragraph so the hybrid and source spaces coincide and AppKit's own
     /// marked-text machinery stays correct.
@@ -1622,7 +1636,11 @@ public final class MarkdownTextView: NSTextView {
         case .none:
             guard appliedSourceFocus != .none else { return }
             let previous = sourcePresentationRange(for: appliedSourceFocus, in: whole)
-            if let previous { storage.removeAttribute(.drSourceFocus, range: previous) }
+            if let previous {
+                storage.beginEditing()
+                storage.removeAttribute(.drSourceFocus, range: previous)
+                storage.endEditing()
+            }
             appliedSourceFocus = .none
             return
         case .document:
@@ -1653,11 +1671,15 @@ public final class MarkdownTextView: NSTextView {
         }
         guard !applicationRanges.isEmpty else { return }
 
+        // One edit, not thousands.  Every `addAttribute` below posts its own
+        // edit notification otherwise, and on a whole-document switch to
+        // Source that is one notification per paragraph — which is where the
+        // switch was spending most of its time, not in the attributes.
+        storage.beginEditing()
+        defer { storage.endEditing() }
+
         var attributes = styleSheet.monoFontAttributes()
         attributes[.drSourceFocus] = true
-        for range in applicationRanges {
-            storage.addAttributes(attributes, range: range)
-        }
 
         let source = storage.string as NSString
         let paragraphs = RangeSet.normalized(applicationRanges.compactMap { range in
@@ -1666,28 +1688,83 @@ public final class MarkdownTextView: NSTextView {
             let upper = source.paragraphRange(for: NSRange(location: upperOffset, length: 0))
             return lower.union(upper).intersection(target)
         })
+        // Every paragraph in a source region wants the same style. Building a
+        // fresh one each time — twenty `NSTextTab`s among them — is the single
+        // most expensive thing in switching to Source: it dominated a 120 ms
+        // whole-document pass on a two-thousand-line file, and all but four of
+        // those objects were identical. The spacing pair is the only thing
+        // that varies, and only at the two ends of a scoped region, so cache
+        // on exactly that.
+        let lineHeight = styleSheet.lineHeight
+        let characterWidth = styleSheet.averageCharacterWidth
+        let tabStops: [NSTextTab] = stride(from: 4, through: 80, by: 4).map {
+            NSTextTab(textAlignment: .left,
+                      location: CGFloat($0) * characterWidth,
+                      options: [:])
+        }
+        var styleCache: [SourceParagraphSpacing: NSParagraphStyle] = [:]
+        func paragraphStyle(_ spacing: SourceParagraphSpacing) -> NSParagraphStyle {
+            if let cached = styleCache[spacing] { return cached }
+            let style = NSMutableParagraphStyle()
+            style.minimumLineHeight = lineHeight
+            style.maximumLineHeight = lineHeight
+            style.lineBreakMode = .byWordWrapping
+            style.paragraphSpacingBefore = spacing.before
+            style.paragraphSpacing = spacing.after
+            style.tabStops = tabStops
+            style.defaultTabInterval = characterWidth * 4
+            let immutable = style.copy() as! NSParagraphStyle
+            styleCache[spacing] = immutable
+            return immutable
+        }
+
+        // Whole-document Source asks for the same style on every paragraph, so
+        // the font, the ligature setting, the focus mark and that one style can
+        // all go on in a single pass.  Separately, the two used to be a
+        // whole-document `addAttributes` followed by one `addAttribute` per
+        // paragraph — several thousand of them on a large file, each one
+        // re-walking the storage's attribute runs.  Merged, the storage's runs
+        // are rewritten once.
+        //
+        // Only the unscoped pass qualifies: a scoped region's first and last
+        // paragraphs carry the region's own air, so those two genuinely differ
+        // from the rest and the walk below is what finds them.
+        if !scoped {
+            attributes[.paragraphStyle] = paragraphStyle(
+                SourceParagraphSpacing(before: 0, after: 0))
+            for paragraphsRange in paragraphs {
+                storage.addAttributes(attributes, range: paragraphsRange)
+            }
+            return
+        }
+
+        for range in applicationRanges {
+            storage.addAttributes(attributes, range: range)
+        }
+
         for paragraphsRange in paragraphs {
             var cursor = paragraphsRange.location
             while cursor < paragraphsRange.upperBound {
                 let paragraph = source.paragraphRange(for: NSRange(location: cursor, length: 0))
                     .intersection(target) ?? NSRange(location: cursor, length: 0)
                 guard paragraph.length > 0 else { break }
-                let style = NSMutableParagraphStyle()
-                style.minimumLineHeight = styleSheet.lineHeight
-                style.maximumLineHeight = styleSheet.lineHeight
-                style.lineBreakMode = .byWordWrapping
-                style.paragraphSpacingBefore = scoped && cursor == target.location ? 28 : 0
-                style.paragraphSpacing = scoped && paragraph.upperBound >= target.upperBound ? 8 : 0
-                style.tabStops = stride(from: 4, through: 80, by: 4).map {
-                    NSTextTab(textAlignment: .left,
-                              location: CGFloat($0) * styleSheet.averageCharacterWidth,
-                              options: [:])
-                }
-                style.defaultTabInterval = styleSheet.averageCharacterWidth * 4
-                storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
+                let spacing = SourceParagraphSpacing(
+                    before: scoped && cursor == target.location ? 28 : 0,
+                    after: scoped && paragraph.upperBound >= target.upperBound ? 8 : 0
+                )
+                storage.addAttribute(
+                    .paragraphStyle, value: paragraphStyle(spacing), range: paragraph
+                )
                 cursor = paragraph.upperBound
             }
         }
+    }
+
+    /// The only thing that varies between source paragraphs, and only at the
+    /// first and last paragraph of a scoped region.
+    private struct SourceParagraphSpacing: Hashable {
+        let before: CGFloat
+        let after: CGFloat
     }
 
     private func sourcePresentationRange(for focus: SourceFocus, in whole: NSRange) -> NSRange? {
@@ -2619,6 +2696,7 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         if keyEventHandler?(event) == true { return }
+        if handleQuickLookSpace(event) { return }
         super.keyDown(with: event)
     }
 
@@ -3043,6 +3121,13 @@ public final class MarkdownTextView: NSTextView {
 
     public override func scrollWheel(with event: NSEvent) {
         interruptAnimatedScroll()
+        // The host gets first refusal on every scroll event: this surface
+        // only scrolls vertically, so the horizontal axis is free for a
+        // gesture the app owns.  Only a claimed event is withheld, so ordinary
+        // scrolling never waits on the decision.
+        if markdownDelegate?.markdownTextView(self, shouldClaimScrollGesture: event) == true {
+            return
+        }
         super.scrollWheel(with: event)
     }
 
@@ -3146,6 +3231,7 @@ public final class MarkdownTextView: NSTextView {
         drawDeletedChangeMarks(in: dirtyRect)
         drawObjectChangeMarks(in: dirtyRect)
         drawHoveredLinkUnderline(in: dirtyRect)
+        drawDropInsertionCaret(in: dirtyRect)
     }
 
     /// Underlines the link under the pointer.  Drawn after the text so it sits
@@ -3315,6 +3401,13 @@ public final class MarkdownTextView: NSTextView {
 
     private func applyModeChrome() {
         isEditable = mode.policy.showsInsertionPoint
+        // `NSTextView` refreshes its drag registration when editability
+        // *changes*, and the mode this view is constructed in is very often
+        // the one it stays in — so the document's own drop types would never
+        // be registered at all without asking for the refresh explicitly.  It
+        // is idempotent; see `updateDragTypeRegistration` in
+        // `MarkdownTextView+Interaction`.
+        updateDragTypeRegistration()
         isSelectable = true
         insertionPointColor = mode.policy.showsInsertionPoint ? styleSheet.accent : styleSheet.text
         typingAttributes = [

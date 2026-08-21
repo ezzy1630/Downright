@@ -55,6 +55,22 @@ enum ToolbarChromePolicy {
         }
     }
 
+    /// The same state for a gesture that reports how far across the rail it
+    /// has travelled rather than where a pointer sits — the two-finger swipe
+    /// happens over the document and has no pointer in the control to read.
+    static func scrubState(
+        position: CGFloat,
+        leftCenterX: CGFloat,
+        rightCenterX: CGFloat
+    ) -> ScrubState {
+        let travelled = min(max(position, 0), 1)
+        return scrubState(
+            pointerX: leftCenterX + (rightCenterX - leftCenterX) * travelled,
+            leftCenterX: leftCenterX,
+            rightCenterX: rightCenterX
+        )
+    }
+
     static func scrubState(
         pointerX: CGFloat,
         leftCenterX: CGFloat,
@@ -694,6 +710,40 @@ final class ToolbarPresentationControl: Motion.SpringSurfaceView {
             applyVisualSelection(selectedSegment)
             updateSelectionIndicator(animated: true)
         }
+    }
+
+    /// Track a gesture that owns the mode change itself — the two-finger
+    /// swipe over the document.  Unlike `updateScrub`, this never calls
+    /// `onChange`: the document has already switched behind the transition,
+    /// and switching again on release would undo it.
+    ///
+    /// `position` runs `0` at Document to `1` at Source.
+    func trackSwipe(position: CGFloat) {
+        let centers = segmentCenters
+        let state = ToolbarChromePolicy.scrubState(
+            position: position,
+            leftCenterX: centers.left,
+            rightCenterX: centers.right
+        )
+        let previousSegment = scrubbedSegment
+        scrubbedSegment = state.segment
+        applyVisualSelection(state.segment)
+        updateSelectionIndicator(centerX: state.indicatorCenterX)
+        if let previousSegment, previousSegment != state.segment {
+            performHapticFeedback()
+        }
+    }
+
+    /// Land the indicator on a segment after such a gesture.  Unconditional
+    /// rather than a `setSelectedSegment` no-op, because a cancelled swipe
+    /// ends on the segment it started from with the rail scrubbed away from it.
+    func settleSwipe(at segment: Int) {
+        let normalized = min(max(segment, 0), 1)
+        scrubbedSegment = nil
+        selectedSegment = normalized
+        setAccessibilityValue(segmentTitles[normalized])
+        applyVisualSelection(normalized)
+        updateSelectionIndicator(animated: window != nil)
     }
 
     private func applyVisualSelection(_ segment: Int) {

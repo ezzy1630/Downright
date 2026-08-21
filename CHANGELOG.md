@@ -30,6 +30,25 @@ every release; Sparkle orders updates by it.
   "check automatically" setting as Sparkle's own schedule. It is a trigger, not
   a trust path — it learns only that the feed moved and asks Sparkle to look, so
   every signature check and download stays exactly where it was.
+- **Two-finger swipe between Document and Source.** Sideways across the
+  document switches presentation, and the titlebar's mode rail travels with
+  your fingers, reaching the far segment exactly where releasing would commit.
+  Release short of that — or flick back the way you came — and it returns
+  having changed nothing.
+
+  On most documents the page you are leaving really does travel off while the
+  one you are entering follows it in, both tracking your fingers one to one.
+  That needs the incoming presentation rendered before a finger moves, which is
+  affordable up to roughly twelve hundred lines: measured engagement is 6 ms at
+  240 lines and 26 ms at 950, against a budget of three frames. Past that the
+  page leans against your fingers instead and the switch happens on release —
+  because a gesture that stalls at the moment it catches is worse than one that
+  promised less. The choice is made per gesture from a per-line cost the app
+  measures on your machine rather than a constant baked in on someone else's.
+
+  Vertical scrolling is untouched: a gesture is only claimed once it is
+  decidedly sideways, never from a mouse wheel, and never from a momentum tail.
+  Abandoning a swipe costs nothing on either path.
 - **Detents on the density rail.** Reading the section stack now taps once per
   mark the pointer takes up, hovering and scrubbing alike, so the rail can be
   counted through by hand instead of only by eye. The taps share one budget
@@ -41,6 +60,50 @@ every release; Sparkle orders updates by it.
   from the system or from a reader profile, silences the rail entirely: its
   springs were already parked under that setting, which left the landing tap
   answering a movement that no longer happens.
+- **Share.** File ▸ Share (⌃⌘S) hands the document to the system share sheet —
+  Mail, Messages, AirDrop, Notes — and File ▸ Share as PDF sends the same
+  rendered page Print and Export PDF produce. Both send a *file*, so an AirDrop
+  arrives as a `.md` or a `.pdf` the receiver can open rather than a nameless
+  blob of pasted text. A saved, unmodified document shares its own file
+  untouched; one with unsaved edits shares a throwaway copy of what is actually
+  on screen, byte-faithful to the document's own encoding and line endings,
+  because sharing the stale file on disk would be a silent lie and saving on the
+  reader's behalf is not Share's decision to make. An Untitled window shares too,
+  under a real filename.
+- **Insert from iPhone or iPad.** Edit ▸ Insert picks up macOS's Take Photo and
+  Scan Documents when a nearby device can serve them. The capture is written as
+  a real image file next to the document — `notes-photo.png`, never overwriting
+  an earlier one — and a single Markdown reference is inserted at the caret as
+  one undoable edit. Nothing else in the document moves: a selection is inserted
+  *around*, not replaced, because the shutter is on a phone and whatever was
+  highlighted here is long out of sight by the time the photo lands. The name is
+  chosen so the written path and the parsed destination are the same string, so
+  the image renders with no trust prompt and arrives with no Asset Doctor
+  warnings. A document that has never been saved has no folder to write beside,
+  so macOS does not offer the capture there at all rather than accepting a photo
+  it would then have to put somewhere unportable.
+- **Drop files onto the document.** Dragging an image, a Markdown file, or
+  anything else onto the page inserts a reference to it at the position under
+  the pointer — not at the caret — with a drop caret showing exactly where it
+  will land while you are still holding the drag. An image already inside the
+  document's folder is referenced where it stands and never duplicated; one from
+  outside is copied in beside the document so the reference stays relative,
+  portable, and free of a trust prompt. A file that is not an image becomes a
+  link, inline, and is never copied: a link is a reference, not an embed. Image
+  data with no file behind it — dragged out of a browser or a preview window —
+  is written next to the document first. Destinations are chosen so they need no
+  percent-encoding, because Downright's renderer resolves a destination as a
+  literal path and would go looking for the `%`; a name with a space uses
+  CommonMark's `<…>` form instead. Every drop is one undoable edit, and a write
+  that fails inserts nothing and takes its own half-written files back out.
+- **Force click and Quick Look.** Force-clicking a path token or a link to a
+  local file opens a Quick Look preview of it; force-clicking an ordinary word
+  still gets macOS's Look Up popover, untouched. File ▸ Quick Look (⌘Y) does the
+  same for whatever the caret is on, and an embedded image opens in Downright's
+  own lightbox rather than a second image viewer. Space is deliberately *not*
+  bound to it in the shortcut table: the document surface always has a caret in
+  both of the modes you can reach, and a space that sometimes is not a space is
+  worse than a chord you have to learn.
 
 ### Changed
 
@@ -56,6 +119,15 @@ every release; Sparkle orders updates by it.
   window no longer writes the file — previously it did, which is exactly the
   unsolicited write the setting exists to prevent when an agent may be editing
   the same file.
+- **Document↔Source switching is two to three times faster.** Switching to
+  Source used to compute block metrics, heading fonts and list indents for every
+  block in the document and then overwrite all of them microseconds later with
+  "monospace, everything" — only the colours ever survived. Source mode now
+  applies what survives and skips what does not, and the whole-document
+  attribute passes were merged so the storage's runs are rewritten once rather
+  than three times. On a 2,000-line file the switch went from 273 ms to around
+  110 ms, and every route into Source is faster for it: the toolbar rail, ⌘⇧E,
+  and the swipe alike.
 - `SUScheduledCheckInterval` drops from 24 hours to 1 hour. It is now the
   fallback for an app that was asleep, offline, or in Low Power Mode while a
   build shipped, rather than the mechanism by which updates are noticed.

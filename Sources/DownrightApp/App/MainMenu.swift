@@ -51,6 +51,9 @@ enum MainMenu {
         case dynamicSubmenu(title: String, delegate: NSMenuDelegate)
         /// The one submenu macOS fills in for us.
         case services
+        /// The Continuity Camera submenu macOS fills in for us — Take Photo and
+        /// Scan Documents, served by a nearby iPhone or iPad.
+        case importFromDevice
     }
 
     /// A menu item for an action the app does not own.
@@ -124,7 +127,10 @@ enum MainMenu {
                 // The app's own version history.  macOS's Revert To / Browse
                 // All Versions are NSDocument features Downright does not use.
                 .commands([.versionTimeline]),
-                .commands([.revealInFinder, .openInEditor, .compareFiles]),
+                .commands([.share, .shareAsPDF]),
+                // Quick Look sits with the other "look at this file" items and
+                // above them, the way Finder's File menu orders it.
+                .commands([.quickLook, .revealInFinder, .openInEditor, .compareFiles]),
                 .standard([StandardItem(
                     title: "Page Setup…",
                     selector: #selector(NSApplication.runPageLayout(_:)),
@@ -219,6 +225,7 @@ enum MainMenu {
                     StandardItem(title: "Make Lower Case", selector: #selector(NSResponder.lowercaseWord(_:))),
                     StandardItem(title: "Capitalize", selector: #selector(NSResponder.capitalizeWord(_:))),
                 ]),
+                .importFromDevice,
                 .submenu(title: "Speech", commands: [.speakDocument, .stopSpeaking]),
             ]
 
@@ -355,6 +362,8 @@ enum MainMenu {
                 for standard in items { submenu.addItem(standard.makeMenuItem()) }
             case .services:
                 submenu.addItem(servicesItem())
+            case .importFromDevice:
+                submenu.addItem(importFromDeviceItem())
             case .standardSubmenu(let title, let items):
                 submenu.addItem(hostItem(title: title, items: items.map { $0.makeMenuItem() }))
             case .dynamicSubmenu(let title, let delegate):
@@ -391,6 +400,28 @@ enum MainMenu {
         item.submenu = services
         NSApp.servicesMenu = services
         return item
+    }
+
+    /// The Continuity Camera host, built exactly the way TextEdit's is: an
+    /// "Insert" submenu holding one placeholder whose only meaningful property
+    /// is `NSMenuItem.importFromDeviceIdentifier`.
+    ///
+    /// AppKit swaps that placeholder for "Take Photo" and "Scan Documents" when
+    /// a nearby iPhone or iPad can serve the request *and* the responder chain
+    /// advertises image return types — `DocumentWindowController` does, in
+    /// `validRequestor(forSendType:returnType:)`.  Nothing here has an action:
+    /// the substituted items carry their own, and a hand-written selector would
+    /// only be a second, wrong answer for the state where no device is in
+    /// range.  The visible title is what the user sees until one is.
+    private static func importFromDeviceItem() -> NSMenuItem {
+        let host = NSMenuItem(title: "Insert", action: nil, keyEquivalent: "")
+        let child = NSMenu(title: "Insert")
+        child.autoenablesItems = true
+        let placeholder = NSMenuItem(title: "Import from iPhone or iPad", action: nil, keyEquivalent: "")
+        placeholder.identifier = NSMenuItem.importFromDeviceIdentifier
+        child.addItem(placeholder)
+        host.submenu = child
+        return host
     }
 
     // MARK: - Items

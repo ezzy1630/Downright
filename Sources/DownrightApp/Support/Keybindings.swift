@@ -42,6 +42,13 @@ enum KeybindingDefaults {
         .copySection:         [KeyBinding("c", [.command, .option])],
         .printDocument:       [KeyBinding("p", .command)],
         .exportHTML:          [KeyBinding("e", [.command, .control])],
+        // Share joins Export HTML's ⌃⌘ family — "the same document, sent
+        // somewhere else".  macOS defines no system chord for Share, and ⌘S /
+        // ⇧⌘S are already Save and Save As, so ⌃⌘S is the chord that reads as
+        // a sibling of both without shadowing either.  Share as PDF stays
+        // unbound: it is the rarer half, and spending a fourth modifier on it
+        // would buy a chord nobody can remember.
+        .share:               [KeyBinding("s", [.command, .control])],
 
         // Panels share one ⌥⌘-number family, the way a navigator normally does.
         .documentLens:        [KeyBinding("2", [.command, .option, .shift])],
@@ -76,6 +83,16 @@ enum KeybindingDefaults {
         .save:                [KeyBinding("s", .command)],
         .saveAs:              [KeyBinding("s", [.command, .shift])],
         .close:               [KeyBinding("w", .command)],
+        // ⌘Y is Quick Look everywhere else on the system — Finder, Mail,
+        // Photos — and nothing in Downright had claimed it.  Deliberately a
+        // chord and not the bare Space that Finder also accepts: the document
+        // surface is editable in both of the modes a reader can reach
+        // (`RenderMode.userFacingModes`), so a bare-Space binding in this table
+        // would be a key that types a space today and stops typing one the
+        // first time some future change makes a surface read-only.  Space is
+        // still honoured, but by `MarkdownTextView`, gated on the one fact that
+        // settles it — `isEditable` — read microseconds before the decision.
+        .quickLook:           [KeyBinding("y", .command)],
         .toggleBold:          [KeyBinding("b", .command)],
         .toggleItalic:        [KeyBinding("i", .command)],
         .insertLink:          [KeyBinding("k", [.command, .option])],
