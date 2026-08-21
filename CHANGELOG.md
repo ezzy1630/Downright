@@ -94,6 +94,24 @@ every release; Sparkle orders updates by it.
 - The npm installer verifies the fetched install script against a pinned
   SHA-256 before running it, so a compromised installer endpoint cannot execute
   arbitrary code at user privileges.
+- **Opening a path from a document can no longer execute it.** Links and path
+  tokens that resolve to an application bundle, a Terminal-run script (`.app`,
+  `.command`, `.tool`, …), or an extension-less executable are revealed in
+  Finder instead of handed to LaunchServices — "open in your editor" never
+  meant "run this". Ordinary documents (PDFs, images, `.sh` files) open as
+  before.
+- Own-write detection in the file watcher is now state-based rather than
+  clock-based: suppression opens when the save starts and closes at the
+  acknowledgement, however long the write takes. On a slow or network volume,
+  saving no longer risks your own file bouncing back as a phantom "changed on
+  disk" conflict; a watchdog fails open if an acknowledgement were ever lost.
+  Directory watches (the sibling list) honor the same filter, so writing
+  sidecars into the workspace folder no longer wakes pointless rescans.
+- The safe-HTML cross-block pairing for README-style `<details>` elements now
+  requires the partner tag to be written as a real HTML block. A mention of
+  `<details>` inside a code span or a sentence can no longer license hiding a
+  stray literal tag in another block; genuine split-element documents pair up
+  exactly as before.
 
 - Stopped idle history maintenance from rewriting every unchanged index, made
   long-session pruning half-hourly, and retained the newest history and reading
