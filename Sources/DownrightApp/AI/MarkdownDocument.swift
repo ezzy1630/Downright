@@ -498,6 +498,10 @@ final class MarkdownDocument: NSObject {
     }
 
     func save(intent: SaveIntent = .normal) throws {
+        // A closed document has no owner left to consent to a write.  Stragglers
+        // (queued autosave work, occlusion events during teardown) must neither
+        // touch the file nor raise a failure alert for a window that is gone.
+        guard !isClosed else { return }
         guard let url else {
             let error = CocoaError(.fileNoSuchFile)
             publishSaveFailure(error)
@@ -719,6 +723,10 @@ final class MarkdownDocument: NSObject {
 
     @discardableResult
     func saveIfNeeded(intent: SaveIntent = .normal) -> Result<Void, Error> {
+        // Same lifetime rule as save(): after close() the document is inert.
+        // Reporting success here keeps straggler implicit saves silent instead
+        // of surfacing errors for a window that no longer exists.
+        guard !isClosed else { return .success(()) }
         guard isDirty else { return .success(()) }
         guard url != nil else {
             let error = CocoaError(.fileNoSuchFile)

@@ -252,6 +252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in windowControllers where controller.markdownDocument.isDirty {
             controller.window?.makeKeyAndOrderFront(nil)
             guard controller.confirmPendingChangesBeforeClose(markDiscardForWindowClose: true) else {
+                // A Discard answered during this cancelled attempt keeps
+                // holding: the buffer it refused is still on screen, and only
+                // fresh work (the next edit) re-arms implicit saves.
                 return .terminateCancel
             }
         }
