@@ -39,6 +39,18 @@ struct ReviewBaselineTests {
         return root
     }
 
+    @MainActor
+    private static func makeIsolatedDocument(in root: URL) -> MarkdownDocument {
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        return MarkdownDocument(
+            parseWorker: MarkdownParseWorker(),
+            snapshotStore: SnapshotStore(
+                historyDirectory: support.appendingPathComponent("history", isDirectory: true)
+            ),
+            documentStateStore: DocumentStateStore(supportDirectory: support)
+        )
+    }
+
     private static let original = """
     # Report
 
@@ -73,7 +85,7 @@ struct ReviewBaselineTests {
         let url = root.appendingPathComponent("report.md")
         try Data(Self.original.utf8).write(to: url)
 
-        let document = MarkdownDocument()
+        let document = Self.makeIsolatedDocument(in: root)
         try document.open(url)
         defer { document.close() }
 
@@ -114,7 +126,7 @@ struct ReviewBaselineTests {
         let url = root.appendingPathComponent("report.md")
         try Data(Self.original.utf8).write(to: url)
 
-        let document = MarkdownDocument()
+        let document = Self.makeIsolatedDocument(in: root)
         try document.open(url)
         defer { document.close() }
 
@@ -453,5 +465,62 @@ struct ReviewBaselineTests {
         // The save that would have failed for no visible reason is now refused
         // with the conflict already on screen.
         #expect(throws: SaveError.self) { try document.save() }
+    }
+
+    @Test @MainActor
+    func undoWalksBackThroughBurstOfExternalWrites() async throws {
+        let root = try Self.makeSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("report.md")
+        try Data(Self.original.utf8).write(to: url)
+
+        let document = Self.makeIsolatedDocument(in: root)
+        try document.open(url)
+        defer { document.close() }
+
+        for write in Self.writes {
+            try Data(write.utf8).write(to: url)
+            document.handleExternalWrite()
+            document.flushPendingExternalWrite()
+            #expect(await waitForExternalText(write, in: document))
+        }
+
+        for expected in Self.writes.dropLast().reversed() {
+            document.undoManager.undo()
+            #expect(document.text == expected)
+        }
+        document.undoManager.undo()
+        #expect(document.text == Self.original)
+    }
+
+    @Test @MainActor
+    func redoRestoresExternalVersion() async throws {
+        let root = try Self.makeSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("report.md")
+        try Data(Self.original.utf8).write(to: url)
+
+        let document = Self.makeIsolatedDocument(in: root)
+        try document.open(url)
+        defer { document.close() }
+
+        try Data(Self.writes[2].utf8).write(to: url)
+        document.handleExternalWrite()
+        document.flushPendingExternalWrite()
+        #expect(await waitForExternalText(Self.writes[2], in: document))
+
+        document.undoManager.undo()
+        #expect(document.text == Self.original)
+        document.undoManager.redo()
+        #expect(document.text == Self.writes[2])
+    }
+
+    @Test @MainActor
+    func externalChangeUndoStackIsBounded() {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-undo-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let document = Self.makeIsolatedDocument(in: root)
+        #expect(document.undoManager.levelsOfUndo == 200)
     }
 }

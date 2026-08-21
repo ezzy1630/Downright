@@ -4,6 +4,100 @@ import MarkdownCore
 import Testing
 
 @MainActor
+private final class PathExistenceProbe: MarkdownTextViewDelegate {
+    private(set) var calls = 0
+    var exists = true
+
+    func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool {
+        calls += 1
+        return exists
+    }
+}
+
+@MainActor
+@Test("Split panes cannot restore stale path existence after a shared refresh")
+func splitPathCachesInvalidateTogether() throws {
+    let text = "`fixtures/report.md`"
+    let document = MarkdownParser.parse(text)
+    let token = try #require(document.pathTokens.first)
+    let storage = NSTextStorage(string: text)
+    let primary = MarkdownTextView(frame: .zero, storage: storage)
+    let split = MarkdownTextView(frame: .zero, storage: storage)
+    let probe = PathExistenceProbe()
+    probe.exists = false
+    primary.markdownDelegate = probe
+    split.markdownDelegate = probe
+    primary.update(document: document, dirty: .wholesale)
+    split.update(document: document, dirty: .wholesale)
+    #expect(storage.attribute(.drPathExists, at: token.range.location, effectiveRange: nil) as? Bool == false)
+
+    probe.exists = true
+    primary.invalidatePathExistenceCache()
+    split.invalidatePathExistenceCache()
+    primary.refreshPathExistence()
+    #expect(storage.attribute(.drPathExists, at: token.range.location, effectiveRange: nil) as? Bool == true)
+
+    split.update(document: document, dirty: DirtySet(ranges: [token.range], isWholesale: false))
+    #expect(storage.attribute(.drPathExists, at: token.range.location, effectiveRange: nil) as? Bool == true)
+}
+
+@MainActor
+@Test("Dense path refreshes yield between bounded attribute batches")
+func densePathRefreshIsChunked() async throws {
+    let text = (0..<512).map { "`fixtures/file-\($0).md`" }.joined(separator: "\n")
+    let document = MarkdownParser.parse(text)
+    #expect(document.pathTokens.count == 512)
+
+    let storage = NSTextStorage(string: text)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 720, height: 420),
+        storage: storage
+    )
+    view.update(document: document, dirty: .wholesale)
+    let probe = PathExistenceProbe()
+    view.markdownDelegate = probe
+
+    view.refreshPathExistence()
+    #expect(probe.calls == 128, "the first main-loop turn must stay bounded")
+
+    let deadline = Date().addingTimeInterval(2)
+    while probe.calls < document.pathTokens.count, Date() < deadline {
+        await Task.yield()
+    }
+    #expect(probe.calls == document.pathTokens.count)
+}
+
+@MainActor
+@Test("A cancelled dense path clear can restart after a parse commit")
+func cancelledDensePathClearRestarts() async throws {
+    let text = (0..<512).map { "`missing/file-\($0).md`" }.joined(separator: "\n")
+    let document = MarkdownParser.parse(text)
+    let storage = NSTextStorage(string: text)
+    let view = MarkdownTextView(frame: .zero, storage: storage)
+    let probe = PathExistenceProbe()
+    probe.exists = false
+    view.markdownDelegate = probe
+    view.update(document: document, dirty: .wholesale)
+
+    probe.exists = true
+    view.refreshPathExistence()
+    #expect(probe.calls >= 128)
+    // A parse commit cancels the remaining scheduled batches.
+    view.update(document: document, dirty: DirtySet(ranges: [document.pathTokens[0].range], isWholesale: false))
+    view.refreshPathExistence()
+
+    let deadline = Date().addingTimeInterval(2)
+    while Date() < deadline {
+        let allNeutral = document.pathTokens.allSatisfy {
+            storage.attribute(.drPathExists, at: $0.range.location, effectiveRange: nil) as? Bool == true
+        }
+        if allNeutral { return }
+        await Task.yield()
+    }
+    Issue.record("the restarted clear left stale missing-path attributes")
+}
+
+@MainActor
 @Test("Document-mode parse commits never publish a whole-storage attribute edit")
 func documentTypingKeepsAttributeInvalidationLocal() {
     let paragraph = "A paragraph whose attributes should remain outside the dirty edit scope."

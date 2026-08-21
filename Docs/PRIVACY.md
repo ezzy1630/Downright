@@ -50,9 +50,17 @@ the network.
 
 ## Retention and deletion
 
-Snapshots are local and content-addressed. Users can delete snapshot history
-from the app. Settings and themes can be removed from the Downright support
-folder. The app does not claim ownership of user Markdown files.
+Snapshots are local and content-addressed. The app applies configured age and
+size caps. A missing path's snapshot index becomes eligible at the configured
+snapshot age; its reading-position state becomes eligible after 30 days. Both
+may be collected only after two separate checks confirm that the path is
+absent and its containing volume is mounted. Downright preserves this local
+metadata when the path is unreadable, the filesystem answer is uncertain, the
+volume is unavailable, or the file returns between checks.
+
+Users can delete snapshot history from the app. Settings and themes can be
+removed from the Downright support folder. The app does not claim ownership of
+user Markdown files.
 
 Crash logs and diagnostics are local unless the user chooses to share them.
 Logs must not include document text, prompts, or full file paths when a stable

@@ -484,6 +484,64 @@ struct EditingKeyReproTests {
         #expect(abs((primary.enclosingScrollView?.contentView.bounds.origin.y ?? 0) - splitViewport) < 1)
     }
 
+    @Test("opening split view preserves the current reading position")
+    func openingSplitViewPreservesCurrentReadingPosition() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproSplitOpen-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = (0..<60).map {
+            "## Section \($0)\n\nParagraph \($0) keeps the split opening at the current reading position."
+        }.joined(separator: "\n\n")
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.setContentSize(NSSize(width: 1000, height: 640))
+        controller.window?.layoutIfNeeded()
+        let primary = controller.primaryContainer.textView
+        primary.resizeToFitContent()
+        let target = (text as NSString).range(of: "Section 40").location
+        primary.scroll(toOffset: target, position: .top, animated: false)
+        let expected = primary.topVisibleOffset
+        #expect(expected > 0)
+
+        controller.toggleSplitView()
+        controller.window?.layoutIfNeeded()
+        let split = try #require(controller.splitContainer?.textView)
+        split.resizeToFitContent()
+
+        // The half-width pane can resolve the same rendered heading to either
+        // side of its hidden Markdown marker. Both offsets are the same line.
+        #expect(abs(split.topVisibleOffset - expected) < 8)
+    }
+
+    @Test("enabling path resolution warms the open document immediately")
+    func enablingPathResolutionWarmsCurrentDocument() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproPathPreference-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("document.md")
+        try Data("ready\n".utf8).write(to: root.appendingPathComponent("generated.md"))
+
+        let original = Preferences.shared.values.resolvePathTokens
+        Preferences.shared.update { $0.resolvePathTokens = false }
+        defer { Preferences.shared.update { $0.resolvePathTokens = original } }
+        let controller = try makeController(text: "`generated.md`", file: url)
+        defer { controller.close() }
+        let token = PathToken(rawPath: "generated.md")
+        #expect(controller.pathResolver?.cachedResolution(for: token) == nil)
+
+        Preferences.shared.update { $0.resolvePathTokens = true }
+        let deadline = Date().addingTimeInterval(2)
+        while controller.pathResolver?.cachedResolution(for: token) == nil,
+              Date() < deadline {
+            await Task.yield()
+        }
+        #expect(controller.pathResolver?.cachedResolution(for: token)?.exists == true)
+    }
+
     @Test("Tab after live edits cannot stack fragments or move the camera")
     func tabAfterLiveEditsKeepsLayoutAndViewportStable() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())

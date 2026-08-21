@@ -83,8 +83,19 @@ writes replace the inode. On an external write:
 5. If the buffer is clean, apply the new text.
 6. If the buffer is dirty, show Review, Keep Mine, and Take Theirs.
 
-Snapshots deduplicate by content hash and have local retention rules. Snapshot
-restore is a text edit, not a hidden file replacement.
+Snapshots deduplicate by content hash. Retention applies the configured age,
+per-document, and global byte caps without rewriting unchanged indexes; a
+half-hour maintenance interval bounds long-running sessions. History for a
+deleted document becomes eligible after the configured snapshot age; its
+reading-position state uses a fixed 30-day age. Both require two distinct
+observations that the path is absent, and the containing volume must be
+mounted. An unreadable path, an I/O error, an unmounted volume, or a path
+restored between observations is preserved. These checks deliberately fail
+closed around atomic replacements.
+
+Snapshot restore is a text edit, not a hidden file replacement. Persistence
+tests inject temporary support roots, and the repository gate also refuses to
+run them without an isolated Application Support directory.
 
 ## Workspace and path resolution
 

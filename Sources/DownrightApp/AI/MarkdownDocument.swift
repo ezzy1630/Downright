@@ -253,6 +253,8 @@ final class MarkdownDocument: NSObject {
     private var isApplyingBatch = false
     private var suppressReparse = false
     private let parseCoordinator: MarkdownParseCoordinator
+    private let snapshotStore: SnapshotStore
+    private let documentStateStore: DocumentStateStore
     private var parseTask: Task<Void, Never>?
     private var parseControlTask: Task<Void, Never>?
     private(set) var revision = MarkdownParseRevision.zero
@@ -284,8 +286,14 @@ final class MarkdownDocument: NSObject {
         self.init(parseWorker: MarkdownParseWorker())
     }
 
-    init(parseWorker: MarkdownParseWorker) {
+    init(
+        parseWorker: MarkdownParseWorker,
+        snapshotStore: SnapshotStore = .shared,
+        documentStateStore: DocumentStateStore = .shared
+    ) {
         self.parseCoordinator = MarkdownParseCoordinator(worker: parseWorker)
+        self.snapshotStore = snapshotStore
+        self.documentStateStore = documentStateStore
         self.state = DocumentState(path: "")
         super.init()
         parseCoordinator.onBusyChange = { [weak self] busy in
@@ -293,6 +301,10 @@ final class MarkdownDocument: NSObject {
         }
         storage.delegate = self
         undoManager.groupsByEvent = false
+        // External rewrites can register whole-document undo payloads for as
+        // long as a window remains open. Bound the stack like a conventional
+        // editor so a busy file cannot grow memory without limit.
+        undoManager.levelsOfUndo = 200
         undoManager.onDidApplyUndoRedo = { [weak self] in
             self?.finishUndoRedo()
         }
@@ -353,7 +365,7 @@ final class MarkdownDocument: NSObject {
         changes.reset()
         self.url = canonical
         self.fidelity = fidelity
-        self.state = DocumentStateStore.shared.state(for: canonical)
+        self.state = documentStateStore.state(for: canonical)
 
         suppressReparse = true
         storage.beginEditing()
@@ -374,8 +386,8 @@ final class MarkdownDocument: NSObject {
         let structure = MarkdownParser.parse(text, options: .structureOnly)
         parsed = structure
 
-        SnapshotStore.shared.record(text, for: canonical, kind: .baseline)
-        DocumentStateStore.shared.noteOpened(canonical, document: structure)
+        snapshotStore.record(text, for: canonical, kind: .baseline)
+        documentStateStore.noteOpened(canonical, document: structure)
 
         restoreReviewState(currentText: text)
 
@@ -417,7 +429,7 @@ final class MarkdownDocument: NSObject {
             return
         }
 
-        let stored = SnapshotStore.shared.content(forHash: storedBaseline)
+        let stored = snapshotStore.content(forHash: storedBaseline)
         guard case .text(let previous) = stored else {
             // The file moved and the old text is gone.  Keep the baseline hash
             // so a later write is still measured from the right place, and let
@@ -580,7 +592,7 @@ final class MarkdownDocument: NSObject {
                case .targetChanged(_, let generations) = ioError {
                 for data in generations {
                     if let decoded = try? DocumentIO.decodeSnapshot(data, sourceURL: url) {
-                        SnapshotStore.shared.record(decoded.text, for: url, kind: .external)
+                        snapshotStore.record(decoded.text, for: url, kind: .external)
                     }
                 }
             }
@@ -612,7 +624,7 @@ final class MarkdownDocument: NSObject {
         diskByteHash = DocumentIO.contentHash(encoded)
         lastCommittedText = text
         pendingConflict = nil
-        SnapshotStore.shared.record(text, for: url, kind: .local)
+        snapshotStore.record(text, for: url, kind: .local)
         setDirty(false)
         persistState()
         publishSavedState()
@@ -695,7 +707,7 @@ final class MarkdownDocument: NSObject {
     ) -> SaveError {
         pendingConflict = conflict
         if let incomingHash { diskHash = incomingHash }
-        if let url { SnapshotStore.shared.record(incoming, for: url, kind: .external) }
+        if let url { snapshotStore.record(incoming, for: url, kind: .external) }
         publishPresentationState(PresentationState(
             phase: .conflict,
             provenance: presentationState.provenance,
@@ -790,7 +802,7 @@ final class MarkdownDocument: NSObject {
         }
         state.lastOpened = Date()
         self.state = state
-        DocumentStateStore.shared.save(state, for: url)
+        documentStateStore.save(state, for: url)
     }
 
     /// Restores the reader's place from persisted state (§8.2).
@@ -1141,10 +1153,10 @@ final class MarkdownDocument: NSObject {
         guard canonical != url else { return }
         url = canonical
         state.path = canonical.path
-        DocumentStateStore.shared.save(state, for: canonical)
+        documentStateStore.save(state, for: canonical)
         // Seed the new key's history with what we are holding, so the timeline
         // does not start empty at the new name.
-        SnapshotStore.shared.record(storage.string, for: canonical, kind: .baseline)
+        snapshotStore.record(storage.string, for: canonical, kind: .baseline)
         onFileRenamed?(canonical)
     }
 
@@ -1207,6 +1219,7 @@ final class MarkdownDocument: NSObject {
         let generation = externalPreparationGeneration
         let capturedText = storage.string
         let baseline = effectiveBaselineText(fallback: capturedText)
+        let snapshotStore = snapshotStore
 
         // File I/O, history reservation, and the two Myers diffs are pure or
         // internally synchronized. Keeping them off the main actor is what
@@ -1223,7 +1236,7 @@ final class MarkdownDocument: NSObject {
             let currentHash = SnapshotStore.hash(capturedText)
             if incomingHash != currentHash,
                !Self.finalNewlineDifferenceOnlyValue(capturedText, incoming) {
-                SnapshotStore.shared.record(incoming, for: url, kind: .external)
+                snapshotStore.record(incoming, for: url, kind: .external)
             }
             let baselineHunks = incomingHash == currentHash
                 ? [] : TextDiff.hunks(old: baseline, new: incoming)
@@ -1407,7 +1420,14 @@ final class MarkdownDocument: NSObject {
         undoManager.beginUndoGrouping()
         undoManager.registerUndo(withTarget: self) { document in
             MainActor.assumeIsolated {
-                document.revertExternalBuffer(to: previous, incoming: incoming)
+                // Undo groups unwind last-in-first-out, so after newer local
+                // edits have unwound the buffer contains this generation's
+                // incoming text. Reading it here avoids retaining a second
+                // whole-document copy in every external-change undo group.
+                document.revertExternalBuffer(
+                    to: previous,
+                    incoming: document.storage.string
+                )
             }
         }
         undoManager.setActionName("External Change")
@@ -1529,13 +1549,13 @@ final class MarkdownDocument: NSObject {
 
     func versions() -> [SnapshotStore.VersionRecord] {
         guard let url else { return [] }
-        return SnapshotStore.shared.versions(for: url)
+        return snapshotStore.versions(for: url)
     }
 
     /// Whether a historical version can still be shown, so the timeline can
     /// distinguish "pruned" from "damaged" instead of showing an empty pane.
     func content(of version: SnapshotStore.VersionRecord) -> SnapshotStore.Content {
-        SnapshotStore.shared.content(for: version)
+        snapshotStore.content(for: version)
     }
 
     /// Restores a historical version into the buffer as a normal, undoable edit.
@@ -1543,7 +1563,7 @@ final class MarkdownDocument: NSObject {
     /// the next agent write is measured against what the user just chose.
     @discardableResult
     func restore(version: SnapshotStore.VersionRecord) -> Bool {
-        guard case .text(let text) = SnapshotStore.shared.content(for: version) else { return false }
+        guard case .text(let text) = snapshotStore.content(for: version) else { return false }
         let previous = storage.string
         let hunks = TextDiff.hunks(old: previous, new: text)
         replace(NSRange(location: 0, length: storage.length), with: text, actionName: "Restore Version")

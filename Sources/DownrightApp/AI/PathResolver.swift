@@ -27,6 +27,8 @@ final class PathResolver {
     private let gitRoot: URL?
     private var cache: [String: Resolution] = [:]
     private let lock = NSLock()
+    private let warmQueue = DispatchQueue(label: "com.ezzy.downright.path-resolve", qos: .userInitiated)
+    private var generation: UInt64 = 0
 
     init(documentURL: URL?) {
         let directory = documentURL?.deletingLastPathComponent()
@@ -38,7 +40,58 @@ final class PathResolver {
     /// Invalidate after an external write — a file the agent just created
     /// should stop being underlined in red without reopening the document.
     func invalidate() {
-        lock.lock(); cache.removeAll(); lock.unlock()
+        lock.withLock {
+            cache.removeAll()
+            generation &+= 1
+        }
+    }
+
+    /// Returns only an answer already in memory. Decoration uses this API so a
+    /// cache miss can remain visually neutral while background warming stats
+    /// the filesystem; explicit user actions may still call `resolve`.
+    func cachedResolution(for token: PathToken) -> Resolution? {
+        lock.withLock {
+            guard let hit = cache[token.rawPath] else { return nil }
+            return Resolution(
+                url: hit.url,
+                exists: hit.exists,
+                isDirectory: hit.isDirectory,
+                line: token.line
+            )
+        }
+    }
+
+    /// Resolves unique path tokens off the main thread, then returns to the
+    /// main queue so the document can repaint from the warmed cache.
+    func warm(_ tokens: [PathToken], completion: @escaping () -> Void) {
+        guard !tokens.isEmpty else {
+            completion()
+            return
+        }
+        let (requestedGeneration, misses) = lock.withLock {
+            var seen = Set<String>()
+            let misses = tokens.filter {
+                seen.insert($0.rawPath).inserted && cache[$0.rawPath] == nil
+            }
+            return (generation, misses)
+        }
+        guard !misses.isEmpty else {
+            completion()
+            return
+        }
+        warmQueue.async { [self] in
+            var resolutions: [(String, Resolution)] = []
+            for token in misses {
+                resolutions.append((token.rawPath, computeResolution(for: token)))
+            }
+            let accepted = lock.withLock {
+                guard generation == requestedGeneration else { return false }
+                for (path, resolution) in resolutions { cache[path] = resolution }
+                return true
+            }
+            guard accepted else { return }
+            DispatchQueue.main.async(execute: completion)
+        }
     }
 
     func resolve(_ token: PathToken) -> Resolution {

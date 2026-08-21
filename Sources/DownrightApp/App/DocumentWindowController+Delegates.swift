@@ -177,7 +177,9 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool {
         guard Preferences.shared.values.resolvePathTokens else { return true }
-        return pathResolver?.resolve(token).exists ?? false
+        // Decoration is a main-thread operation. A cold cache is neutral until
+        // the revision-aware background warm completes and refreshes the view.
+        return pathResolver?.cachedResolution(for: token)?.exists ?? true
     }
 
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {

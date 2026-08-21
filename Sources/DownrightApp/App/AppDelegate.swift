@@ -153,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // History pruning at launch rather than on a timer: it touches the disk
         // and there is no reason to do it while the user is reading (§8.3).
         SnapshotStore.shared.schedulePrune()
+        DocumentStateStore.shared.schedulePruneAbandonedStates()
 
         hasFinishedLaunching = true
 

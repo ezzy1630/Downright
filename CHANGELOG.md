@@ -14,6 +14,13 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
+- Stopped idle history maintenance from rewriting every unchanged index, made
+  long-session pruning half-hourly, and added mounted-volume-aware collection
+  of stale history and reading-state files.
+- Bounded external-change undo history and moved path-existence rechecks to a
+  background cache warm so long-lived, frequently rewritten documents cannot
+  grow memory indefinitely or stall the main thread on filesystem checks.
+
 - **Made saves fail closed around external file activity.** Downright now
   distinguishes unchanged, changed, missing, and unreadable disk state; an
   implicit save can no longer recreate a deleted file, swallow an atomic

@@ -432,6 +432,7 @@ public final class MarkdownTextView: NSTextView {
     private var objectChangeMarks: [ChangeMark] = []
     private var fragmentAccessibilityElements: [NSAccessibilityElement] = []
     private var pathExistence: [PathToken: Bool] = [:]
+    private var pathRefreshGeneration: UInt = 0
     private var codeCollapseOverrides: [Int: Bool] = [:]
     private var invisiblesApplied = false
     private var hoverTracking: NSTrackingArea?
@@ -2421,6 +2422,87 @@ public final class MarkdownTextView: NSTextView {
             let colour = styleSheet.changeColor(mark.kind)
             context.setFillColor(colour.withAlphaComponent(mark.visited ? 0.3 : 0.75).cgColor)
             context.fill(band)
+        }
+    }
+
+    /// Re-runs path-existence styling after the resolver has warmed its cache.
+    public func refreshPathExistence(completion: (() -> Void)? = nil) {
+        invalidatePathExistenceCache()
+        let refreshGeneration = pathRefreshGeneration
+        let documentGeneration = updateGeneration
+        guard !parsedDocument.pathTokens.isEmpty else {
+            completion?()
+            return
+        }
+        refreshPathExistence(
+            parsedDocument.pathTokens,
+            from: 0,
+            documentGeneration: documentGeneration,
+            refreshGeneration: refreshGeneration,
+            completion: completion
+        )
+    }
+
+    /// Split panes share attributed storage but keep independent lookup caches.
+    /// Clear every pane before one owner repairs the shared attributes.
+    public func invalidatePathExistenceCache() {
+        pathRefreshGeneration &+= 1
+        pathExistence.removeAll(keepingCapacity: true)
+    }
+
+    /// Attribute repair is bounded per main-loop turn. Agent-generated reports
+    /// can contain thousands of path tokens; applying all of them in one
+    /// NSTextStorage edit would simply move the external-rewrite hitch from
+    /// filesystem lookup to decoration.
+    private func refreshPathExistence(
+        _ tokens: [ResolvableToken],
+        from start: Int,
+        documentGeneration: Int,
+        refreshGeneration: UInt,
+        completion: (() -> Void)?
+    ) {
+        guard updateGeneration == documentGeneration,
+              pathRefreshGeneration == refreshGeneration,
+              let storage = textStorage,
+              start < tokens.count else { return }
+
+        let end = min(start + 128, tokens.count)
+        storage.beginEditing()
+        for resolvable in tokens[start..<end] {
+            guard let range = clampToStorage(resolvable.range) else { continue }
+            let exists = markdownDelegate?.markdownTextView(
+                self,
+                pathExistsFor: resolvable.token
+            ) ?? true
+            pathExistence[resolvable.token] = exists
+            storage.addAttribute(.drPathExists, value: exists, range: range)
+            if exists {
+                storage.addAttribute(.foregroundColor, value: styleSheet.textSecondary, range: range)
+                storage.removeAttribute(.underlineStyle, range: range)
+                storage.removeAttribute(.underlineColor, range: range)
+            } else {
+                storage.addAttributes([
+                    .foregroundColor: styleSheet.textSecondary,
+                    .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue,
+                    .underlineColor: styleSheet.textFaint,
+                ], range: range)
+            }
+        }
+        storage.endEditing()
+        needsDisplay = true
+
+        guard end < tokens.count else {
+            completion?()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshPathExistence(
+                tokens,
+                from: end,
+                documentGeneration: documentGeneration,
+                refreshGeneration: refreshGeneration,
+                completion: completion
+            )
         }
     }
 
