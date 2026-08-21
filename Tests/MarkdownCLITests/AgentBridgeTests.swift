@@ -224,7 +224,58 @@ struct AgentBridgeTests {
         let object = try JSONSerialization.jsonObject(with: Data(snippet.utf8)) as? [String: Any]
         let postToolUse = (object?["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]]
         let command = (postToolUse?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String
-        #expect(command == "/usr/local/bin/down notify")
+        // The executable is POSIX single-quoted so no character in an unusual
+        // install path can open a shell expansion context.
+        #expect(command == "'/usr/local/bin/down' notify")
+    }
+
+    @Test("Hook commands cannot smuggle shell expansion through the path")
+    func hookCommandQuotesHostilePaths() {
+        // Inside POSIX single quotes nothing expands: `$`, backticks, double
+        // quotes, and backslashes are all literal.  The only character that
+        // needs care is the single quote itself, escaped the standard way.
+        let hostile = "/opt/My Tools/\"$(touch /tmp/pwned)\"/down"
+        let command = AgentBridge.hookCommand(executable: hostile)
+        #expect(command.hasPrefix("'/opt/My Tools/"))
+        #expect(command.hasSuffix("/down' notify"))
+        #expect(command.contains("\"$(touch /tmp/pwned)\""),
+                "the payload must survive verbatim inside the quotes")
+
+        let tricky = "/opt/o'brien/down"
+        #expect(AgentBridge.hookCommand(executable: tricky) == "'/opt/o'\\''brien/down' notify")
+    }
+
+    /// Hooks written by earlier builds used unquoted or double-quoted paths.
+    /// An upgrade must recognize them as ours — reporting state accurately,
+    /// migrating them to the canonical quoted form instead of appending a
+    /// duplicate that would fire twice per event, and removing them cleanly.
+    @Test("A legacy-format hook is recognized, migrated in place, and removable")
+    func legacyHookIsRecognizedAndMigrated() {
+        let executable = "/usr/local/bin/down"
+        for legacyCommand in ["/usr/local/bin/down notify", "\"/usr/local/bin/down\" notify"] {
+            let seeded: [String: Any] = [
+                "hooks": ["PostToolUse": [[
+                    "matcher": AgentBridge.toolMatcher,
+                    "hooks": [["type": "command", "command": legacyCommand]],
+                ]]],
+            ]
+            // State reporting counts the legacy hook as installed.
+            #expect(AgentBridge.isHookInstalled(in: seeded, executable: executable))
+
+            // Installing migrates it in place rather than appending a twin.
+            let (migrated, changed) = AgentBridge.installingHook(into: seeded, executable: executable)
+            #expect(changed)
+            let postToolUse = (migrated["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]]
+            #expect(postToolUse?.count == 1)
+            #expect((postToolUse?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String
+                == "'/usr/local/bin/down' notify")
+
+            // A second install is a no-op, and an uninstall removes it.
+            #expect(AgentBridge.installingHook(into: migrated, executable: executable).changed == false)
+            let (removed, removedChanged) = AgentBridge.removingHook(from: migrated, executable: executable)
+            #expect(removedChanged)
+            #expect(removed["hooks"] == nil)
+        }
     }
 
     @Test("Scope decides which settings file is written")

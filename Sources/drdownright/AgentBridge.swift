@@ -93,9 +93,31 @@ public enum AgentBridge {
 
     /// The shell command a hook runs.  `notify` reads the payload on stdin, so
     /// the hook needs no `jq`, no shell quoting, and no per-tool special casing.
+    ///
+    /// The executable is POSIX single-quoted (with the usual `'\''` escape)
+    /// rather than double-quoted: a double-quoted string still expands `$`,
+    /// backticks, and backslashes when the agent's hook runner shells out, so
+    /// an unusual install path could smuggle command substitution into
+    /// settings.json.
     public static func hookCommand(executable: String = "down") -> String {
-        let quoted = executable.contains(" ") ? "\"\(executable)\"" : executable
+        let quoted = "'" + executable.replacingOccurrences(of: "'", with: "'\\''") + "'"
         return "\(quoted) notify"
+    }
+
+    /// Command strings earlier builds wrote for this executable: the bare
+    /// path and a double-quoted variant.  Recognizing them lets an upgrade
+    /// find its own previous hook instead of appending a duplicate next to it,
+    /// and lets an uninstall remove it instead of leaving debris.
+    private static func legacyHookCommands(executable: String) -> [String] {
+        [executable + " notify", "\"\(executable)\" notify"]
+    }
+
+    /// Every command string that counts as this app's hook for the executable:
+    /// the canonical quoted form plus the pre-quoting legacy forms.
+    private static func ownedHookCommands(executable: String) -> Set<String> {
+        var commands = Set(legacyHookCommands(executable: executable))
+        commands.insert(hookCommand(executable: executable))
+        return commands
     }
 
     /// One `PostToolUse` entry in Claude Code's settings schema.
@@ -113,7 +135,7 @@ public enum AgentBridge {
     /// a user who edits it by hand or checks one into a project must not find
     /// the app disagreeing with reality.
     public static func isHookInstalled(in settings: [String: Any], executable: String = "down") -> Bool {
-        let command = hookCommand(executable: executable)
+        let commands = ownedHookCommands(executable: executable)
         let entries = (settings["hooks"] as? [String: Any])?["PostToolUse"] as? [[String: Any]] ?? []
         return entries.contains { entry in
             // Our hook is identified by its matcher *and* its command.  A
@@ -123,7 +145,7 @@ public enum AgentBridge {
             entry["matcher"] as? String == toolMatcher
                 && (entry["hooks"] as? [[String: Any]] ?? [])
                     .compactMap { $0["command"] as? String }
-                    .contains(command)
+                    .contains { commands.contains($0) }
         }
     }
 
@@ -132,15 +154,56 @@ public enum AgentBridge {
     /// Idempotent, and deliberately additive: a user's `settings.json` is their
     /// own file with their own hooks in it, so this preserves every unrelated
     /// key, appends rather than replaces the `PostToolUse` array, and returns
-    /// the input unchanged when an equivalent hook is already installed.
+    /// the input unchanged when the canonical hook is already installed.  A
+    /// legacy-format entry of ours is migrated in place — replaced by the
+    /// canonical quoted command at the same position — rather than duplicated.
     public static func installingHook(
         into settings: [String: Any],
         executable: String = "down"
     ) -> (settings: [String: Any], changed: Bool) {
-        guard !isHookInstalled(in: settings, executable: executable) else { return (settings, false) }
         var settings = settings
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
         var postToolUse = hooks["PostToolUse"] as? [[String: Any]] ?? []
+
+        let canonical = hookCommand(executable: executable)
+        let legacy = Set(legacyHookCommands(executable: executable))
+        func commands(in entry: [String: Any]) -> [String] {
+            (entry["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String }
+        }
+
+        // Canonical already present: nothing to do, even if a legacy entry
+        // somehow sits beside it (that combination means hands edited the
+        // file, and hands win).
+        if postToolUse.contains(where: { entry in
+            entry["matcher"] as? String == toolMatcher && commands(in: entry).contains(canonical)
+        }) {
+            return (settings, false)
+        }
+
+        // A legacy entry of ours: migrate it to the canonical form where it
+        // stands instead of appending a second hook that fires twice.
+        var migrated = false
+        postToolUse = postToolUse.map { entry in
+            guard entry["matcher"] as? String == toolMatcher,
+                  commands(in: entry).contains(where: legacy.contains)
+            else { return entry }
+            migrated = true
+            var updated = entry
+            updated["hooks"] = (entry["hooks"] as? [[String: Any]] ?? []).map { hook -> [String: Any] in
+                guard let command = hook["command"] as? String, legacy.contains(command) else {
+                    return hook
+                }
+                var replacement = hook
+                replacement["command"] = canonical
+                return replacement
+            }
+            return updated
+        }
+        if migrated {
+            hooks["PostToolUse"] = postToolUse
+            settings["hooks"] = hooks
+            return (settings, true)
+        }
 
         postToolUse.append(hookEntry(executable: executable))
         hooks["PostToolUse"] = postToolUse
@@ -159,7 +222,7 @@ public enum AgentBridge {
               let postToolUse = hooks["PostToolUse"] as? [[String: Any]]
         else { return (settings, false) }
 
-        let command = hookCommand(executable: executable)
+        let commands = ownedHookCommands(executable: executable)
         var changed = false
         var remaining: [[String: Any]] = []
         for var entry in postToolUse {
@@ -170,9 +233,12 @@ public enum AgentBridge {
                 remaining.append(entry)
                 continue
             }
-            let commands = entry["hooks"] as? [[String: Any]] ?? []
-            let kept = commands.filter { ($0["command"] as? String) != command }
-            if kept.count != commands.count { changed = true }
+            let hooks = entry["hooks"] as? [[String: Any]] ?? []
+            let kept = hooks.filter { hook in
+                guard let command = hook["command"] as? String else { return true }
+                return !commands.contains(command)
+            }
+            if kept.count != hooks.count { changed = true }
             guard !kept.isEmpty else { continue }
             entry["hooks"] = kept
             remaining.append(entry)
