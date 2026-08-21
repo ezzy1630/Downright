@@ -89,8 +89,15 @@ fi
 
 echo
 echo "==> Version consistency (single source: Config/version.env)"
-"$ROOT/Scripts/sync-versions.sh"
+# This script runs without `set -e` on purpose (the test step inspects its own
+# status), so every gate here must be checked explicitly.  A drift report that
+# only prints is a release gate that always passes.
+if ! "$ROOT/Scripts/sync-versions.sh"; then
+    echo "    FAILED"
+    exit 1
+fi
 
+echo
 echo "==> Sparkle is linked only by the host app"
 SPARKLE_IMPORTS="$(grep -rln 'import Sparkle' Sources --include='*.swift' || true)"
 if [ -z "$SPARKLE_IMPORTS" ]; then
@@ -108,7 +115,12 @@ echo "    ok"
 
 echo
 echo "==> Theme contrast"
-python3 "$ROOT/Scripts/check-contrast.py"
+# Same rule as the version gate above: a WCAG regression must fail the run,
+# not just decorate its output.
+if ! python3 "$ROOT/Scripts/check-contrast.py"; then
+    echo "    FAILED"
+    exit 1
+fi
 
 echo
 echo "==> Sanity: the runner must actually have run something"

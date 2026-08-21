@@ -11,9 +11,14 @@ if (process.argv.includes("--help")) {
   process.exit(0);
 }
 
-const response = await fetch(url, {
-  headers: { accept: "application/vnd.github+json", "user-agent": "downright-homebrew-readiness" },
-});
+// Unauthenticated GitHub API calls share a 60 req/h budget per source IP, so
+// a shared CI runner can be rate-limited into a raw failure.  Use
+// GITHUB_TOKEN when the environment provides one (read-only public data; the
+// token only raises the limit and is never logged).
+const headers = { accept: "application/vnd.github+json", "user-agent": "downright-homebrew-readiness" };
+if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+
+const response = await fetch(url, { headers });
 if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
 const repo = await response.json();
 const result = {
