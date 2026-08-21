@@ -12,6 +12,31 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+### Added
+
+- **Update Now.** A build published from a push to `main` now reaches a running
+  copy in about a minute instead of on the next daily check, and the pill that
+  offers it acts instead of opening a window. One press installs and relaunches,
+  carrying its own progress in the titlebar; the update panel stays where it was
+  for menu checks, errors, and no-update results. Resting on the button unfurls
+  a glass panel of the release notes — the appcast already embeds them, so it
+  costs no extra request — which you can move into, and which trims to whole
+  lines rather than clipping a sentence in half. An update that lands while you
+  are in the app gets one accent pass on arrival; one that was already waiting
+  when the window opened does not pretend it just arrived.
+- The appcast is watched while the app is open: a conditional request roughly
+  every 90 seconds in front and every 15 minutes behind, stopped entirely with
+  no network and in Low Power Mode while backgrounded, and governed by the same
+  "check automatically" setting as Sparkle's own schedule. It is a trigger, not
+  a trust path — it learns only that the feed moved and asks Sparkle to look, so
+  every signature check and download stays exactly where it was.
+
+### Changed
+
+- `SUScheduledCheckInterval` drops from 24 hours to 1 hour. It is now the
+  fallback for an app that was asleep, offline, or in Low Power Mode while a
+  build shipped, rather than the mechanism by which updates are noticed.
+
 ### Fixed
 
 - Stopped idle history maintenance from rewriting every unchanged index, made

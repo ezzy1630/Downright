@@ -120,6 +120,10 @@ npx --yes downright-installer
 Every installation path leaves automatic Sparkle updates enabled. The curl
 path needs no Node.js; the npm path is macOS-only and requires Node.js 18+.
 
+A build published while the app is open is offered within about a minute: the
+titlebar shows **Update Now**, one press installs it and relaunches, and
+resting on the button shows what changed before you commit to it.
+
 ## Why Downright
 
 - **Exact source.** Rendering decorates the original text storage; it does not

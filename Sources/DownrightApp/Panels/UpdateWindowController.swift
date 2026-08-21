@@ -494,7 +494,7 @@ private final class UpdatePanelContent {
 // MARK: - Notes view (release notes through the real renderer)
 
 @MainActor
-private final class UpdateNotesView: NSView {
+final class UpdateNotesView: NSView {
     init(coordinator: UpdateCoordinator, sheet: StyleSheet) {
         super.init(frame: .zero)
 
