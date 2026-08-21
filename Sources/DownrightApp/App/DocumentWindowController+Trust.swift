@@ -192,7 +192,12 @@ extension DocumentWindowController: TrustPromptViewDelegate {
             path = nil
         }
         guard let path else { return }
-        guard trustStore.grant(scope: scope, path: path, effects: [request.effect]) else {
+        guard trustStore.grant(
+            scope: scope,
+            path: path,
+            effects: [request.effect],
+            externalURL: request.target.externalURL
+        ) else {
             presentOperationError(
                 "Couldn’t save this trust decision",
                 error: CocoaError(.fileWriteUnknown)
