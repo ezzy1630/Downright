@@ -56,7 +56,7 @@ struct SmartPasteIntegrationTests {
         pasteboard.setString("https://example.com", forType: .URL)
         pasteboard.setString("lossless", forType: .string)
 
-        #expect(MarkdownSmartPaste.payload(from: pasteboard) == .text("**lossless**"))
+        #expect(MarkdownSmartPaste.payload(from: pasteboard) == .markdown("**lossless**"))
     }
 
     @Test("standard copy exposes visible text and keeps Markdown as an alternate")
@@ -114,6 +114,41 @@ struct SmartPasteIntegrationTests {
         #expect(payload == .html("<p><strong>Only HTML</strong></p>", fallback: ""))
         #expect(MarkdownSmartPaste.replacement(
             for: payload!, selection: "", context: .markdown) == "**Only HTML**")
+    }
+
+    @Test("Safari public.html keeps rich structure ahead of flattened fallback")
+    func safariHTMLRoundTrip() {
+        let pasteboard = isolatedPasteboard()
+        pasteboard.clearContents()
+        let html = """
+        <!DOCTYPE html><html><head><style>body { color: red }</style></head><body><!--StartFragment-->
+        <div><h2>Heading</h2><p>Intro <strong>bold</strong> and <a href="https://example.com">link</a>.</p>
+        <ul><li>first<ul><li>nested <code>code</code></li></ul></li><li>second</li></ul>
+        <table><tbody><tr><th>Name</th><th>Count</th></tr><tr><td>Ada</td><td>1</td></tr></tbody></table>
+        <script>window.evil = true</script></div><!--EndFragment--></body></html>
+        """
+        pasteboard.setString(html, forType: .html)
+        // Safari advertises several rich aliases and a flattened public.text
+        // fallback. Normal Paste must consume public.html, not the fallback.
+        pasteboard.setString("Heading Intro bold and link. first nested code second Name Count Ada 1", forType: .string)
+        pasteboard.setData(Data([0x00, 0x01]), forType: .rtf)
+        pasteboard.setData(Data([0x02, 0x03]), forType: .appleWebArchive)
+
+        let payload = MarkdownSmartPaste.payload(from: pasteboard)
+        guard let payload else {
+            Issue.record("Safari-style clipboard did not expose a payload")
+            return
+        }
+        let replacement = MarkdownSmartPaste.replacement(
+            for: payload, selection: "", context: .markdown)
+        #expect(replacement.contains("## Heading"))
+        #expect(replacement.contains("**bold**"))
+        #expect(replacement.contains("[link](https://example.com)"))
+        #expect(replacement.contains("- first\n  - nested `code`\n- second"))
+        #expect(replacement.contains("| Name"))
+        #expect(replacement.contains("| Ada"))
+        #expect(!replacement.contains("window.evil"))
+        #expect(!replacement.contains("Heading Intro bold and link. first nested code"))
     }
 
     @Test("source edit replaces the source selection and creates one undo step")
@@ -370,8 +405,11 @@ struct SmartPasteIntegrationTests {
                 for: payload, selection: "", context: MarkdownSmartPaste.context(
                     for: NSRange(location: 0, length: 0), in: view.parsedDocument, mode: .source))
             switch payload {
+            case .markdown(let value): #expect(replacement == value)
             case .url(let value), .text(let value): #expect(replacement == value)
             case .html(let value, _): #expect(replacement == value)
+            case .richText(let value), .file(let value): #expect(replacement == value)
+            case .image: #expect(replacement == "Pasted image")
             }
         }
     }

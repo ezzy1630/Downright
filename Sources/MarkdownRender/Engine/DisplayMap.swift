@@ -486,6 +486,30 @@ public struct DisplayMap {
         self.normalizedBaseHiddenRanges = normalizedBaseHiddenRanges
     }
 
+    /// Projects an ordinary character edit without rebuilding the paragraph
+    /// lookup table. When paragraph topology and substitution cardinality are
+    /// unchanged, every entry keeps the same paragraph slot; only source
+    /// offsets move. Structural edits fall back to the validating initializer.
+    func projectingStableTopology(
+        paragraphs newParagraphs: ParagraphIndex,
+        substitutions: [DisplaySubstitution],
+        hiddenRanges: [NSRange]
+    ) -> DisplayMap {
+        guard overrideParagraph == nil,
+              newParagraphs.starts.count == paragraphs.starts.count,
+              substitutions.count == base.count else {
+            return DisplayMap(paragraphs: newParagraphs, substitutions: substitutions)
+        }
+        return DisplayMap(
+            paragraphs: newParagraphs,
+            base: substitutions,
+            firstInParagraph: firstInParagraph,
+            overrideParagraph: nil,
+            overrideEntries: [],
+            normalizedBaseHiddenRanges: hiddenRanges
+        )
+    }
+
     /// A map identical to this one except that the entries of the paragraph
     /// containing `offset` are replaced.  O(entries in that paragraph).
     ///

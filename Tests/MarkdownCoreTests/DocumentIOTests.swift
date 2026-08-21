@@ -210,4 +210,83 @@ import Testing
         #expect(fidelityBE.encoding == .utf16BE)
         try assertRoundTrip(beBody, "utf16 BE no BOM")
     }
+
+    @Test func guardedReplaceRestoresRacingGeneration() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+        let opened = Data("opened\n".utf8)
+        let firstExternal = Data("external-one\n".utf8)
+        let newestExternal = Data("external-two\n".utf8)
+        try firstExternal.write(to: url)
+
+        do {
+            try DocumentIO.replaceExistingAtomicallyForTesting(
+                with: Data("mine\n".utf8), at: url, expected: opened
+            ) {
+                try! newestExternal.write(to: url, options: .atomic)
+            }
+            Issue.record("a mismatched generation must fail closed")
+        } catch let DocumentIOError.targetChanged(_, displaced) {
+            #expect(displaced.contains(firstExternal))
+            #expect(displaced.contains(newestExternal))
+        }
+        #expect(try Data(contentsOf: url) == newestExternal)
+    }
+
+    @Test func failedRollbackNeverDeletesDisplacedExternalBytes() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+        let external = Data("external\n".utf8)
+        try external.write(to: url)
+
+        #expect(throws: (any Error).self) {
+            try DocumentIO.replaceExistingAtomicallyForTesting(
+                with: Data("mine\n".utf8), at: url,
+                expected: Data("opened\n".utf8)
+            ) {
+                try! FileManager.default.removeItem(at: url)
+            }
+        }
+        let recoveryFiles = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix(".downright-save-") }
+        #expect(recoveryFiles.count == 1)
+        #expect(try Data(contentsOf: recoveryFiles[0]) == external)
+    }
+
+    @Test func displacedReadFailureLeavesRecoverableExternalGeneration() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("doc.md")
+        let external = Data("external-before-read-failure\n".utf8)
+        let mine = Data("mine\n".utf8)
+        try external.write(to: url)
+
+        do {
+            try DocumentIO.replaceExistingAtomicallyForTesting(
+                with: mine, at: url, expected: external,
+                afterDisplacedRead: {},
+                afterSwap: { temporary in
+                    try! FileManager.default.setAttributes(
+                        [.posixPermissions: NSNumber(value: 0o000)],
+                        ofItemAtPath: temporary.path
+                    )
+                }
+            )
+            Issue.record("a displaced-generation read failure must fail closed")
+        } catch let DocumentIOError.displacedGenerationUnreadable(_, recoveryURL, _) {
+            #expect(FileManager.default.fileExists(atPath: recoveryURL.path))
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: 0o600)],
+                ofItemAtPath: recoveryURL.path
+            )
+            #expect(try Data(contentsOf: recoveryURL) == external)
+        }
+
+        // The public path contains Downright's candidate, while the external
+        // generation remains available at the recovery URL from the error.
+        #expect(try Data(contentsOf: url) == mine)
+    }
 }

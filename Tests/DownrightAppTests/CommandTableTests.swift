@@ -89,6 +89,18 @@ struct CommandTableTests {
         #expect(MainMenu.command(for: item ?? NSMenuItem()) == .checkForUpdates)
     }
 
+    @Test func contentsOutlineKeepsOneCanonicalCommandAndPaletteNames() {
+        #expect(Command.documentLens.title == "Contents / Outline")
+        let model = CommandPaletteModel(commands: [.documentLens], bindings: { _ in [] })
+        #expect(model.results.map(\.command) == [.documentLens])
+        var outline = model
+        outline.updateQuery("outline")
+        #expect(outline.results.map(\.command) == [.documentLens])
+        var contents = model
+        contents.updateQuery("contents")
+        #expect(contents.results.map(\.command) == [.documentLens])
+    }
+
     /// The standard items the Edit and Window menus were missing.
     @Test func standardMenuItemsExistWithTheirMacOSChords() {
         _ = NSApplication.shared
@@ -102,7 +114,7 @@ struct CommandTableTests {
         walk(MainMenu.build())
 
         #expect(titles["Paste and Match Style"]?.0 == "v")
-        #expect(titles["Paste and Match Style"]?.1 == [.command, .shift])
+        #expect(titles["Paste and Match Style"]?.1 == [.command, .option, .shift])
         #expect(titles["Page Setup…"]?.0 == "p")
         #expect(titles["Page Setup…"]?.1 == [.command, .shift])
         #expect(titles["Enter Full Screen"]?.0 == "f")

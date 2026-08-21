@@ -93,6 +93,16 @@ APP="$ROOT/$APP_ACCEPTANCE_SCRATCH/Build/Products/$CONFIGURATION/Downright.app"
     exit 1
 }
 
+# The acceptance identity must never inherit the production Sparkle channel.
+# Xcode expands the release plist before this script embeds and re-seals the
+# final bundle, so remove every updater input from that exact development app.
+if [ "$APP_ACCEPTANCE_PRODUCTION" = "0" ]; then
+    APP_INFO="$APP/Contents/Info.plist"
+    for key in SUAutomaticallyUpdate SUEnableAutomaticChecks SUFeedURL SUPublicEDKey SURequireSignedFeed SUScheduledCheckInterval SUVerifyUpdateBeforeExtraction; do
+        /usr/libexec/PlistBuddy -c "Delete :$key" "$APP_INFO" >/dev/null 2>&1 || true
+    done
+fi
+
 echo "==> Embedding the CLI and flattening Xcode resource bundles"
 swift build -c release --scratch-path "$SPOTLIGHT_SCRATCH" --product down
 CLI_BIN="$(swift build -c release --scratch-path "$SPOTLIGHT_SCRATCH" --product down --show-bin-path)/down"

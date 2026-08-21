@@ -163,6 +163,9 @@ final class DocumentWindowController: NSWindowController {
     private var cachedSectionMetrics: [ReadingMetrics] = []
     private var cachedWordCount = 0
     private var autosaveWorkItem: DispatchWorkItem?
+    /// Prevents autosave, close, and task-toggle failures from stacking several
+    /// identical recovery sheets for the same unavailable backing path.
+    var saveRecoveryAlert: NSAlert?
 
     // MARK: - Construction
 
@@ -724,6 +727,9 @@ final class DocumentWindowController: NSWindowController {
             self?.window?.isDocumentEdited = dirty
             if dirty { self?.scheduleAutosave() }
         }
+        markdownDocument.onPresentationStateChanged = { [weak self] state in
+            self?.toolbarDocumentIdentityView?.documentState = state
+        }
         markdownDocument.onWillApplyUndoRedo = { [weak self] in
             guard let self else { return }
             for pane in self.documentPanes {
@@ -1167,7 +1173,11 @@ final class DocumentWindowController: NSWindowController {
         // are intentionally absent from the calm reading surface.
         primaryContainer.textView.changeMarks = []
         splitContainer?.textView.changeMarks = []
-        refreshDensityBands()
+        // Change tracking can be published from the external-write commit.
+        // Rebuilding every density/outline band in that same main-actor turn
+        // turns a tiny source insertion into a visible scroll hitch; the normal
+        // derived-UI debounce coalesces it with the incoming parse commit.
+        scheduleDerivedUIRefresh()
     }
 
     /// "I have read all of these" — the review queue's one explicit exit.
@@ -1208,11 +1218,12 @@ final class DocumentWindowController: NSWindowController {
             showConflictBar("Changed on disk — \(conflict.changedBlockCount) block\(conflict.changedBlockCount == 1 ? "" : "s")")
 
         case .fileRemoved:
-            toolbarDocumentIdentityView?.hasExternalChanges = true
+            toolbarDocumentIdentityView?.documentState = .init(
+                phase: .changedOnDisk, provenance: nil, detail: "File missing"
+            )
             showConflictBar("File was moved or deleted")
 
         case .fileRestored:
-            toolbarDocumentIdentityView?.hasExternalChanges = false
             dismissConflictBar()
         }
     }
@@ -2292,6 +2303,8 @@ final class DocumentWindowController: NSWindowController {
             // the primary leaves the window with no text first responder, so
             // the next native key command appears to do nothing.
             let active = containerTextView
+            let activeTopOffset = active.topVisibleOffset
+            let activeViewportY = active.enclosingScrollView?.contentView.bounds.origin.y
             synchronizePanes(from: active, selection: true, viewport: true)
             focusDimmingViews.removeAll { view in
                 if view.superview === splitContainer {
@@ -2312,6 +2325,20 @@ final class DocumentWindowController: NSWindowController {
                 primaryContainer.topAnchor.constraint(equalTo: barStack.bottomAnchor),
                 primaryContainer.bottomAnchor.constraint(equalTo: statusBarView.topAnchor),
             ])
+            rootView.layoutSubtreeIfNeeded()
+            primaryContainer.textView.resizeToFitContent()
+            // Reflowing from half-width back to full-width changes physical Y
+            // geometry. Restore by source anchor after that reflow, not only
+            // while both panes still had their split widths.
+            primaryContainer.textView.scroll(
+                toOffset: activeTopOffset, position: .top, animated: false
+            )
+            if let activeViewportY,
+               let scrollView = primaryContainer.textView.enclosingScrollView {
+                let clip = scrollView.contentView
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: activeViewportY))
+                scrollView.reflectScrolledClipView(clip)
+            }
             markdownDocument.state.splitViewEnabled = false
             window?.makeFirstResponder(primaryContainer.textView)
             return
@@ -2330,7 +2357,7 @@ final class DocumentWindowController: NSWindowController {
         second.textView.mode = source.mode
         second.textView.zoomLevel = source.zoomLevel
         second.textView.foldedHeadingSlugs = source.foldedHeadingSlugs
-        second.textView.update(document: markdownDocument.parsed, dirty: .wholesale)
+        second.textView.adoptSharedPresentation(from: source)
         second.textView.setSourceSelectedRanges(source.sourceSelectedRanges)
         second.textView.scroll(toOffset: source.topVisibleOffset, position: .top, animated: false)
         splitContainer = second

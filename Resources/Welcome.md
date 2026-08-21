@@ -17,8 +17,9 @@ the territory at the same time.
 
 ## Structural zoom
 
-Press ⌃⌘1. The document collapses to its top-level headings. ⌃⌘2 adds the level
-under those. ⌃⌘5 brings everything back.
+Press {{shortcut:zoomLevel1}}. The document collapses to its top-level headings.
+{{shortcut:zoomLevel2}} adds the level under those. {{shortcut:zoomLevel5}}
+brings everything back.
 
 Nothing is removed from the file, only from your eye. Use it on a long document
 when you want the argument before the detail.
@@ -28,7 +29,7 @@ when you want the argument before the detail.
 Click into this paragraph and type. The markers for the word you are in appear,
 and only those. Nothing else on the page moves.
 
-Press ⌘⇧E for Source Focus: the whole document becomes plain Markdown with line
+Press {{shortcut:sourceMode}} for Source Focus: the whole document becomes plain Markdown with line
 numbers, and Done brings you back. The caret keeps its place in both directions,
 and the file keeps its bytes.
 
@@ -38,16 +39,16 @@ A table:
 
 | Press | What happens |
 | --- | --- |
-| ⌘⇧K | Command palette, for anything you cannot remember |
-| ⌥⌘1 | Outline |
-| ⌥⌘3 | Tasks |
-| ⌘⇧O | Search the headings |
+| {{shortcut:commandPalette}} | Command palette, for anything you cannot remember |
+| {{shortcut:documentLens}} | {{command:documentLens}} |
+| {{shortcut:taskPanel}} | Tasks |
+| {{shortcut:nextHeading}} | Jump to the next heading |
 
 A task list. Click a box — it edits one character of the file, and undo puts it
 back:
 
 - [x] Open a Markdown file
-- [ ] Press ⌃⌘1, then ⌃⌘5
+- [ ] Press {{shortcut:zoomLevel1}}, then {{shortcut:zoomLevel5}}
 - [ ] Drag the gutter
 - [ ] Tick this box
 
@@ -72,9 +73,10 @@ it. One that does not is underlined, which is the point.[^paths]
 ## When something else writes the file
 
 Leave a file open, let an agent edit it, and come back. The changed regions are
-marked in the text and in the gutter, and ⌃⌘↓ walks through them one at a time.
+marked in the text and in the gutter, and {{shortcut:nextChange}} walks through
+them one at a time.
 
-Every outside write is snapshotted first. ⌥⌘V opens the version timeline, so a
+Every outside write is snapshotted first. {{shortcut:versionTimeline}} opens the version timeline, so a
 change you did not want is a change you can take back.
 
 > [!TIP]
@@ -82,7 +84,7 @@ change you did not want is a change you can take back.
 
 ## Where to go next
 
-Settings (⌘,) has seven panes and a search field. Keys is where every shortcut
+Settings ({{shortcut:preferences}}) has focused panes and a search field. Keys is where every shortcut
 printed here can be changed — these are only the defaults.
 
 You can close this document whenever you like. It is a copy, opened from a

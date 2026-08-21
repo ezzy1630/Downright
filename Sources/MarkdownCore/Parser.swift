@@ -141,7 +141,8 @@ struct BlockBuilder {
         case is HTMLBlock:
             return MDBlock(
                 content: .htmlBlock, range: range, contentRange: range,
-                depth: depth, quoteDepth: quoteDepth
+                depth: depth, quoteDepth: quoteDepth,
+                safeHTML: SafeHTMLParser.parse(map.text as String, range: range)
             )
 
         default:
@@ -237,11 +238,16 @@ struct BlockBuilder {
                 depth: depth, quoteDepth: quoteDepth
             )
         }
-        return MDBlock(
+        let block = MDBlock(
             content: .paragraph, range: range, contentRange: range,
             inlines: inlines.spans(for: markup, bounds: range),
             depth: depth, quoteDepth: quoteDepth
         )
+        // A paragraph may contain a complete inline HTML element tree (for
+        // example `<p><strong>README</strong></p>`). Keep one source-addressed
+        // annotation set so the renderer can style it without rewriting text.
+        block.safeHTML = SafeHTMLParser.parse(map.text as String, range: range)
+        return block
     }
 
     // MARK: Containers

@@ -84,6 +84,18 @@ actor MarkdownParseCoordinator {
         wake = nil
     }
 
+    /// Runs a correctness-critical snapshot without waiting behind an obsolete
+    /// non-cancellable cmark parse. Actor reentrancy permits the Sendable worker
+    /// operation to overlap the stale request; the document revision gate still
+    /// decides which result may commit.
+    func runImmediately(_ request: MarkdownParseRequest) async -> MarkdownParseResult {
+        await worker.run(
+            text: request.text,
+            previous: request.previous,
+            revision: request.revision
+        )
+    }
+
     /// Drops a snapshot that has not started running.  A synchronous reparse
     /// has already produced a newer tree, so keeping this request would only
     /// spend parse time on a result that the document revision gate rejects.

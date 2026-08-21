@@ -18,6 +18,16 @@ source "$ROOT/Config/version.env"
 PRODUCTION="${PRODUCTION:-0}"
 BUILD="$("$ROOT/Scripts/build-number.sh")"
 
+# Keep development artifacts distinct from the installed daily driver in
+# Launch Services and the Quick Look plug-in registry. Release builds retain
+# the public identifier; callers may give an explicit identifier for other
+# isolated acceptance channels.
+if [ "$PRODUCTION" = "1" ]; then
+    HOST_BUNDLE_IDENTIFIER="com.ezzy.downright"
+else
+    HOST_BUNDLE_IDENTIFIER="${DOWNRIGHT_HOST_BUNDLE_IDENTIFIER:-com.ezzy.downright.acceptance}"
+fi
+
 command -v xcodegen >/dev/null || {
     echo "xcodegen is required. Install it with: brew install xcodegen" >&2
     exit 1
@@ -46,10 +56,27 @@ xcodebuild \
     CODE_SIGNING_REQUIRED=NO \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD" \
+    DOWNRIGHT_HOST_BUNDLE_IDENTIFIER="$HOST_BUNDLE_IDENTIFIER" \
     DEBUG_INFORMATION_FORMAT="$DEBUG_INFORMATION_FORMAT" \
     build
 
 APP="$ROOT/$SCRATCH/Build/Products/$CONFIGURATION/Downright.app"
+
+if [ "$PRODUCTION" != "1" ]; then
+    # A development bundle must never poll the public Sparkle channel. Keep the
+    # framework linked so the shipped graph is exercised, but remove every
+    # updater input before the bundle is sealed.
+    for key in \
+        SUAutomaticallyUpdate \
+        SUEnableAutomaticChecks \
+        SUFeedURL \
+        SUPublicEDKey \
+        SURequireSignedFeed \
+        SUScheduledCheckInterval \
+        SUVerifyUpdateBeforeExtraction; do
+        /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist" 2>/dev/null || true
+    done
+fi
 
 echo "==> Embedding Sparkle.framework"
 # XcodeGen's `embed: true` for an SPM framework resolves the copy phase to a

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Watches a single file for external rewrites (§8.1).
 ///
@@ -18,8 +19,22 @@ final class FileWatcher {
         var modified: Date
         var size: Int
         var inode: UInt64
+        /// A content signature closes the gap where an editor rewrites a file
+        /// in place without changing its size or filesystem timestamp.
+        var contentDigest: Data?
 
-        static let missing = Snapshot(modified: .distantPast, size: -1, inode: 0)
+        static let missing = Snapshot(
+            modified: .distantPast,
+            size: -1,
+            inode: 0,
+            contentDigest: nil
+        )
+
+        func withContentDigest(_ digest: Data) -> Snapshot {
+            var copy = self
+            copy.contentDigest = digest
+            return copy
+        }
     }
 
     enum Event {
@@ -49,9 +64,26 @@ final class FileWatcher {
     private var pollTimer: DispatchSourceTimer?
     private var lastSnapshot: Snapshot
     private var coalesceWorkItem: DispatchWorkItem?
+    /// A filesystem event is a strong signal that content should be checked
+    /// immediately. Keep that request when a polling tick happens to
+    /// coalesce with the event.
+    private var forceContentDigestOnNextCheck = false
     /// Writes we made ourselves must not come back to us as external changes.
     private var suppressUntil: Date = .distantPast
-    private var suppressedSnapshot: Snapshot?
+    /// The last snapshot observed while an own-write suppression window was
+    /// open.  This is deliberately separate from `lastSnapshot`: advancing the
+    /// baseline before deciding whether a snapshot is ours is the race that
+    /// used to swallow an external atomic replacement.
+    private var suppressedSnapshots: [Snapshot] = []
+    private var suppressionBaseline: Snapshot?
+    private var expectedOwnSnapshot: Snapshot?
+    private var ownWriteGeneration: UInt64 = 0
+    /// Metadata is the cheap path for ordinary polls. Every few polls we
+    /// still hash unchanged metadata so an in-place rewrite that preserves
+    /// inode, size, and timestamps is detected even on filesystems whose
+    /// event stream is unavailable. FSEvents and test probes force a hash.
+    private var pollProbeCount: UInt64 = 0
+    private let contentDigestPollStride: UInt64 = 4
     /// Bumped on every `stop()` so in-flight coalesced work becomes a no-op.
     private var generation: UInt64 = 0
 
@@ -114,6 +146,7 @@ final class FileWatcher {
         pollTimer = nil
         coalesceWorkItem?.cancel()
         coalesceWorkItem = nil
+        forceContentDigestOnNextCheck = false
     }
 
     /// Point the watcher at a different file (Save As, or following a rename).
@@ -124,6 +157,7 @@ final class FileWatcher {
             stopOnQueue()
             url = resolved
             lastSnapshot = FileWatcher.snapshot(of: resolved)
+            pollProbeCount = 0
             start()
         }
     }
@@ -133,16 +167,50 @@ final class FileWatcher {
     /// document — the toggle-a-checkbox case (§8.5) makes this obvious fast.
     func suppressOwnWrite(for interval: TimeInterval = 0.6) {
         onQueue {
+            ownWriteGeneration &+= 1
+            suppressionBaseline = lastSnapshot
+            expectedOwnSnapshot = nil
+            suppressedSnapshots.removeAll(keepingCapacity: true)
             suppressUntil = Date().addingTimeInterval(interval)
-            suppressedSnapshot = nil
         }
     }
 
-    /// Call after writing so the baseline matches what is now on disk.
-    func acknowledgeOwnWrite() {
+    /// Call after writing so the baseline can reconcile the replacement.  When
+    /// supplied, `contents` are the exact bytes Downright intended to write;
+    /// retaining them is what distinguishes a racing external replacement from
+    /// a successful own save even if no filesystem event arrived yet.
+    func acknowledgeOwnWrite(contents: Data? = nil) {
         onQueue {
-            lastSnapshot = FileWatcher.snapshot(of: url)
+            let actual = FileWatcher.snapshot(of: url)
+            // Passing the bytes written by the document layer lets us tell an
+            // external replacement that won the race before this callback from
+            // the bytes Downright intended to write.  Keep the no-argument API
+            // for existing callers; its snapshot remains the best available
+            // fallback when the caller cannot provide the payload.
+            expectedOwnSnapshot = contents.map {
+                actual.withContentDigest(FileWatcher.contentDigest(for: $0))
+            } ?? actual
+
+            if actual == expectedOwnSnapshot {
+                lastSnapshot = actual
+            } else if actual != lastSnapshot {
+                // The file on disk is not the payload we just wrote.  Retain it
+                // as an external observation for the reconciliation pass.
+                recordSuppressedSnapshot(actual)
+            }
             suppressUntil = Date().addingTimeInterval(0.25)
+        }
+    }
+
+    /// A guarded save failed before committing our payload. End suppression
+    /// immediately so the restored external generation is observed normally.
+    func cancelOwnWriteSuppression() {
+        onQueue {
+            expectedOwnSnapshot = nil
+            suppressedSnapshots.removeAll(keepingCapacity: true)
+            suppressUntil = .distantPast
+            forceContentDigestOnNextCheck = true
+            scheduleCheck(forceContentDigest: true)
         }
     }
 
@@ -227,7 +295,8 @@ final class FileWatcher {
             URL(fileURLWithPath: path).standardizedFileURL.path == target
         }
         guard matches else { return }
-        scheduleCheck()
+        recordCurrentSnapshotIfSuppressed()
+        scheduleCheck(forceContentDigest: true)
     }
 
     /// Whether a path under a watched directory is worth waking the owner for.
@@ -268,23 +337,133 @@ final class FileWatcher {
 
     // MARK: - Change detection
 
-    private func scheduleCheck() {
+    private func scheduleCheck(forceContentDigest: Bool = false) {
+        if forceContentDigest {
+            forceContentDigestOnNextCheck = true
+        }
         coalesceWorkItem?.cancel()
         let gen = generation
+        let writeGen = ownWriteGeneration
         let item = DispatchWorkItem { [weak self] in
-            guard let self, self.generation == gen else { return }
-            self.check()
+            guard let self,
+                  self.generation == gen,
+                  self.ownWriteGeneration == writeGen
+            else { return }
+            let shouldForceContentDigest = self.forceContentDigestOnNextCheck
+            self.forceContentDigestOnNextCheck = false
+            self.check(forceContentDigest: shouldForceContentDigest)
         }
         coalesceWorkItem = item
         queue.asyncAfter(deadline: .now() + coalesceInterval, execute: item)
     }
 
-    private func check() {
-        let now = FileWatcher.snapshot(of: url)
-        guard now != lastSnapshot else { return }
+    /// Synchronous filesystem probe used by deterministic integration tests.
+    /// Production notifications still arrive through FSEvents and the polling
+    /// safety net; this hook only avoids making race tests depend on scheduler
+    /// timing.
+    func checkNowForTesting() {
+        onQueue { check(forceContentDigest: true) }
+    }
 
+    /// A production-shaped metadata-only probe used by deterministic tests to
+    /// exercise the bounded same-metadata fallback without waiting 1.5s per
+    /// poll. Unlike `checkNowForTesting`, this does not force a content read.
+    func pollNowForTesting() {
+        onQueue { check(forceContentDigest: false) }
+    }
+
+    private func check(forceContentDigest: Bool = false) {
+        pollProbeCount &+= 1
+        let metadata = FileWatcher.metadata(of: url) ?? .missing
+        let metadataChanged = !FileWatcher.metadataMatches(metadata, lastSnapshot)
+        let periodicContentProbe = pollProbeCount % contentDigestPollStride == 0
+        let suppressionActive = Date() < suppressUntil
+        guard forceContentDigest || metadataChanged || periodicContentProbe || !suppressedSnapshots.isEmpty else {
+            return
+        }
+
+        let now = FileWatcher.snapshot(of: url, includeContentDigest: true)
+
+        if suppressionActive {
+            guard now != lastSnapshot else { return }
+            if let expectedOwnSnapshot, now == expectedOwnSnapshot {
+                // Consume our own replacement, but do not discard an external
+                // snapshot observed earlier in the same generation.
+                lastSnapshot = now
+            } else {
+                recordSuppressedSnapshot(now)
+            }
+            scheduleCheck()
+            return
+        }
+
+        if !suppressedSnapshots.isEmpty {
+            reconcileSuppressedChange(final: now)
+            return
+        }
+
+        guard now != lastSnapshot else { return }
         let previous = lastSnapshot
         lastSnapshot = now
+        deliver(event(for: now, previous: previous))
+    }
+
+    /// Reconciles observations made while an own-write window was open.  The
+    /// final snapshot is always committed, including when an external change
+    /// preceded our own bytes; this prevents a later poll from re-reporting the
+    /// suppressed own write.  Only the external snapshot is delivered.
+    private func reconcileSuppressedChange(final: Snapshot) {
+        let previous = suppressionBaseline ?? lastSnapshot
+        let expected = expectedOwnSnapshot
+        var candidates = suppressedSnapshots.filter {
+            $0 != expected && $0 != previous
+        }
+        if final != previous, final != expected {
+            candidates.append(final)
+        }
+        // Atomic replacement can expose a brief missing path between unlink
+        // and rename.  Once the expected own bytes are present, that transient
+        // is part of our save rather than an external removal event.
+        if final == expected, !candidates.isEmpty,
+           candidates.allSatisfy({ $0.size < 0 }) {
+            candidates.removeAll(keepingCapacity: true)
+        }
+        let observedExternal = candidates.last
+
+        suppressionBaseline = nil
+        expectedOwnSnapshot = nil
+        suppressedSnapshots.removeAll(keepingCapacity: true)
+        suppressUntil = .distantPast
+        lastSnapshot = final
+
+        if let observedExternal {
+            deliver(event(for: observedExternal, previous: previous))
+        }
+    }
+
+    private func recordSuppressedSnapshot(_ snapshot: Snapshot) {
+        guard snapshot != suppressionBaseline,
+              !suppressedSnapshots.contains(snapshot)
+        else { return }
+        suppressedSnapshots.append(snapshot)
+    }
+
+    private func recordCurrentSnapshotIfSuppressed() {
+        guard Date() < suppressUntil else { return }
+        let snapshot = FileWatcher.snapshot(of: url)
+        guard snapshot != lastSnapshot else { return }
+        if let expectedOwnSnapshot, snapshot == expectedOwnSnapshot {
+            lastSnapshot = snapshot
+        } else {
+            recordSuppressedSnapshot(snapshot)
+        }
+    }
+
+    private func deliver(_ event: Event) {
+        DispatchQueue.main.async { [handler] in handler(event) }
+    }
+
+    private func event(for now: Snapshot, previous: Snapshot) -> Event {
 
         // An atomic save deletes the original file before renaming the new one
         // in; if we act on the deletion we would close the document or report
@@ -302,8 +481,7 @@ final class FileWatcher {
            let relocated = FileWatcher.locate(previous, in: url.deletingLastPathComponent()) {
             retarget(to: relocated)
             let newURL = url
-            DispatchQueue.main.async { [handler] in handler(.renamed(to: newURL)) }
-            return
+            return .renamed(to: newURL)
         }
 
         let event: Event
@@ -315,33 +493,16 @@ final class FileWatcher {
             event = .changed
         }
 
-        if Date() < suppressUntil {
-            // Still inside the suppression window for our own write.
-            // Defer notification until the suppression window closes and
-            // acknowledgeOwnWrite has had an opportunity to update lastSnapshot.
-            scheduleCheck()
-            return
-        }
-
-        // Absorb a snapshot we already surfaced while the suppression window was
-        // open (FSEvents can retransmit), so the one external write is reported
-        // once, not repeatedly for each delivery.
-        if let suppressed = suppressedSnapshot, now == suppressed {
-            suppressedSnapshot = nil
-            return
-        }
-        suppressedSnapshot = nil
-
-        DispatchQueue.main.async { [handler] in handler(event) }
+        return event
     }
 
     /// Finds the file that used to be at the watched path, shallowly, in one
     /// directory.
     ///
-    /// Matched on the *whole* snapshot — inode, size, and modification time —
-    /// not on the inode alone: a rename changes none of the three, while an
-    /// inode number freed by a genuine deletion can be handed straight back to
-    /// an unrelated new file.
+    /// Matched on the *whole* snapshot — inode, size, modification time, and
+    /// content digest — not on the inode alone: a rename changes none of these,
+    /// while an inode number freed by a genuine deletion can be handed straight
+    /// back to an unrelated new file.
     ///
     /// Only ever runs when the watched file has just disappeared, so the cost
     /// is paid once per removal rather than once per event.  Capped because
@@ -353,20 +514,60 @@ final class FileWatcher {
         }
         for name in names.prefix(4096) {
             let candidate = directory.appendingPathComponent(name)
-            if snapshot(of: candidate) == wanted { return candidate }
+            guard let metadata = metadata(of: candidate),
+                  metadata.modified == wanted.modified,
+                  metadata.size == wanted.size,
+                  metadata.inode == wanted.inode
+            else { continue }
+            // Only hash a candidate whose inode/metadata could actually be the
+            // relocated file; a busy sibling directory should stay cheap.
+            if wanted.contentDigest == nil || snapshot(of: candidate) == wanted {
+                return candidate
+            }
         }
         return nil
     }
 
-    private static func snapshot(of url: URL) -> Snapshot {
+    private static func snapshot(of url: URL, includeContentDigest: Bool = true) -> Snapshot {
+        for _ in 0..<3 {
+            guard let before = metadata(of: url) else { return .missing }
+            guard includeContentDigest || before != .missing else { return .missing }
+            guard includeContentDigest else { return before }
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+                return before
+            }
+            guard let after = metadata(of: url) else { return .missing }
+            guard before == after else { continue }
+            return before.withContentDigest(contentDigest(for: data))
+        }
+
+        // A file that is being rewritten continuously is still represented by
+        // its latest metadata.  The next FSEvents/poll pass will retry the
+        // content signature once the writer settles.
+        return metadata(of: url) ?? .missing
+    }
+
+    private static func metadataMatches(_ lhs: Snapshot, _ rhs: Snapshot) -> Bool {
+        lhs.modified == rhs.modified
+            && lhs.size == rhs.size
+            && lhs.inode == rhs.inode
+    }
+
+    private static func metadata(of url: URL) -> Snapshot? {
         var st = stat()
-        guard stat(url.path, &st) == 0 else { return .missing }
+        guard stat(url.path, &st) == 0 else { return nil }
         let seconds = TimeInterval(st.st_mtimespec.tv_sec)
         let nanos = TimeInterval(st.st_mtimespec.tv_nsec) / 1_000_000_000
         return Snapshot(
             modified: Date(timeIntervalSince1970: seconds + nanos),
             size: Int(st.st_size),
-            inode: UInt64(st.st_ino)
+            inode: UInt64(st.st_ino),
+            contentDigest: nil
         )
     }
+
+    private static func contentDigest(for data: Data) -> Data {
+        Data(SHA256.hash(data: data))
+    }
+
 }

@@ -287,7 +287,8 @@ enum CodeFileExtensions {
 // activity, the panels a reader reaches for, task progress, overflow — that
 // never nudges the centre rail.
 //
-// Find and Outline are in that cluster rather than inside `···` on purpose.
+// Contents / Outline and Find are in that cluster rather than inside `···` on
+// purpose.
 // The overflow was the only interactive control on the trailing edge, which
 // put every panel in the app one unlabelled glyph and one menu away in a
 // window with room for three more buttons.  `···` keeps what a reader reaches
@@ -329,6 +330,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             guard let window else { return nil }
             let item = NSToolbarItem(itemIdentifier: identifier)
             let identity = ToolbarDocumentIdentityView(window: window)
+            identity.documentState = markdownDocument.presentationState
             item.view = identity
             toolbarDocumentIdentityView = identity
             item.isBordered = false
@@ -356,6 +358,13 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             return item
 
         case Self.clusterItem:
+            let contentsButton = ToolbarActionButton(
+                symbol: "list.bullet.indent", label: Command.documentLens.title,
+                help: "Show or hide the document Contents and Outline",
+                target: self, action: #selector(toolbarShowDocumentLens(_:)),
+                usesGlassSurface: true
+            )
+            contentsButton.styleSheet = activeStyleSheet
             let findButton = ToolbarActionButton(
                 symbol: "magnifyingglass", label: "Find",
                 help: "Find in this document",
@@ -374,6 +383,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = ToolbarTrailingCluster(views: [
                 activityIndicator,
+                contentsButton,
                 findButton,
                 progressRing,
                 pill,
@@ -400,6 +410,10 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             // keeps the panels one reach away.
             let menuRep = NSMenuItem(title: "Actions", action: nil, keyEquivalent: "")
             let repMenu = NSMenu(title: "Actions")
+            repMenu.addItem(menuItem(
+                title: Command.documentLens.title, symbol: "list.bullet.indent",
+                action: #selector(toolbarShowDocumentLens(_:))
+            ))
             repMenu.addItem(menuItem(
                 title: "Find", symbol: "magnifyingglass",
                 action: #selector(toolbarShowFind(_:))
@@ -534,6 +548,10 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         toggleTaskPanel()
     }
 
+    @objc private func toolbarShowDocumentLens(_ sender: Any?) {
+        perform(.documentLens)
+    }
+
     @objc private func toolbarToggleSourceFocus(_ sender: Any?) {
         toolbarModeChanged(primaryContainer.textView.sourceFocus == .none ? 1 : 0)
     }
@@ -559,6 +577,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         menu.delegate = self
 
         menu.addItem(sectionHeader("Panels"))
+        addCommands([.documentLens], to: menu)
         menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
         menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
 

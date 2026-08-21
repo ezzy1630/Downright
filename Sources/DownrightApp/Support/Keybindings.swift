@@ -8,7 +8,7 @@ import AppKit
 /// §7.2 can spend the bare letter keys at all.
 ///
 /// Chords are chosen so nothing shadows a macOS convention: ⌘0 is Actual Size,
-/// ⌘⇧P is Page Setup, ⌘⇧V is Paste and Match Style, ⌃⌘F is Enter Full Screen,
+/// ⌘⇧P is Page Setup, ⌥⇧⌘V is Paste and Match Style, ⌃⌘F is Enter Full Screen,
 /// and ⌘T / ⌘⇧T stay free for the tab chords users reach for reflexively.
 enum KeybindingDefaults {
     /// A command may carry more than one binding: `↓` and `j` both scroll.

@@ -79,23 +79,23 @@ enum ToolbarScrubPhase {
 
 /// Leading titlebar identity. It mirrors the window's document title while
 /// preserving a deliberate two-line hierarchy and the titlebar drag region.
-/// A quiet proxy opens the path menu; an edited dot marks unsaved work.
+/// A quiet proxy opens the path menu; a compact native label names exceptional
+/// document state. Neutral documents remain visually silent.
 @MainActor
 final class ToolbarDocumentIdentityView: NSView {
     private enum Metrics {
         static let width: CGFloat = 220
         static let height: CGFloat = 36
         static let proxySize: CGFloat = 16
-        static let dirtySize: CGFloat = 6
         static let titleSize: CGFloat = 12.5
+        static let stateSize: CGFloat = 9.5
         static let contextSize: CGFloat = 10
         static let lineGap: CGFloat = 1
     }
 
     private weak var hostWindow: NSWindow?
     private let proxyButton = ToolbarInteractiveButton(frame: .zero)
-    private let dirtyDot = NSView()
-    private let externalDot = NSView()
+    private let stateLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let contextLabel = NSTextField(labelWithString: "")
     private let titleRow = NSStackView()
@@ -109,16 +109,27 @@ final class ToolbarDocumentIdentityView: NSView {
     var isEdited: Bool = false {
         didSet {
             guard isEdited != oldValue else { return }
-            dirtyDot.isHidden = !isEdited
-            refreshAccessibility()
+            if isEdited, documentState.phase == .neutral {
+                documentState = .init(phase: .edited, provenance: "Edit", detail: nil)
+            } else if !isEdited, documentState.phase == .edited {
+                documentState = .neutral
+            }
         }
     }
 
     var hasExternalChanges: Bool = false {
         didSet {
             guard hasExternalChanges != oldValue else { return }
-            externalDot.isHidden = !hasExternalChanges
-            refreshAccessibility()
+            if hasExternalChanges, documentState.phase == .neutral {
+                documentState = .init(phase: .changedOnDisk, provenance: nil, detail: nil)
+            }
+        }
+    }
+
+    var documentState: MarkdownDocument.PresentationState = .neutral {
+        didSet {
+            guard documentState != oldValue else { return }
+            refreshDocumentState()
         }
     }
 
@@ -148,23 +159,12 @@ final class ToolbarDocumentIdentityView: NSView {
         proxyButton.target = self
         proxyButton.action = #selector(showPathMenu(_:))
 
-        dirtyDot.wantsLayer = true
-        // Theme accent, not controlAccentColor: Paper Light / Warm Dark are
-        // blue-native, and the system accent can still be orange on the Mac.
-        dirtyDot.layer?.backgroundColor = StyleSheet.current.accent.cgColor
-        dirtyDot.layer?.cornerRadius = Metrics.dirtySize / 2
-        dirtyDot.isHidden = true
-        dirtyDot.setContentHuggingPriority(.required, for: .horizontal)
-        dirtyDot.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        externalDot.wantsLayer = true
-        externalDot.layer?.backgroundColor = NSColor.clear.cgColor
-        externalDot.layer?.borderColor = StyleSheet.current.accent.cgColor
-        externalDot.layer?.borderWidth = 1.5
-        externalDot.layer?.cornerRadius = Metrics.dirtySize / 2
-        externalDot.isHidden = true
-        externalDot.setContentHuggingPriority(.required, for: .horizontal)
-        externalDot.setContentCompressionResistancePriority(.required, for: .horizontal)
+        stateLabel.font = .systemFont(ofSize: Metrics.stateSize, weight: .medium)
+        stateLabel.lineBreakMode = .byTruncatingTail
+        stateLabel.maximumNumberOfLines = 1
+        stateLabel.isHidden = true
+        stateLabel.setContentHuggingPriority(.required, for: .horizontal)
+        stateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.maximumNumberOfLines = 1
@@ -182,8 +182,7 @@ final class ToolbarDocumentIdentityView: NSView {
         titleRow.alignment = .centerY
         titleRow.spacing = 5
         titleRow.detachesHiddenViews = true
-        titleRow.addArrangedSubview(externalDot)
-        titleRow.addArrangedSubview(dirtyDot)
+        titleRow.addArrangedSubview(stateLabel)
         titleRow.addArrangedSubview(titleLabel)
 
         textColumn.orientation = .vertical
@@ -194,8 +193,6 @@ final class ToolbarDocumentIdentityView: NSView {
 
         proxyButton.translatesAutoresizingMaskIntoConstraints = false
         textColumn.translatesAutoresizingMaskIntoConstraints = false
-        dirtyDot.translatesAutoresizingMaskIntoConstraints = false
-        externalDot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(proxyButton)
         addSubview(textColumn)
 
@@ -207,11 +204,6 @@ final class ToolbarDocumentIdentityView: NSView {
             proxyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             proxyButton.widthAnchor.constraint(equalToConstant: Metrics.proxySize + 2),
             proxyButton.heightAnchor.constraint(equalToConstant: Metrics.proxySize + 2),
-
-            dirtyDot.widthAnchor.constraint(equalToConstant: Metrics.dirtySize),
-            dirtyDot.heightAnchor.constraint(equalToConstant: Metrics.dirtySize),
-            externalDot.widthAnchor.constraint(equalToConstant: Metrics.dirtySize),
-            externalDot.heightAnchor.constraint(equalToConstant: Metrics.dirtySize),
 
             textColumn.leadingAnchor.constraint(equalTo: proxyButton.trailingAnchor, constant: 5),
             textColumn.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
@@ -236,6 +228,7 @@ final class ToolbarDocumentIdentityView: NSView {
             }
         }
         refreshEmphasis()
+        refreshDocumentState()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -364,28 +357,80 @@ final class ToolbarDocumentIdentityView: NSView {
         titleLabel.stringValue = title
         contextLabel.stringValue = context
         contextLabel.isHidden = context.isEmpty
-        toolTip = context.isEmpty ? title : "\(title) — \(context)"
+        refreshToolTip()
         refreshAccessibility()
     }
 
-    private func refreshAccessibility() {
-        let base = contextLabel.stringValue.isEmpty
+    private var identityDescription: String {
+        contextLabel.stringValue.isEmpty
             ? titleLabel.stringValue
             : "\(titleLabel.stringValue), \(contextLabel.stringValue)"
-        var states: [String] = []
-        if isEdited { states.append("edited") }
-        if hasExternalChanges { states.append("changed on disk") }
-        let label = states.isEmpty ? base : "\(base), \(states.joined(separator: ", "))"
+    }
+
+    private func refreshAccessibility() {
+        let base = identityDescription
+        let state = stateDescription
+        let label = state == nil ? base : "\(base), \(state!)"
         setAccessibilityRole(.group)
         setAccessibilityLabel(label)
+    }
+
+    private var stateDescription: String? {
+        let title: String
+        switch documentState.phase {
+        case .neutral: return nil
+        case .edited: title = "Edited"
+        case .saving: title = "Saving"
+        case .saved: title = "Saved"
+        case .changedOnDisk: title = "Changed on disk"
+        case .conflict: title = "Conflict"
+        case .saveFailed: title = "Save failed"
+        }
+        let provenance = documentState.provenance.map { " — \($0)" } ?? ""
+        let detail = documentState.detail.map { ": \($0)" } ?? ""
+        return title + provenance + detail
+    }
+
+    private func refreshDocumentState() {
+        switch documentState.phase {
+        case .neutral:
+            stateLabel.stringValue = ""
+            stateLabel.isHidden = true
+        case .edited: stateLabel.stringValue = "Edited"
+        case .saving: stateLabel.stringValue = "Saving"
+        case .saved: stateLabel.stringValue = "Saved"
+        case .changedOnDisk: stateLabel.stringValue = "On disk"
+        case .conflict: stateLabel.stringValue = "Conflict"
+        case .saveFailed: stateLabel.stringValue = "Save failed"
+        }
+        if documentState.phase != .neutral { stateLabel.isHidden = false }
+        refreshToolTip()
+        refreshEmphasis()
+        refreshAccessibility()
+    }
+
+    private func refreshToolTip() {
+        let base = identityDescription
+        guard let state = stateDescription else {
+            toolTip = base.isEmpty ? nil : base
+            return
+        }
+        toolTip = base.isEmpty ? state : "\(base) — \(state)"
     }
 
     private func refreshEmphasis() {
         titleLabel.textColor = hostWindow?.isKeyWindow == true ? .labelColor : .secondaryLabelColor
         contextLabel.textColor = .tertiaryLabelColor
-        let accent = StyleSheet.current.accent
-        dirtyDot.layer?.backgroundColor = accent.cgColor
-        externalDot.layer?.borderColor = accent.cgColor
+        switch documentState.phase {
+        case .conflict, .saveFailed:
+            stateLabel.textColor = .systemRed
+        case .changedOnDisk:
+            stateLabel.textColor = StyleSheet.current.accent
+        case .edited, .saving, .saved:
+            stateLabel.textColor = .secondaryLabelColor
+        case .neutral:
+            stateLabel.textColor = .tertiaryLabelColor
+        }
         updateProxyIcon(for: hostWindow?.representedURL)
     }
 

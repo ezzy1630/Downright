@@ -500,7 +500,10 @@ public final class DecorationEngine {
             return
 
         case .heading, .paragraph, .htmlBlock, .footnoteDefinition:
-            if let program = cachedProgram(for: block, context: context) {
+            if let html = block.safeHTML, html.isSafe {
+                applyBase(block, context: context, state: &state)
+                applySafeHTML(html, block: block, state: &state)
+            } else if let program = cachedProgram(for: block, context: context) {
                 applyProgram(program, at: block.range.location, state: &state)
                 let attributes = styles.baseAttributes(for: block, context: context)
                 applyFirstHeadingSpacing(block, attributes: attributes, state: &state)
@@ -839,6 +842,135 @@ public final class DecorationEngine {
         ], to: span.contentRange.length > 0 ? span.contentRange : span.range, state: &state)
     }
 
+    /// Applies a conservative native presentation to README-style HTML while
+    /// leaving every source character in storage. MarkerPolicy controls when
+    /// the original tags are shown for editing.
+    private func applySafeHTML(
+        _ html: SafeHTMLDocument,
+        block: MDBlock,
+        state: inout DecorateState
+    ) {
+        let bodyFont = styleSheet.bodyFont()
+        for annotation in html.annotations {
+            for tagRange in annotation.tagRanges {
+                apply(styles.markerAttributes(dimmed: true), to: tagRange, state: &state)
+            }
+            switch annotation.kind {
+            case .paragraph(let alignment):
+                guard let alignment, annotation.contentRange.length > 0 else { continue }
+                let current = state.storage.attribute(
+                        .paragraphStyle,
+                        at: annotation.contentRange.location,
+                        effectiveRange: nil
+                      ) as? NSParagraphStyle
+                let paragraph = current?.mutableCopy() as? NSMutableParagraphStyle
+                    ?? NSMutableParagraphStyle()
+                switch alignment {
+                case .left: paragraph.alignment = .left
+                case .center: paragraph.alignment = .center
+                case .right: paragraph.alignment = .right
+                case .justify: paragraph.alignment = .justified
+                }
+                let physicalParagraph = (state.storage.string as NSString)
+                    .paragraphRange(for: annotation.range)
+                apply([.paragraphStyle: paragraph.copy() as Any], to: physicalParagraph, state: &state)
+
+            case .heading(let level):
+                apply([
+                    .font: styleSheet.headingFont(level: level),
+                    .foregroundColor: styleSheet.headingColor(level: level),
+                    .drHeading: level,
+                ], to: annotation.contentRange, state: &state)
+
+            case .strong:
+                apply([.font: emphasized(bodyFont, bold: true, italic: false)],
+                      to: annotation.contentRange, state: &state)
+
+            case .emphasis:
+                apply([.font: emphasized(bodyFont, bold: false, italic: true)],
+                      to: annotation.contentRange, state: &state)
+
+            case .link(let destination, _):
+                apply([
+                    .drLink: destination,
+                    .link: destination,
+                    .foregroundColor: styleSheet.link,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                ], to: annotation.contentRange, state: &state)
+
+            case .image(let source, let alt):
+                let payload = FragmentPayload(
+                    kind: .image,
+                    sourceRange: annotation.range,
+                    blockIdentity: block.identity,
+                    detail: source
+                )
+                apply([
+                    .drFragment: payload,
+                    .drLink: source,
+                    .drReference: alt,
+                ], to: annotation.range, state: &state)
+                state.fragmentCount += 1
+
+            case .summary:
+                // Keep the summary visually distinct even though the source
+                // tags are hidden in Read/Live. The disclosure glyph is a
+                // source-preserving display-map substitution; this treatment
+                // gives VoiceOver/text selection and a narrow window a stable
+                // semantic anchor without inserting a character into source.
+                apply([
+                    .font: emphasized(bodyFont, bold: true, italic: false),
+                    .backgroundColor: styleSheet.surface.withAlphaComponent(0.34),
+                ], to: annotation.contentRange, state: &state)
+
+            case .tableCell(let header, let alignment):
+                if header {
+                    apply([.font: emphasized(bodyFont, bold: true, italic: false)],
+                          to: annotation.contentRange, state: &state)
+                }
+                if let alignment, annotation.contentRange.length > 0 {
+                    let current = state.storage.attribute(
+                        .paragraphStyle,
+                        at: annotation.contentRange.location,
+                        effectiveRange: nil
+                    ) as? NSParagraphStyle
+                    let paragraph = current?.mutableCopy() as? NSMutableParagraphStyle
+                        ?? NSMutableParagraphStyle()
+                    switch alignment {
+                    case .left: paragraph.alignment = .left
+                    case .center: paragraph.alignment = .center
+                    case .right: paragraph.alignment = .right
+                    case .justify: paragraph.alignment = .justified
+                    }
+                    apply([.paragraphStyle: paragraph], to: annotation.contentRange, state: &state)
+                }
+                // HTML tables commonly omit whitespace between cells. A small
+                // trailing kern is a visual column gutter that does not alter
+                // the source string or its source/display coordinate mapping.
+                if annotation.contentRange.length > 0 {
+                    let trailing = NSRange(
+                        location: annotation.contentRange.upperBound - 1,
+                        length: 1
+                    )
+                    apply([
+                        .kern: RenderMetrics.tableColumnGap * 0.5,
+                        .backgroundColor: styleSheet.surface.withAlphaComponent(header ? 0.26 : 0.12),
+                    ], to: trailing, state: &state)
+                    apply([
+                        .backgroundColor: styleSheet.surface.withAlphaComponent(header ? 0.26 : 0.12),
+                    ], to: annotation.contentRange, state: &state)
+                }
+
+            case .inert:
+                apply([.foregroundColor: styleSheet.textFaint],
+                      to: annotation.range, state: &state)
+
+            case .lineBreak, .details, .detailsClosing, .table, .tableRow:
+                break
+            }
+        }
+    }
+
     /// Bold and italic inside a heading must stay at the heading's size, so
     /// traits are derived from the block's own font unless the block is at body
     /// size — where the theme's `emphasisFont` gets to make the call (§11.1).
@@ -949,6 +1081,7 @@ public final class DecorationEngine {
     // MARK: - Program cache
 
     private func cachedProgram(for block: MDBlock, context: BlockContext) -> [AttributeOp]? {
+        guard block.safeHTML == nil else { return nil }
         guard block.subtreeHash != 0, block.children.isEmpty, block.content.isLeafText else { return nil }
         // Inline math carries its LaTeX as a payload read out of the document,
         // which the range-shifted recorder cannot resolve.  Rare enough that

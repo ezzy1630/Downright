@@ -38,6 +38,47 @@ struct WindowChromeTests {
     }
 
     @Test
+    func documentIdentityNamesEveryNonNeutralStateAccessibly() throws {
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        let identity = try #require(controller.toolbarDocumentIdentityView)
+        let cases: [(MarkdownDocument.PresentationState.Phase, String)] = [
+            (.edited, "Edited"),
+            (.saving, "Saving"),
+            (.saved, "Saved"),
+            (.changedOnDisk, "Changed on disk"),
+            (.conflict, "Conflict"),
+            (.saveFailed, "Save failed"),
+        ]
+        for (phase, label) in cases {
+            identity.documentState = .init(
+                phase: phase, provenance: "Paste", detail: "Example"
+            )
+            #expect(identity.accessibilityLabel()?.contains(label) == true)
+            #expect(identity.accessibilityLabel()?.contains("Paste") == true)
+            #expect(identity.toolTip?.contains(label) == true)
+        }
+        identity.documentState = .neutral
+        #expect(identity.accessibilityLabel()?.contains("Edited") == false)
+        #expect(identity.toolTip == nil)
+    }
+
+    @Test
+    func missingFileRecoveryOffersOnlyExplicitNativeChoices() throws {
+        let controller = DocumentWindowController()
+        controller.presentSaveError(SaveError.fileMissing(URL(fileURLWithPath: "/tmp/missing.md")))
+        let alert = try #require(controller.saveRecoveryAlert)
+        #expect(alert.buttons.map(\.title) == [
+            "Save a Copy…", "Recreate File", "Discard Changes", "Cancel",
+        ])
+        #expect(alert.buttons.allSatisfy { $0.toolTip?.isEmpty == false })
+        if let window = controller.window, window.attachedSheet != nil {
+            window.endSheet(alert.window, returnCode: .cancel)
+        }
+        controller.close()
+    }
+
+    @Test
     func toolbarScrubPolicyClampsMovementAndCrossesAtTheMidpoint() {
         #expect(
             ToolbarChromePolicy.scrubState(pointerX: -20, leftCenterX: 44, rightCenterX: 132)
@@ -234,7 +275,9 @@ struct WindowChromeTests {
         // put every panel in the app behind one unlabelled glyph and a menu —
         // in a window with room for more buttons.
         let find = try #require(
-            cluster.arrangedSubviews.first { $0 is ToolbarActionButton } as? ToolbarActionButton,
+            cluster.arrangedSubviews.first {
+                ($0 as? ToolbarActionButton)?.accessibilityLabel() == "Find"
+            } as? ToolbarActionButton,
             "find is not in the trailing cluster"
         )
         #expect(find.intrinsicContentSize.width == 34)
@@ -244,6 +287,14 @@ struct WindowChromeTests {
         #expect(find.feedbackInsetY == 0)
         #expect(find.feedbackCornerRadius == 17)
         #expect(!find.isOn, "find should rest unlit with its panel closed")
+        let contents = try #require(
+            cluster.arrangedSubviews.first {
+                ($0 as? ToolbarActionButton)?.accessibilityLabel() == Command.documentLens.title
+            } as? ToolbarActionButton,
+            "contents is not in the trailing cluster"
+        )
+        #expect(contents.toolTip == "Show or hide the document Contents and Outline")
+        #expect(contents.accessibilityHelp() == "Show or hide the document Contents and Outline")
         #expect(cluster.arrangedSubviews.contains { $0 is ActivityIndicatorView })
         #expect(cluster.arrangedSubviews.contains { $0 is TaskProgressRing })
         let updatePill = try #require(
@@ -257,12 +308,13 @@ struct WindowChromeTests {
             cluster.arrangedSubviews.first { $0 is ToolbarMenuButton } as? ToolbarMenuButton,
             "the overflow menu is not in the trailing cluster"
         )
+        #expect(overflow.popupMenuItems.contains { MainMenu.command(for: $0) == .documentLens })
         #expect(overflow.intrinsicContentSize.width == 34)
         #expect(overflow.intrinsicContentSize.height == 34)
         #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })
         #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
         // The cluster leads with the spinner and ends at the menu: activity,
-        // find, ring, pill, overflow — each hidden view costs nothing.
+        // contents, find, ring, pill, overflow — each hidden view costs nothing.
         #expect(cluster.arrangedSubviews.first is ActivityIndicatorView)
         #expect(cluster.arrangedSubviews.last is ToolbarMenuButton)
     }

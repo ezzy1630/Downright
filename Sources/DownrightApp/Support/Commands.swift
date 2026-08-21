@@ -76,7 +76,7 @@ enum Command: String, CaseIterable, Codable {
         case .tableEditor: return "Edit Table…"
         case .assetDoctor: return "Asset Doctor"
         case .commandPalette: return "Command Palette…"
-        case .documentLens: return "Document Lens"
+        case .documentLens: return "Contents / Outline"
         case .readerProfiles: return "Reader Profiles"
         case .documentHealth: return "Document Health"
         case .renderTargets: return "Render Targets"

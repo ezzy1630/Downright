@@ -6,7 +6,7 @@ import MarkdownCore
 @Suite(.serialized)
 struct AsyncParseTests {
     @Test @MainActor
-    func externalAbsorbPublishesWholesaleRender() {
+    func externalAbsorbPublishesBoundedIncrementalRender() async throws {
         let document = MarkdownDocument()
         let initial = "# One\n\nA calm paragraph.\n"
         let incoming = "# One\n\nA rewritten paragraph with a different shape.\n"
@@ -20,7 +20,57 @@ struct AsyncParseTests {
         )
 
         #expect(document.text == incoming)
-        #expect(observedDirty?.isWholesale == true)
+        for _ in 0..<100 where observedDirty == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(observedDirty?.isWholesale == false)
+        #expect(observedDirty?.ranges.isEmpty == false)
+    }
+
+    @Test @MainActor
+    func externalAbsorbUndoRedoDoesNotConsumeNextLocalEdit() async throws {
+        let document = MarkdownDocument()
+        let original = "# One\n\nOriginal body.\n"
+        let incoming = "# One\n\nExternal body.\n"
+        document.adopt(text: original, displayURL: nil)
+
+        document.applyExternalText(
+            incoming,
+            hunks: TextDiff.hunks(old: original, new: incoming)
+        )
+        for _ in 0..<100 where document.parsed.text != incoming {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(document.parsed.text == incoming)
+
+        document.undoManager.undo()
+        #expect(document.text == original)
+        #expect(document.parsed.text == original)
+
+        document.undoManager.redo()
+        #expect(document.text == incoming)
+        #expect(document.parsed.text == incoming)
+
+        // Drain the delegate callbacks from absorb, undo, and redo. The next
+        // edit must still be treated as a user mutation after all of them.
+        for _ in 0..<20 { await Task.yield() }
+        var reparseCount = 0
+        document.onReparse = { parsed, _ in
+            if parsed.text == document.text { reparseCount += 1 }
+        }
+        #expect(document.replace(
+            NSRange(location: document.storage.length, length: 0),
+            with: "Local tail.\n",
+            actionName: "Paste"
+        ))
+        #expect(document.isDirty)
+        #expect(document.presentationState.phase == .edited)
+
+        for _ in 0..<100 where document.parsed.text != document.text {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(document.parsed.text == document.text)
+        #expect(reparseCount == 1)
     }
 
     @Test @MainActor

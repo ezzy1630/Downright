@@ -184,8 +184,11 @@ HOST_BUILD="$(host_build "$APP")"
 
 SPOTLIGHT_SHORT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')"
 SPOTLIGHT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')"
+HOST_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS/Info.plist" 2>/dev/null || echo '')"
+SPOTLIGHT_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$SPOTLIGHT_PLIST" 2>/dev/null || echo '')"
 check "$([ "$SPOTLIGHT_SHORT" = "$HOST_SHORT" ] && echo 1 || echo 0)" "Spotlight importer marketing version matches host"
 check "$([ "$SPOTLIGHT_BUILD" = "$HOST_BUILD" ] && echo 1 || echo 0)" "Spotlight importer build version matches host"
+check "$([ "$SPOTLIGHT_BUNDLE_ID" = "$HOST_BUNDLE_ID.spotlight" ] && echo 1 || echo 0)" "Spotlight importer identifier follows host"
 
 for appex in "$CONTENTS"/PlugIns/*.appex; do
     [ -e "$appex" ] || continue
@@ -194,8 +197,17 @@ for appex in "$CONTENTS"/PlugIns/*.appex; do
     EXT_PLIST="$(appex_plist "$appex" || true)"
     EXT_SHORT="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$EXT_PLIST" 2>/dev/null || echo "")"
     EXT_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$EXT_PLIST" 2>/dev/null || echo "")"
+    EXT_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$EXT_PLIST" 2>/dev/null || echo "")"
     check "$([ "$EXT_SHORT" = "$HOST_SHORT" ] && echo 1 || echo 0)" "$(basename "$appex") marketing version matches host"
     check "$([ "$EXT_BUILD" = "$HOST_BUILD" ] && echo 1 || echo 0)" "$(basename "$appex") build version matches host"
+    case "$(basename "$appex")" in
+        DownrightQL.appex) EXPECTED_EXTENSION_ID="$HOST_BUNDLE_ID.quicklook" ;;
+        DownrightThumb.appex) EXPECTED_EXTENSION_ID="$HOST_BUNDLE_ID.thumbnail" ;;
+        *) EXPECTED_EXTENSION_ID="" ;;
+    esac
+    if [ -n "$EXPECTED_EXTENSION_ID" ]; then
+        check "$([ "$EXT_BUNDLE_ID" = "$EXPECTED_EXTENSION_ID" ] && echo 1 || echo 0)" "$(basename "$appex") identifier follows host"
+    fi
 done
 
 # Numeric, monotonically increasing CFBundleVersion is a release gate concern
@@ -229,7 +241,13 @@ if [ "$PRODUCTION" = "1" ]; then
     check "$([ "$VERIFY_BEFORE_EXTRACTION" = "true" ] && echo 1 || echo 0)" "update verified before extraction"
     check "$INTERVAL_OK" "scheduled update interval is positive"
 else
-    check 1 "updater-disabled configuration (dev bundle)"
+    DEV_UPDATER_KEYS=0
+    for key in SUAutomaticallyUpdate SUEnableAutomaticChecks SUFeedURL SUPublicEDKey SURequireSignedFeed SUScheduledCheckInterval SUVerifyUpdateBeforeExtraction; do
+        if /usr/libexec/PlistBuddy -c "Print :$key" "$CONTENTS/Info.plist" >/dev/null 2>&1; then
+            DEV_UPDATER_KEYS=$((DEV_UPDATER_KEYS + 1))
+        fi
+    done
+    check "$([ "$DEV_UPDATER_KEYS" -eq 0 ] && echo 1 || echo 0)" "updater-disabled configuration (dev bundle)"
 fi
 
 echo

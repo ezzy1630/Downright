@@ -224,6 +224,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         // The document owns reparsing; the storage delegate already scheduled
         // it.  Change marks shift here so they keep pointing at the same text.
         markdownDocument.changes.adjust(forEditIn: range, delta: delta)
+        markdownDocument.noteMutation(view.lastMutationProvenance)
         scheduleFindRefresh()
     }
 

@@ -656,4 +656,29 @@ struct EditingKeyReproTests {
         let after = try #require(view.rect(forOffset: offset)).minY - clip.bounds.origin.y
         #expect(abs(after - before) < 2, "the picker moved its clicked heading")
     }
+
+    @Test("IME marked text owns a valid undo group")
+    func markedTextUsesValidUndoGrouping() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("EditingKeyReproIME-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try makeController(text: "# 入力\n\nBody\n", file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        view.setSourceSelectedRanges([NSRange(location: 7, length: 0)])
+
+        // NSTextView raises an Objective-C exception when its private marked-
+        // text undo registration runs without a group. Reaching the assertions
+        // is therefore the regression proof for the crash boundary.
+        view.setMarkedText(
+            "かな",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: view.sourceSelectedRange
+        )
+        #expect(view.hasMarkedText())
+        #expect(controller.markdownDocument.text.contains("かな"))
+        view.unmarkText()
+        #expect(!view.hasMarkedText())
+    }
 }

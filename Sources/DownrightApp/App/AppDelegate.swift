@@ -54,9 +54,12 @@ enum WelcomeDocument {
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
         let copy = folder.appendingPathComponent("Welcome to Downright.md")
         // A fresh copy every time: the tour should read the same on the second
-        // visit as on the first, whatever the reader typed into it.
+        // visit as on the first, whatever the reader typed into it. Render
+        // shortcut tokens at open time so customized bindings stay truthful.
         try? manager.removeItem(at: copy)
-        try manager.copyItem(at: bundled, to: copy)
+        let source = try String(contentsOf: bundled, encoding: .utf8)
+        let rendered = try WelcomeTour.render(source)
+        try rendered.write(to: copy, atomically: true, encoding: .utf8)
         return copy
     }
 }
