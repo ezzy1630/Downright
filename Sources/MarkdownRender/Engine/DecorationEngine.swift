@@ -66,6 +66,37 @@ public final class DecorationEngine {
     private var styles: BlockStyleFactory
     private let syntaxCache = SyntaxRunCache()
 
+    // MARK: Source-mode typography (§3.2)
+
+    /// Set for the duration of one `decorate` call whose `.font`, `.ligature`
+    /// and `.paragraphStyle` output is guaranteed to be thrown away before
+    /// anything can read it.
+    ///
+    /// Switching the one text surface into Source is a wholesale pass under the
+    /// Source policy followed — in the same turn, before any layout — by the
+    /// view's whole-document source presentation, which rewrites the font and
+    /// one uniform paragraph style over *every* character.  So the heading
+    /// faces, the list indents, the code row hangs and the per-paragraph styles
+    /// this file computes on that path exist for microseconds and are then
+    /// overwritten.  They are not free to compute: each one is a paragraph walk
+    /// and an attribute run split that the source pass then has to walk back
+    /// over, which is why the switch cost grew with the document rather than
+    /// with what changed.
+    ///
+    /// Everything that is *not* typography still has to be produced here —
+    /// foreground colours, marker highlighting, code syntax runs, links,
+    /// fragments, block identity — because nothing downstream re-establishes
+    /// any of it.  `apply` enforces that split in one place rather than trusting
+    /// each call site to remember it.
+    private var discardsTypography = false
+
+    /// The policy shape Source mode uses: markers styled in place rather than
+    /// hidden, and nothing rendered as an object.  Live and Read both hide
+    /// markers and both render fragments, so this cannot be true for either.
+    private var policyIsSourceShaped: Bool {
+        !policy.rendersFragments && !policy.hidesBlockMarkers && !policy.hidesInlineMarkers
+    }
+
     public init(styleSheet: StyleSheet, highlighter: SyntaxHighlighter = BuiltinSyntaxHighlighter.shared) {
         self.styleSheet = styleSheet
         self.highlighter = highlighter
@@ -95,6 +126,14 @@ public final class DecorationEngine {
         /// the key must carry the task bit or the cache records the wrong
         /// marker column for one of them.
         var task: Bool
+        /// A program recorded during a wholesale Source pass carries no font
+        /// and no paragraph style, because the source presentation was about
+        /// to overwrite both.  Replaying that program anywhere else leaves the
+        /// paragraph with no typography at all, so the two shapes must never
+        /// share an entry — the policy change that ends Source mode already
+        /// drops the cache, but an incremental commit *inside* Source mode does
+        /// not, and that is the one that would have hit a stale entry.
+        var plainTypography: Bool
     }
 
     private var programCache: [ProgramKey: [AttributeOp]] = [:]
@@ -147,6 +186,14 @@ public final class DecorationEngine {
             targets = RangeSet.normalized(dirty.ranges.compactMap { clip(blockBounds(of: $0, in: document), to: full) })
         }
         guard !targets.isEmpty else { return DecorationResult(elapsed: CFAbsoluteTimeGetCurrent() - started) }
+
+        // Only a *wholesale* Source pass earns the shortcut.  An incremental
+        // commit in Source mode re-decorates whole blocks while the source
+        // presentation is re-applied over the narrower ranges the diff
+        // reported, so typography dropped here would not be put back over the
+        // rest of those blocks.
+        discardsTypography = dirty.isWholesale && policyIsSourceShaped
+        defer { discardsTypography = false }
 
         var state = DecorateState(document: document, storage: storage)
         state.documentBase = documentBaseAttributes()
@@ -525,6 +572,7 @@ public final class DecorationEngine {
     // MARK: - Attribute application
 
     private func applyTrailingListSpacing(_ list: MDBlock, state: inout DecorateState) {
+        guard !discardsTypography else { return }
         guard let last = list.children.last, last.range.length > 0 else { return }
         let source = state.storage.string as NSString
         let offset = min(source.length - 1, max(last.range.location, last.range.upperBound - 1))
@@ -551,13 +599,28 @@ public final class DecorationEngine {
     ) {
         guard let clipped = clip(range, to: state.target), clipped.length > 0 else { return }
         guard clipped.upperBound <= state.storage.length else { return }
+        guard !discardsTypography else {
+            // The one place the Source shortcut is enforced, so a call site
+            // that forgets it still cannot write typography that the source
+            // presentation is about to overwrite.  An operation that carried
+            // nothing but a font or a paragraph style disappears entirely
+            // rather than splitting an attribute run for nothing.
+            var surviving = attributes
+            surviving.removeValue(forKey: .font)
+            surviving.removeValue(forKey: .paragraphStyle)
+            guard !surviving.isEmpty else { return }
+            state.storage.addAttributes(surviving, range: clipped)
+            state.attributeRanges += 1
+            return
+        }
         state.storage.addAttributes(attributes, range: clipped)
         state.attributeRanges += 1
     }
 
     private func applyBase(_ block: MDBlock, context: BlockContext, state: inout DecorateState) {
         var attributes = styles.baseAttributes(for: block, context: context)
-        if styleSheet.theme.typography.opticalMargins,
+        if !discardsTypography,
+           styleSheet.theme.typography.opticalMargins,
            context.listDepth == 0,
            case .paragraph = block.content,
            let first = state.document.substring(block.contentRange).first,
@@ -600,6 +663,7 @@ public final class DecorationEngine {
         over block: MDBlock,
         state: inout DecorateState
     ) {
+        guard !discardsTypography else { return }
         let text = state.storage.string as NSString
         let children = block.children
         var cursor = block.range.location
@@ -623,6 +687,7 @@ public final class DecorationEngine {
         attributes: [NSAttributedString.Key: Any],
         state: inout DecorateState
     ) {
+        guard !discardsTypography else { return }
         guard case .heading = block.content,
               let original = attributes[.paragraphStyle] as? NSParagraphStyle else { return }
         let isFirst = state.document.headings.first?.range.location == block.range.location
@@ -672,6 +737,7 @@ public final class DecorationEngine {
         attributes: [NSAttributedString.Key: Any],
         state: inout DecorateState
     ) {
+        guard !discardsTypography else { return }
         guard case .paragraph = block.content,
               state.document.substring(block.contentRange).contains("\n"),
               let original = attributes[.paragraphStyle] as? NSParagraphStyle
@@ -697,6 +763,7 @@ public final class DecorationEngine {
     private func applyCodeRowIndents(
         _ block: MDBlock, context: BlockContext, state: inout DecorateState
     ) {
+        guard !discardsTypography else { return }
         let base = styles.paragraphStyle(for: block, context: context)
         let text = state.storage.string as NSString
         for line in physicalParagraphs(of: block, in: state) {
@@ -757,11 +824,18 @@ public final class DecorationEngine {
 
             switch span.kind {
             case .strong:
+                // The trait still has to propagate into the children even when
+                // the face itself is about to be overwritten: a `**bold _and_
+                // italic**` span resolves its emphasis from both flags.
                 bold = true
-                apply([.font: emphasized(blockFont, bold: true, italic: italic)], to: span.contentRange, state: &state)
+                if !discardsTypography {
+                    apply([.font: emphasized(blockFont, bold: true, italic: italic)], to: span.contentRange, state: &state)
+                }
             case .emphasis:
                 italic = true
-                apply([.font: emphasized(blockFont, bold: bold, italic: true)], to: span.contentRange, state: &state)
+                if !discardsTypography {
+                    apply([.font: emphasized(blockFont, bold: bold, italic: true)], to: span.contentRange, state: &state)
+                }
             case .strikethrough:
                 apply([
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
@@ -769,11 +843,17 @@ public final class DecorationEngine {
                     .foregroundColor: styleSheet.textFaint,
                 ], to: span.contentRange, state: &state)
             case .inlineCode:
-                apply([
-                    .font: styleSheet.monoFont(size: blockFont.pointSize * 0.94),
+                var attributes: [NSAttributedString.Key: Any] = [
                     .foregroundColor: styleSheet.text,
                     .drInlineCode: true,
-                ], to: span.contentRange, state: &state)
+                ]
+                // Resolving a resized mono face goes through the font
+                // descriptor, so it is worth not asking for one that is about
+                // to be replaced by the source presentation's own mono.
+                if !discardsTypography {
+                    attributes[.font] = styleSheet.monoFont(size: blockFont.pointSize * 0.94)
+                }
+                apply(attributes, to: span.contentRange, state: &state)
             case .link(let destination, _):
                 applyLink(destination, span: span, state: &state)
             case .autolink(let destination):
@@ -796,20 +876,29 @@ public final class DecorationEngine {
                 // §8.4: the engine marks it; only the app knows whether the
                 // file is there, so `drPathExists` starts optimistic and the
                 // view refines it through the delegate.
-                apply([
+                var attributes: [NSAttributedString.Key: Any] = [
                     .drPathToken: token,
                     .drPathExists: true,
                     .drInlineCode: true,
-                    .font: styleSheet.monoFont(size: blockFont.pointSize * 0.94),
                     .foregroundColor: styleSheet.textSecondary,
-                ], to: span.range, state: &state)
+                ]
+                if !discardsTypography {
+                    attributes[.font] = styleSheet.monoFont(size: blockFont.pointSize * 0.94)
+                }
+                apply(attributes, to: span.range, state: &state)
             case .footnoteReference(let identifier):
-                apply([
+                // The raised baseline survives into Source — only the smaller
+                // face is overwritten — so the offset is still measured from
+                // the block's own font here.
+                var attributes: [NSAttributedString.Key: Any] = [
                     .drReference: identifier,
                     .foregroundColor: styleSheet.accent,
                     .baselineOffset: blockFont.xHeight * 0.42,
-                    .font: blockFont.withSize(blockFont.pointSize * 0.62),
-                ], to: span.range, state: &state)
+                ]
+                if !discardsTypography {
+                    attributes[.font] = blockFont.withSize(blockFont.pointSize * 0.62)
+                }
+                apply(attributes, to: span.range, state: &state)
             case .inlineHTML:
                 apply([.foregroundColor: styleSheet.textFaint], to: span.range, state: &state)
             case .text, .softBreak, .lineBreak:
@@ -857,7 +946,8 @@ public final class DecorationEngine {
             }
             switch annotation.kind {
             case .paragraph(let alignment):
-                guard let alignment, annotation.contentRange.length > 0 else { continue }
+                guard !discardsTypography,
+                      let alignment, annotation.contentRange.length > 0 else { continue }
                 let current = state.storage.attribute(
                         .paragraphStyle,
                         at: annotation.contentRange.location,
@@ -928,7 +1018,7 @@ public final class DecorationEngine {
                     apply([.font: emphasized(bodyFont, bold: true, italic: false)],
                           to: annotation.contentRange, state: &state)
                 }
-                if let alignment, annotation.contentRange.length > 0 {
+                if !discardsTypography, let alignment, annotation.contentRange.length > 0 {
                     let current = state.storage.attribute(
                         .paragraphStyle,
                         at: annotation.contentRange.location,
@@ -1089,7 +1179,8 @@ public final class DecorationEngine {
         guard !Self.containsInlineMath(block.inlines) else { return nil }
         let key = ProgramKey(hash: block.subtreeHash, kind: BlockStyleFactory.kindCode(block.content),
                              listDepth: context.listDepth, quoteDepth: context.quoteDepth,
-                             length: block.range.length, task: context.task)
+                             length: block.range.length, task: context.task,
+                             plainTypography: discardsTypography)
         if let hit = programCache[key] { return hit }
         guard programSeen.contains(key) else {
             programSeen.insert(key)

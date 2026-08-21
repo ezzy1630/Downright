@@ -116,6 +116,12 @@ final class DocumentWindowController: NSWindowController {
     private var isPinned = false
     private var focusModeApplied = false
     private var discardChangesOnClose = false
+    /// Set the moment the user chooses Discard in the close/quit prompt and
+    /// never cleared afterwards.  Between that choice and the window actually
+    /// tearing down, occlusion changes and queued autosave work can still fire;
+    /// every implicit write path checks this so a refused buffer is never
+    /// committed behind the user's back.
+    private var implicitSaveSuppressed = false
     private var focusDimmingViews: [FocusDimmingView] = []
     private var isSynchronizingPanes = false
     private var pendingInitialRestoreOffset: Int?
@@ -133,6 +139,75 @@ final class DocumentWindowController: NSWindowController {
     var isFocusModeEnabled: Bool { Preferences.shared.values.focusMode }
     var pendingConflict: MarkdownDocument.Conflict?
     weak var toolbarPresentationControl: ToolbarPresentationControl?
+    /// The two-finger Document↔Source swipe over the document surface.  Lazy
+    /// because it closes over the panes and the rail, neither of which exists
+    /// until the window is loaded.
+    lazy var presentationSwipe = PresentationSwipeCoordinator(
+        host: PresentationSwipeCoordinator.Host(
+            panes: { [weak self] in self?.documentPanes ?? [] },
+            styleSheet: { [weak self] in self?.activeStyleSheet ?? .current },
+            selectedSegment: { [weak self] in self?.presentationSegment ?? 0 },
+            commitSegment: { [weak self] segment in
+                self?.changePresentation(to: segment)
+            },
+            trackRail: { [weak self] position in
+                self?.toolbarPresentationControl?.trackSwipe(position: position)
+            },
+            settleRail: { [weak self] segment in
+                self?.toolbarPresentationControl?.settleSwipe(at: segment)
+            },
+            documentLines: { [weak self] in self?.documentLineCount ?? 0 },
+            setSegment: { [weak self] segment in
+                self?.setPresentationSegment(segment)
+            }
+        )
+    )
+    /// ⌘-scroll and ⌥-scroll over the document surface.  Both scales already
+    /// existed and neither was reachable with a mouse: pinch drove text size,
+    /// and structural detail hid behind ⌃⌥⌘1…5.
+    lazy var scrollZoom = ScrollZoomCoordinator(
+        host: ScrollZoomCoordinator.Host(
+            stepTextSize: { [weak self] steps in
+                self?.adjustTextSize(by: CGFloat(steps))
+            },
+            stepDetail: { [weak self] steps in
+                guard let self, steps != 0 else { return }
+                // Routed through the commands rather than the zoom level, so
+                // the gesture, the chord and the View menu can never disagree
+                // about what the ends of the scale are.
+                let command: Command = steps > 0 ? .zoomIn : .zoomOut
+                for _ in 0..<abs(steps) { self.perform(command) }
+            }
+        )
+    )
+    /// The ⇧ two-finger Back/Forward swipe over the document surface.  Lazy
+    /// for the same reason as the presentation swipe: it closes over the panes.
+    lazy var historySwipe = HistorySwipeCoordinator(
+        host: HistorySwipeCoordinator.Host(
+            panes: { [weak self] in self?.documentPanes ?? [] },
+            styleSheet: { [weak self] in self?.activeStyleSheet ?? .current },
+            canMove: { [weak self] direction in
+                guard let self else { return false }
+                switch direction {
+                case .back: return self.jumpHistory.canGoBack
+                case .forward: return self.jumpHistory.canGoForward
+                }
+            },
+            move: { [weak self] direction in
+                switch direction {
+                case .back: self?.goBack()
+                case .forward: self?.goForward()
+                }
+            }
+        )
+    )
+    /// Every gesture the document surface can hand a scroll event to, in the
+    /// order they get to claim it.  The zooms decide on one event and answer
+    /// at once; the two swipes need travel first, and the one that needs ⇧ has
+    /// to be asked before the one that needs nothing held at all.
+    lazy var documentScrollGestures = ScrollGestureChain([
+        scrollZoom, historySwipe, presentationSwipe,
+    ])
     weak var toolbarDocumentIdentityView: ToolbarDocumentIdentityView?
     /// The two panel buttons promoted out of the `···` overflow.  Weak, because
     /// the toolbar item owns its view; the controller only needs them to keep
@@ -223,6 +298,9 @@ final class DocumentWindowController: NSWindowController {
         isOpeningDocument = true
         defer { isOpeningDocument = false }
         resetTransientChrome()
+        // The suppression belongs to the buffer the user declined to keep; a
+        // different document opened in this window starts with a clean slate.
+        implicitSaveSuppressed = false
         try markdownDocument.open(url)
         clearStaleFullDocumentSelectionIfNeeded()
         let requestedMode = mode.normalizedForEditing
@@ -1086,11 +1164,16 @@ final class DocumentWindowController: NSWindowController {
     /// and autosave is enabled.  Repeated edits reset the timer, so a rapid
     /// typing burst produces one save, not one per keystroke.
     private func scheduleAutosave() {
+        // scheduleAutosave runs exactly when the buffer turns dirty, i.e. on
+        // fresh work.  A previous Discard decision covered the buffer as it
+        // existed then; new edits are new work and re-arm implicit saves.
+        implicitSaveSuppressed = false
         guard Preferences.shared.values.autosaveEnabled,
               markdownDocument.url != nil else { return }
         autosaveWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.markdownDocument.isDirty else { return }
+            guard let self, self.markdownDocument.isDirty,
+                  !self.implicitSaveSuppressed else { return }
             _ = self.saveDocument()
         }
         autosaveWorkItem = work
@@ -2516,6 +2599,10 @@ final class DocumentWindowController: NSWindowController {
     @discardableResult
     func confirmPendingChangesBeforeClose(markDiscardForWindowClose: Bool) -> Bool {
         discardChangesOnClose = false
+        // The prompt runs a modal loop during which main-queue work items still
+        // drain.  A pending autosave firing here would write the buffer before
+        // the user has even answered "Save changes?", so retire it up front.
+        autosaveWorkItem?.cancel()
         guard markdownDocument.isDirty, markdownDocument.url != nil else { return true }
 
         let alert = NSAlert()
@@ -2529,6 +2616,7 @@ final class DocumentWindowController: NSWindowController {
             return saveDocument()
         case .alertSecondButtonReturn:
             discardChangesOnClose = markDiscardForWindowClose
+            implicitSaveSuppressed = true
             return true
         default:
             return false
@@ -2542,6 +2630,7 @@ final class DocumentWindowController: NSWindowController {
         stopSpeaking()
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
+        autosaveWorkItem?.cancel()
         removeFocusDimmingViews(animated: false)
         removeFloatingSurface()
         let selection = primaryContainer.textView.sourceSelectedRange
@@ -2625,6 +2714,10 @@ extension DocumentWindowController: NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        // A resize reflows both presentations, so a swipe in flight is holding
+        // stills that no longer describe the document. Ground it first.
+        presentationSwipe.cancelInFlight()
+        historySwipe.cancelInFlight()
         updateFocusDimmingViews()
         refitFloatingSurface()
     }
@@ -2687,6 +2780,12 @@ extension DocumentWindowController: NSWindowDelegate {
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
         guard window?.occlusionState.contains(.visible) == false else { return }
+        // Occlusion is an implicit save, so it belongs to the autosave feature:
+        // with the setting off (the default) a covered or miniaturized window
+        // must never write, because an agent may be editing the same file.  A
+        // discarded buffer is equally ineligible — the user just said no.
+        guard Preferences.shared.values.autosaveEnabled,
+              !implicitSaveSuppressed else { return }
         markdownDocument.saveIfNeeded()
     }
 }

@@ -142,6 +142,14 @@ public enum DocumentIO {
             try? FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: temporary.path)
         }
 
+        // The swap publishes a name, not durability: without flushing the
+        // payload first, a crash or power loss immediately after the swap can
+        // leave the document path holding a truncated or empty generation.
+        // (The directory entry itself is deliberately not synced — losing it
+        // after a crash only rolls the path back to the previous generation,
+        // which is the safe direction.)
+        try syncTemporaryToStableStorage(temporary)
+
         guard renamex_np(temporary.path, url.path, UInt32(RENAME_SWAP)) == 0 else {
             throw posixRenameError(path: url.path)
         }
@@ -200,6 +208,20 @@ public enum DocumentIO {
             code: Int(errno),
             userInfo: [NSFilePathErrorKey: path]
         )
+    }
+
+    /// Flushes a just-written file's contents to stable storage before its
+    /// name is published.  `F_FULLFSYNC` waits for the drive itself to
+    /// acknowledge, which plain `fsync(2)` does not guarantee on macOS;
+    /// filesystems that do not support it fall back to `fsync`, and only a
+    /// failure of both surfaces as a save error.
+    private static func syncTemporaryToStableStorage(_ url: URL) throws {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        if fcntl(handle.fileDescriptor, F_FULLFSYNC) == 0 { return }
+        guard fsync(handle.fileDescriptor) == 0 else {
+            throw posixRenameError(path: url.path)
+        }
     }
 
     /// The exact bytes `write` will place on disk. Callers that coordinate a

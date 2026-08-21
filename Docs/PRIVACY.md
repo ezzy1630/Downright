@@ -18,10 +18,34 @@ file names by default. It does not require a cloud service.
 | Recent documents | macOS recent-document services | Start window |
 | Workspace siblings | Memory during the workspace session | Sidebar display |
 | Optional AI input | On-device Apple Intelligence | User-requested action |
+| Update check | Public appcast host | Offer a new build |
 
 Downright does not copy a whole folder into a database. It does not upload
 workspace files. A path shown in a document is not opened or executed until the
 user clicks it.
+
+## Update checks
+
+A production build asks the public appcast whether a newer build exists. It is
+an ordinary conditional `GET` for one static file, over HTTPS, carrying no
+account, no identifier, no cookie, no system profile, and no information about
+the documents the user has open. `SUEnableSystemProfiling` is off. Nothing is
+uploaded; the app only reads a version.
+
+While the app is open it repeats that request periodically so a build published
+during the session is offered during the session rather than up to a day later.
+The repeat is deliberately cheap and deliberately quiet:
+
+- The request is conditional. An unchanged feed answers `304` with no body.
+- It stops entirely with no network, and in Low Power Mode while the app is in
+  the background.
+- It slows to a background cadence whenever the app is not frontmost.
+- It learns exactly one bit — the feed is not the one last seen — and hands
+  that to Sparkle. It never parses the feed and cannot cause an install.
+
+Dev and ad-hoc builds carry no updater configuration and make no such request
+at all. A user who does not want update checks can turn them off in Settings,
+which stops the scheduled check and this watch together.
 
 ## Apple Intelligence
 
@@ -51,12 +75,9 @@ the network.
 ## Retention and deletion
 
 Snapshots are local and content-addressed. The app applies configured age and
-size caps. A missing path's snapshot index becomes eligible at the configured
-snapshot age; its reading-position state becomes eligible after 30 days. Both
-may be collected only after two separate checks confirm that the path is
-absent and its containing volume is mounted. Downright preserves this local
-metadata when the path is unreadable, the filesystem answer is uncertain, the
-volume is unavailable, or the file returns between checks.
+size caps while retaining each document's newest snapshot. Missing paths do
+not cause snapshot indexes or reading-position state to be deleted; files can
+move, repositories can be relocated, and external volumes can be unavailable.
 
 Users can delete snapshot history from the app. Settings and themes can be
 removed from the Downright support folder. The app does not claim ownership of
@@ -84,6 +105,7 @@ The product page and settings must state:
 2. AI is optional and on-device in the supported feature.
 3. The app does not need an account or cloud sync.
 4. Files are not uploaded by the core app.
+   Update checks read a public version feed and send nothing about the user.
 5. The user controls snapshots and shared diagnostics.
 
 Privacy tests must cover offline operation, Quick Look, workspace scanning,

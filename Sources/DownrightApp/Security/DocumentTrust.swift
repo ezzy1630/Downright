@@ -71,11 +71,19 @@ struct TrustGrant: Codable, Hashable, Sendable {
     let scope: TrustScope
     let canonicalPath: String
     let effects: Set<TrustEffect>
+    /// For external effects (links, remote assets, automation) the grant is
+    /// pinned to the exact URL the user approved — never to "any URL of this
+    /// effect inside the folder".  `nil` for purely local effects.  Optional
+    /// so grants persisted before this field existed still decode; policy
+    /// treats legacy external-effect grants as unmatched (fail closed), and
+    /// the next prompt re-records them with their URL.
+    let externalURL: String?
 
-    init(scope: TrustScope, canonicalPath: String, effects: Set<TrustEffect>) {
+    init(scope: TrustScope, canonicalPath: String, effects: Set<TrustEffect>, externalURL: String? = nil) {
         self.scope = scope
         self.canonicalPath = canonicalPath
         self.effects = effects
+        self.externalURL = externalURL
     }
 }
 
@@ -95,6 +103,12 @@ struct DocumentTrust: Sendable {
         let target = URL(fileURLWithPath: scopePath)
         let matching = grants.contains { grant in
             guard grant.effects.contains(request.effect) else { return false }
+            // An external grant answers only for the exact URL that was
+            // approved.  Matching "any external effect inside this folder"
+            // would let one approval of, say, a vscode:// link silently
+            // authorize a later shortcuts:// automation URL in any document
+            // under the same root.
+            guard request.target.externalURL == grant.externalURL else { return false }
             let root = URL(fileURLWithPath: grant.canonicalPath)
             switch grant.scope {
             case .file:

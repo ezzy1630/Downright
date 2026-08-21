@@ -55,6 +55,22 @@ enum ToolbarChromePolicy {
         }
     }
 
+    /// The same state for a gesture that reports how far across the rail it
+    /// has travelled rather than where a pointer sits — the two-finger swipe
+    /// happens over the document and has no pointer in the control to read.
+    static func scrubState(
+        position: CGFloat,
+        leftCenterX: CGFloat,
+        rightCenterX: CGFloat
+    ) -> ScrubState {
+        let travelled = min(max(position, 0), 1)
+        return scrubState(
+            pointerX: leftCenterX + (rightCenterX - leftCenterX) * travelled,
+            leftCenterX: leftCenterX,
+            rightCenterX: rightCenterX
+        )
+    }
+
     static func scrubState(
         pointerX: CGFloat,
         leftCenterX: CGFloat,
@@ -99,6 +115,7 @@ final class ToolbarDocumentIdentityView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let contextLabel = NSTextField(labelWithString: "")
     private let titleRow = NSStackView()
+    private let secondaryRow = NSStackView()
     private let textColumn = NSStackView()
     private var titleObservation: NSKeyValueObservation?
     private var subtitleObservation: NSKeyValueObservation?
@@ -180,16 +197,21 @@ final class ToolbarDocumentIdentityView: NSView {
 
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
-        titleRow.spacing = 5
         titleRow.detachesHiddenViews = true
-        titleRow.addArrangedSubview(stateLabel)
         titleRow.addArrangedSubview(titleLabel)
+
+        secondaryRow.orientation = .horizontal
+        secondaryRow.alignment = .centerY
+        secondaryRow.spacing = 5
+        secondaryRow.detachesHiddenViews = true
+        secondaryRow.addArrangedSubview(stateLabel)
+        secondaryRow.addArrangedSubview(contextLabel)
 
         textColumn.orientation = .vertical
         textColumn.alignment = .leading
         textColumn.spacing = Metrics.lineGap
         textColumn.addArrangedSubview(titleRow)
-        textColumn.addArrangedSubview(contextLabel)
+        textColumn.addArrangedSubview(secondaryRow)
 
         proxyButton.translatesAutoresizingMaskIntoConstraints = false
         textColumn.translatesAutoresizingMaskIntoConstraints = false
@@ -376,34 +398,31 @@ final class ToolbarDocumentIdentityView: NSView {
     }
 
     private var stateDescription: String? {
-        let title: String
-        switch documentState.phase {
-        case .neutral: return nil
-        case .edited: title = "Edited"
-        case .saving: title = "Saving"
-        case .saved: title = "Saved"
-        case .changedOnDisk: title = "Changed on disk"
-        case .conflict: title = "Conflict"
-        case .saveFailed: title = "Save failed"
-        }
+        guard let title = stateTitle else { return nil }
         let provenance = documentState.provenance.map { " — \($0)" } ?? ""
-        let detail = documentState.detail.map { ": \($0)" } ?? ""
+        let detail = documentState.detail.flatMap { $0 == title ? nil : ": \($0)" } ?? ""
         return title + provenance + detail
     }
 
-    private func refreshDocumentState() {
+    private var stateTitle: String? {
         switch documentState.phase {
-        case .neutral:
+        case .neutral, .edited, .saving, .saved:
+            return nil
+        case .changedOnDisk:
+            return documentState.detail == "File missing" ? "File missing" : "Changed externally"
+        case .conflict: return "Conflict"
+        case .saveFailed: return "Save failed"
+        }
+    }
+
+    private func refreshDocumentState() {
+        if let stateTitle {
+            stateLabel.stringValue = stateTitle
+            stateLabel.isHidden = false
+        } else {
             stateLabel.stringValue = ""
             stateLabel.isHidden = true
-        case .edited: stateLabel.stringValue = "Edited"
-        case .saving: stateLabel.stringValue = "Saving"
-        case .saved: stateLabel.stringValue = "Saved"
-        case .changedOnDisk: stateLabel.stringValue = "On disk"
-        case .conflict: stateLabel.stringValue = "Conflict"
-        case .saveFailed: stateLabel.stringValue = "Save failed"
         }
-        if documentState.phase != .neutral { stateLabel.isHidden = false }
         refreshToolTip()
         refreshEmphasis()
         refreshAccessibility()
@@ -426,9 +445,7 @@ final class ToolbarDocumentIdentityView: NSView {
             stateLabel.textColor = .systemRed
         case .changedOnDisk:
             stateLabel.textColor = StyleSheet.current.accent
-        case .edited, .saving, .saved:
-            stateLabel.textColor = .secondaryLabelColor
-        case .neutral:
+        case .neutral, .edited, .saving, .saved:
             stateLabel.textColor = .tertiaryLabelColor
         }
         updateProxyIcon(for: hostWindow?.representedURL)
@@ -693,6 +710,40 @@ final class ToolbarPresentationControl: Motion.SpringSurfaceView {
             applyVisualSelection(selectedSegment)
             updateSelectionIndicator(animated: true)
         }
+    }
+
+    /// Track a gesture that owns the mode change itself — the two-finger
+    /// swipe over the document.  Unlike `updateScrub`, this never calls
+    /// `onChange`: the document has already switched behind the transition,
+    /// and switching again on release would undo it.
+    ///
+    /// `position` runs `0` at Document to `1` at Source.
+    func trackSwipe(position: CGFloat) {
+        let centers = segmentCenters
+        let state = ToolbarChromePolicy.scrubState(
+            position: position,
+            leftCenterX: centers.left,
+            rightCenterX: centers.right
+        )
+        let previousSegment = scrubbedSegment
+        scrubbedSegment = state.segment
+        applyVisualSelection(state.segment)
+        updateSelectionIndicator(centerX: state.indicatorCenterX)
+        if let previousSegment, previousSegment != state.segment {
+            performHapticFeedback()
+        }
+    }
+
+    /// Land the indicator on a segment after such a gesture.  Unconditional
+    /// rather than a `setSelectedSegment` no-op, because a cancelled swipe
+    /// ends on the segment it started from with the rail scrubbed away from it.
+    func settleSwipe(at segment: Int) {
+        let normalized = min(max(segment, 0), 1)
+        scrubbedSegment = nil
+        selectedSegment = normalized
+        setAccessibilityValue(segmentTitles[normalized])
+        applyVisualSelection(normalized)
+        updateSelectionIndicator(animated: window != nil)
     }
 
     private func applyVisualSelection(_ segment: Int) {

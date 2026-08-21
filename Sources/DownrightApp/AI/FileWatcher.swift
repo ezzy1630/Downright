@@ -69,7 +69,20 @@ final class FileWatcher {
     /// coalesce with the event.
     private var forceContentDigestOnNextCheck = false
     /// Writes we made ourselves must not come back to us as external changes.
-    private var suppressUntil: Date = .distantPast
+    ///
+    /// Suppression is a *state*, not a clock: it opens with
+    /// `suppressOwnWrite()` and closes at `acknowledgeOwnWrite(contents:)` or
+    /// `cancelOwnWriteSuppression()`, however long the write takes — on a
+    /// network volume an atomic save can easily outlive any fixed window, and
+    /// a window that expires early delivers our own bytes back as a phantom
+    /// external change. Two bounded clocks remain, neither load-bearing:
+    /// a watchdog that fails open if an acknowledgement is somehow lost, and
+    /// a short post-acknowledge grace that keeps late FSEvents from the same
+    /// write from being reconciled as externals before the state pass sees
+    /// them.
+    private var ownWriteInFlight = false
+    private var ownWriteWatchdogDeadline = Date.distantPast
+    private var settleGraceUntil = Date.distantPast
     /// The last snapshot observed while an own-write suppression window was
     /// open.  This is deliberately separate from `lastSnapshot`: advancing the
     /// baseline before deciding whether a snapshot is ours is the race that
@@ -165,13 +178,22 @@ final class FileWatcher {
     /// Call immediately before writing the file ourselves.  Our own write would
     /// otherwise arrive back as an external change and re-mark the whole
     /// document — the toggle-a-checkbox case (§8.5) makes this obvious fast.
+    ///
+    /// Suppression stays open until the matching acknowledgement (or cancel),
+    /// regardless of how long the write takes; `interval` only sizes the
+    /// lost-acknowledgement watchdog.
     func suppressOwnWrite(for interval: TimeInterval = 0.6) {
         onQueue {
             ownWriteGeneration &+= 1
             suppressionBaseline = lastSnapshot
             expectedOwnSnapshot = nil
             suppressedSnapshots.removeAll(keepingCapacity: true)
-            suppressUntil = Date().addingTimeInterval(interval)
+            ownWriteInFlight = true
+            settleGraceUntil = .distantPast
+            // A save that never acknowledged must not mute the watcher
+            // forever: fail open after a generous multiple of the caller's
+            // expectation, floored well above any honest slow volume.
+            ownWriteWatchdogDeadline = Date().addingTimeInterval(max(5.0, interval * 4))
         }
     }
 
@@ -198,7 +220,9 @@ final class FileWatcher {
                 // as an external observation for the reconciliation pass.
                 recordSuppressedSnapshot(actual)
             }
-            suppressUntil = Date().addingTimeInterval(0.25)
+            // The write has landed; the very next observation reconciles.
+            ownWriteInFlight = false
+            settleGraceUntil = Date().addingTimeInterval(0.25)
         }
     }
 
@@ -208,7 +232,8 @@ final class FileWatcher {
         onQueue {
             expectedOwnSnapshot = nil
             suppressedSnapshots.removeAll(keepingCapacity: true)
-            suppressUntil = .distantPast
+            ownWriteInFlight = false
+            settleGraceUntil = .distantPast
             forceContentDigestOnNextCheck = true
             scheduleCheck(forceContentDigest: true)
         }
@@ -314,7 +339,18 @@ final class FileWatcher {
         return ext.isEmpty || interestingExtensions.contains(ext)
     }
 
+    /// Delivers a coalesced `.changed` for directory watches.
+    ///
+    /// Contract: a directory watch reports *any* interesting churn under the
+    /// root — it has no single file to attribute events to. While own-write
+    /// suppression is open (the owner writing sidecars or review notes into
+    /// the watched folder), deliveries are skipped so the app's own writes
+    /// cannot wake an idempotent rescan; the next genuine change re-triggers
+    /// one. Any future owner that treats these events as content-to-reload
+    /// inherits this filter automatically and must not rely on receiving
+    /// events for its own writes.
     private func scheduleDirectoryChange() {
+        guard !isSuppressingOwnWrites() else { return }
         coalesceWorkItem?.cancel()
         let gen = generation
         let item = DispatchWorkItem { [weak self] in
@@ -372,19 +408,48 @@ final class FileWatcher {
         onQueue { check(forceContentDigest: false) }
     }
 
+    /// Forces the lost-acknowledgement watchdog to fire on the next check, so
+    /// the fail-open path is deterministic instead of waiting out its floor.
+    func tripSuppressionWatchdogForTesting() {
+        onQueue { ownWriteWatchdogDeadline = .distantPast }
+    }
+
+    /// Drives directory-watch event matching directly, without depending on
+    /// FSEvents delivery timing.
+    func deliverDirectoryEventForTesting(paths: [String]) {
+        onQueue { handleStreamEvents(paths: paths) }
+    }
+
+    /// Whether own-write suppression is currently absorbing observations.
+    /// In-flight covers the whole save transaction; the settle grace only
+    /// keeps late events from the just-landed write from racing the state
+    /// reconciliation. Correctness never depends on the grace expiring.
+    private func isSuppressingOwnWrites(now: Date = Date()) -> Bool {
+        ownWriteInFlight || now < settleGraceUntil
+    }
+
     private func check(forceContentDigest: Bool = false) {
         pollProbeCount &+= 1
+        // Lost acknowledgement: fail open rather than stay deaf forever.
+        if ownWriteInFlight, Date() >= ownWriteWatchdogDeadline {
+            ownWriteInFlight = false
+            forceContentDigestOnNextCheck = true
+        }
         let metadata = FileWatcher.metadata(of: url) ?? .missing
         let metadataChanged = !FileWatcher.metadataMatches(metadata, lastSnapshot)
         let periodicContentProbe = pollProbeCount % contentDigestPollStride == 0
-        let suppressionActive = Date() < suppressUntil
-        guard forceContentDigest || metadataChanged || periodicContentProbe || !suppressedSnapshots.isEmpty else {
+        guard forceContentDigest
+                || metadataChanged
+                || periodicContentProbe
+                || !suppressedSnapshots.isEmpty
+                || expectedOwnSnapshot != nil
+        else {
             return
         }
 
         let now = FileWatcher.snapshot(of: url, includeContentDigest: true)
 
-        if suppressionActive {
+        if isSuppressingOwnWrites() {
             guard now != lastSnapshot else { return }
             if let expectedOwnSnapshot, now == expectedOwnSnapshot {
                 // Consume our own replacement, but do not discard an external
@@ -397,7 +462,7 @@ final class FileWatcher {
             return
         }
 
-        if !suppressedSnapshots.isEmpty {
+        if !suppressedSnapshots.isEmpty || expectedOwnSnapshot != nil {
             reconcileSuppressedChange(final: now)
             return
         }
@@ -433,7 +498,8 @@ final class FileWatcher {
         suppressionBaseline = nil
         expectedOwnSnapshot = nil
         suppressedSnapshots.removeAll(keepingCapacity: true)
-        suppressUntil = .distantPast
+        ownWriteInFlight = false
+        settleGraceUntil = .distantPast
         lastSnapshot = final
 
         if let observedExternal {
@@ -449,7 +515,7 @@ final class FileWatcher {
     }
 
     private func recordCurrentSnapshotIfSuppressed() {
-        guard Date() < suppressUntil else { return }
+        guard isSuppressingOwnWrites() else { return }
         let snapshot = FileWatcher.snapshot(of: url)
         guard snapshot != lastSnapshot else { return }
         if let expectedOwnSnapshot, snapshot == expectedOwnSnapshot {

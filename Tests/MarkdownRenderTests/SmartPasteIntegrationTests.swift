@@ -27,7 +27,7 @@ struct SmartPasteIntegrationTests {
         return view
     }
 
-    @Test("pasteboard priority prefers URL over HTML and plain text")
+    @Test("ordinary paste prefers visible text; Markdown paste prefers rich structure")
     func pasteboardPriority() {
         let pasteboard = isolatedPasteboard()
         pasteboard.clearContents()
@@ -36,10 +36,15 @@ struct SmartPasteIntegrationTests {
         pasteboard.setString("fallback", forType: .string)
 
         let payload = MarkdownSmartPaste.payload(from: pasteboard)
-        #expect(payload == .url("www.example.com"))
+        #expect(payload == .text("fallback"))
         #expect(MarkdownSmartPaste.replacement(
-            for: payload!, selection: "title", context: .markdown)
-            == "[title](https://www.example.com)")
+            for: payload!, selection: "title", context: .markdown) == "fallback")
+
+        let markdownPayload = MarkdownSmartPaste.payload(from: pasteboard, mode: .markdown)
+        #expect(markdownPayload == .html("<p>Browser title</p>", fallback: "fallback"))
+        #expect(MarkdownSmartPaste.replacement(
+            for: markdownPayload!, selection: "", context: .markdown, mode: .markdown)
+            == "Browser title")
         #expect(MarkdownSmartPaste.replacement(
             for: .url("javascript://alert(1)"), selection: "title", context: .markdown)
             == "javascript://alert(1)")
@@ -116,7 +121,7 @@ struct SmartPasteIntegrationTests {
             for: payload!, selection: "", context: .markdown) == "**Only HTML**")
     }
 
-    @Test("Safari public.html keeps rich structure ahead of flattened fallback")
+    @Test("Paste as Markdown keeps Safari structure ahead of flattened fallback")
     func safariHTMLRoundTrip() {
         let pasteboard = isolatedPasteboard()
         pasteboard.clearContents()
@@ -129,12 +134,14 @@ struct SmartPasteIntegrationTests {
         """
         pasteboard.setString(html, forType: .html)
         // Safari advertises several rich aliases and a flattened public.text
-        // fallback. Normal Paste must consume public.html, not the fallback.
+        // fallback. Explicit Markdown conversion consumes public.html.
         pasteboard.setString("Heading Intro bold and link. first nested code second Name Count Ada 1", forType: .string)
         pasteboard.setData(Data([0x00, 0x01]), forType: .rtf)
         pasteboard.setData(Data([0x02, 0x03]), forType: .appleWebArchive)
 
-        let payload = MarkdownSmartPaste.payload(from: pasteboard)
+        #expect(MarkdownSmartPaste.payload(from: pasteboard)
+            == .text("Heading Intro bold and link. first nested code second Name Count Ada 1"))
+        let payload = MarkdownSmartPaste.payload(from: pasteboard, mode: .markdown)
         guard let payload else {
             Issue.record("Safari-style clipboard did not expose a payload")
             return

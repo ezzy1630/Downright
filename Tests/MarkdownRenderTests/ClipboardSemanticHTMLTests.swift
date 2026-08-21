@@ -70,7 +70,11 @@ struct ClipboardSemanticHTMLTests {
         let pasteboard = NSPasteboard(name: .init("DownrightClipboardTests.\(UUID())"))
         pasteboard.clearContents()
         pasteboard.setData(rtf, forType: .rtf)
-        guard case .html(let richHTML, let fallback) = MarkdownSmartPaste.payload(from: pasteboard) else {
+        #expect(MarkdownSmartPaste.payload(from: pasteboard) == .text("Rich text"))
+        guard case .html(let richHTML, let fallback) = MarkdownSmartPaste.payload(
+            from: pasteboard,
+            mode: .markdown
+        ) else {
             Issue.record("RTF should retain semantic HTML when AppKit can convert it")
             return
         }

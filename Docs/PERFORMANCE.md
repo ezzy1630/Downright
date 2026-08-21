@@ -11,11 +11,30 @@ pipeline. Do not replace a failed measurement with a claim.
 | Keystroke response, 5,000-line file | <8 ms | Source edit, paragraph map, dirty decoration | p95 below target |
 | Scroll | 120 fps on ProMotion | Long-document scroll trace | No sustained frame drop |
 | Structural zoom | <300 ms | Level 1–5 transition trace | Anchor stays fixed; no dropped frames |
+| Document↔Source swipe, engage and abandon (give path) | <8 ms | `PresentationSwipeBudgetTests`, 2,000-line file | Below target; nothing rendered inside the gesture |
+| Document↔Source swipe, engage (drag path) | <50 ms | `PresentationSwitchBudget`, documents under its line budget | Below target; measured 6 ms at 240 lines, 26 ms at 950 |
+| Document↔Source swipe, per tracking frame | <1 ms | `PresentationSwipeBudgetTests` | Below target |
 | Quick Look preview | <400 ms | Preview extension render | p95 below target |
 | Quick Look peak memory | <60 MB | Resident memory polling | Never exceeds target |
 | 1 MB document memory | <150 MB | App open and idle measurement | Peak below target |
 | Quick Look safety fallback | 60 MB | Memory guard | Plain text fallback above guard |
 | Large Quick Look file | 2 MB | Preview policy | Initial blocks plus Open in App |
+
+The swipe budgets exist because the obvious implementation misses them by an
+order of magnitude. Dragging the Source presentation in under the fingers
+requires rendering it first, which is a whole-document TextKit rebuild. The
+gesture therefore measures before it promises: `PresentationSwitchBudget` holds
+a per-line cost, seeded from a release sweep and recalibrated from every switch
+the app performs, and the swipe takes the drag only where the estimate fits
+inside the engagement budget. Above it the gesture translates one layer instead
+and switches on release through the same path the toolbar rail uses, for the
+same cost and no more.
+
+Two things make the drag affordable at all. The outgoing page is captured by
+`CALayer.render` at half resolution — 3 ms, against 30 ms for a full-resolution
+`cacheDisplay`, because it composites what is already rasterised rather than
+re-running TextKit — and the incoming side is not captured at all, since it is
+the live text view with the mode change already applied behind the still.
 
 The 8 ms keystroke target is the P0 architecture gate. Semantic parsing runs
 outside this synchronous path. Its result is revision checked before the app

@@ -76,6 +76,98 @@ struct DocumentTrustTests {
         #expect(DocumentTrust(grants: [grant]).decision(for: remoteImage) == .ask)
     }
 
+    /// One folder-scope approval of an external effect must answer only for
+    /// the exact URL that was approved — never for every future URL of that
+    /// effect under the folder, or a single "always allow" on a vscode:// link
+    /// would silently authorize a later shortcuts:// automation.
+    @Test
+    func folderGrantForAnExternalURLAuthorizesOnlyThatURL() {
+        let document = URL(fileURLWithPath: "/workspace/README.md")
+        let approved = "vscode://file/tmp/note.md"
+        let otherScheme = "shortcuts://run-shortcut?name=Deploy"
+
+        let persistence = InMemoryTrustStorePersistence()
+        let store = TrustStore(persistence: persistence)
+        #expect(store.grant(
+            scope: .folder,
+            path: URL(fileURLWithPath: "/workspace"),
+            effects: [.automationAppIntent],
+            externalURL: approved
+        ))
+
+        let sameURL = TrustRequest(
+            effect: .automationAppIntent,
+            target: TrustTarget(displayName: approved, externalURL: approved),
+            documentURL: document
+        )
+        let differentURL = TrustRequest(
+            effect: .automationAppIntent,
+            target: TrustTarget(displayName: otherScheme, externalURL: otherScheme),
+            documentURL: document
+        )
+        #expect(store.policy().decision(for: sameURL) == .allow)
+        #expect(store.policy().decision(for: differentURL) == .ask)
+    }
+
+    /// Grants persisted before external grants carried their URL must not
+    /// start answering for arbitrary URLs after an upgrade: they fail closed
+    /// for external effects (the next prompt re-records them with their URL)
+    /// while continuing to authorize the local effects they were created for.
+    @Test
+    func legacyExternalGrantFailsClosedForExternalEffectsButKeepsLocalOnes() throws {
+        let document = try #require(DocumentTrust.canonicalFilePath(
+            URL(fileURLWithPath: "/tmp/downright-trust-legacy/notes.md")
+        ))
+        let legacy = TrustGrant(
+            scope: .folder,
+            canonicalPath: document.deletingLastPathComponent().path,
+            effects: [.openExternalLink]
+        )
+        let external = TrustRequest(
+            effect: .openExternalLink,
+            target: TrustTarget(
+                displayName: "https://example.com",
+                externalURL: "https://example.com"
+            ),
+            documentURL: document
+        )
+        let local = TrustRequest(
+            effect: .launchPathOrEditor,
+            target: TrustTarget(
+                displayName: "/tmp/downright-trust-legacy/notes.md",
+                canonicalPath: document.path
+            ),
+            documentURL: document
+        )
+        #expect(DocumentTrust(grants: [legacy]).decision(for: external) == .ask)
+
+        let persistence = InMemoryTrustStorePersistence([legacy])
+        let store = TrustStore(persistence: persistence)
+        #expect(store.grant(
+            scope: .file,
+            path: document,
+            effects: [.launchPathOrEditor]
+        ))
+        #expect(store.policy().decision(for: local) == .allow)
+    }
+
+    @Test
+    func persistedGrantsWithoutTheURLEntryStillDecode() throws {
+        let json = """
+        [
+          {
+            "scope" : "file",
+            "canonicalPath" : "/tmp/downright-trust-decode/notes.md",
+            "effects" : ["readLocalAsset"]
+          }
+        ]
+        """
+        let grants = try JSONDecoder().decode([TrustGrant].self, from: Data(json.utf8))
+        #expect(grants.count == 1)
+        #expect(grants.first?.externalURL == nil)
+        #expect(grants.first?.effects == [.readLocalAsset])
+    }
+
     @Test
     func symlinkResolvesToRealPathAndTraversalStaysOutside() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())

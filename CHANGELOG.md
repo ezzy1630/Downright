@@ -12,11 +12,182 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+### Added
+
+- **Update Now.** A build published from a push to `main` now reaches a running
+  copy in about a minute instead of on the next daily check, and the pill that
+  offers it acts instead of opening a window. One press installs and relaunches,
+  carrying its own progress in the titlebar; the update panel stays where it was
+  for menu checks, errors, and no-update results. Resting on the button unfurls
+  a glass panel of the release notes — the appcast already embeds them, so it
+  costs no extra request — which you can move into, and which trims to whole
+  lines rather than clipping a sentence in half. An update that lands while you
+  are in the app gets one accent pass on arrival; one that was already waiting
+  when the window opened does not pretend it just arrived.
+- The appcast is watched while the app is open: a conditional request roughly
+  every 90 seconds in front and every 15 minutes behind, stopped entirely with
+  no network and in Low Power Mode while backgrounded, and governed by the same
+  "check automatically" setting as Sparkle's own schedule. It is a trigger, not
+  a trust path — it learns only that the feed moved and asks Sparkle to look, so
+  every signature check and download stays exactly where it was.
+- **Two-finger swipe between Document and Source.** Sideways across the
+  document switches presentation, and the titlebar's mode rail travels with
+  your fingers, reaching the far segment exactly where releasing would commit.
+  Release short of that — or flick back the way you came — and it returns
+  having changed nothing.
+
+  On most documents the page you are leaving really does travel off while the
+  one you are entering follows it in, both tracking your fingers one to one.
+  That needs the incoming presentation rendered before a finger moves, which is
+  affordable up to roughly twelve hundred lines: measured engagement is 6 ms at
+  240 lines and 26 ms at 950, against a budget of three frames. Past that the
+  page leans against your fingers instead and the switch happens on release —
+  because a gesture that stalls at the moment it catches is worse than one that
+  promised less. The choice is made per gesture from a per-line cost the app
+  measures on your machine rather than a constant baked in on someone else's.
+
+  Vertical scrolling is untouched: a gesture is only claimed once it is
+  decidedly sideways, never from a mouse wheel, and never from a momentum tail.
+  Abandoning a swipe costs nothing on either path.
+- **Detents on the density rail.** Reading the section stack now taps once per
+  mark the pointer takes up, hovering and scrubbing alike, so the rail can be
+  counted through by hand instead of only by eye. The taps share one budget
+  with the landing punch and are floored at 50 ms apart: a slow read ticks mark
+  by mark, a fast sweep thins to a rhythm rather than buzzing, and a jump that
+  lands on the mark you just crossed answers once rather than twice. Leaving
+  the stack is silent — the rail sits against the window edge, so an exit is
+  the one transition that happens without anyone meaning it. Reduce Motion,
+  from the system or from a reader profile, silences the rail entirely: its
+  springs were already parked under that setting, which left the landing tap
+  answering a movement that no longer happens.
+- **Share.** File ▸ Share (⌃⌘S) hands the document to the system share sheet —
+  Mail, Messages, AirDrop, Notes — and File ▸ Share as PDF sends the same
+  rendered page Print and Export PDF produce. Both send a *file*, so an AirDrop
+  arrives as a `.md` or a `.pdf` the receiver can open rather than a nameless
+  blob of pasted text. A saved, unmodified document shares its own file
+  untouched; one with unsaved edits shares a throwaway copy of what is actually
+  on screen, byte-faithful to the document's own encoding and line endings,
+  because sharing the stale file on disk would be a silent lie and saving on the
+  reader's behalf is not Share's decision to make. An Untitled window shares too,
+  under a real filename.
+- **Insert from iPhone or iPad.** Edit ▸ Insert picks up macOS's Take Photo and
+  Scan Documents when a nearby device can serve them. The capture is written as
+  a real image file next to the document — `notes-photo.png`, never overwriting
+  an earlier one — and a single Markdown reference is inserted at the caret as
+  one undoable edit. Nothing else in the document moves: a selection is inserted
+  *around*, not replaced, because the shutter is on a phone and whatever was
+  highlighted here is long out of sight by the time the photo lands. The name is
+  chosen so the written path and the parsed destination are the same string, so
+  the image renders with no trust prompt and arrives with no Asset Doctor
+  warnings. A document that has never been saved has no folder to write beside,
+  so macOS does not offer the capture there at all rather than accepting a photo
+  it would then have to put somewhere unportable.
+- **Drop files onto the document.** Dragging an image, a Markdown file, or
+  anything else onto the page inserts a reference to it at the position under
+  the pointer — not at the caret — with a drop caret showing exactly where it
+  will land while you are still holding the drag. An image already inside the
+  document's folder is referenced where it stands and never duplicated; one from
+  outside is copied in beside the document so the reference stays relative,
+  portable, and free of a trust prompt. A file that is not an image becomes a
+  link, inline, and is never copied: a link is a reference, not an embed. Image
+  data with no file behind it — dragged out of a browser or a preview window —
+  is written next to the document first. Destinations are chosen so they need no
+  percent-encoding, because Downright's renderer resolves a destination as a
+  literal path and would go looking for the `%`; a name with a space uses
+  CommonMark's `<…>` form instead. Every drop is one undoable edit, and a write
+  that fails inserts nothing and takes its own half-written files back out.
+- **Force click and Quick Look.** Force-clicking a path token or a link to a
+  local file opens a Quick Look preview of it; force-clicking an ordinary word
+  still gets macOS's Look Up popover, untouched. File ▸ Quick Look (⌘Y) does the
+  same for whatever the caret is on, and an embedded image opens in Downright's
+  own lightbox rather than a second image viewer. Space is deliberately *not*
+  bound to it in the shortcut table: the document surface always has a caret in
+  both of the modes you can reach, and a space that sometimes is not a space is
+  worse than a chord you have to learn.
+
+### Changed
+
+- External-effect trust grants are now pinned to the exact URL you approved.
+  An "always allow" given to one link or automation inside a folder no longer
+  silently authorizes every future URL of that kind in the same folder — a
+  different scheme or address asks again. Grants recorded before this change
+  fail closed for external effects and are re-recorded with their URL the next
+  time you approve them; purely local permissions (reading assets, opening
+  paths) keep working untouched.
+- The occlusion save now belongs to the autosave setting it always behaved
+  like. With autosave off (the default), covering or miniaturizing a dirty
+  window no longer writes the file — previously it did, which is exactly the
+  unsolicited write the setting exists to prevent when an agent may be editing
+  the same file.
+- **Document↔Source switching is two to three times faster.** Switching to
+  Source used to compute block metrics, heading fonts and list indents for every
+  block in the document and then overwrite all of them microseconds later with
+  "monospace, everything" — only the colours ever survived. Source mode now
+  applies what survives and skips what does not, and the whole-document
+  attribute passes were merged so the storage's runs are rewritten once rather
+  than three times. On a 2,000-line file the switch went from 273 ms to around
+  110 ms, and every route into Source is faster for it: the toolbar rail, ⌘⇧E,
+  and the swipe alike.
+- `SUScheduledCheckInterval` drops from 24 hours to 1 hour. It is now the
+  fallback for an app that was asleep, offline, or in Low Power Mode while a
+  build shipped, rather than the mechanism by which updates are noticed.
+
 ### Fixed
 
+- **A discarded buffer can no longer reach disk.** Choosing Discard in the
+  close or quit prompt used to leave the document dirty while queued autosave
+  work and window-occlusion saves stayed armed: the write could land while the
+  confirmation was still on screen or as the window tore down, committing the
+  very edits you had just declined to keep. Every implicit save path now stops
+  at the choice, and a closed document refuses writes outright.
+- **Closed an export hole that could produce live `javascript:` links.**
+  Browsers strip tabs and newlines out of URLs before parsing them, so a
+  destination written as `java<TAB>script:` passed the CLI exporter's scheme
+  block and came back to life inside the browser — the same trick also let a
+  tabbed `http:` image through as a live remote request. Destinations are now
+  normalized before analysis and emitted in that same normalized form.
+- Fragment metadata (code-block copy ranges, image-load invalidation, table
+  geometry) now follows edits made outside the text view's own typing funnel:
+  document commands, undo/redo, and absorbed external rewrites shift the
+  payload ranges along with the attribute runs they ride on. Copying a code
+  block after typing above it no longer grabs the wrong span.
+- The repository gate now fails when version consistency or theme contrast
+  checks fail, instead of printing their reports and exiting green.
+- Update probes on hosts that serve no `ETag` now send `If-Modified-Since`
+  from the stored document date, so an unchanged feed answers `304` instead of
+  being re-downloaded and hashed every cycle.
+- Saves flush the replacement generation to stable storage before the atomic
+  swap publishes it, so a crash or power loss right after a save cannot leave
+  the document file truncated or empty.
+- Agent hook commands single-quote the executable path, so no character in an
+  unusual install location can open a shell expansion context inside the
+  agent's settings. Hooks installed by earlier builds are recognized and
+  migrated to the quoted form in place instead of being duplicated.
+- The npm installer verifies the fetched install script against a pinned
+  SHA-256 before running it, so a compromised installer endpoint cannot execute
+  arbitrary code at user privileges.
+- **Opening a path from a document can no longer execute it.** Links and path
+  tokens that resolve to an application bundle, a Terminal-run script (`.app`,
+  `.command`, `.tool`, …), or an extension-less executable are revealed in
+  Finder instead of handed to LaunchServices — "open in your editor" never
+  meant "run this". Ordinary documents (PDFs, images, `.sh` files) open as
+  before.
+- Own-write detection in the file watcher is now state-based rather than
+  clock-based: suppression opens when the save starts and closes at the
+  acknowledgement, however long the write takes. On a slow or network volume,
+  saving no longer risks your own file bouncing back as a phantom "changed on
+  disk" conflict; a watchdog fails open if an acknowledgement were ever lost.
+  Directory watches (the sibling list) honor the same filter, so writing
+  sidecars into the workspace folder no longer wakes pointless rescans.
+- The safe-HTML cross-block pairing for README-style `<details>` elements now
+  requires the partner tag to be written as a real HTML block. A mention of
+  `<details>` inside a code span or a sentence can no longer license hiding a
+  stray literal tag in another block; genuine split-element documents pair up
+  exactly as before.
+
 - Stopped idle history maintenance from rewriting every unchanged index, made
-  long-session pruning half-hourly, and added mounted-volume-aware collection
-  of stale history and reading-state files.
+  long-session pruning half-hourly, and retained the newest history and reading
+  state when a document path disappears.
 - Bounded external-change undo history and moved path-existence rechecks to a
   background cache warm so long-lived, frequently rewritten documents cannot
   grow memory indefinitely or stall the main thread on filesystem checks.
@@ -34,9 +205,9 @@ every release; Sparkle orders updates by it.
   background parsing and incremental TextKit commits preserve selection and
   scroll anchors while bounded real-window frame gates cover 10k–50k-line
   documents, IME composition, split view, and concurrent scrolling.
-- **Repaired browser-rich paste boundaries.** HTML, WebArchive, RTF, and RTFD
-  imports preserve useful paragraph, list, table, code, and link structure
-  without guessing at unsupported image or vendor payloads.
+- **Repaired browser-rich paste boundaries.** Explicit Paste as Markdown
+  converts HTML, WebArchive, RTF, and RTFD into useful paragraph, list, table,
+  code, and link structure without changing ordinary Paste's visible text.
 - **Fixed a crash on ordinary prose.** Any document containing a one-character
   word before `:digits` — "John 3:16", "meet at 9:30", `` `a:1` `` — fatally
   trapped the path-token scanner during the per-keystroke reparse.
@@ -97,14 +268,12 @@ every release; Sparkle orders updates by it.
 
 ### Added
 
-- **Calm, explicit document trust states.** The toolbar now communicates
-  Edited, Saving, briefly Saved, Changed on disk, Conflict, and Save failed,
-  with accessible labels and focused mutation provenance such as Paste,
-  Toggle Task, Replace, panel actions, and Undo.
-- **Contents / Outline is a first-class command.** It is visible in the
-  toolbar and overflow menu, remains available through View, the command
-  palette, accessibility, and configurable keybindings, and reuses the
-  pinnable inspector rather than adding a permanent sidebar.
+- **Calm, explicit document trust states.** The toolbar stays silent during
+  ordinary editing and saving, and communicates only exceptional states:
+  Changed externally, File missing, Conflict, and Save failed.
+- **Contents / Outline remains an advanced command.** It is available through
+  View, the command palette, accessibility, and configurable keybindings
+  without occupying the permanent toolbar, overflow menu, or Welcome guide.
 - **Universal clipboard flavors.** Copy now publishes lossless private
   Markdown, plain text, RTF, and sanitized semantic HTML so native and browser
   targets retain headings, lists, emphasis, links, tables, and code structure.

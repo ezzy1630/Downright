@@ -590,7 +590,7 @@ public enum MarkdownCLI {
         result = result.replacingOccurrences(of: #"\*([^*]+)\*"#, with: "<em>$1</em>", options: .regularExpression)
         result = replacingMatches(in: result, pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#) { captures in
             let alt = captures[0]
-            let source = captures[1]
+            let source = removingURLLineBreaks(captures[1])
             guard imageSourceIsSafe(source) else {
                 return "<span class=\"missing-image\" title=\"\(source)\">\(alt)</span>"
             }
@@ -598,7 +598,7 @@ public enum MarkdownCLI {
         }
         result = replacingMatches(in: result, pattern: #"\[([^\]]+)\]\(([^)]+)\)"#) { captures in
             let label = captures[0]
-            let destination = captures[1]
+            let destination = removingURLLineBreaks(captures[1])
             guard linkDestinationIsSafe(destination) else {
                 return "<span title=\"\(destination)\">\(label)</span>"
             }
@@ -609,12 +609,28 @@ public enum MarkdownCLI {
 
     private static let linkSchemeAllowlist: Set<String> = ["http", "https", "mailto"]
 
+    /// Browsers strip tab, line feed, and carriage return from anywhere inside
+    /// a URL before parsing it, so `java\tscript:` reaches the browser as a
+    /// live `javascript:` scheme no matter how it was analyzed.  Normalizing
+    /// before analysis *and* emission means the safety check sees exactly what
+    /// the browser will act on, and the emitted HTML carries the same text.
+    private static func removingURLLineBreaks(_ value: String) -> String {
+        value.replacingOccurrences(of: "\t", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+    }
+
     private static func linkDestinationIsSafe(_ destination: String) -> Bool {
-        let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = removingURLLineBreaks(destination)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         guard let colon = trimmed.firstIndex(of: ":") else { return true }
         let prefix = String(trimmed[..<colon])
         if prefix.rangeOfCharacter(from: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+-.")).inverted) != nil {
-            return !prefix.contains("javascript") && !prefix.contains("data") && !prefix.contains("vbscript")
+            // A character a URL scheme cannot contain means this parses as a
+            // relative path (browsers never treat it as a scheme), so it is
+            // inert by construction — no fuzzy substring block needed.
+            return true
         }
         return linkSchemeAllowlist.contains(prefix)
     }
@@ -622,7 +638,7 @@ public enum MarkdownCLI {
     private static func imageSourceIsSafe(_ source: String) -> Bool {
         guard !source.hasPrefix("/"),
               !source.hasPrefix("\\"),
-              !hasURLScheme(source)
+              !hasURLScheme(removingURLLineBreaks(source))
         else { return false }
         let decoded = source.removingPercentEncoding ?? source
         let path = decoded

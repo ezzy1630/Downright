@@ -74,21 +74,28 @@ final class TrustStore {
     }
 
     @discardableResult
-    func grant(scope: TrustScope, path: URL, effects: Set<TrustEffect>) -> Bool {
+    func grant(scope: TrustScope, path: URL, effects: Set<TrustEffect>, externalURL: String? = nil) -> Bool {
         guard let canonical = DocumentTrust.canonicalFilePath(path) else { return false }
         lock.lock()
         defer { lock.unlock() }
         guard !loadFailed else { return false }
         let previous = values
-        let existing = values.first { $0.scope == scope && $0.canonicalPath == canonical.path }
-        values.removeAll { $0.scope == scope && $0.canonicalPath == canonical.path }
+        // External grants are keyed by their approved URL as well, so two
+        // different links at the same path never collapse into one grant.
+        let existing = values.first {
+            $0.scope == scope && $0.canonicalPath == canonical.path && $0.externalURL == externalURL
+        }
+        values.removeAll {
+            $0.scope == scope && $0.canonicalPath == canonical.path && $0.externalURL == externalURL
+        }
         // A new grant extends the effects already allowed for this path rather
         // than replacing them: granting editor-launch after a folder-read must
         // not silently revoke the read the user consented to earlier.
         values.append(TrustGrant(
             scope: scope,
             canonicalPath: canonical.path,
-            effects: effects.union(existing?.effects ?? [])
+            effects: effects.union(existing?.effects ?? []),
+            externalURL: externalURL
         ))
         // Keep mutation and persistence ordered. Unlocking before the save
         // lets concurrent callers write snapshots in reverse order, leaving

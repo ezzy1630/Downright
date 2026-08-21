@@ -31,12 +31,16 @@ public final class ThemeStore {
     private var observers: [ObjectIdentifier: (Theme) -> Void] = [:]
     private var watcher: DirectoryWatcher?
 
-    /// Internal rather than private so tests can save and restore the user's
-    /// real preference around exercising `select(named:)`.
-    static let selectionDefaultsKey = "downright.theme.selected"
+    private static let selectionDefaultsKey = "downright.theme.selected"
 
-    public init() {
-        selectedName = UserDefaults.standard.string(forKey: ThemeStore.selectionDefaultsKey) ?? "Paper Light"
+    private let defaults: UserDefaults
+
+    /// `defaults` exists so a test (or an alternate host) can isolate theme
+    /// selection from the user's real preferences; the default keeps the
+    /// long-standing standard-defaults behaviour.
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        selectedName = defaults.string(forKey: ThemeStore.selectionDefaultsKey) ?? "Paper Light"
         bundledThemes = ThemeStore.loadBundledThemes()
         rebuild()
         reloadUserThemes()
@@ -47,7 +51,7 @@ public final class ThemeStore {
     public func select(named name: String) {
         guard themes.contains(where: { $0.name == name }), name != selectedName else { return }
         selectedName = name
-        UserDefaults.standard.set(name, forKey: ThemeStore.selectionDefaultsKey)
+        defaults.set(name, forKey: ThemeStore.selectionDefaultsKey)
         bumpAndNotify()
     }
 

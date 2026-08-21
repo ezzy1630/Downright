@@ -55,6 +55,56 @@ struct SafeHTMLTests {
         }
     }
 
+    /// The cross-block accommodation must answer for *parsed tags*, not raw
+    /// substrings: a mention of the element inside a code span, or in prose,
+    /// must not license hiding a stray literal tag in another block.
+    @Test func detailsMentionsInCodeSpansAndProseDoNotSatisfyTheCrossBlockCheck() throws {
+        for opener in ["`<details>`", "the <details> element is a container"] {
+            let source = """
+            \(opener)
+
+            </details>
+            """
+            let parsed = MarkdownParser.parse(source)
+            let documents = parsed.root.children.compactMap(\.safeHTML)
+            let closing = try #require(documents.last)
+            #expect(!closing.isSafe, "a stray closer with only a textual mention before it stays literal")
+            #expect(closing.annotations.isEmpty)
+            #expect(parsed.text == source)
+        }
+
+        for closer in ["`</details>`", "write </details> to close"] {
+            let source = """
+            <details open>
+
+            \(closer)
+            """
+            let parsed = MarkdownParser.parse(source)
+            let documents = parsed.root.children.compactMap(\.safeHTML)
+            let opening = try #require(documents.first)
+            #expect(!opening.isSafe, "an opener whose only partner is textual mention stays literal")
+            #expect(opening.annotations.isEmpty)
+        }
+    }
+
+    /// The genuine README shape — an opening block, a blank line, the body,
+    /// another blank line, the closing block — keeps its cross-block pairing.
+    @Test func splitDetailsAcrossBlankLinesStillPairsUp() throws {
+        let source = """
+        <details open>
+        <summary>More</summary>
+
+        Body text across the boundary.
+
+        </details>
+        """
+        let parsed = MarkdownParser.parse(source)
+        let documents = parsed.root.children.compactMap(\.safeHTML)
+        let annotations = documents.flatMap(\.annotations)
+        #expect(annotations.contains { if case .details = $0.kind { true } else { false } })
+        #expect(annotations.contains { if case .detailsClosing = $0.kind { true } else { false } })
+    }
+
     @Test func remoteImagesStayVisibleButInertInsideSafeParents() throws {
         let source = #"<p align="center"><img src="https://tracker.example/pixel.png" alt="remote"></p>"#
         let parsed = MarkdownParser.parse(source)

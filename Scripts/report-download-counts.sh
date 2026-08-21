@@ -11,6 +11,13 @@ RELEASE="latest"
 JSON=0
 ALL=0
 
+# One asset-naming contract for every mode: a versioned artifact may carry the
+# "-<build>-<sha>" release suffix, and a milestone-style bare version counts
+# the same whether the report covers one release or all of them.  These are
+# handed to jq through --arg, which takes the value raw — single backslashes.
+VERSIONED_DMG_PATTERN='^Downright-[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+-[0-9a-f]+)?\.dmg$'
+UPDATE_ZIP_PATTERN='^Downright-[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+-[0-9a-f]+)?\.zip$'
+
 usage() {
     echo "usage: Scripts/report-download-counts.sh [--release latest|TAG] [--all] [--json]" >&2
 }
@@ -75,9 +82,9 @@ if [ "$ALL" = "1" ]; then
     RELEASES="$(jq -s 'add // []' "$RELEASES_FILE")"
     RELEASE_COUNT="$(printf '%s' "$RELEASES" | jq 'length')"
     STABLE_DMGS="$(printf '%s' "$RELEASES" | jq -r '[.[] | .assets[]? | select(.name == "Downright.dmg") | .download_count] | add // 0')"
-    VERSIONED_DMGS="$(printf '%s' "$RELEASES" | jq -r '[.[] | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9]+-[0-9a-f]+)?\\.dmg$")) | .download_count] | add // 0')"
+    VERSIONED_DMGS="$(printf '%s' "$RELEASES" | jq -r --arg pattern "$VERSIONED_DMG_PATTERN" '[.[] | .assets[]? | select(.name | test($pattern)) | .download_count] | add // 0')"
     ACQUISITION_DMGS=$((STABLE_DMGS + VERSIONED_DMGS))
-    UPDATE_ZIPS="$(printf '%s' "$RELEASES" | jq -r '[.[] | .assets[]? | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9]+-[0-9a-f]+)?\\.zip$")) | .download_count] | add // 0')"
+    UPDATE_ZIPS="$(printf '%s' "$RELEASES" | jq -r --arg pattern "$UPDATE_ZIP_PATTERN" '[.[] | .assets[]? | select(.name | test($pattern)) | .download_count] | add // 0')"
 
     if [ "$JSON" = "1" ]; then
         printf '%s' "$RELEASES" | jq --arg repository "$REPOSITORY" \
@@ -109,9 +116,9 @@ TAG="$(printf '%s' "$RESPONSE" | jq -r '.tag_name // empty')"
 [ -n "$TAG" ] || { echo "release not found: $RELEASE" >&2; exit 1; }
 
 STABLE_DMG="$(printf '%s' "$RESPONSE" | jq -r '[.assets[] | select(.name == "Downright.dmg") | .download_count] | add // 0')"
-VERSIONED_DMGS="$(printf '%s' "$RESPONSE" | jq -r '[.assets[] | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+-[0-9a-f]+\\.dmg$")) | .download_count] | add // 0')"
+VERSIONED_DMGS="$(printf '%s' "$RESPONSE" | jq -r --arg pattern "$VERSIONED_DMG_PATTERN" '[.assets[] | select(.name | test($pattern)) | .download_count] | add // 0')"
 ACQUISITION_DMGS=$((STABLE_DMG + VERSIONED_DMGS))
-UPDATE_ZIPS="$(printf '%s' "$RESPONSE" | jq -r '[.assets[] | select(.name | test("^Downright-[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9]+-[0-9a-f]+)?\\.zip$")) | .download_count] | add // 0')"
+UPDATE_ZIPS="$(printf '%s' "$RESPONSE" | jq -r --arg pattern "$UPDATE_ZIP_PATTERN" '[.assets[] | select(.name | test($pattern)) | .download_count] | add // 0')"
 
 if [ "$JSON" = "1" ]; then
     printf '%s' "$RESPONSE" | jq --arg repository "$REPOSITORY" \

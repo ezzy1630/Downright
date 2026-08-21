@@ -33,8 +33,10 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write        # publish the GitHub Release + assets
-      id-token: write        # GitHub Pages deployment
-      pages: write
+      # No id-token/pages here: this job only *uploads* the Pages artifact.
+      # The OIDC-signed deployment happens in `deploy`, which holds exactly
+      # the grants it needs — this job must not, being the one that handles
+      # every signing secret.
 
     env:
       MARKETING_VERSION_FILE: Config/version.env

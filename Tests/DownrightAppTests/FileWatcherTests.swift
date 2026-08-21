@@ -177,6 +177,99 @@ struct FileWatcherTests {
         try await Task.sleep(nanoseconds: 350_000_000)
     }
 
+    /// A save on a slow volume can stay in flight far longer than any fixed
+    /// suppression window. Suppression is a state now, so the observation
+    /// made while the write is still unacknowledged — and the acknowledged
+    /// bytes themselves — must both stay silent, and only genuine later
+    /// external activity may deliver.
+    @Test("a write still unacknowledged past the old clock window stays suppressed")
+    func slowVolumeSaveIsNotAPhantomExternalChange() async throws {
+        let fixture = try Fixture(contents: "before")
+        defer { fixture.remove() }
+        let events = EventCollector()
+        let watcher = FileWatcher(url: fixture.url) { events.append($0) }
+        defer { watcher.stop() }
+
+        let own = Data("own bytes written slowly".utf8)
+        watcher.suppressOwnWrite(for: 0.05)
+        try fixture.atomicReplace(own)
+
+        // Outlive the caller's whole interval and the legacy 0.6 s window.
+        try await Task.sleep(nanoseconds: 700_000_000)
+        watcher.checkNowForTesting()
+        try await settle()
+        #expect(events.count == 0, "an in-flight own write must not arrive as an external change")
+
+        watcher.acknowledgeOwnWrite(contents: own)
+        watcher.checkNowForTesting()
+        try await settle()
+        #expect(events.count == 0, "the acknowledged bytes stay silent too")
+
+        let external = Data("genuinely external".utf8)
+        try fixture.atomicReplace(external)
+        watcher.checkNowForTesting()
+        try await expectEventCount(events, 1)
+        #expect(events.count == 1)
+        #expect(events.isChanged(at: 0))
+    }
+
+    /// If an acknowledgement is somehow lost, the watchdog fails open instead
+    /// of leaving the watcher deaf forever.
+    @Test("a lost acknowledgement trips the watchdog back to detection")
+    func lostAcknowledgementFailsOpen() async throws {
+        let fixture = try Fixture(contents: "before")
+        defer { fixture.remove() }
+        let events = EventCollector()
+        let watcher = FileWatcher(url: fixture.url) { events.append($0) }
+        defer { watcher.stop() }
+
+        let own = Data("unacknowledged bytes".utf8)
+        watcher.suppressOwnWrite(for: 5)
+        try fixture.atomicReplace(own)
+        watcher.tripSuppressionWatchdogForTesting()
+
+        watcher.checkNowForTesting()
+        try await expectEventCount(events, 1)
+        #expect(events.isChanged(at: 0), "fail-open surfaces the unacknowledged write as change")
+
+        // And the watcher keeps detecting afterwards.
+        try fixture.atomicReplace(Data("later".utf8))
+        watcher.checkNowForTesting()
+        try await expectEventCount(events, 2)
+    }
+
+    /// Directory watches honor the same own-write suppression: the owner
+    /// writing sidecars into the watched folder must not wake an idempotent
+    /// rescan, and detection resumes once suppression ends.
+    @Test("directory watch skips deliveries while own-write suppression is open")
+    func directoryWatchRespectsOwnWriteSuppression() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-dirwatch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sibling = directory.appendingPathComponent("sibling.md")
+        try Data("first\n".utf8).write(to: sibling)
+
+        let events = EventCollector()
+        let watcher = FileWatcher(
+            url: directory,
+            watchesDirectory: true,
+            fileExtensions: ["md"]
+        ) { events.append($0) }
+        defer { watcher.stop() }
+
+        watcher.suppressOwnWrite(for: 5)
+        try Data("second\n".utf8).write(to: sibling)
+        watcher.deliverDirectoryEventForTesting(paths: [sibling.path])
+        try await settle()
+        #expect(events.count == 0, "our own write into the folder stays silent")
+
+        watcher.cancelOwnWriteSuppression()
+        watcher.deliverDirectoryEventForTesting(paths: [sibling.path])
+        try await expectEventCount(events, 1)
+        #expect(events.isChanged(at: 0))
+    }
+
     private func expectEventCount(_ events: EventCollector, _ count: Int) async throws {
         for _ in 0..<100 {
             if events.count >= count { return }

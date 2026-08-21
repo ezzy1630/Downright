@@ -27,7 +27,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 - Keep the one-TextKit-2-surface architecture unless the task explicitly changes that contract. Incremental typing must not cause a whole-document rebuild; length-changing edits must invalidate all shifted ranges and fragments.
 - Make source mutations and undo boundaries explicit. Storage, autosave, watcher, and external-write changes need focused coverage for the relevant clean/dirty states and, when applicable, atomic replacement, deletion/rename, own-write suppression, conflict/review, failure, and recovery.
 - Never translate an I/O failure into “no change,” recreate a deleted file silently, overwrite source after a rendering failure, or save after the user chose Discard.
-- Downright has no app telemetry and does not upload document contents. Public acquisition means GitHub Release `.dmg` asset requests across stable and versioned DMGs; exclude Sparkle ZIP/delta requests and never describe requests as unique people or completed installs.
+- Downright has no app telemetry and does not upload document contents. The one recurring network request a production build makes on its own is a conditional `GET` of the public appcast, carrying no identifier and reading only a version; it stops with the "check automatically" setting, and it may trigger a Sparkle check but never parses the feed or installs anything. Public acquisition means GitHub Release `.dmg` asset requests across stable and versioned DMGs; exclude Sparkle ZIP/delta requests and never describe requests as unique people or completed installs.
 
 ## Validation by Surface
 

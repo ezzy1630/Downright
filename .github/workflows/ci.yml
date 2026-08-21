@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# A force-push or a new commit on a PR branch supersedes the previous run:
+# the full macos-26 lane is expensive, and only the newest result matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   swift:
     # AppKit Liquid Glass symbols are part of the macOS 26 SDK.  macos-15's

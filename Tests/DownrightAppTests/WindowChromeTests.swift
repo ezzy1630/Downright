@@ -38,15 +38,12 @@ struct WindowChromeTests {
     }
 
     @Test
-    func documentIdentityNamesEveryNonNeutralStateAccessibly() throws {
+    func documentIdentityShowsOnlyExceptionalStates() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }
         let identity = try #require(controller.toolbarDocumentIdentityView)
         let cases: [(MarkdownDocument.PresentationState.Phase, String)] = [
-            (.edited, "Edited"),
-            (.saving, "Saving"),
-            (.saved, "Saved"),
-            (.changedOnDisk, "Changed on disk"),
+            (.changedOnDisk, "Changed externally"),
             (.conflict, "Conflict"),
             (.saveFailed, "Save failed"),
         ]
@@ -58,9 +55,25 @@ struct WindowChromeTests {
             #expect(identity.accessibilityLabel()?.contains("Paste") == true)
             #expect(identity.toolTip?.contains(label) == true)
         }
-        identity.documentState = .neutral
-        #expect(identity.accessibilityLabel()?.contains("Edited") == false)
-        #expect(identity.toolTip == nil)
+        for phase in [
+            MarkdownDocument.PresentationState.Phase.neutral,
+            .edited,
+            .saving,
+            .saved,
+        ] {
+            identity.documentState = .init(
+                phase: phase, provenance: "Paste", detail: "Example"
+            )
+            #expect(identity.accessibilityLabel()?.contains("Paste") != true)
+            #expect(identity.toolTip?.contains("Paste") != true)
+        }
+
+        identity.documentState = .init(
+            phase: .changedOnDisk, provenance: nil, detail: "File missing"
+        )
+        #expect(identity.accessibilityLabel()?.contains("File missing") == true)
+        #expect(identity.accessibilityLabel()?.contains("Changed externally") == false)
+        #expect(identity.toolTip?.contains("File missing: File missing") == false)
     }
 
     @Test
@@ -287,14 +300,9 @@ struct WindowChromeTests {
         #expect(find.feedbackInsetY == 0)
         #expect(find.feedbackCornerRadius == 17)
         #expect(!find.isOn, "find should rest unlit with its panel closed")
-        let contents = try #require(
-            cluster.arrangedSubviews.first {
-                ($0 as? ToolbarActionButton)?.accessibilityLabel() == Command.documentLens.title
-            } as? ToolbarActionButton,
-            "contents is not in the trailing cluster"
-        )
-        #expect(contents.toolTip == "Show or hide the document Contents and Outline")
-        #expect(contents.accessibilityHelp() == "Show or hide the document Contents and Outline")
+        #expect(!cluster.arrangedSubviews.contains {
+            ($0 as? ToolbarActionButton)?.accessibilityLabel() == Command.documentLens.title
+        }, "Contents / Outline belongs in menus, not the permanent toolbar")
         #expect(cluster.arrangedSubviews.contains { $0 is ActivityIndicatorView })
         #expect(cluster.arrangedSubviews.contains { $0 is TaskProgressRing })
         let updatePill = try #require(
@@ -308,13 +316,13 @@ struct WindowChromeTests {
             cluster.arrangedSubviews.first { $0 is ToolbarMenuButton } as? ToolbarMenuButton,
             "the overflow menu is not in the trailing cluster"
         )
-        #expect(overflow.popupMenuItems.contains { MainMenu.command(for: $0) == .documentLens })
+        #expect(!overflow.popupMenuItems.contains { MainMenu.command(for: $0) == .documentLens })
         #expect(overflow.intrinsicContentSize.width == 34)
         #expect(overflow.intrinsicContentSize.height == 34)
         #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })
         #expect(overflow.popupMenuItems.contains { $0.title == "Source Focus" || $0.title == "Exit Source Focus" })
         // The cluster leads with the spinner and ends at the menu: activity,
-        // contents, find, ring, pill, overflow — each hidden view costs nothing.
+        // find, ring, pill, overflow — each hidden view costs nothing.
         #expect(cluster.arrangedSubviews.first is ActivityIndicatorView)
         #expect(cluster.arrangedSubviews.last is ToolbarMenuButton)
     }
@@ -568,7 +576,8 @@ struct WindowChromeTests {
     }
 
     @Test("Rapid Replace toggles cannot leave a faded ghost row")
-    func replaceBarRapidToggleSettlesVisible() async throws {
+    @MainActor
+    func replaceBarRapidToggleSettlesVisible() throws {
         let style = StyleSheet(
             theme: ThemeStore.shared.current,
             appearance: NSAppearance(named: .darkAqua)!,
@@ -584,7 +593,11 @@ struct WindowChromeTests {
         bar.showsReplace = true
         bar.showsReplace = false
         bar.showsReplace = true
-        try await Task.sleep(for: .milliseconds(350))
+        // Wait for the fade-in to actually settle instead of sleeping a fixed
+        // interval: animation timers coalesce on loaded machines, so any
+        // constant can expire mid-fade and fail a correct implementation.
+        let settled = pumpMainRunLoop(until: { abs(bar.replaceRowAlphaForTesting - 1) < 0.001 })
+        #expect(settled, "the replace row never reached full alpha")
         bar.layoutSubtreeIfNeeded()
 
         #expect(bar.showsReplace)

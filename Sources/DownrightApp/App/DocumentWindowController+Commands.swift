@@ -35,7 +35,8 @@ extension DocumentWindowController: CommandResponder {
             canGoForward: jumpHistory.canGoForward,
             isSpeaking: isSpeakingDocument,
             caretIsInTable: caretIsInTable,
-            hasChangeMarks: !markdownDocument.changes.decoratedMarks.isEmpty
+            hasChangeMarks: !markdownDocument.changes.decoratedMarks.isEmpty,
+            hasQuickLookTarget: hasQuickLookTarget
         )
     }
 
@@ -222,6 +223,10 @@ extension DocumentWindowController: CommandResponder {
             authorizeLocalEffect(.launchPathOrEditor, target: url) {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
+        // Reports whether anything was previewed, so a Quick Look aimed at
+        // nothing can fall back the way the caller expects rather than
+        // silently swallowing the key.
+        case .quickLook: return quickLookAtSelection()
         case .openInEditor:
             guard let url = markdownDocument.url else { return true }
             authorizeLocalEffect(.launchPathOrEditor, target: url) {
@@ -238,6 +243,8 @@ extension DocumentWindowController: CommandResponder {
         case .exportHTML: exportHTML()
         case .exportPDF: exportPDF()
         case .exportSelectionAsImage: exportSelectionAsImage()
+        case .share: shareDocument()
+        case .shareAsPDF: shareDocumentAsPDF()
         case .increaseTextSize: adjustTextSize(by: 1)
         case .decreaseTextSize: adjustTextSize(by: -1)
         case .resetTextSize: Preferences.shared.update { $0.textSizeAdjustment = 0 }

@@ -498,6 +498,10 @@ final class MarkdownDocument: NSObject {
     }
 
     func save(intent: SaveIntent = .normal) throws {
+        // A closed document has no owner left to consent to a write.  Stragglers
+        // (queued autosave work, occlusion events during teardown) must neither
+        // touch the file nor raise a failure alert for a window that is gone.
+        guard !isClosed else { return }
         guard let url else {
             let error = CocoaError(.fileNoSuchFile)
             publishSaveFailure(error)
@@ -719,6 +723,10 @@ final class MarkdownDocument: NSObject {
 
     @discardableResult
     func saveIfNeeded(intent: SaveIntent = .normal) -> Result<Void, Error> {
+        // Same lifetime rule as save(): after close() the document is inert.
+        // Reporting success here keeps straggler implicit saves silent instead
+        // of surfacing errors for a window that no longer exists.
+        guard !isClosed else { return .success(()) }
         guard isDirty else { return .success(()) }
         guard url != nil else {
             let error = CocoaError(.fileNoSuchFile)
@@ -810,6 +818,25 @@ final class MarkdownDocument: NSObject {
         ScrollAnchoring.offset(for: state.anchor, in: parsed)
     }
 
+    /// Keep reference-valued fragment metadata aligned with the storage while
+    /// the parser works on its immutable snapshot.  Mirrors the projection in
+    /// MarkdownTextView's editing funnel so document-level mutations (commands,
+    /// undo/redo, external absorption) cannot leave payloads pointing at
+    /// pre-edit offsets.
+    private func projectFragmentPayloads(across range: NSRange, insertedLength: Int) {
+        var seen = Set<ObjectIdentifier>()
+        let start = max(0, min(range.location, storage.length))
+        storage.enumerateAttribute(
+            .drFragment,
+            in: NSRange(location: start, length: storage.length - start)
+        ) { value, _, _ in
+            guard let payload = value as? FragmentPayload else { return }
+            let identity = ObjectIdentifier(payload)
+            guard seen.insert(identity).inserted else { return }
+            payload.projectSourceRanges(across: range, insertedLength: insertedLength)
+        }
+    }
+
     // MARK: - Editing
     //
     // Every mutation funnels through here so undo, dirty tracking, and change
@@ -841,6 +868,14 @@ final class MarkdownDocument: NSObject {
         if let actionName { undoManager.setActionName(actionName) }
         undoManager.endUndoGrouping()
 
+        // Attribute runs move with the storage edit, but the fragment payload
+        // objects riding on them are reference values whose ranges do not.
+        // Project them across this edit exactly as MarkdownTextView does for
+        // its own editing funnel; otherwise every unchanged block below an
+        // insertion keeps pointing at pre-edit offsets until some later edit
+        // happens to redecorate it (stale code-block copies, image loads
+        // invalidating the wrong range).
+        projectFragmentPayloads(across: range, insertedLength: (replacement as NSString).length)
         storage.beginEditing()
         storage.replaceCharacters(in: range, with: replacement)
         storage.endEditing()
@@ -1443,6 +1478,12 @@ final class MarkdownDocument: NSObject {
                       hunk.oldRange.upperBound <= storage.length,
                       hunk.newRange.location >= 0,
                       hunk.newRange.upperBound <= incomingText.length else { continue }
+                // Same reference-payload rule as replace(): hunk edits shift
+                // the runs below them without moving payload ranges.
+                projectFragmentPayloads(
+                    across: hunk.oldRange,
+                    insertedLength: incomingText.substring(with: hunk.newRange).utf16.count
+                )
                 storage.replaceCharacters(
                     in: hunk.oldRange,
                     with: incomingText.substring(with: hunk.newRange)

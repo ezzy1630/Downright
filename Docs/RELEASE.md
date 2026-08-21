@@ -51,6 +51,49 @@ Scripts/sync-versions.sh fix    # rewrite the consumers from version.env
 - Pills live in document titlebars and the start window; the update panel is a
   single nonmodal window that renders release notes through the app's own
   `MarkdownTextView`.
+- `Sources/DownrightApp/Updater/ReleaseWatch.swift` — notices that the appcast
+  moved and asks Sparkle to look. See "Update latency" below.
+- The pill acts rather than opens: one press installs and relaunches, and
+  resting on it unfurls `UpdateNotesPopover` with the notes the appcast already
+  embedded. Unsaved work is *not* handled in the updater — Sparkle's install
+  asks the app to terminate, which runs `applicationShouldTerminate` and the
+  app's one policy for dirty buffers. A cancelled quit lands the machine in
+  `.waitingForTermination`, which is what the "Restart to Update" pill reports.
+
+## Update latency
+
+Every push to `main` publishes a signed appcast, so the practical question is
+how long an already-running copy takes to notice. Three things decide it:
+
+| Stage | Cost |
+|---|---|
+| Push → signed appcast live on Pages | the release workflow's own run time |
+| Appcast live → `ReleaseWatch` notices | ~90s frontmost, ~15 min backgrounded |
+| Noticed → pill offers it | one Sparkle background check |
+
+`ReleaseWatch` is a **trigger, not a trust path**. It issues a conditional
+`GET` against `SUFeedURL`, and on a changed validator calls
+`checkForUpdatesInBackground()`. It never parses the appcast, never compares
+versions, never reads an enclosure URL, and cannot cause an install: every
+signature check, ordering decision, and download stays inside Sparkle.
+Shortening the latency of an update therefore leaves the security model of one
+untouched.
+
+`SUScheduledCheckInterval` (1 hour) remains as the fallback for an app that was
+asleep, offline, or in Low Power Mode while a build shipped. Sparkle enforces a
+one-hour floor on scheduled checks, which is why the watch drives its own
+trigger rather than simply setting a shorter interval.
+
+To work on the update surface without waiting out a release, launch a **debug**
+build with `--downright-demo-update`. It fills in synthetic metadata so the
+pill, its arrival, and the hover notes can be exercised directly; it touches
+neither Sparkle nor the feed, and `#if DEBUG` keeps it out of the Release
+configuration the notarised archive is built with.
+
+```bash
+CONFIGURATION=debug SCRATCH=.build-demo Scripts/bundle-app.sh
+open .build-demo/bundle/Downright.app --args --downright-demo-update
+```
 
 Dev/ad-hoc bundles omit the Sparkle Info.plist block, which disables the
 updater entirely (`UpdateCoordinator.start()` refuses to run). Production keys

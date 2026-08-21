@@ -38,6 +38,18 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             $0.textSizeAdjustment = $0.textSizeAdjustment == 0 ? 3 : 0
         }
     }
+
+    /// Four things can happen on this surface's wheel: ⌘ sizes the text, ⌥
+    /// steps structural detail, ⇧ and two fingers sideways move through jump
+    /// history, and two bare fingers sideways switch Document↔Source.  They
+    /// are asked in that order and the first to claim wins; anything none of
+    /// them has claimed goes straight back, so vertical scrolling — which is
+    /// what almost every one of these events is — is untouched.
+    func markdownTextView(
+        _ view: MarkdownTextView, shouldClaimScrollGesture event: NSEvent
+    ) -> Bool {
+        documentScrollGestures.handle(event)
+    }
     func markdownTextView(
         _ view: MarkdownTextView, didRequestHeadingLevel level: Int?, headingIndex: Int
     ) {
@@ -96,6 +108,15 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             authorizeLocalEffect(.launchPathOrEditor, target: target) {
                 if DocumentTypes.isMarkdown(target.pathExtension) {
                     (NSApp.delegate as? AppDelegate)?.open(target)
+                } else if DocumentTypes.executesWhenOpened(target) {
+                    // "Open in editor" never means "run this": an application
+                    // bundle or Terminal script linked from a document is
+                    // revealed in Finder instead, so showing where it lives
+                    // stays possible while running it stays a manual act.
+                    NSWorkspace.shared.selectFile(
+                        target.path,
+                        inFileViewerRootedAtPath: target.deletingLastPathComponent().path
+                    )
                 } else {
                     NSWorkspace.shared.open(target)
                 }
@@ -120,6 +141,15 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
                     (NSApp.delegate as? AppDelegate)?.open(target)
                 } else {
                     openInPlace(target)
+                }
+            } else if DocumentTypes.executesWhenOpened(target) {
+                // Same rule as .localFile: reveal execution-capable targets,
+                // never run them from inside a document.
+                authorizeLocalEffect(.launchPathOrEditor, target: target) {
+                    NSWorkspace.shared.selectFile(
+                        target.path,
+                        inFileViewerRootedAtPath: target.deletingLastPathComponent().path
+                    )
                 }
             } else {
                 authorizeLocalEffect(.launchPathOrEditor, target: target) {
@@ -232,6 +262,33 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
     // MARK: Context menus (§7.1)
 
+    /// Opens a path token in the user's editor.  Returns false — and touches
+    /// nothing — when the token does not resolve to an existing file, matching
+    /// `didActivatePathToken` and the documented missing-path contract.
+    @discardableResult
+    func openPathTokenInEditor(_ token: PathToken) -> Bool {
+        guard let resolution = pathResolver?.resolve(token),
+              resolution.exists,
+              let url = resolution.url else { return false }
+        authorizeLocalEffect(.launchPathOrEditor, target: url) {
+            Preferences.shared.values.externalEditor.open(url, line: token.line)
+        }
+        return true
+    }
+
+    /// Reveals a path token's file in Finder; same missing-path rule as
+    /// `openPathTokenInEditor`.
+    @discardableResult
+    func revealPathTokenInFinder(_ token: PathToken) -> Bool {
+        guard let resolution = pathResolver?.resolve(token),
+              resolution.exists,
+              let url = resolution.url else { return false }
+        authorizeLocalEffect(.launchPathOrEditor, target: url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        return true
+    }
+
     func markdownTextView(_ view: MarkdownTextView, wantsContextMenuFor target: ContextTarget) -> NSMenu? {
         let menu = NSMenu()
         switch target.kind {
@@ -269,17 +326,14 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .pathToken(let token):
             menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
             menu.addItem(.separator())
+            // Missing paths stay inert on every surface, including this one:
+            // no editor launch and no Finder reveal may run for a target that
+            // does not exist (§ Workspace and path resolution).
             menu.addItem(actionItem("Open in Editor") { [weak self] in
-                guard let self, let resolution = self.pathResolver?.resolve(token), let url = resolution.url else { return }
-                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
-                    Preferences.shared.values.externalEditor.open(url, line: token.line)
-                }
+                _ = self?.openPathTokenInEditor(token)
             })
             menu.addItem(actionItem("Reveal in Finder") { [weak self] in
-                guard let self, let url = self.pathResolver?.resolve(token).url else { return }
-                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
+                _ = self?.revealPathTokenInFinder(token)
             })
             menu.addItem(actionItem("Copy Path") {
                 NSPasteboard.general.clearContents()

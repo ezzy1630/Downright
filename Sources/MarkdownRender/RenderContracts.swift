@@ -251,7 +251,10 @@ public final class FragmentPayload: NSObject {
     /// leading cell text disappeared and trailing Markdown markers leaked.
     /// Project the old metadata over the same edit immediately; the fresh parse
     /// remains authoritative when it arrives.
-    func projectSourceRanges(across edit: NSRange, insertedLength: Int) {
+    /// Public because every edit funnel that mutates a decorated storage —
+    /// the view's own and the document layer's — must be able to keep payloads
+    /// aligned with the runs they ride on.
+    public func projectSourceRanges(across edit: NSRange, insertedLength: Int) {
         sourceRange = Self.project(sourceRange, across: edit, insertedLength: insertedLength)
         guard var tableData else { return }
         tableData.delimiterRange = Self.project(

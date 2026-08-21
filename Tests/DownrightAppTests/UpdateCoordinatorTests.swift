@@ -408,7 +408,7 @@ struct UpdateCoordinatorFlowTests {
         coordinator.driverDidFindUpdate(sampleMetadata, stage: .downloaded, userInitiated: false) { _ in }
         #expect(coordinator.panelShowCount == 0)
         #expect(coordinator.phase == .available(sampleMetadata, stage: .downloaded))
-        #expect(coordinator.pillModel == .restartToUpdate)
+        #expect(coordinator.pillModel == .updateNow(version: "1.1.0", isReady: true))
 
         coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded, userInitiated: true) { _ in }
         #expect(coordinator.panelShowCount > 0)
@@ -424,7 +424,7 @@ struct UpdateCoordinatorFlowTests {
         coordinator.driverDidBecomeReadyToRelaunch { _ in }
         #expect(coordinator.panelShowCount == 0)
         #expect(coordinator.phase == .readyToRelaunch)
-        #expect(coordinator.pillModel == .restartToUpdate)
+        #expect(coordinator.pillModel?.offersInstall == true)
     }
 
     /// A background-cycle failure is a non-event: no window, and no warning
@@ -488,11 +488,11 @@ struct UpdateCoordinatorFlowTests {
 
     // MARK: Background downloads
 
-    @Test func backgroundDownloadDrivesRestartPill() {
+    @Test func backgroundDownloadDrivesUpdateNowPill() {
         let (coordinator, engine) = makeCoordinator()
         #expect(coordinator.pillModel == nil)
         engine.completeBackgroundDownload(displayVersion: "1.1.0")
-        #expect(coordinator.pillModel == .restartToUpdate)
+        #expect(coordinator.pillModel == .updateNow(version: "1.1.0", isReady: true))
         #expect(coordinator.downloadedUpdate != nil)
         coordinator.driverDidDismiss()
         #expect(coordinator.downloadedUpdate == nil)
@@ -718,5 +718,373 @@ struct UpdateBuildContractTests {
         let targetText = String(manifest[marker.lowerBound...])
         let appTarget = targetText.prefix { $0 != "}" }
         #expect(appTarget.contains("Sparkle"), "DownrightApp target must link Sparkle")
+    }
+}
+
+// MARK: - Release watch policy
+
+@Suite
+struct ReleaseWatchPolicyTests {
+    @Test func frontmostChecksFarMoreOftenThanBackgrounded() {
+        var policy = ReleaseWatchPolicy()
+        policy.isAppActive = true
+        #expect(policy.interval == ReleaseWatchPolicy.activeInterval)
+        policy.isAppActive = false
+        #expect(policy.interval == ReleaseWatchPolicy.backgroundInterval)
+    }
+
+    /// No network is not a failure state; it is simply nothing to do.
+    @Test func noNetworkSuspendsEntirely() {
+        var policy = ReleaseWatchPolicy(isAppActive: true, isLowPower: false, hasNetwork: false)
+        #expect(policy.interval == nil)
+        policy.hasNetwork = true
+        #expect(policy.interval != nil)
+    }
+
+    /// Low Power Mode is an explicit request to stop doing optional work, and
+    /// polling for a build nobody asked for is exactly that.
+    @Test func lowPowerBacksOffInFrontAndStopsBehind() {
+        var policy = ReleaseWatchPolicy(isAppActive: true, isLowPower: true, hasNetwork: true)
+        #expect(policy.interval == ReleaseWatchPolicy.backgroundInterval)
+        policy.isAppActive = false
+        #expect(policy.interval == nil)
+    }
+}
+
+// MARK: - Release watch
+
+@MainActor
+private final class FakeReleaseFeedProbe: ReleaseFeedProbe {
+    private var results: [ReleaseFeedProbeResult]
+    /// Every validator the watch offered, in order — the evidence that a
+    /// conditional request is actually conditional.
+    private(set) var validators: [String?] = []
+
+    init(_ results: [ReleaseFeedProbeResult]) { self.results = results }
+
+    func probe(feed: URL, validator: String?) async -> ReleaseFeedProbeResult {
+        validators.append(validator)
+        return results.isEmpty ? .unchanged : results.removeFirst()
+    }
+}
+
+@Suite(.serialized)
+@MainActor
+struct ReleaseWatchTests {
+    private let feed = URL(string: "https://example.invalid/appcast.xml")!
+
+    /// The watch hands its work to a `Task`; yield until it has landed rather
+    /// than sleeping for a duration that would only ever be a guess.
+    private func settle(_ watch: ReleaseWatch, probes: Int) async {
+        for _ in 0..<500 where watch.completedProbeCount < probes {
+            await Task.yield()
+        }
+    }
+
+    private func makeWatch(
+        _ results: [ReleaseFeedProbeResult]
+    ) -> (ReleaseWatch, FakeReleaseFeedProbe) {
+        let probe = FakeReleaseFeedProbe(results)
+        return (ReleaseWatch(feed: feed, prober: probe), probe)
+    }
+
+    /// Sparkle's own post-launch check already answers "was something waiting
+    /// when I opened the app". The first probe only learns where to start.
+    @Test func firstProbeEstablishesTheBaselineWithoutFiring() async {
+        let (watch, _) = makeWatch([.changed(validator: "etag:a")])
+        var fired = 0
+        watch.onFeedChanged = { fired += 1 }
+        watch.start(observingSystemEvents: false)
+        await settle(watch, probes: 1)
+        #expect(watch.hasBaseline)
+        #expect(fired == 0)
+        watch.stop()
+    }
+
+    @Test func aMovedFeedFiresOnce() async {
+        let (watch, probe) = makeWatch([.changed(validator: "etag:a"), .changed(validator: "etag:b")])
+        var fired = 0
+        watch.onFeedChanged = { fired += 1 }
+        watch.start(observingSystemEvents: false)
+        await settle(watch, probes: 1)
+        watch.probeNow()
+        await settle(watch, probes: 2)
+        #expect(fired == 1)
+        // The second request carried the first response's validator back.
+        #expect(probe.validators == [nil, "etag:a"])
+        watch.stop()
+    }
+
+    @Test func anUnchangedFeedIsSilent() async {
+        let (watch, _) = makeWatch([.changed(validator: "etag:a"), .unchanged, .unchanged])
+        var fired = 0
+        watch.onFeedChanged = { fired += 1 }
+        watch.start(observingSystemEvents: false)
+        await settle(watch, probes: 1)
+        watch.probeNow()
+        await settle(watch, probes: 2)
+        watch.probeNow()
+        await settle(watch, probes: 3)
+        #expect(fired == 0)
+        watch.stop()
+    }
+
+    /// An unreachable feed must not be mistaken for a baseline, or the first
+    /// successful probe after a flight would look like a brand-new release.
+    @Test func anUnreachableFeedDoesNotEstablishTheBaseline() async {
+        let (watch, _) = makeWatch([.unreachable, .changed(validator: "etag:a")])
+        var fired = 0
+        watch.onFeedChanged = { fired += 1 }
+        watch.start(observingSystemEvents: false)
+        await settle(watch, probes: 1)
+        #expect(!watch.hasBaseline)
+        watch.probeNow()
+        await settle(watch, probes: 2)
+        #expect(watch.hasBaseline)
+        #expect(fired == 0)
+        watch.stop()
+    }
+
+    /// Wake fires activation too, and a held Cmd-Tab flaps it several times a
+    /// second. Without a floor each of those becomes its own request.
+    @Test func coincidingEventsCollapseIntoOneProbe() async {
+        let (watch, _) = makeWatch([.changed(validator: "etag:a")])
+        watch.start(observingSystemEvents: false)
+        await settle(watch, probes: 1)
+        watch.systemDidWake()
+        watch.applicationDidChangeActivation(isActive: true)
+        watch.networkAvailabilityDidChange(hasNetwork: true)
+        await Task.yield()
+        #expect(watch.completedProbeCount == 1)
+        watch.stop()
+    }
+
+    @Test func losingTheNetworkStopsProbing() async {
+        let (watch, _) = makeWatch([.changed(validator: "etag:a")])
+        watch.start(observingSystemEvents: false)
+        await settle(watch, probes: 1)
+        watch.networkAvailabilityDidChange(hasNetwork: false)
+        watch.probeNow()
+        await Task.yield()
+        #expect(watch.completedProbeCount == 1)
+        watch.stop()
+    }
+}
+
+// MARK: - Notes summary
+
+@Suite
+struct UpdateNotesSummaryTests {
+    /// The panel header already names the version, so a leading title line
+    /// would be the same sentence twice.
+    @Test func dropsTheLeadingTitle() {
+        let summary = UpdateNotesSummary.summary(from: "# Downright 1.1.0\n\n- Faster parsing")
+        #expect(!summary.contains("Downright 1.1.0"))
+        #expect(summary.contains("Faster parsing"))
+    }
+
+    @Test func stopsWellShortOfAWallOfText() {
+        let long = (1...60).map { "- change number \($0)" }.joined(separator: "\n")
+        let summary = UpdateNotesSummary.summary(from: long)
+        #expect(summary.contains("change number 1"))
+        #expect(!summary.contains("change number 40"))
+        #expect(summary.hasSuffix("…"), "a trimmed summary has to say that it was trimmed")
+    }
+
+    @Test func handlesNoNotesAtAll() {
+        #expect(UpdateNotesSummary.summary(from: nil).isEmpty)
+        #expect(UpdateNotesSummary.summary(from: "   \n\n  ").isEmpty)
+    }
+
+    @Test func keepsShortNotesWhole() {
+        let summary = UpdateNotesSummary.summary(from: "- one\n- two")
+        #expect(summary == "- one\n- two")
+    }
+}
+
+// MARK: - Update Now (one press installs)
+
+@Suite(.serialized)
+@MainActor
+struct UpdateNowPressTests {
+    private func makeCoordinator() -> (UpdateCoordinator, FakeUpdateEngine) {
+        let engine = FakeUpdateEngine()
+        let coordinator = UpdateCoordinator(engine: engine)
+        coordinator.suppressUIForTesting = true
+        try? engine.start()
+        return (coordinator, engine)
+    }
+
+    @Test func onlyActionableStatesOfferAnInstall() {
+        #expect(UpdatePillModel.updateNow(version: "1.1.0", isReady: false).offersInstall)
+        #expect(UpdatePillModel.restartToUpdate.offersInstall)
+        #expect(!UpdatePillModel.warning.offersInstall)
+        #expect(!UpdatePillModel.progress("Updating…", nil).offersInstall)
+        #expect(!UpdatePillModel.informational("1.2.0").offersInstall)
+    }
+
+    /// The whole point of the control: the press is the decision, so no window
+    /// opens to ask it again.
+    @Test func pressInstallsWithoutOpeningThePanel() {
+        let (coordinator, _) = makeCoordinator()
+        var replies: [UpdateUserChoice] = []
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded, userInitiated: false) {
+            replies.append($0)
+        }
+        #expect(coordinator.pillModel == .updateNow(version: "1.1.0", isReady: false))
+        coordinator.userDidPressUpdateNow()
+        #expect(replies == [.install])
+        #expect(coordinator.panelShowCount == 0)
+    }
+
+    /// A background download leaves no prompt armed, so the press has to
+    /// re-enter Sparkle — and that cycle must stay as silent as the press.
+    @Test func pressOnABackgroundDownloadReentersSparkleSilently() {
+        let (coordinator, engine) = makeCoordinator()
+        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        coordinator.userDidPressUpdateNow()
+        #expect(engine.foregroundCheckCount == 1)
+        #expect(coordinator.isExpeditedInstall)
+
+        coordinator.driverDidBeginUserCheck { }
+        #expect(coordinator.panelShowCount == 0, "a press must not open the panel it replaced")
+
+        var replies: [UpdateUserChoice] = []
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .downloaded, userInitiated: true) {
+            replies.append($0)
+        }
+        #expect(replies == [.install])
+        #expect(coordinator.panelShowCount == 0)
+    }
+
+    @Test func anExpeditedReadyToRelaunchInstallsImmediately() {
+        let (coordinator, engine) = makeCoordinator()
+        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        coordinator.userDidPressUpdateNow()
+        coordinator.driverDidBeginUserCheck { }
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded, userInitiated: true) { _ in }
+        coordinator.driverDidBeginDownload { }
+        #expect(coordinator.panelShowCount == 0, "progress belongs on the pill during a press")
+
+        var replies: [UpdateUserChoice] = []
+        coordinator.driverDidBecomeReadyToRelaunch { replies.append($0) }
+        #expect(replies == [.install])
+        #expect(coordinator.panelShowCount == 0)
+    }
+
+    /// A press that could not be honoured owes an explanation, so the failure
+    /// path deliberately drops back to the ordinary panel.
+    @Test func anExpeditedFailureFallsBackToThePanel() {
+        let (coordinator, engine) = makeCoordinator()
+        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        coordinator.userDidPressUpdateNow()
+        coordinator.driverDidBeginUserCheck { }
+        coordinator.driverDidEncounterError(
+            NSError(domain: "Sparkle", code: 2001, userInfo: [NSLocalizedDescriptionKey: "no"])
+        ) { }
+        #expect(!coordinator.isExpeditedInstall)
+        #expect(coordinator.panelShowCount > 0)
+        #expect(coordinator.pillModel == .warning)
+    }
+
+    /// Once installation has begun only the quit is outstanding, so the pill
+    /// says so and the press retries the quit rather than starting again.
+    @Test func pressWhileWaitingForTerminationRetriesTheQuit() {
+        let (coordinator, _) = makeCoordinator()
+        var retries = 0
+        coordinator.driverDidBeginInstallation(applicationTerminated: false) { retries += 1 }
+        #expect(coordinator.pillModel == .restartToUpdate)
+        coordinator.userDidPressUpdateNow()
+        #expect(retries == 1)
+    }
+
+    /// The phases after `.available` carry no metadata of their own; without
+    /// the cycle keeping hold of it, the tooltip and hover notes go blank
+    /// halfway through the install they are describing.
+    @Test func theVersionSurvivesToReadyToRelaunch() {
+        let (coordinator, _) = makeCoordinator()
+        coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded, userInitiated: false) { _ in }
+        coordinator.driverDidBeginDownload { }
+        coordinator.driverDidBecomeReadyToRelaunch { _ in }
+        #expect(coordinator.pendingUpdate?.displayVersionString == "1.1.0")
+        #expect(coordinator.pillModel == .updateNow(version: "1.1.0", isReady: true))
+        coordinator.driverDidDismiss()
+        #expect(coordinator.pendingUpdate == nil)
+    }
+}
+
+// MARK: - Release watch → coordinator
+
+@Suite(.serialized)
+@MainActor
+struct ReleaseWatchTriggerTests {
+    private func makeCoordinator() -> (UpdateCoordinator, FakeUpdateEngine) {
+        let engine = FakeUpdateEngine()
+        let coordinator = UpdateCoordinator(engine: engine)
+        coordinator.suppressUIForTesting = true
+        try? engine.start()
+        return (coordinator, engine)
+    }
+
+    /// The full extent of the watch's authority: it asks Sparkle to look.
+    @Test func aMovedFeedAsksSparkleToLook() {
+        let (coordinator, engine) = makeCoordinator()
+        #expect(engine.backgroundCheckCount == 0)
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 1)
+        #expect(coordinator.releaseWatchTriggerCount == 1)
+    }
+
+    /// The reader is watching a download or reading a prompt; restarting
+    /// underneath them replaces what they are looking at with the same answer.
+    @Test func aLiveCycleIsLeftAlone() {
+        let (coordinator, engine) = makeCoordinator()
+        coordinator.driverDidBeginUserCheck { }
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 0)
+    }
+
+    @Test func anAlreadyWaitingUpdateIsNotRechecked() {
+        let (coordinator, engine) = makeCoordinator()
+        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 0)
+    }
+
+    /// A bundle with no updater has nothing to trigger.
+    @Test func aStoppedEngineIsNeverTriggered() {
+        let engine = FakeUpdateEngine()
+        let coordinator = UpdateCoordinator(engine: engine)
+        coordinator.suppressUIForTesting = true
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 0)
+        #expect(coordinator.releaseWatchTriggerCount == 0)
+    }
+}
+
+// MARK: - The automatic-check setting governs the watch too
+
+@Suite(.serialized)
+@MainActor
+struct ReleaseWatchSettingTests {
+    /// "Check for updates automatically" has to mean every automatic check.
+    /// A setting that stopped Sparkle's schedule and left the watch polling
+    /// would be a narrower promise than the one the settings pane makes.
+    @Test func turningAutomaticChecksOffSilencesTheWatch() {
+        let engine = FakeUpdateEngine()
+        let coordinator = UpdateCoordinator(engine: engine)
+        coordinator.suppressUIForTesting = true
+        try? engine.start()
+
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 1)
+
+        coordinator.automaticallyChecksForUpdates = false
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 1, "the watch must not outlive the setting")
+
+        coordinator.automaticallyChecksForUpdates = true
+        coordinator.releaseFeedDidChange()
+        #expect(engine.backgroundCheckCount == 2)
     }
 }

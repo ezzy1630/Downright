@@ -95,7 +95,16 @@ struct VisualDebuggerViewTests {
         ))
         #expect(view.accessibilityLabel() == "Visual Debugger")
         #expect(view.summaryTextForTesting().contains("Visual Debugger"))
+
+        // Copy into a named pasteboard: the view must route through the
+        // injectable target, so nothing it does reaches the user's real
+        // clipboard by construction.
+        let scratch = NSPasteboard(name: NSPasteboard.Name("downright.test.visual-debugger"))
+        scratch.clearContents()
+        scratch.setString("sentinel", forType: .string)
+        view.pasteboardForTesting = scratch
+        defer { view.pasteboardForTesting = .general }
         view.copySummaryForTesting()
-        #expect(NSPasteboard.general.string(forType: .string)?.contains("Visual Debugger") == true)
+        #expect(scratch.string(forType: .string)?.contains("Visual Debugger") == true)
     }
 }

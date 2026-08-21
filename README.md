@@ -86,7 +86,7 @@ Download the latest signed and notarized release from
 3. Launch it once to configure Markdown file associations, Quick Look, and the
    CLI.
 
-### Homebrew
+### Homebrew cask
 
 The public tap installs the same production app into `/Applications`:
 
@@ -100,9 +100,9 @@ request in the release asset download count.
 This is the developer tap. The tap-free `brew install --cask downright`
 command is not advertised until an official Homebrew Cask is accepted.
 
-### Terminal installer
+### Command-line options
 
-The first-party installer downloads the latest signed build, verifies its
+The first-party shell installer downloads the latest signed build, verifies its
 published checksum and app signature, installs it into `/Applications`,
 registers the Finder integrations, and links `down` and `md` when possible:
 
@@ -111,7 +111,7 @@ curl -fsSL https://downright.cc/install | bash
 ```
 
 If Node.js 18 or newer is already installed, the npm launcher runs the same
-first-party installer:
+first-party macOS installer:
 
 ```bash
 npx --yes downright-installer
@@ -119,6 +119,10 @@ npx --yes downright-installer
 
 Every installation path leaves automatic Sparkle updates enabled. The curl
 path needs no Node.js; the npm path is macOS-only and requires Node.js 18+.
+
+A build published while the app is open is offered within about a minute: the
+titlebar shows **Update Now**, one press installs it and relaunches, and
+resting on the button shows what changed before you commit to it.
 
 ## Why Downright
 
@@ -171,6 +175,17 @@ All bindings are editable in **Settings → Keys**.
 | `⌥⇧⌘3` | Task worklist | `⌥⌘V` | Version timeline |
 | `⌃⌥⌘1`–`5` | Structural zoom | `⌥⇧↑` / `↓` | Previous / next change |
 | `⌘\` | Split view | `⌘L` | Toggle task at caret |
+
+Two fingers sideways across the document switch between Document and Source.
+The titlebar's mode rail travels with your fingers, so you can see how far is
+far enough; release short of that and it returns having changed nothing. On
+documents short enough to render the other presentation in time — most of them —
+the pages themselves slide past each other under your fingers.
+
+Hold ⇧ and swipe sideways to move back and forward through jump history.
+Pinch to change text size, ⌘-scroll to do the same with a mouse, and ⌥-scroll to
+step through the structural detail levels. Double-tap with two fingers toggles a
+larger text size.
 
 ## Themes and appearance
 
@@ -227,6 +242,14 @@ cd Downright
 Scripts/bundle-xcode-app.sh
 APP_SOURCE=.build-xcode/Build/Products/Release/Downright.app Scripts/install.sh
 down README.md
+```
+
+`install.sh` links the `down` CLI into `/usr/local/bin`, which needs write
+access on a default macOS setup. To link somewhere writable instead, set
+`BIN_DEST` (and put that directory on your `PATH`):
+
+```bash
+BIN_DEST="$HOME/.local/bin" APP_SOURCE=.build-xcode/Build/Products/Release/Downright.app Scripts/install.sh
 ```
 
 For a faster SwiftPM development build without Finder extensions:

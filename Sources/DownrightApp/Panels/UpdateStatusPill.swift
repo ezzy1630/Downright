@@ -7,8 +7,20 @@ import MarkdownRender
 ///
 /// It remains absent (zero width, hidden) when the coordinator is idle, and
 /// appears with a restrained fade/slide for the states the spec surfaces:
-/// "Update 1.1", a progress ring, "Restart to Update", and a warning/retry
+/// "Update Now", a progress ring, "Restart to Update", and a warning/retry
 /// badge.  All motion honors Reduce Motion.
+///
+/// The actionable pill *acts*: one press installs and relaunches, rather than
+/// opening a window to ask the question the label already answered.  What a
+/// press costs is therefore owed to the reader before they make it, which is
+/// what `UpdateNotesPopover` is for — resting on the pill unfurls the release
+/// notes without committing to anything.
+///
+/// One consequence governs the whole control: **the pill must never move or
+/// reshape under the pointer.**  It is a button that restarts the app, so the
+/// target cannot shift while it is being aimed at.  The hover notes are a
+/// separate window hanging below it, and the arrival emphasis is a colour
+/// pass with no geometry in it at all.
 @MainActor
 final class UpdateStatusPill: NSButton {
     enum Presentation {
@@ -47,6 +59,14 @@ final class UpdateStatusPill: NSButton {
     private var stateObserver: NSObjectProtocol?
     private var sheet: StyleSheet
     private var currentModel: UpdatePillModel?
+    /// A single accent pass when an update lands while the reader is here.
+    /// Separate from `feedbackLayer` so an emphasis in flight cannot be
+    /// cancelled by a hover, and a hover cannot inherit the emphasis colour.
+    private let emphasisLayer = CALayer()
+    private var hoverNotesWork: DispatchWorkItem?
+    /// Strong: the panel takes itself down on pointer-exit, so it has to
+    /// survive the method that opened it.
+    private var notesPopover: UpdateNotesPopover?
 
     override var intrinsicContentSize: NSSize {
         guard let currentModel, currentModel != UpdatePillModel.hidden else {
@@ -87,6 +107,10 @@ final class UpdateStatusPill: NSButton {
         feedbackLayer.cornerCurve = .continuous
         feedbackLayer.opacity = 0
         shell.layer?.addSublayer(feedbackLayer)
+        emphasisLayer.cornerRadius = Metrics.cornerRadius
+        emphasisLayer.cornerCurve = .continuous
+        emphasisLayer.opacity = 0
+        shell.layer?.addSublayer(emphasisLayer)
         addSubview(shell)
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -120,9 +144,9 @@ final class UpdateStatusPill: NSButton {
         target = self
         action = #selector(clicked(_:))
         setAccessibilityRole(.button)
-        setAccessibilityHelp("Open the update panel")
+        setAccessibilityHelp("Downright update status")
         // Pointer users get the same sentence VoiceOver does.
-        toolTip = "Open the update panel"
+        toolTip = "Install the update and relaunch Downright"
 
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -177,7 +201,11 @@ final class UpdateStatusPill: NSButton {
     }
 
     @objc private func clicked(_ sender: Any?) {
-        UpdateCoordinator.shared.showPanel()
+        // The notes were the preview; the click is the decision. Take the
+        // panel down first so the app does not relaunch out from under a
+        // window still animating.
+        dismissNotesPopover(animated: false)
+        UpdateCoordinator.shared.userDidPressUpdateNow()
     }
 
     // MARK: - Pointer feedback
@@ -187,6 +215,7 @@ final class UpdateStatusPill: NSButton {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         feedbackLayer.frame = shell.bounds
+        emphasisLayer.frame = shell.bounds
         CATransaction.commit()
     }
 
@@ -195,8 +224,82 @@ final class UpdateStatusPill: NSButton {
         refreshTrackingArea(&trackingArea, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect])
     }
 
-    override func mouseEntered(with event: NSEvent) { interaction = .hover }
-    override func mouseExited(with event: NSEvent) { interaction = .idle }
+    override func mouseEntered(with event: NSEvent) {
+        interaction = .hover
+        scheduleNotesPopover()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        interaction = .idle
+        // Only the *pending* presentation is cancelled here. A panel already
+        // on screen dismisses itself once the pointer has left the pill, the
+        // bridge, and its own body — that union is what makes it enterable.
+        hoverNotesWork?.cancel()
+        hoverNotesWork = nil
+    }
+
+    // MARK: - Hover notes
+
+    private func scheduleNotesPopover() {
+        hoverNotesWork?.cancel()
+        hoverNotesWork = nil
+        guard let currentModel, currentModel.offersInstall else { return }
+        guard UpdateCoordinator.shared.pendingUpdate != nil, window != nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.presentNotesPopover() }
+        }
+        hoverNotesWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + UpdateNotesPopover.hoverInDelay, execute: work
+        )
+    }
+
+    private func presentNotesPopover() {
+        hoverNotesWork = nil
+        guard interaction != .idle, let currentModel, currentModel.offersInstall else { return }
+        let isReady: Bool
+        if case .updateNow(_, let ready) = currentModel { isReady = ready } else { isReady = true }
+        notesPopover = UpdateNotesPopover.present(
+            from: self,
+            metadata: UpdateCoordinator.shared.pendingUpdate,
+            isReady: isReady,
+            sheet: sheet
+        )
+        guard let notesPopover else { return }
+        // The tooltip and the panel answer the same question, and the system
+        // would float the tooltip over the panel a second later. The panel is
+        // the better answer, so it takes the tooltip's place while it is up.
+        toolTip = nil
+        notesPopover.onDismiss = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.notesPopover = nil
+                self?.refreshAppearance()
+            }
+        }
+    }
+
+    private func dismissNotesPopover(animated: Bool) {
+        hoverNotesWork?.cancel()
+        hoverNotesWork = nil
+        notesPopover?.dismiss(animated: animated)
+        notesPopover = nil
+    }
+
+    // MARK: - Arrival
+
+    /// One accent pass, once, when an update lands while the reader is
+    /// actually here.  A pill that was already offering an update when the
+    /// window opened has not just *arrived* and must not pretend it did.
+    private func playArrivalEmphasis() {
+        guard !sheet.reduceMotion else { return }
+        emphasisLayer.backgroundColor = sheet.accent.cgColor
+        let pulse = CAKeyframeAnimation(keyPath: "opacity")
+        pulse.values = [0, sheet.increaseContrast ? 0.5 : 0.34, 0]
+        pulse.keyTimes = [0, 0.34, 1]
+        pulse.duration = Motion.emphasis * 4
+        pulse.timingFunctions = [Motion.timing(.snap), Motion.timing(.easeOut)]
+        emphasisLayer.add(pulse, forKey: "update-arrival")
+    }
 
     override func mouseDown(with event: NSEvent) {
         interaction = .pressed
@@ -232,10 +335,21 @@ final class UpdateStatusPill: NSButton {
     private func refreshFromCoordinator() {
         let model = UpdateCoordinator.shared.pillModel
         let changed = model != currentModel
+        let wasVisible = currentModel != UpdatePillModel.hidden
         currentModel = model
         refreshAppearance()
         guard changed else { return }
         let visible = model != UpdatePillModel.hidden
+        if !(model?.offersInstall ?? false) { dismissNotesPopover(animated: true) }
+        // "Landed while you were sitting here" is the only case that earns
+        // emphasis. A pill built for a window that is opening now, or one
+        // whose app is in the background, has not interrupted anybody — and
+        // the window check is what tells those apart, because a pill built
+        // before it is in a window has no window to have interrupted.
+        if visible, !wasVisible, NSApp.isActive,
+           let window, window.isVisible, window.occlusionState.contains(.visible) {
+            playArrivalEmphasis()
+        }
         // Set in both branches: a hidden control that still reports the last
         // visible state is a stale answer for VoiceOver.
         setAccessibilityLabel(accessibilityLabel(for: model))
@@ -266,12 +380,22 @@ final class UpdateStatusPill: NSButton {
         guard let model = currentModel else { return }
         let contrast = sheet.increaseContrast
         switch model {
-        case .available(let version):
+        case .updateNow(let version, let isReady):
             iconView.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: "Update available")
             iconView.contentTintColor = sheet.accent
-            label.textColor = sheet.textSecondary
-            label.stringValue = "Update \(version)"
+            // The button says what pressing it does; the version it installs
+            // is one hover away, and in the tooltip for pointer users who
+            // never rest long enough to see the notes.
+            label.textColor = sheet.text
+            label.stringValue = "Update Now"
             label.isHidden = false
+            toolTip = if version.isEmpty {
+                "Install the update and relaunch Downright"
+            } else if isReady {
+                "Install Downright \(version) and relaunch"
+            } else {
+                "Download and install Downright \(version), then relaunch"
+            }
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
@@ -286,6 +410,7 @@ final class UpdateStatusPill: NSButton {
             label.textColor = sheet.text
             label.stringValue = "Restart to Update"
             label.isHidden = false
+            toolTip = "Quit and reopen Downright to finish installing"
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
@@ -298,6 +423,7 @@ final class UpdateStatusPill: NSButton {
             label.textColor = sheet.textSecondary
             label.stringValue = title
             label.isHidden = false
+            toolTip = "Show update progress"
             iconView.isHidden = true
             progressIndicator.isHidden = false
             if let fraction {
@@ -341,6 +467,7 @@ final class UpdateStatusPill: NSButton {
 
         case .informational(let version):
             iconView.image = NSImage(systemSymbolName: "info.circle.fill", accessibilityDescription: "Update information")
+            toolTip = "Read about Downright \(version)"
             iconView.contentTintColor = sheet.accent
             label.textColor = sheet.textSecondary
             label.stringValue = "Update \(version)"
@@ -358,7 +485,11 @@ final class UpdateStatusPill: NSButton {
 
     private func accessibilityLabel(for model: UpdatePillModel?) -> String {
         switch model {
-        case .available(let version): return "Update \(version) available"
+        case .updateNow(let version, let isReady):
+            if version.isEmpty { return "Update Now" }
+            return isReady
+                ? "Update Now. Downright \(version) is ready to install"
+                : "Update Now. Downright \(version) is available"
         case .restartToUpdate: return "Update ready. Restart Downright to update"
         case .progress(let title, _): return title
         case .warning: return "Update failed. Open the update panel for details"

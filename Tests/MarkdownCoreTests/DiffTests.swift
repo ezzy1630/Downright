@@ -298,7 +298,11 @@ import Testing
         let start = Date()
         let result = Myers.diff(old, new)
         #expect(result == nil)
-        #expect(Date().timeIntervalSince(start) < 1.0)
+        // The wall clock here is a coarse bail-out probe, not a benchmark:
+        // building the O(D²) trace takes minutes and gigabytes, while the
+        // correct path returns in microseconds.  A generous ceiling stays
+        // robust on loaded CI machines and still catches the regression.
+        #expect(Date().timeIntervalSince(start) < 5.0)
     }
 
     /// Reordering large shared content stays solvable despite the length: the
@@ -326,6 +330,8 @@ import Testing
         let start = Date()
         let result = Myers.diff(old, new)
         #expect(result == nil)
-        #expect(Date().timeIntervalSince(start) < 1.0)
+        // Same coarse bail-out probe as above: generous enough for loaded
+        // machines, still orders of magnitude below a built trace.
+        #expect(Date().timeIntervalSince(start) < 5.0)
     }
 }

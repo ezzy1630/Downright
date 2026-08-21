@@ -34,8 +34,15 @@
 	<true/>
 	<key>SUAutomaticallyUpdate</key>
 	<true/>
+	<!-- The fallback floor, not the mechanism. `ReleaseWatch` notices a moved
+	     appcast within about a minute while the app is open, which is what
+	     makes a build published from a push to `main` reachable the same
+	     sitting. This interval is what still catches an app that was asleep,
+	     offline, or in Low Power Mode when that happened; Sparkle enforces a
+	     one-hour floor on scheduled checks, so this is as short as the
+	     scheduler itself can usefully be. -->
 	<key>SUScheduledCheckInterval</key>
-	<integer>86400</integer>
+	<integer>3600</integer>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
 	<key>SURequireSignedFeed</key>

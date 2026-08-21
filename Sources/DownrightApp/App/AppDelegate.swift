@@ -77,6 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var launchLine: Int?
     /// Set by `down --review`; applies to command-line documents in this launch only.
     private var launchReview = false
+    /// Debug-only `--downright-demo-update`: show the "Update Now" pill with
+    /// synthetic metadata so the update surface can be worked on directly.
+    private var launchDemoUpdate = false
     /// Launch Services can deliver an open request between NSApplication's
     /// will-finish and did-finish callbacks. Keep that request alive until the
     /// app has installed its menus, preferences, and first-run surfaces rather
@@ -108,6 +111,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start the Sparkle updater after launch, as the spec requires.  Dev
         // bundles without the Sparkle Info.plist block make this a no-op.
         UpdateCoordinator.shared.start()
+#if DEBUG
+        if launchDemoUpdate {
+            // Deliberately after the first window is up: the pill's arrival
+            // emphasis is defined as "landed while the reader was here", so
+            // firing it before there is a window to land in would only ever
+            // exercise the silent path.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                MainActor.assumeIsolated {
+                    UpdateCoordinator.shared.presentDemoUpdateForDebugging()
+                }
+            }
+        }
+#endif
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesDidChange),
             name: Preferences.didChange, object: nil
@@ -153,7 +169,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // History pruning at launch rather than on a timer: it touches the disk
         // and there is no reason to do it while the user is reading (§8.3).
         SnapshotStore.shared.schedulePrune()
-        DocumentStateStore.shared.schedulePruneAbandonedStates()
 
         hasFinishedLaunching = true
 
@@ -237,6 +252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in windowControllers where controller.markdownDocument.isDirty {
             controller.window?.makeKeyAndOrderFront(nil)
             guard controller.confirmPendingChangesBeforeClose(markDiscardForWindowClose: true) else {
+                // A Discard answered during this cancelled attempt keeps
+                // holding: the buffer it refused is still on screen, and only
+                // fresh work (the next edit) re-arms implicit saves.
                 return .terminateCancel
             }
         }
@@ -252,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             launchLine = Int(arguments[index + 1])
         }
         launchReview = arguments.contains("--downright-review")
+        launchDemoUpdate = arguments.contains("--downright-demo-update")
     }
 
     // MARK: - Opening

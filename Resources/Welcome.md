@@ -40,7 +40,6 @@ A table:
 | Press | What happens |
 | --- | --- |
 | {{shortcut:commandPalette}} | Command palette, for anything you cannot remember |
-| {{shortcut:documentLens}} | {{command:documentLens}} |
 | {{shortcut:taskPanel}} | Tasks |
 | {{shortcut:nextHeading}} | Jump to the next heading |
 

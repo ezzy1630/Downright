@@ -215,6 +215,16 @@ enum ExternalEditor: String, CaseIterable, Codable {
     }
 
     func open(_ file: URL, line: Int?) {
+        // Every editor path below means "edit this file", never "run it":
+        // an application bundle or Terminal script linked from a document is
+        // revealed in Finder instead of handed to any opener.
+        guard !DocumentTypes.executesWhenOpened(file) else {
+            NSWorkspace.shared.selectFile(
+                file.path,
+                inFileViewerRootedAtPath: file.deletingLastPathComponent().path
+            )
+            return
+        }
         if let schemeURL = url(for: file, line: line) {
             NSWorkspace.shared.open(schemeURL)
             return

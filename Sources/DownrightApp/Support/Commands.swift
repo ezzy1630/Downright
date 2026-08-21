@@ -49,8 +49,18 @@ enum Command: String, CaseIterable, Codable {
 
     // Files and export (§9.5)
     case newDocument, open, save, saveAs, revealInFinder, openInEditor, close
+    /// Previews the file the caret is on — a path token, or a link to a local
+    /// file — in the system Quick Look panel, the same affordance Space gives
+    /// in Finder.  Embedded images take the app's own lightbox instead.
+    case quickLook
     case copyAsMarkdown, copyAsRichText, copyAsPlainText, copySection, copySectionLink
     case printDocument, exportHTML, exportPDF, exportSelectionAsImage
+    /// Hands the document to the system share sheet — Mail, Messages, AirDrop,
+    /// Notes.  Two commands rather than one submenu because a share sheet is
+    /// built around the items it was given: the reader chooses the
+    /// representation first and the destination second, and there is no way to
+    /// change the first once the sheet is up.
+    case share, shareAsPDF
     case increaseTextSize, decreaseTextSize, resetTextSize
     case speakDocument, stopSpeaking
 
@@ -149,6 +159,7 @@ enum Command: String, CaseIterable, Codable {
         case .open: return "Open…"
         case .save: return "Save"
         case .saveAs: return "Save As…"
+        case .quickLook: return "Quick Look"
         case .revealInFinder: return "Reveal in Finder"
         case .openInEditor: return "Open in Editor"
         case .close: return "Close"
@@ -161,6 +172,8 @@ enum Command: String, CaseIterable, Codable {
         case .exportHTML: return "Export HTML…"
         case .exportPDF: return "Export PDF…"
         case .exportSelectionAsImage: return "Export Selection as Image…"
+        case .share: return "Share…"
+        case .shareAsPDF: return "Share as PDF…"
         case .increaseTextSize: return "Bigger Text"
         case .decreaseTextSize: return "Smaller Text"
         case .resetTextSize: return "Actual Size"
@@ -194,7 +207,7 @@ enum Command: String, CaseIterable, Codable {
         switch self {
         case .newDocument, .open, .save, .saveAs, .close, .revealInFinder, .openInEditor,
              .printDocument, .exportHTML, .exportPDF, .exportSelectionAsImage, .compareFiles,
-             .versionTimeline:
+             .versionTimeline, .share, .shareAsPDF, .quickLook:
             return .file
         case .copyAsMarkdown, .copyAsRichText, .copyAsPlainText, .copySection, .copySectionLink,
              .find, .findNext, .findPrevious, .findReplace, .findInSiblings, .useSelectionForFind,
@@ -273,6 +286,20 @@ enum Command: String, CaseIterable, Codable {
             return .documentWithFile
         case .useSelectionForFind, .exportSelectionAsImage:
             return .selection
+        case .quickLook:
+            // Not `.selection`: the caret sitting *on* a link is enough, and
+            // requiring a highlighted range would disable the command in the
+            // state it is most often wanted from.
+            return .quickLookTarget
+        case .share, .shareAsPDF:
+            // Deliberately `.document`, not `.documentWithFile`.  A never-saved
+            // buffer still holds something worth sending, and disabling Share
+            // for it would be the one state where the reader most wants it —
+            // notes typed into an Untitled window they have not filed yet.
+            // `DocumentShareSource` covers the gap by writing what is on screen
+            // to a real `.md` before the sheet opens, so AirDrop always carries
+            // a file the receiver can open rather than a nameless text blob.
+            return .document
         case .nextChange, .previousChange, .markChangesReviewed:
             return .changeMarks
         default:
@@ -313,6 +340,8 @@ enum CommandPrecondition: String, CaseIterable {
     case tableAtCaret
     /// Needs at least one live change mark to walk or to retire.
     case changeMarks
+    /// Needs the caret to be on something with a file behind it.
+    case quickLookTarget
 
     func isSatisfied(in context: CommandContext) -> Bool {
         switch self {
@@ -329,6 +358,7 @@ enum CommandPrecondition: String, CaseIterable {
         case .forwardHistory: return context.hasDocument && context.canGoForward
         case .speaking: return context.hasDocument && context.isSpeaking
         case .tableAtCaret: return context.hasDocument && context.caretIsInTable
+        case .quickLookTarget: return context.hasDocument && context.hasQuickLookTarget
         }
     }
 }
@@ -348,6 +378,8 @@ struct CommandContext: Equatable {
     var caretIsInTable: Bool
     /// At least one unexpired change mark is on the page.
     var hasChangeMarks: Bool
+    /// The caret or selection is on a link, path token, or image.
+    var hasQuickLookTarget: Bool
 
     init(
         hasDocument: Bool = false,
@@ -360,7 +392,8 @@ struct CommandContext: Equatable {
         canGoForward: Bool = false,
         isSpeaking: Bool = false,
         caretIsInTable: Bool = false,
-        hasChangeMarks: Bool = false
+        hasChangeMarks: Bool = false,
+        hasQuickLookTarget: Bool = false
     ) {
         self.hasDocument = hasDocument
         self.documentHasFile = documentHasFile
@@ -373,6 +406,7 @@ struct CommandContext: Equatable {
         self.isSpeaking = isSpeaking
         self.caretIsInTable = caretIsInTable
         self.hasChangeMarks = hasChangeMarks
+        self.hasQuickLookTarget = hasQuickLookTarget
     }
 
     /// No document anywhere — what the app menu sees while only the start

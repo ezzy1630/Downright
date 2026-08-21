@@ -115,6 +115,10 @@ final class VisualDebuggerView: NSView, PanelSurface {
         copySummary(copyButton)
     }
 
+    /// Where copies land.  Tests inject a named pasteboard so exercising the
+    /// copy path never clobbers the user's real clipboard.
+    var pasteboardForTesting: NSPasteboard = .general
+
     func summaryTextForTesting() -> String { summaryView.string }
 
     override var acceptsFirstResponder: Bool { true }
@@ -132,8 +136,9 @@ final class VisualDebuggerView: NSView, PanelSurface {
     }
 
     @objc private func copySummary(_ sender: Any?) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(model.summary, forType: .string)
+        let pasteboard = pasteboardForTesting
+        pasteboard.clearContents()
+        pasteboard.setString(model.summary, forType: .string)
         delegate?.visualDebugger(self, didCopy: model.summary)
     }
 

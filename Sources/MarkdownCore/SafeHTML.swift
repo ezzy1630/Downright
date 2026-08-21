@@ -258,15 +258,41 @@ public enum SafeHTMLParser {
             return nil
         }
 
+        /// True when the genuine closing fragment appears after `location`.
+        ///
+        /// swift-markdown splits a README-style `<details>` element at blank
+        /// lines, so the partner tag lives in a *later HTML block*. A bare
+        /// substring search over the whole source would let any mention of
+        /// the text satisfy that check — `` `<details>` `` inside a code span,
+        /// or prose naming the element — and hide a stray literal
+        /// `</details>` that was never part of a real element. Genuine
+        /// partners are written as their own HTML block, so require that
+        /// shape: at most three spaces of indent on the line, then the tag.
         private func hasClosingDetails(after location: Int) -> Bool {
             guard location < source.length else { return false }
-            return source.range(
-                of: "</details>",
-                options: [.caseInsensitive],
-                range: NSRange(location: location, length: source.length - location)
-            ).location != NSNotFound
+            var search = NSRange(location: location, length: source.length - location)
+            while search.length > 0 {
+                let match = source.range(
+                    of: "</details>",
+                    options: [.caseInsensitive],
+                    range: search
+                )
+                guard match.location != NSNotFound else { return false }
+                if isHTMLBlockLineStart(match.location) {
+                    return true
+                }
+                search = NSRange(
+                    location: match.location + 1,
+                    length: source.length - (match.location + 1)
+                )
+            }
+            return false
         }
 
+        /// True when a real `<details …>` opening tag appears before
+        /// `location`, written as an HTML block. See `hasClosingDetails` for
+        /// why the search is anchored to the block shape rather than run over
+        /// raw source.
         private func hasOpeningDetails(before location: Int) -> Bool {
             guard location > 0 else { return false }
             var search = NSRange(location: 0, length: location)
@@ -277,17 +303,41 @@ public enum SafeHTMLParser {
                     range: search
                 )
                 guard match.location != NSNotFound else { return false }
+                // The partner must live entirely before this block.
                 guard match.upperBound < location else {
                     search.length = match.location
                     continue
                 }
-                let next = source.character(at: match.upperBound)
-                if next == 0x3E || next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D {
-                    return true
+                if isHTMLBlockLineStart(match.location) {
+                    let next = source.character(at: match.upperBound)
+                    if next == 0x3E || next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D {
+                        return true
+                    }
                 }
                 search.length = match.location
             }
             return false
+        }
+
+        /// Whether `location` starts an HTML block line: beginning of source
+        /// or right after a newline, with no more than three leading spaces
+        /// (CommonMark's HTML-block indentation allowance). Tabs fail
+        /// deliberately: real emitters indent blocks with spaces, while code
+        /// fences routinely indent deeper than three.
+        private func isHTMLBlockLineStart(_ location: Int) -> Bool {
+            var index = location
+            var spaces = 0
+            while index > 0 {
+                let previous = source.character(at: index - 1)
+                if previous == 0x20 {
+                    spaces += 1
+                    index -= 1
+                    if spaces > 3 { return false }
+                    continue
+                }
+                return previous == 0x0A || previous == 0x0D
+            }
+            return true
         }
 
         private func index(of character: Character, from start: Int) -> Int? {

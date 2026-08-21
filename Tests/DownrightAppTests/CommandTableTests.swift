@@ -114,7 +114,8 @@ struct CommandTableTests {
         walk(MainMenu.build())
 
         #expect(titles["Paste and Match Style"]?.0 == "v")
-        #expect(titles["Paste and Match Style"]?.1 == [.command, .option, .shift])
+        #expect(titles["Paste and Match Style"]?.1 == [.command, .shift])
+        #expect(titles["Paste as Markdown"]?.0 == "")
         #expect(titles["Page Setup…"]?.0 == "p")
         #expect(titles["Page Setup…"]?.1 == [.command, .shift])
         #expect(titles["Enter Full Screen"]?.0 == "f")
