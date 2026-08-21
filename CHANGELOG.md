@@ -30,6 +30,17 @@ every release; Sparkle orders updates by it.
   "check automatically" setting as Sparkle's own schedule. It is a trigger, not
   a trust path — it learns only that the feed moved and asks Sparkle to look, so
   every signature check and download stays exactly where it was.
+- **Detents on the density rail.** Reading the section stack now taps once per
+  mark the pointer takes up, hovering and scrubbing alike, so the rail can be
+  counted through by hand instead of only by eye. The taps share one budget
+  with the landing punch and are floored at 50 ms apart: a slow read ticks mark
+  by mark, a fast sweep thins to a rhythm rather than buzzing, and a jump that
+  lands on the mark you just crossed answers once rather than twice. Leaving
+  the stack is silent — the rail sits against the window edge, so an exit is
+  the one transition that happens without anyone meaning it. Reduce Motion,
+  from the system or from a reader profile, silences the rail entirely: its
+  springs were already parked under that setting, which left the landing tap
+  answering a movement that no longer happens.
 
 ### Changed
 

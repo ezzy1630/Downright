@@ -29,6 +29,7 @@ struct DensityRailTests {
         #expect(DensityGutterView.hoverActivationSlop == 22)
         #expect(DensityGutterView.hoverDismissalSlop == 4)
         #expect(DensityGutterView.previewExitDelay == 0.06)
+        #expect(DensityGutterView.detentInterval == 0.05)
         #expect(DensityGutterView.proximityRadius == 36)
         #expect(DensityGutterView.magneticPull == 1.5)
         #expect(DensityGutterView.scrubVelocityPull == 2.0)
@@ -602,5 +603,120 @@ struct DensityRailTests {
         #expect(DensityGutterView.shouldBeginScrub(
             from: origin, to: NSPoint(x: 20, y: 104)
         ))
+    }
+
+    // MARK: - Detents
+
+    @Test("Arriving at a mark taps; leaving the stack does not")
+    func detentFiresOnArrivalAndCrossingOnly() {
+        // Arrival and hand-over: both are the pointer taking up a new position
+        // the rail actually depicts.
+        #expect(DensityGutterView.isDetentCrossing(from: nil, to: 0))
+        #expect(DensityGutterView.isDetentCrossing(from: 0, to: 1))
+
+        // Standing still is not a crossing, however many pointer moves arrive.
+        #expect(!DensityGutterView.isDetentCrossing(from: 1, to: 1))
+
+        // Leaving is silent.  The rail is against the window edge, so this
+        // transition fires on pointer travel that never meant to touch it.
+        #expect(!DensityGutterView.isDetentCrossing(from: 0, to: nil))
+        #expect(!DensityGutterView.isDetentCrossing(from: nil, to: nil))
+    }
+
+    /// The rail is a control you read by dragging along it, so the tap has to
+    /// survive a scrub without becoming a buzz — and the landing punch has to
+    /// stay audible to the hand rather than merging with the detent that
+    /// preceded it by a millisecond.
+    /// Pinned rather than inherited: a runner with Reduce Motion set silences
+    /// the rail, and a tap-counting test would then pass by measuring nothing.
+    @MainActor
+    private func rail(reduceMotion: Bool) -> DensityGutterView {
+        let rail = DensityGutterView(styleSheet: StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSApp.effectiveAppearance,
+            reduceMotionOverride: reduceMotion
+        ))
+        rail.frame = NSRect(x: 0, y: 0, width: DensityGutterView.width, height: 600)
+        rail.bands = (0..<40).map { index in
+            DensityBand(
+                kind: .heading(level: 1),
+                startFraction: CGFloat(index) / 40,
+                endFraction: CGFloat(index + 1) / 40
+            )
+        }
+        rail.layoutSubtreeIfNeeded()
+        return rail
+    }
+
+    @Test("A sweep across the stack thins to a rhythm instead of buzzing")
+    @MainActor
+    func detentsAreRateLimitedAcrossAScrub() throws {
+        let rail = self.rail(reduceMotion: false)
+        var taps = 0
+        rail.performHapticFeedback = { taps += 1 }
+
+        // One unbroken sweep from one end of the track to the other.  Every
+        // mark is crossed, so an ungated rail taps ~40 times in the handful of
+        // milliseconds this loop takes.
+        var crossings = 0
+        var previous: Int?
+        let positions = rail.markPositionsForTesting
+        for step in 0...600 {
+            let y = CGFloat(step)
+            let next = DensityGutterView.nextHoveredBandIndex(
+                at: y,
+                positions: positions,
+                currentIndex: previous,
+                activationSlop: DensityGutterView.hoverActivationSlop,
+                dismissalSlop: DensityGutterView.dismissalSlop(for: positions)
+            )
+            if DensityGutterView.isDetentCrossing(from: previous, to: next) { crossings += 1 }
+            previous = next
+            rail.driveHoverForTesting(toY: y)
+        }
+
+        #expect(crossings > 20, "the sweep did not actually cross the stack")
+        #expect(taps > 0, "a sweep across the stack produced no detent at all")
+        // The claim is a ratio, not a count: however fast the machine runs the
+        // loop, the taps are bounded by the clock and not by the marks.
+        #expect(taps < crossings / 4,
+                "\(taps) taps for \(crossings) crossings — the rail is buzzing, not ticking")
+
+        // Suppression must not wedge it: once the floor has passed, the very
+        // next crossing taps again.  Aim at a drawn mark rather than at the
+        // end of the track — the stack is inset, so the extremes resolve to no
+        // mark at all and would cross nothing.
+        let before = taps
+        Thread.sleep(forTimeInterval: DensityGutterView.detentInterval * 2)
+        rail.driveHoverForTesting(toY: try #require(positions.first))
+        #expect(taps > before, "the rail stopped tapping after its first detent")
+    }
+
+    /// Reduce Motion already parks the rail's springs, so a rail that kept
+    /// tapping would answer movement the reader asked not to have.
+    @Test("Reduce Motion silences the rail's detents and its landing punch")
+    @MainActor
+    func reduceMotionSilencesTheRail() throws {
+        let quiet = rail(reduceMotion: true)
+        var taps = 0
+        quiet.performHapticFeedback = { taps += 1 }
+        let positions = quiet.markPositionsForTesting
+
+        for step in 0...600 {
+            quiet.driveHoverForTesting(toY: CGFloat(step))
+        }
+        #expect(taps == 0, "the rail tapped \(taps) times with Reduce Motion set")
+
+        // The same sweep on a rail that has not been asked for less motion is
+        // what proves the silence above came from the setting and not from a
+        // stack the pointer never crossed.
+        let loud = rail(reduceMotion: false)
+        var loudTaps = 0
+        loud.performHapticFeedback = { loudTaps += 1 }
+        #expect(loud.markPositionsForTesting == positions)
+        for step in 0...600 {
+            loud.driveHoverForTesting(toY: CGFloat(step))
+        }
+        #expect(loudTaps > 0)
     }
 }

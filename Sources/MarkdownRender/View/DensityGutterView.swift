@@ -149,6 +149,15 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     static let hoverDismissalSlop: CGFloat = 4
     /// Small bridge only for the physical gap between a mark and its preview.
     static let previewExitDelay: TimeInterval = 0.06
+    /// Floor between two taps of the Taptic engine.
+    ///
+    /// A deliberate scrub crosses a dozen marks in a tenth of a second, and
+    /// the engine renders every request in full rather than coalescing them:
+    /// ungated, the rail hums under the hand instead of ticking, and the one
+    /// tap that means something — the landing punch — is lost in it.  At 50ms
+    /// a slow read of the stack taps mark by mark and a fast sweep thins to a
+    /// rhythm, which is the difference between a detent and a buzz.
+    static let detentInterval: TimeInterval = 0.05
     /// Distance over which mark size / brightness fall off from the pointer.
     static let proximityRadius: CGFloat = 36
     /// Maximum magnetic pull of a mark toward the pointer (points).
@@ -216,6 +225,16 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     private var pointerIsInOutline = false
     private var lastPointerSample: (y: CGFloat, time: CFTimeInterval)?
     private var pointerVelocityY: CGFloat = 0
+    /// When the rail last tapped, so `detentInterval` can be enforced across
+    /// both the things that ask for one.
+    private var lastHapticTime: CFTimeInterval = -.greatestFiniteMagnitude
+
+    /// Swapped in tests to count taps; production always reaches the performer.
+    /// `.alignment` is the tap the rest of the app uses for a control landing
+    /// on a discrete position, which is exactly what crossing a mark is.
+    var performHapticFeedback: () -> Void = {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
     private var previousCurrentFraction: CGFloat?
     private var progressWashLayer: CALayer?
     private var spineLayer: CALayer?
@@ -1258,8 +1277,42 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         guard let index, index < markSimulations.count else { return }
         markSimulations[index].frame.size.width.kick(Motion.jumpPunchKick)
         markSimulations[index].frame.size.height.kick(Motion.jumpPunchKick * 0.5)
-        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        performRailHaptic()
         armRailDriver()
+    }
+
+    /// Every tap the rail makes goes through here.
+    ///
+    /// Two things ask for one — a detent as the pointer crosses onto a mark,
+    /// and the landing punch when a jump commits — and on mouse-up they can
+    /// both fire for the same mark in the same event.  Two taps that close
+    /// together read as one mushy thud, so the rail keeps a single budget and
+    /// the first asker wins it.  Suppression deliberately leaves the clock
+    /// alone: a detent that loses its slot does not push the next one back.
+    private func performRailHaptic() {
+        // Reduce Motion has already parked every spring in the rail
+        // (`armRailDriver`), which leaves the landing punch a tap with nothing
+        // behind it and the detents a rhythm answering movement the reader
+        // asked not to see.  Read the sheet rather than the workspace: a
+        // reader profile can request a calmer document without the whole
+        // system being set that way.
+        guard !styleSheet.reduceMotion else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastHapticTime >= Self.detentInterval else { return }
+        lastHapticTime = now
+        performHapticFeedback()
+    }
+
+    /// Which hover transitions earn a detent.
+    ///
+    /// Arriving at a mark and crossing between two both do; leaving the stack
+    /// does not.  A tap on the way *out* answers a gesture the reader has
+    /// already abandoned, and because the rail sits against the window edge
+    /// that exit fires on any pointer travel that merely passes the window —
+    /// the one transition guaranteed to happen without intent.
+    static func isDetentCrossing(from previous: Int?, to next: Int?) -> Bool {
+        guard let next else { return false }
+        return next != previous
     }
 
     private func updateHoveredBand(at point: NSPoint?, animated: Bool) {
@@ -1278,6 +1331,13 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         }
 
         let indexChanged = nextIndex != hoveredBandIndex
+        // Both hover and scrub land here, so the stack ticks under the pointer
+        // the same way whether the button is down or not — the marks are the
+        // rail's detents in either gesture, and hysteresis above has already
+        // decided where one ends and the next begins.
+        if Self.isDetentCrossing(from: hoveredBandIndex, to: nextIndex) {
+            performRailHaptic()
+        }
         hoveredBandIndex = nextIndex
         // The springs *are* the smoothing: retarget on every pointer move and
         // let the display link carry the motion.  With CA, only index changes
@@ -1286,6 +1346,19 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
         if indexChanged || point != nil || pointerLocation != nil {
             updateMarkLayers(animated: animated)
         }
+    }
+
+    /// Drive the hover funnel without a window or a synthesised event, so the
+    /// detent policy can be exercised through the same path hover and scrub
+    /// both take rather than through a reimplementation of it.
+    func driveHoverForTesting(toY y: CGFloat) {
+        updateHoveredBand(at: NSPoint(x: bounds.midX, y: y), animated: false)
+    }
+
+    /// The drawn mark positions, so a test can count the crossings a sweep
+    /// makes against the same stack the rail is hovering.
+    var markPositionsForTesting: [CGFloat] {
+        resolvedStack(height: bounds.height).map(\.y)
     }
 
     /// A mark's hover row is half the gap to its neighbour, so the pointer
