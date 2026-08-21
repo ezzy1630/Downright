@@ -51,12 +51,9 @@ the network.
 ## Retention and deletion
 
 Snapshots are local and content-addressed. The app applies configured age and
-size caps. A missing path's snapshot index becomes eligible at the configured
-snapshot age; its reading-position state becomes eligible after 30 days. Both
-may be collected only after two separate checks confirm that the path is
-absent and its containing volume is mounted. Downright preserves this local
-metadata when the path is unreadable, the filesystem answer is uncertain, the
-volume is unavailable, or the file returns between checks.
+size caps while retaining each document's newest snapshot. Missing paths do
+not cause snapshot indexes or reading-position state to be deleted; files can
+move, repositories can be relocated, and external volumes can be unavailable.
 
 Users can delete snapshot history from the app. Settings and themes can be
 removed from the Downright support folder. The app does not claim ownership of

@@ -38,14 +38,11 @@ struct WindowChromeTests {
     }
 
     @Test
-    func documentIdentityNamesEveryNonNeutralStateAccessibly() throws {
+    func documentIdentityShowsOnlyExceptionalStates() throws {
         let controller = DocumentWindowController()
         defer { controller.close() }
         let identity = try #require(controller.toolbarDocumentIdentityView)
         let cases: [(MarkdownDocument.PresentationState.Phase, String)] = [
-            (.edited, "Edited"),
-            (.saving, "Saving"),
-            (.saved, "Saved"),
             (.changedOnDisk, "Changed externally"),
             (.conflict, "Conflict"),
             (.saveFailed, "Save failed"),
@@ -58,9 +55,18 @@ struct WindowChromeTests {
             #expect(identity.accessibilityLabel()?.contains("Paste") == true)
             #expect(identity.toolTip?.contains(label) == true)
         }
-        identity.documentState = .neutral
-        #expect(identity.accessibilityLabel()?.contains("Edited") == false)
-        #expect(identity.toolTip == nil)
+        for phase in [
+            MarkdownDocument.PresentationState.Phase.neutral,
+            .edited,
+            .saving,
+            .saved,
+        ] {
+            identity.documentState = .init(
+                phase: phase, provenance: "Paste", detail: "Example"
+            )
+            #expect(identity.accessibilityLabel()?.contains("Paste") != true)
+            #expect(identity.toolTip?.contains("Paste") != true)
+        }
 
         identity.documentState = .init(
             phase: .changedOnDisk, provenance: nil, detail: "File missing"
@@ -310,7 +316,7 @@ struct WindowChromeTests {
             cluster.arrangedSubviews.first { $0 is ToolbarMenuButton } as? ToolbarMenuButton,
             "the overflow menu is not in the trailing cluster"
         )
-        #expect(overflow.popupMenuItems.contains { MainMenu.command(for: $0) == .documentLens })
+        #expect(!overflow.popupMenuItems.contains { MainMenu.command(for: $0) == .documentLens })
         #expect(overflow.intrinsicContentSize.width == 34)
         #expect(overflow.intrinsicContentSize.height == 34)
         #expect(overflow.popupMenuItems.contains { $0.title == "Document Detail" })

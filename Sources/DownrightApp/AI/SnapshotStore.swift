@@ -1,6 +1,5 @@
 import Foundation
 import MarkdownCore
-import Darwin
 
 /// Local time-travel (§8.3).
 ///
@@ -117,8 +116,6 @@ final class SnapshotStore: @unchecked Sendable {
     private var evictedVersionsByDocument: [String: Int] = [:]
     private var lastReport = PruneReport()
     private let historyDirectory: URL
-    private var abandonedCandidates: [String: String] = [:]
-    private let abandonedConfirmationDelay: TimeInterval = 30
 
     /// `historyDirectory` is injectable so maintenance tests can exercise real
     /// filesystem behavior without ever traversing the user's production
@@ -233,10 +230,6 @@ final class SnapshotStore: @unchecked Sendable {
         queue.async { [self] in
             lastPrune = Date()
             _ = prune()
-            queue.asyncAfter(deadline: .now() + abandonedConfirmationDelay) { [self] in
-                lastPrune = Date()
-                _ = prune()
-            }
         }
     }
 
@@ -346,53 +339,6 @@ final class SnapshotStore: @unchecked Sendable {
         prune()
     }
 
-    /// A missing path is abandoned only after its newest version has aged out
-    /// and the containing volume is mounted. This avoids deleting history for
-    /// an atomic replacement in flight or an unplugged external volume.
-    private func isAbandoned(_ index: Index, key: String, cutoff: Date) -> Bool {
-        guard let newest = index.versions.last, newest.date < cutoff else {
-            abandonedCandidates.removeValue(forKey: key)
-            return false
-        }
-        let presence = index.path.isEmpty ? PathPresence.absent : Self.pathPresence(for: index.path)
-        guard presence == .absent,
-              (index.path.isEmpty || Self.volumeIsMounted(for: index.path)) else {
-            abandonedCandidates.removeValue(forKey: key)
-            return false
-        }
-        // ENOENT is also the middle of an atomic replacement. Require the same
-        // old index to be absent in two distinct prune generations.
-        let signature = "\(index.path)\u{0}\(newest.hash)\u{0}\(newest.date.timeIntervalSinceReferenceDate)"
-        guard abandonedCandidates[key] == signature else {
-            abandonedCandidates[key] = signature
-            return false
-        }
-        return true
-    }
-
-    enum PathPresence: Equatable {
-        case present
-        case absent
-        case indeterminate
-    }
-
-    /// Uses `lstat` so permission and I/O failures are not collapsed into the
-    /// same answer as a confirmed missing path.
-    static func pathPresence(for path: String) -> PathPresence {
-        var info = stat()
-        if lstat(path, &info) == 0 { return .present }
-        switch errno {
-        case ENOENT, ENOTDIR: return .absent
-        default: return .indeterminate
-        }
-    }
-
-    static func volumeIsMounted(for path: String) -> Bool {
-        let components = (path as NSString).pathComponents
-        guard components.count > 2, components[1] == "Volumes" else { return true }
-        return pathPresence(for: "/Volumes/" + components[2]) == .present
-    }
-
     /// Trims every document against the age cap and its **own** size budget,
     /// then applies the global cap as a backstop, then garbage-collects objects
     /// no index references any more.
@@ -428,7 +374,6 @@ final class SnapshotStore: @unchecked Sendable {
             guard let data = try? Data(contentsOf: indexFile),
                   var index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
             else {
-                abandonedCandidates.removeValue(forKey: documentKey)
                 hasIncompleteReferenceKnowledge = true
                 continue
             }
@@ -445,31 +390,6 @@ final class SnapshotStore: @unchecked Sendable {
             var total = index.versions.reduce(0) { $0 + $1.byteCount }
             while total > limits.2, index.versions.count > 1 {
                 total -= index.versions.removeFirst().byteCount
-            }
-
-            if isAbandoned(index, key: documentKey, cutoff: cutoff) {
-                let removed = pendingLock.withLock {
-                    do {
-                        try fm.removeItem(at: indexFile)
-                    } catch {
-                        return false
-                    }
-                    // Atomic with deletion: a concurrent record must either
-                    // see the old durable index or reload the now-empty one.
-                    stateByDocument.removeValue(forKey: documentKey)
-                    stateOrder.removeAll { $0 == documentKey }
-                    return true
-                }
-                if removed {
-                    if before > 0 {
-                        report.droppedVersions[documentKey, default: 0] += before
-                    }
-                } else {
-                    liveIndexes.append(indexFile)
-                    referenced.formUnion(index.versions.map(\.hash))
-                    if let newest = index.versions.last?.hash { newestHashes.insert(newest) }
-                }
-                continue
             }
 
             let dropped = before - index.versions.count

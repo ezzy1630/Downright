@@ -149,13 +149,12 @@ enum MainMenu {
                     StandardItem(
                         title: "Paste as Markdown",
                         selector: #selector(MarkdownTextView.pasteAsMarkdown(_:)),
-                        keyEquivalent: "v", modifiers: [.command, .option]
+                        keyEquivalent: ""
                     ),
-                    // The likeliest paste in a byte-exact Markdown editor.
                     StandardItem(
                         title: "Paste and Match Style",
                         selector: #selector(MarkdownTextView.pasteAndMatchStyle(_:)),
-                        keyEquivalent: "v", modifiers: [.command, .option, .shift]
+                        keyEquivalent: "v", modifiers: [.command, .shift]
                     ),
                     StandardItem(title: "Delete", selector: #selector(NSText.delete(_:))),
                     StandardItem(title: "Select All", selector: #selector(NSText.selectAll(_:)), keyEquivalent: "a"),

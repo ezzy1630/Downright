@@ -390,10 +390,8 @@ final class ToolbarDocumentIdentityView: NSView {
 
     private var stateTitle: String? {
         switch documentState.phase {
-        case .neutral: return nil
-        case .edited: return "Edited"
-        case .saving: return "Saving"
-        case .saved: return "Saved"
+        case .neutral, .edited, .saving, .saved:
+            return nil
         case .changedOnDisk:
             return documentState.detail == "File missing" ? "File missing" : "Changed externally"
         case .conflict: return "Conflict"
@@ -431,9 +429,7 @@ final class ToolbarDocumentIdentityView: NSView {
             stateLabel.textColor = .systemRed
         case .changedOnDisk:
             stateLabel.textColor = StyleSheet.current.accent
-        case .edited, .saving, .saved:
-            stateLabel.textColor = .secondaryLabelColor
-        case .neutral:
+        case .neutral, .edited, .saving, .saved:
             stateLabel.textColor = .tertiaryLabelColor
         }
         updateProxyIcon(for: hostWindow?.representedURL)

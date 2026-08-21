@@ -85,13 +85,10 @@ writes replace the inode. On an external write:
 
 Snapshots deduplicate by content hash. Retention applies the configured age,
 per-document, and global byte caps without rewriting unchanged indexes; a
-half-hour maintenance interval bounds long-running sessions. History for a
-deleted document becomes eligible after the configured snapshot age; its
-reading-position state uses a fixed 30-day age. Both require two distinct
-observations that the path is absent, and the containing volume must be
-mounted. An unreadable path, an I/O error, an unmounted volume, or a path
-restored between observations is preserved. These checks deliberately fail
-closed around atomic replacements.
+half-hour maintenance interval bounds long-running sessions. The newest
+snapshot for each document is retained even after the document moves or its
+path disappears. Reading-position state is not deleted based on path presence;
+broader cleanup requires an explicit user action.
 
 Snapshot restore is a text edit, not a hidden file replacement. Persistence
 tests inject temporary support roots, and the repository gate also refuses to

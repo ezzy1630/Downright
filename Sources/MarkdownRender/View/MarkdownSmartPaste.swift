@@ -16,9 +16,8 @@ enum MarkdownPasteMode: Equatable {
     case matchStyle
 }
 
-/// Clipboard payload in the order in which AppKit presents useful flavours.
-/// Keeping this value independent of `NSPasteboard` makes the policy pure and
-/// keeps all source-coordinate mutation in `MarkdownTextView`.
+/// A clipboard payload independent of `NSPasteboard`, keeping flavour policy
+/// pure and all source-coordinate mutation in `MarkdownTextView`.
 enum MarkdownPastePayload: Equatable {
     case markdown(String)
     case url(String)
@@ -30,14 +29,29 @@ enum MarkdownPastePayload: Equatable {
 }
 
 enum MarkdownSmartPaste {
-    /// Reads clipboard flavours in the same order as AppKit's paste action:
-    /// an explicit URL wins over browser HTML, then plain text. The named
-    /// pasteboard seam keeps tests and Quick Look callers off the global board.
-    static func payload(from pasteboard: NSPasteboard) -> MarkdownPastePayload? {
-        let orderedTypes: [NSPasteboard.PasteboardType] = [
-            .downrightMarkdown, .URL, .html, .rtf, .rtfd, .webArchive, .appleWebArchive,
-            .fileURL, .tiff, .png, .string,
+    /// Ordinary paste is conservative: lossless Downright Markdown wins, then
+    /// the producer's visible plain text. Rich conversion belongs to the
+    /// explicit Paste as Markdown command; Match Style also prefers visible
+    /// text and strips formatting from rich-only payloads as a fallback.
+    static func payload(
+        from pasteboard: NSPasteboard,
+        mode: MarkdownPasteMode = .smart
+    ) -> MarkdownPastePayload? {
+        let richTypes: [NSPasteboard.PasteboardType] = [
+            .html, .rtf, .rtfd, .webArchive, .appleWebArchive,
         ]
+        let orderedTypes: [NSPasteboard.PasteboardType]
+        switch mode {
+        case .smart:
+            orderedTypes = [.downrightMarkdown, .string, .URL, .fileURL]
+                + richTypes + [.tiff, .png]
+        case .markdown:
+            orderedTypes = [.downrightMarkdown] + richTypes
+                + [.URL, .fileURL, .string, .tiff, .png]
+        case .matchStyle:
+            orderedTypes = [.string, .downrightMarkdown, .URL, .fileURL]
+                + richTypes + [.tiff, .png]
+        }
         for type in orderedTypes where pasteboard.types?.contains(type) == true {
             if type == .downrightMarkdown {
                 if let markdown = pasteboard.string(forType: type) { return .markdown(markdown) }

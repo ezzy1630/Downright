@@ -15,8 +15,8 @@ every release; Sparkle orders updates by it.
 ### Fixed
 
 - Stopped idle history maintenance from rewriting every unchanged index, made
-  long-session pruning half-hourly, and added mounted-volume-aware collection
-  of stale history and reading-state files.
+  long-session pruning half-hourly, and retained the newest history and reading
+  state when a document path disappears.
 - Bounded external-change undo history and moved path-existence rechecks to a
   background cache warm so long-lived, frequently rewritten documents cannot
   grow memory indefinitely or stall the main thread on filesystem checks.
@@ -34,9 +34,9 @@ every release; Sparkle orders updates by it.
   background parsing and incremental TextKit commits preserve selection and
   scroll anchors while bounded real-window frame gates cover 10k–50k-line
   documents, IME composition, split view, and concurrent scrolling.
-- **Repaired browser-rich paste boundaries.** HTML, WebArchive, RTF, and RTFD
-  imports preserve useful paragraph, list, table, code, and link structure
-  without guessing at unsupported image or vendor payloads.
+- **Repaired browser-rich paste boundaries.** Explicit Paste as Markdown
+  converts HTML, WebArchive, RTF, and RTFD into useful paragraph, list, table,
+  code, and link structure without changing ordinary Paste's visible text.
 - **Fixed a crash on ordinary prose.** Any document containing a one-character
   word before `:digits` — "John 3:16", "meet at 9:30", `` `a:1` `` — fatally
   trapped the path-token scanner during the per-keystroke reparse.
@@ -97,14 +97,12 @@ every release; Sparkle orders updates by it.
 
 ### Added
 
-- **Calm, explicit document trust states.** The toolbar now communicates
-  Edited, Saving, briefly Saved, Changed externally, Conflict, and Save failed,
-  with accessible labels and focused mutation provenance such as Paste,
-  Toggle Task, Replace, panel actions, and Undo.
-- **Contents / Outline is a first-class command.** It is visible in the
-  overflow menu and remains available through View, the command palette,
-  accessibility, and configurable keybindings. It reuses the pinnable
-  inspector rather than adding a permanent sidebar.
+- **Calm, explicit document trust states.** The toolbar stays silent during
+  ordinary editing and saving, and communicates only exceptional states:
+  Changed externally, File missing, Conflict, and Save failed.
+- **Contents / Outline remains an advanced command.** It is available through
+  View, the command palette, accessibility, and configurable keybindings
+  without occupying the permanent toolbar, overflow menu, or Welcome guide.
 - **Universal clipboard flavors.** Copy now publishes lossless private
   Markdown, plain text, RTF, and sanitized semantic HTML so native and browser
   targets retain headings, lists, emphasis, links, tables, and code structure.

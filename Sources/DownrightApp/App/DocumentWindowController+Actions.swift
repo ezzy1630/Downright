@@ -401,10 +401,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             let menuRep = NSMenuItem(title: "Actions", action: nil, keyEquivalent: "")
             let repMenu = NSMenu(title: "Actions")
             repMenu.addItem(menuItem(
-                title: Command.documentLens.title, symbol: "list.bullet.indent",
-                action: #selector(toolbarShowDocumentLens(_:))
-            ))
-            repMenu.addItem(menuItem(
                 title: "Find", symbol: "magnifyingglass",
                 action: #selector(toolbarShowFind(_:))
             ))
@@ -538,10 +534,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         toggleTaskPanel()
     }
 
-    @objc private func toolbarShowDocumentLens(_ sender: Any?) {
-        perform(.documentLens)
-    }
-
     @objc private func toolbarToggleSourceFocus(_ sender: Any?) {
         toolbarModeChanged(primaryContainer.textView.sourceFocus == .none ? 1 : 0)
     }
@@ -567,7 +559,6 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         menu.delegate = self
 
         menu.addItem(sectionHeader("Panels"))
-        addCommands([.documentLens], to: menu)
         menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
         menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
 

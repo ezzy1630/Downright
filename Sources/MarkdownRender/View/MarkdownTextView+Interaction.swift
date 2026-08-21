@@ -1036,7 +1036,7 @@ extension MarkdownTextView {
     private func applyPaste(mode pasteMode: MarkdownPasteMode) {
         guard isEditable else { return }
         let pasteboard = NSPasteboard.general
-        guard let payload = markdownPastePayload(from: pasteboard) else { return }
+        guard let payload = markdownPastePayload(from: pasteboard, mode: pasteMode) else { return }
         if case .image = payload {
             // An unnamed bitmap has no honest Markdown destination until the
             // document owner chooses an asset path. Never replace a selection
@@ -1148,11 +1148,13 @@ extension MarkdownTextView {
         return deletionRange(after: clampedCaret, in: storage)
     }
 
-    /// Read the richest useful clipboard flavour first.  URL is intentionally
-    /// ahead of HTML/string because browser URL copies commonly advertise all
-    /// three and the URL is the user's explicit intent.
-    private func markdownPastePayload(from pasteboard: NSPasteboard) -> MarkdownPastePayload? {
-        MarkdownSmartPaste.payload(from: pasteboard)
+    /// Resolve clipboard flavour according to the invoked command. Ordinary
+    /// paste remains literal; rich conversion is an explicit choice.
+    private func markdownPastePayload(
+        from pasteboard: NSPasteboard,
+        mode: MarkdownPasteMode
+    ) -> MarkdownPastePayload? {
+        MarkdownSmartPaste.payload(from: pasteboard, mode: mode)
     }
 
     /// A hidden marker is deleted whole.  Deleting half of `**` would leave
