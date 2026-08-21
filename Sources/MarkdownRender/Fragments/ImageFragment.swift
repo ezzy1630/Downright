@@ -7,11 +7,15 @@ import MarkdownCore
 /// make the handoff honest under strict concurrency.
 private final class ImageLoadCompletionBox: @unchecked Sendable {
     weak var view: MarkdownTextView?
-    let sourceRange: NSRange
+    /// The payload reference, not a copied range: an edit that lands while the
+    /// decode is in flight projects the payload's ranges in place, so reading
+    /// `sourceRange` at completion time invalidates where the image lives
+    /// *now* rather than where it lived when the load was scheduled.
+    let payload: FragmentPayload
 
-    init(view: MarkdownTextView?, sourceRange: NSRange) {
+    init(view: MarkdownTextView?, payload: FragmentPayload) {
         self.view = view
-        self.sourceRange = sourceRange
+        self.payload = payload
     }
 }
 
@@ -188,14 +192,14 @@ final class ImageFragment: DownrightFragment {
     /// load share one background read; a failed load is retried on the next
     /// layout pass because the cache still misses.
     private func scheduleAsyncLoad(_ url: URL, dimension: Int) {
-        let box = ImageLoadCompletionBox(view: context?.textView, sourceRange: payload.sourceRange)
+        let box = ImageLoadCompletionBox(view: context?.textView, payload: payload)
         MarkdownFragmentImageCaches.images.loadImageAsync(
             for: url, maxPixelDimension: dimension
         ) { image in
             // A nil result means the file is missing or unreadable; only invalidate
             // layout when an image is successfully loaded to avoid infinite layout loops.
             guard image != nil, let view = box.view else { return }
-            view.invalidateFragments(in: box.sourceRange)
+            view.invalidateFragments(in: box.payload.sourceRange)
         }
     }
 
