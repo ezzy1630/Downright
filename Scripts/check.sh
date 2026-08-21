@@ -16,6 +16,25 @@ SCRATCH="${SCRATCH:-.build-main}"
 # path makes SwiftPM rebuild the world on every switch.  Keep them apart.
 TEST_SCRATCH="${TEST_SCRATCH:-.build-test}"
 
+# Model and app-layer tests exercise snapshot/state persistence, including
+# destructive pruning. Never let the authoritative gate inherit the user's
+# real Application Support directory. Callers that provide an explicit
+# isolated directory keep ownership of it; otherwise this script creates and
+# removes a per-run sandbox.
+if [ -z "${DOWNRIGHT_SUPPORT_DIRECTORY:-}" ]; then
+    if ! TEST_SUPPORT_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/downright-check-support.XXXXXX")" \
+        || [ -z "$TEST_SUPPORT_DIRECTORY" ] \
+        || [ ! -d "$TEST_SUPPORT_DIRECTORY" ]; then
+        echo "check: could not create an isolated Application Support directory" >&2
+        exit 1
+    fi
+    export DOWNRIGHT_SUPPORT_DIRECTORY="$TEST_SUPPORT_DIRECTORY"
+    cleanup_test_support() {
+        find "$TEST_SUPPORT_DIRECTORY" -depth -delete
+    }
+    trap cleanup_test_support EXIT
+fi
+
 # Logs are named after the scratch path, not fixed under /tmp.  Two runs with
 # different SCRATCH values are a deliberately supported thing (CI uses its own,
 # and running a second check while one is in flight is normal), but with fixed

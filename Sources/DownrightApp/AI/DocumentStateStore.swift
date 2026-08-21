@@ -123,51 +123,139 @@ final class DocumentStateStore {
     private var cacheOrder: [String] = []
     private let maximumCachedStates = 256
     private let lock = NSLock()
+    private let pruneQueue = DispatchQueue(label: "com.ezzy.downright.state-prune", qos: .utility)
 
-    private init() { AppPaths.ensure(AppPaths.stateDirectory) }
+    /// A deleted document keeps its reading position long enough to be
+    /// restored from the Trash, without making the state directory a permanent
+    /// record of every document ever opened.
+    private let abandonedStateMaximumAge: TimeInterval = 30 * 24 * 60 * 60
+    private let abandonedStateConfirmationDelay: TimeInterval
+    private let supportDirectory: URL
+    private let stateDirectory: URL
+    private var abandonedCandidates: [String: String] = [:]
+
+    /// `supportDirectory` is injectable so state-pruning tests cannot touch the
+    /// user's real reading positions or recents.
+    init(
+        supportDirectory: URL = AppPaths.supportDirectory,
+        abandonedStateConfirmationDelay: TimeInterval = 30
+    ) {
+        self.supportDirectory = supportDirectory.standardizedFileURL
+        self.stateDirectory = self.supportDirectory.appendingPathComponent("state", isDirectory: true)
+        self.abandonedStateConfirmationDelay = abandonedStateConfirmationDelay
+        AppPaths.ensure(self.stateDirectory)
+    }
+
+    /// Drops stale reading state for documents that no longer exist. This is a
+    /// launch job: nothing else deletes these files, and doing the directory
+    /// walk off the main thread keeps opening a document responsive.
+    func schedulePruneAbandonedStates() {
+        pruneQueue.async { [self] in
+            pruneAbandonedStates()
+            // A second, meaningfully separated observation confirms absence
+            // without installing a permanent maintenance timer.
+            pruneQueue.asyncAfter(deadline: .now() + abandonedStateConfirmationDelay) { [self] in
+                pruneAbandonedStates()
+            }
+        }
+    }
+
+    @discardableResult
+    func pruneAbandonedStates() -> Int {
+        guard let files = try? fm.contentsOfDirectory(
+            at: stateDirectory,
+            includingPropertiesForKeys: nil
+        ) else { return 0 }
+
+        let cutoff = Date().addingTimeInterval(-abandonedStateMaximumAge)
+        var removed = 0
+        for file in files where file.pathExtension == "json" {
+            let key = file.deletingPathExtension().lastPathComponent
+            guard let data = try? Data(contentsOf: file),
+                  let state = try? JSONDecoder.snapshotDecoder.decode(DocumentState.self, from: data)
+            else {
+                _ = lock.withLock { abandonedCandidates.removeValue(forKey: key) }
+                continue
+            }
+
+            guard state.lastOpened < cutoff else {
+                _ = lock.withLock { abandonedCandidates.removeValue(forKey: key) }
+                continue
+            }
+            let presence = state.path.isEmpty
+                ? SnapshotStore.PathPresence.absent
+                : SnapshotStore.pathPresence(for: state.path)
+            guard presence == .absent,
+                  (state.path.isEmpty || SnapshotStore.volumeIsMounted(for: state.path)) else {
+                _ = lock.withLock { abandonedCandidates.removeValue(forKey: key) }
+                continue
+            }
+            let signature = DocumentIO.contentHash(data)
+            let confirmed = lock.withLock {
+                guard abandonedCandidates[key] == signature else {
+                    abandonedCandidates[key] = signature
+                    return false
+                }
+                return true
+            }
+            guard confirmed else { continue }
+            let didRemove = lock.withLock {
+                // A save can refresh this state while the prune is walking.
+                // Delete only the exact stale generation we inspected.
+                guard (try? Data(contentsOf: file)) == data else { return false }
+                do {
+                    try fm.removeItem(at: file)
+                } catch {
+                    return false
+                }
+                cache.removeValue(forKey: key)
+                cacheOrder.removeAll { $0 == key }
+                abandonedCandidates.removeValue(forKey: key)
+                return true
+            }
+            if didRemove { removed += 1 }
+        }
+        return removed
+    }
 
     // MARK: - Per-document state
 
     func state(for url: URL) -> DocumentState {
         let key = SnapshotStore.documentKey(for: url)
-        lock.lock()
-        if let cached = cache[key] {
-            touchCacheKey(key)
-            lock.unlock()
-            return cached
-        }
-        lock.unlock()
+        return lock.withLock {
+            if let cached = cache[key] {
+                touchCacheKey(key)
+                return cached
+            }
 
-        let fileURL = AppPaths.stateDirectory.appendingPathComponent(key + ".json")
-        var state: DocumentState
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder.snapshotDecoder.decode(DocumentState.self, from: data) {
-            state = decoded
-        } else {
-            state = DocumentState(path: url.path)
+            let fileURL = stateDirectory.appendingPathComponent(key + ".json")
+            var state: DocumentState
+            if let data = try? Data(contentsOf: fileURL),
+               let decoded = try? JSONDecoder.snapshotDecoder.decode(DocumentState.self, from: data) {
+                state = decoded
+            } else {
+                state = DocumentState(path: url.path)
+            }
+            state.path = url.path
+            storeInCache(state, forKey: key)
+            return state
         }
-        state.path = url.path
-
-        lock.lock()
-        storeInCache(state, forKey: key)
-        lock.unlock()
-        return state
     }
 
     func save(_ state: DocumentState, for url: URL) {
         let key = SnapshotStore.documentKey(for: url)
-        lock.lock()
-        storeInCache(state, forKey: key)
-        lock.unlock()
-
         guard let data = try? JSONEncoder.snapshotEncoder.encode(state) else { return }
-        let fileURL = AppPaths.stateDirectory.appendingPathComponent(key + ".json")
-        try? data.write(to: fileURL, options: .atomic)
+        let fileURL = stateDirectory.appendingPathComponent(key + ".json")
+        lock.withLock {
+            storeInCache(state, forKey: key)
+            try? data.write(to: fileURL, options: .atomic)
+            _ = abandonedCandidates.removeValue(forKey: key)
+        }
     }
 
     // MARK: - Recents
 
-    private var recentsURL: URL { AppPaths.supportDirectory.appendingPathComponent("recents.json") }
+    private var recentsURL: URL { supportDirectory.appendingPathComponent("recents.json") }
 
     func recents(limit: Int = 30) -> [RecentDocument] {
         guard let data = try? Data(contentsOf: recentsURL),

@@ -103,6 +103,8 @@ final class DocumentWindowController: NSWindowController {
     // State
     var scanner: SiblingScanner?
     var pathResolver: PathResolver?
+    private var resolvesPathTokens = Preferences.shared.values.resolvePathTokens
+    private var isClearingDisabledPathState = false
     let findSession = FindSession()
     let jumpHistory = JumpHistory()
     var activeStyleSheet = DocumentWindowController.makeStyleSheet(
@@ -716,6 +718,20 @@ final class DocumentWindowController: NSWindowController {
             self.primaryContainer.textView.update(document: parsed, dirty: dirty)
             self.splitContainer?.textView.update(document: parsed, dirty: dirty)
             self.synchronizePanes(from: self.primaryContainer.textView)
+            if Preferences.shared.values.resolvePathTokens {
+                self.pathResolver?.warm(parsed.pathTokens.map(\.token)) { [weak self] in
+                    guard let self else { return }
+                    // Split panes share attributed storage. One bounded refresh
+                    // updates both without duplicating the attribute walk.
+                    for pane in self.documentPanes {
+                        pane.textView.invalidatePathExistenceCache()
+                    }
+                    self.primaryContainer.textView.refreshPathExistence()
+                    self.splitContainer?.textView.needsDisplay = true
+                }
+            } else if self.isClearingDisabledPathState {
+                self.clearDisabledPathState()
+            }
             self.scheduleDerivedUIRefresh()
             self.scheduleFindRefresh()
         }
@@ -799,6 +815,9 @@ final class DocumentWindowController: NSWindowController {
     }
 
     @objc private func preferencesDidChange() {
+        let shouldResolvePathTokens = Preferences.shared.values.resolvePathTokens
+        let pathResolutionChanged = shouldResolvePathTokens != resolvesPathTokens
+        resolvesPathTokens = shouldResolvePathTokens
         window?.applyThemeAppearance(for: ThemeStore.shared.current)
         activeStyleSheet = Self.makeStyleSheet(
             theme: ThemeStore.shared.current,
@@ -808,6 +827,47 @@ final class DocumentWindowController: NSWindowController {
         applyFocusMode(Preferences.shared.values.focusMode, animated: true)
         applyStatusBarPreference()
         rebuildSiblingScannerIfFoldersChanged()
+        if pathResolutionChanged {
+            refreshPathResolutionPreference(enabled: shouldResolvePathTokens)
+        }
+    }
+
+    private func refreshPathResolutionPreference(enabled: Bool) {
+        pathResolver?.invalidate()
+        for pane in documentPanes {
+            pane.textView.invalidatePathExistenceCache()
+        }
+        guard enabled else {
+            // The delegate returns neutral/exists while disabled, so this
+            // bounded pass removes any missing-path underline without I/O.
+            isClearingDisabledPathState = true
+            clearDisabledPathState()
+            return
+        }
+        isClearingDisabledPathState = false
+        pathResolver?.warm(markdownDocument.parsed.pathTokens.map(\.token)) { [weak self] in
+            guard let self, self.resolvesPathTokens else { return }
+            for pane in self.documentPanes {
+                pane.textView.invalidatePathExistenceCache()
+            }
+            self.primaryContainer.textView.refreshPathExistence()
+            self.splitContainer?.textView.needsDisplay = true
+        }
+    }
+
+    private func clearDisabledPathState() {
+        guard !resolvesPathTokens else {
+            isClearingDisabledPathState = false
+            return
+        }
+        for pane in documentPanes {
+            pane.textView.invalidatePathExistenceCache()
+        }
+        primaryContainer.textView.refreshPathExistence { [weak self] in
+            guard let self, !self.resolvesPathTokens else { return }
+            self.isClearingDisabledPathState = false
+            self.splitContainer?.textView.needsDisplay = true
+        }
     }
 
     /// The status bar is opt-in (DESIGN.md's "Avoid" list names a permanent
@@ -1206,6 +1266,8 @@ final class DocumentWindowController: NSWindowController {
         switch event {
         case .applied(let hunks):
             refreshChangeDecorations()
+            // The external parse commits asynchronously. Invalidate now; the
+            // matching onReparse callback warms the new revision's tokens.
             pathResolver?.invalidate()
             scheduleFindRefresh()
             guard !hunks.isEmpty else { return }
@@ -2354,12 +2416,12 @@ final class DocumentWindowController: NSWindowController {
         configureLocalAssetAccess(for: second.textView, documentURL: markdownDocument.url)
         second.textView.configuration = renderConfiguration
         let source = containerTextView
+        let sourceViewportOffset = source.topVisibleOffset
         second.textView.mode = source.mode
         second.textView.zoomLevel = source.zoomLevel
         second.textView.foldedHeadingSlugs = source.foldedHeadingSlugs
         second.textView.adoptSharedPresentation(from: source)
         second.textView.setSourceSelectedRanges(source.sourceSelectedRanges)
-        second.textView.scroll(toOffset: source.topVisibleOffset, position: .top, animated: false)
         splitContainer = second
 
         let split = ThemedSplitView(styleSheet: activeStyleSheet)
@@ -2379,6 +2441,13 @@ final class DocumentWindowController: NSWindowController {
         ])
         rootView.layoutSubtreeIfNeeded()
         split.setPosition(max(1, split.bounds.width / 2), ofDividerAt: 0)
+        // A detached text view has no viewport geometry, so scrolling it before
+        // `addArrangedSubview` silently lands at the document start. Establish
+        // the final pane widths first, then restore the source-space reading
+        // position the user was at when they opened the split.
+        split.layoutSubtreeIfNeeded()
+        second.textView.resizeToFitContent()
+        second.textView.scroll(toOffset: sourceViewportOffset, position: .top, animated: false)
         splitViewContainer = split
         markdownDocument.state.splitViewEnabled = true
         if isFocusModeEnabled { installFocusDimmingView(in: second) }

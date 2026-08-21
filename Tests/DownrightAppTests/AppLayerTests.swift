@@ -125,10 +125,11 @@ struct AppLayerTests {
     // MARK: - Snapshot store (§8.3)
 
     @Test func snapshotStoreDeduplicatesAndRestores() async throws {
-        let store = SnapshotStore.shared
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("downright-test-\(UUID().uuidString).md")
-        defer { store.forget(url) }
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SnapshotStore(historyDirectory: root.appendingPathComponent("history"))
+        let url = root.appendingPathComponent("document.md")
 
         let first = "# One\n\nBody.\n"
         let second = "# One\n\nBody, revised.\n"
@@ -145,6 +146,315 @@ struct AppLayerTests {
         #expect(versions.count == 2)
         #expect(store.text(for: versions[0]) == first)
         #expect(store.text(for: versions[1]) == second)
+    }
+
+    private func snapshotIndexFile(for url: URL, historyDirectory: URL) -> URL {
+        historyDirectory
+            .appendingPathComponent("index", isDirectory: true)
+            .appendingPathComponent(SnapshotStore.documentKey(for: url) + ".json")
+    }
+
+    private func writeSnapshotIndex(path: String, age: TimeInterval, to file: URL) throws {
+        let stamp = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-age))
+        let encodedPath = try #require(String(data: JSONEncoder().encode(path), encoding: .utf8))
+        let json = """
+        {"path":\(encodedPath),"versions":[{"hash":"\(String(repeating: "a", count: 64))",\
+        "date":"\(stamp)","byteCount":12,"kind":"external"}]}
+        """
+        AppPaths.ensure(file.deletingLastPathComponent())
+        try Data(json.utf8).write(to: file, options: .atomic)
+    }
+
+    private func ageSnapshotIndex(_ file: URL, by age: TimeInterval) throws {
+        let data = try Data(contentsOf: file)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var versions = try #require(json["versions"] as? [[String: Any]])
+        versions[versions.count - 1]["date"] = ISO8601DateFormatter().string(
+            from: Date().addingTimeInterval(-age)
+        )
+        json["versions"] = versions
+        try JSONSerialization.data(withJSONObject: json).write(to: file, options: .atomic)
+    }
+
+    private func runSnapshotPrune(_ store: SnapshotStore) async {
+        await store.pruneOneGenerationForTesting()
+    }
+
+    @Test func pruneForgetsOldHistoryForMissingDocument() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let url = root.appendingPathComponent("gone.md")
+        let file = snapshotIndexFile(for: url, historyDirectory: historyDirectory)
+
+        let text = "gone but cached\n"
+        #expect(store.record(text, for: url, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+        try ageSnapshotIndex(file, by: 90 * 24 * 60 * 60)
+        await runSnapshotPrune(store)
+        #expect(FileManager.default.fileExists(atPath: file.path), "one ENOENT can be an atomic replacement gap")
+        await runSnapshotPrune(store)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+
+        #expect(
+            store.record(text, for: url, kind: .baseline) != nil,
+            "deleting an abandoned index must atomically invalidate its loaded newest-hash cache"
+        )
+        await store.waitForPendingWrites()
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func pruneRequiresConsecutiveAbsenceAndForgetsARestoredGap() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-gap-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let url = root.appendingPathComponent("temporarily-missing.md")
+        let file = snapshotIndexFile(for: url, historyDirectory: historyDirectory)
+        try writeSnapshotIndex(path: url.path, age: 90 * 24 * 60 * 60, to: file)
+
+        await runSnapshotPrune(store)
+        try Data("restored\n".utf8).write(to: url)
+        await runSnapshotPrune(store)
+        try FileManager.default.removeItem(at: url)
+        await runSnapshotPrune(store)
+        #expect(FileManager.default.fileExists(atPath: file.path), "a restored path resets absence confirmation")
+        await runSnapshotPrune(store)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func pruneKeepsHistoryWhenPathLookupIsUnreadable() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-permission-\(UUID().uuidString)", isDirectory: true)
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let target = locked.appendingPathComponent("document.md")
+        try Data("private\n".utf8).write(to: target)
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let file = snapshotIndexFile(for: target, historyDirectory: historyDirectory)
+        try writeSnapshotIndex(path: target.path, age: 90 * 24 * 60 * 60, to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+
+        #expect(SnapshotStore.pathPresence(for: target.path) == .indeterminate)
+        await runSnapshotPrune(store)
+        await runSnapshotPrune(store)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func pruneKeepsObjectsWhenIndexDirectoryCannotBeListed() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-index-directory-\(UUID().uuidString)", isDirectory: true)
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let indexDirectory = historyDirectory.appendingPathComponent("index", isDirectory: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: indexDirectory.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        let text = "must survive an unreadable index directory\n"
+        let record = try #require(store.record(text, for: document, kind: .baseline))
+        await store.waitForPendingWrites()
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: indexDirectory.path)
+
+        await runSnapshotPrune(store)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: indexDirectory.path)
+        #expect(store.content(for: record) == .text(text))
+    }
+
+    @Test func pruneKeepsObjectsWhenAnyIndexIsCorrupt() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-corrupt-index-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        let text = "must survive a corrupt index\n"
+        let record = try #require(store.record(text, for: document, kind: .baseline))
+        await store.waitForPendingWrites()
+        let index = snapshotIndexFile(for: document, historyDirectory: historyDirectory)
+        try Data("not json".utf8).write(to: index, options: .atomic)
+
+        await runSnapshotPrune(store)
+
+        #expect(store.content(for: record) == .text(text))
+    }
+
+    @Test func pruneKeepsObjectsWhenAnyIndexFileIsUnreadable() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-unreadable-index-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        let text = "must survive an unreadable index file\n"
+        let record = try #require(store.record(text, for: document, kind: .baseline))
+        await store.waitForPendingWrites()
+        let index = snapshotIndexFile(for: document, historyDirectory: historyDirectory)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: index.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: index.path) }
+
+        await runSnapshotPrune(store)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: index.path)
+        #expect(store.content(for: record) == .text(text))
+    }
+
+    @Test func pruneKeepsOldHistoryForLiveDocument() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let url = root.appendingPathComponent("live.md")
+        try Data("# Live\n".utf8).write(to: url)
+        let file = snapshotIndexFile(for: url, historyDirectory: historyDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try writeSnapshotIndex(path: url.path, age: 90 * 24 * 60 * 60, to: file)
+        await runSnapshotPrune(store)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func pruneDoesNotRewriteUnchangedIndex() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-prune-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let url = root.appendingPathComponent("stable.md")
+        try Data("# Stable\n".utf8).write(to: url)
+        let file = snapshotIndexFile(for: url, historyDirectory: historyDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        store.record("# Stable\n", for: url, kind: .baseline)
+        await store.waitForPendingWrites()
+        let mark = Date(timeIntervalSince1970: 1_000_000)
+        try FileManager.default.setAttributes([.modificationDate: mark], ofItemAtPath: file.path)
+        await runSnapshotPrune(store)
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        #expect(attributes[.modificationDate] as? Date == mark)
+    }
+
+    @Test func abandonedReadingStateIsCollectedButLiveStateRemains() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-state-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let live = root.appendingPathComponent("live.md")
+        try Data("# Live\n".utf8).write(to: live)
+        let recent = root.appendingPathComponent("recent.md")
+        let stale = root.appendingPathComponent("stale.md")
+        let supportDirectory = root.appendingPathComponent("support", isDirectory: true)
+        let store = DocumentStateStore(supportDirectory: supportDirectory)
+        func stateFile(_ url: URL) -> URL {
+            supportDirectory.appendingPathComponent("state", isDirectory: true)
+                .appendingPathComponent(SnapshotStore.documentKey(for: url) + ".json")
+        }
+        defer {
+            for url in [live, recent, stale] {
+                try? FileManager.default.removeItem(at: stateFile(url))
+            }
+        }
+
+        for url in [live, recent] {
+            var state = DocumentState(path: url.path)
+            state.lastOpened = Date()
+            store.save(state, for: url)
+        }
+        var oldState = DocumentState(path: stale.path)
+        oldState.lastOpened = .distantPast
+        store.save(oldState, for: stale)
+
+        store.pruneAbandonedStates()
+
+        #expect(FileManager.default.fileExists(atPath: stateFile(live).path))
+        #expect(FileManager.default.fileExists(atPath: stateFile(recent).path))
+        #expect(FileManager.default.fileExists(atPath: stateFile(stale).path))
+        store.pruneAbandonedStates()
+        #expect(!FileManager.default.fileExists(atPath: stateFile(stale).path))
+    }
+
+    @Test func readingStatePruneForgetsTransientAbsenceAfterRestore() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-state-gap-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let store = DocumentStateStore(supportDirectory: support)
+        let document = root.appendingPathComponent("document.md")
+        let stateFile = support.appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent(SnapshotStore.documentKey(for: document) + ".json")
+        var state = DocumentState(path: document.path)
+        state.lastOpened = .distantPast
+        store.save(state, for: document)
+
+        store.pruneAbandonedStates()
+        try Data("restored\n".utf8).write(to: document)
+        store.pruneAbandonedStates()
+        try FileManager.default.removeItem(at: document)
+        store.pruneAbandonedStates()
+        #expect(FileManager.default.fileExists(atPath: stateFile.path))
+        store.pruneAbandonedStates()
+        #expect(!FileManager.default.fileExists(atPath: stateFile.path))
+    }
+
+    @Test func scheduledReadingStatePruneReachesDelayedConfirmation() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-state-scheduled-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let store = DocumentStateStore(
+            supportDirectory: support,
+            abandonedStateConfirmationDelay: 0.05
+        )
+        let document = root.appendingPathComponent("missing.md")
+        let stateFile = support.appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent(SnapshotStore.documentKey(for: document) + ".json")
+        var state = DocumentState(path: document.path)
+        state.lastOpened = .distantPast
+        store.save(state, for: document)
+
+        store.schedulePruneAbandonedStates()
+        let deadline = Date().addingTimeInterval(1)
+        while FileManager.default.fileExists(atPath: stateFile.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!FileManager.default.fileExists(atPath: stateFile.path))
+    }
+
+    @Test func freshReadingStateCancelsPendingAbandonment() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-state-refresh-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let store = DocumentStateStore(supportDirectory: support)
+        let document = root.appendingPathComponent("missing.md")
+        let stateFile = support.appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent(SnapshotStore.documentKey(for: document) + ".json")
+        var stale = DocumentState(path: document.path)
+        stale.lastOpened = .distantPast
+        store.save(stale, for: document)
+        store.pruneAbandonedStates()
+
+        var fresh = DocumentState(path: document.path)
+        fresh.lastOpened = Date()
+        fresh.selectionLocation = 42
+        store.save(fresh, for: document)
+        store.pruneAbandonedStates()
+
+        #expect(FileManager.default.fileExists(atPath: stateFile.path))
+        #expect(store.state(for: document).selectionLocation == 42)
     }
 
     @Test func contentHashIsStable() {
@@ -377,6 +687,61 @@ struct AppLayerTests {
             !resolver.resolve(PathToken(rawPath: "src/auth/session.ts", line: 42)).exists,
             "a file the agent claims to have touched that isn't there must resolve as missing"
         )
+    }
+
+    @Test @MainActor
+    func pathResolverWarmsCacheAndReturnsOnMainQueue() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-path-warm-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("ready\n".utf8).write(to: root.appendingPathComponent("ready.md"))
+
+        let resolver = PathResolver(documentURL: root.appendingPathComponent("document.md"))
+        #expect(resolver.cachedResolution(for: PathToken(rawPath: "ready.md")) == nil)
+        await withCheckedContinuation { continuation in
+            resolver.warm([
+                PathToken(rawPath: "ready.md"),
+                PathToken(rawPath: "ready.md", line: 9),
+                PathToken(rawPath: "missing.md"),
+            ]) {
+                #expect(Thread.isMainThread)
+                continuation.resume()
+            }
+        }
+
+        #expect(resolver.resolve(PathToken(rawPath: "ready.md", line: 9)).exists)
+        #expect(resolver.resolve(PathToken(rawPath: "ready.md", line: 9)).line == 9)
+        #expect(!resolver.resolve(PathToken(rawPath: "missing.md")).exists)
+        #expect(resolver.cachedResolution(for: PathToken(rawPath: "ready.md"))?.exists == true)
+
+        try FileManager.default.removeItem(at: root.appendingPathComponent("ready.md"))
+        await withCheckedContinuation { continuation in
+            resolver.warm([PathToken(rawPath: "ready.md")]) { continuation.resume() }
+        }
+        #expect(
+            resolver.cachedResolution(for: PathToken(rawPath: "ready.md"))?.exists == true,
+            "a current-generation cache hit must not be restatted on every reparse"
+        )
+    }
+
+    @Test @MainActor
+    func newlyParsedPathTokenRemainsUncachedUntilBackgroundWarmCompletes() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-new-path-token-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let resolver = PathResolver(documentURL: root.appendingPathComponent("document.md"))
+        let newToken = PathToken(rawPath: "generated.md")
+
+        // This token represents one introduced by the new parse after an
+        // external rewrite. Decoration must not synchronously stat it.
+        #expect(resolver.cachedResolution(for: newToken) == nil)
+        try Data("generated\n".utf8).write(to: root.appendingPathComponent(newToken.rawPath))
+        await withCheckedContinuation { continuation in
+            resolver.warm([newToken]) { continuation.resume() }
+        }
+        #expect(resolver.cachedResolution(for: newToken)?.exists == true)
     }
 
     @Test func gitRootDiscoveryStopsAtTheRepository() throws {

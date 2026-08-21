@@ -109,6 +109,43 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(XCTAttachment(screenshot: window.screenshot()))
     }
 
+    func testSplitViewCreatesTwoInteractiveDocumentPanes() throws {
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
+
+        let windowMenu = app.menuBars.menuBarItems["Window"]
+        XCTAssertTrue(windowMenu.waitForExistence(timeout: 10), "the Window menu was not built")
+        windowMenu.click()
+        let splitView = app.menuItems["Split View"]
+        XCTAssertTrue(splitView.waitForExistence(timeout: 10), "the split-view command is missing")
+        XCTAssertTrue(splitView.isEnabled, "the split-view command is disabled for a document")
+        splitView.click()
+
+        let editors = window.textViews.matching(identifier: "Document editor")
+        XCTAssertEqual(editors.count, 2, "split view did not expose two document editors")
+        let left = editors.element(boundBy: 0)
+        let right = editors.element(boundBy: 1)
+        XCTAssertTrue(left.isHittable)
+        XCTAssertTrue(right.isHittable)
+        XCTAssertLessThan(left.frame.midX, right.frame.midX)
+        let splitScreenshot = XCTAttachment(screenshot: window.screenshot())
+        splitScreenshot.lifetime = .keepAlways
+        add(splitScreenshot)
+
+        right.click()
+        right.typeText("!")
+
+        windowMenu.click()
+        app.menuItems["Split View"].click()
+        XCTAssertEqual(window.textViews.matching(identifier: "Document editor").count, 1)
+        let survivingValue = window.textViews["Document editor"].value as? String
+        XCTAssertTrue(survivingValue?.contains("!") == true)
+    }
+
     /// Release-only smoke coverage for the path that previously crashed:
     /// launch a production-configured app built as an older version, invoke
     /// the real menu command, let Sparkle drive the custom panel through its

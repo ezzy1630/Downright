@@ -1,5 +1,6 @@
 import Foundation
 import MarkdownCore
+import Darwin
 
 /// Local time-travel (§8.3).
 ///
@@ -14,7 +15,7 @@ import MarkdownCore
 /// history/objects/<ab>/<hash>       zlib-compressed UTF-8 content
 /// history/index/<docKey>.json       ordered version list for one document
 /// ```
-final class SnapshotStore {
+final class SnapshotStore: @unchecked Sendable {
     static let shared = SnapshotStore()
 
     enum SnapshotKind: String, Codable {
@@ -115,15 +116,22 @@ final class SnapshotStore {
     /// reads and acknowledges its own count.
     private var evictedVersionsByDocument: [String: Int] = [:]
     private var lastReport = PruneReport()
+    private let historyDirectory: URL
+    private var abandonedCandidates: [String: String] = [:]
+    private let abandonedConfirmationDelay: TimeInterval = 30
 
-    private init() {
-        AppPaths.ensure(AppPaths.historyDirectory)
+    /// `historyDirectory` is injectable so maintenance tests can exercise real
+    /// filesystem behavior without ever traversing the user's production
+    /// Application Support store.
+    init(historyDirectory: URL = AppPaths.historyDirectory) {
+        self.historyDirectory = historyDirectory.standardizedFileURL
+        AppPaths.ensure(self.historyDirectory)
         AppPaths.ensure(objectsDirectory)
         AppPaths.ensure(indexDirectory)
     }
 
-    private var objectsDirectory: URL { AppPaths.historyDirectory.appendingPathComponent("objects", isDirectory: true) }
-    private var indexDirectory: URL { AppPaths.historyDirectory.appendingPathComponent("index", isDirectory: true) }
+    private var objectsDirectory: URL { historyDirectory.appendingPathComponent("objects", isDirectory: true) }
+    private var indexDirectory: URL { historyDirectory.appendingPathComponent("index", isDirectory: true) }
 
     // MARK: - Recording
 
@@ -223,7 +231,23 @@ final class SnapshotStore {
     /// window between its write and the matching index append.
     func schedulePrune() {
         queue.async { [self] in
+            lastPrune = Date()
             _ = prune()
+            queue.asyncAfter(deadline: .now() + abandonedConfirmationDelay) { [self] in
+                lastPrune = Date()
+                _ = prune()
+            }
+        }
+    }
+
+    /// Executes exactly one prune generation and waits for it. Destructive
+    /// filesystem tests use this instead of production's delayed confirmation.
+    func pruneOneGenerationForTesting() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async { [self] in
+                _ = prune()
+                continuation.resume()
+            }
         }
     }
 
@@ -312,10 +336,61 @@ final class SnapshotStore {
 
     // MARK: - Pruning
 
+    /// Pruning is primarily a launch job. This interval is only a backstop for
+    /// unusually long sessions that can cross the configured size caps.
+    private let pruneInterval: TimeInterval = 30 * 60
+
     private func pruneIfDue() {
-        guard Date().timeIntervalSince(lastPrune) > 300 else { return }
+        guard Date().timeIntervalSince(lastPrune) > pruneInterval else { return }
         lastPrune = Date()
         prune()
+    }
+
+    /// A missing path is abandoned only after its newest version has aged out
+    /// and the containing volume is mounted. This avoids deleting history for
+    /// an atomic replacement in flight or an unplugged external volume.
+    private func isAbandoned(_ index: Index, key: String, cutoff: Date) -> Bool {
+        guard let newest = index.versions.last, newest.date < cutoff else {
+            abandonedCandidates.removeValue(forKey: key)
+            return false
+        }
+        let presence = index.path.isEmpty ? PathPresence.absent : Self.pathPresence(for: index.path)
+        guard presence == .absent,
+              (index.path.isEmpty || Self.volumeIsMounted(for: index.path)) else {
+            abandonedCandidates.removeValue(forKey: key)
+            return false
+        }
+        // ENOENT is also the middle of an atomic replacement. Require the same
+        // old index to be absent in two distinct prune generations.
+        let signature = "\(index.path)\u{0}\(newest.hash)\u{0}\(newest.date.timeIntervalSinceReferenceDate)"
+        guard abandonedCandidates[key] == signature else {
+            abandonedCandidates[key] = signature
+            return false
+        }
+        return true
+    }
+
+    enum PathPresence: Equatable {
+        case present
+        case absent
+        case indeterminate
+    }
+
+    /// Uses `lstat` so permission and I/O failures are not collapsed into the
+    /// same answer as a confirmed missing path.
+    static func pathPresence(for path: String) -> PathPresence {
+        var info = stat()
+        if lstat(path, &info) == 0 { return .present }
+        switch errno {
+        case ENOENT, ENOTDIR: return .absent
+        default: return .indeterminate
+        }
+    }
+
+    static func volumeIsMounted(for path: String) -> Bool {
+        let components = (path as NSString).pathComponents
+        guard components.count > 2, components[1] == "Volumes" else { return true }
+        return pathPresence(for: "/Volumes/" + components[2]) == .present
     }
 
     /// Trims every document against the age cap and its **own** size budget,
@@ -337,12 +412,26 @@ final class SnapshotStore {
         var referenced = Set<String>()
         var newestHashes = Set<String>()
 
-        let indexes = (try? fm.contentsOfDirectory(at: indexDirectory, includingPropertiesForKeys: nil)) ?? []
+        guard let indexes = try? fm.contentsOfDirectory(
+            at: indexDirectory,
+            includingPropertiesForKeys: nil
+        ) else {
+            // No complete index inventory means no safe answer to "unreferenced".
+            // Fail closed and leave every object alone this generation.
+            recordPrune(report)
+            return report
+        }
+        var hasIncompleteReferenceKnowledge = false
+        var liveIndexes: [URL] = []
         for indexFile in indexes where indexFile.pathExtension == "json" {
+            let documentKey = indexFile.deletingPathExtension().lastPathComponent
             guard let data = try? Data(contentsOf: indexFile),
                   var index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
-            else { continue }
-            let documentKey = indexFile.deletingPathExtension().lastPathComponent
+            else {
+                abandonedCandidates.removeValue(forKey: documentKey)
+                hasIncompleteReferenceKnowledge = true
+                continue
+            }
             let before = index.versions.count
 
             // Always keep the newest version even if it is older than the cap:
@@ -358,16 +447,47 @@ final class SnapshotStore {
                 total -= index.versions.removeFirst().byteCount
             }
 
+            if isAbandoned(index, key: documentKey, cutoff: cutoff) {
+                let removed = pendingLock.withLock {
+                    do {
+                        try fm.removeItem(at: indexFile)
+                    } catch {
+                        return false
+                    }
+                    // Atomic with deletion: a concurrent record must either
+                    // see the old durable index or reload the now-empty one.
+                    stateByDocument.removeValue(forKey: documentKey)
+                    stateOrder.removeAll { $0 == documentKey }
+                    return true
+                }
+                if removed {
+                    if before > 0 {
+                        report.droppedVersions[documentKey, default: 0] += before
+                    }
+                } else {
+                    liveIndexes.append(indexFile)
+                    referenced.formUnion(index.versions.map(\.hash))
+                    if let newest = index.versions.last?.hash { newestHashes.insert(newest) }
+                }
+                continue
+            }
+
             let dropped = before - index.versions.count
             if dropped > 0 { report.droppedVersions[documentKey, default: 0] += dropped }
 
-            if let encoded = try? JSONEncoder.snapshotEncoder.encode(index) {
+            if dropped > 0, let encoded = try? JSONEncoder.snapshotEncoder.encode(index) {
                 try? encoded.write(to: indexFile, options: .atomic)
             }
+            liveIndexes.append(indexFile)
             referenced.formUnion(index.versions.map(\.hash))
             if let newest = index.versions.last?.hash {
                 newestHashes.insert(newest)
             }
+        }
+
+        guard !hasIncompleteReferenceKnowledge else {
+            recordPrune(report)
+            return report
         }
 
         var objects = objectInventory()
@@ -399,7 +519,7 @@ final class SnapshotStore {
             return report
         }
 
-        for indexFile in indexes where indexFile.pathExtension == "json" {
+        for indexFile in liveIndexes {
             guard let data = try? Data(contentsOf: indexFile),
                   var index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
             else { continue }
@@ -407,7 +527,8 @@ final class SnapshotStore {
             let before = index.versions.count
             index.versions.removeAll { dropped.contains($0.hash) }
             let removed = before - index.versions.count
-            if removed > 0 { report.droppedVersions[documentKey, default: 0] += removed }
+            guard removed > 0 else { continue }
+            report.droppedVersions[documentKey, default: 0] += removed
             if let encoded = try? JSONEncoder.snapshotEncoder.encode(index) {
                 try? encoded.write(to: indexFile, options: .atomic)
             }
