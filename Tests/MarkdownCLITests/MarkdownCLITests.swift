@@ -87,6 +87,25 @@ struct MarkdownCLITests {
         #expect(!html.contains("href=\"javascript/foo:alert(1)\""))
     }
 
+    @Test func htmlExportNeutralizesLineBreakObfuscatedSchemes() {
+        // Browsers strip tab, LF, and CR from anywhere inside a URL before
+        // parsing it, so every destination below would reach the browser as a
+        // live scheme unless the exporter normalizes before analyzing.
+        let html = MarkdownCLI.html(for: """
+        [tab](java\tscript:alert(1)) [newline](ja\nscript:alert(1)) [cr](j\rascript:alert(2))
+        ![pixel](http\t://tracking.example/x.png)
+        """)
+
+        #expect(!html.lowercased().contains("href=\"javascript:"))
+        #expect(!html.contains("\t"), "no raw tab may survive into an emitted URL")
+        #expect(!html.contains("\r"), "no raw carriage return may survive into an emitted URL")
+        #expect(!html.contains("<img "), "an obfuscated remote image source must not become a live img")
+
+        let safe = MarkdownCLI.html(for: "[web](https://example.com) [rel](./a.md)")
+        #expect(safe.contains("href=\"https://example.com\""))
+        #expect(safe.contains("href=\"./a.md\""))
+    }
+
     @Test func checkAndOutlineSupportDoubleDash() throws {
         #expect(try MarkdownCLI.parse(["check", "--", "-notes.md"])
             == .check(json: false, target: nil, paths: ["-notes.md"]))
