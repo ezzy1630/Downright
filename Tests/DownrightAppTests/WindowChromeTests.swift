@@ -576,7 +576,8 @@ struct WindowChromeTests {
     }
 
     @Test("Rapid Replace toggles cannot leave a faded ghost row")
-    func replaceBarRapidToggleSettlesVisible() async throws {
+    @MainActor
+    func replaceBarRapidToggleSettlesVisible() throws {
         let style = StyleSheet(
             theme: ThemeStore.shared.current,
             appearance: NSAppearance(named: .darkAqua)!,
@@ -592,7 +593,11 @@ struct WindowChromeTests {
         bar.showsReplace = true
         bar.showsReplace = false
         bar.showsReplace = true
-        try await Task.sleep(for: .milliseconds(350))
+        // Wait for the fade-in to actually settle instead of sleeping a fixed
+        // interval: animation timers coalesce on loaded machines, so any
+        // constant can expire mid-fade and fail a correct implementation.
+        let settled = pumpMainRunLoop(until: { abs(bar.replaceRowAlphaForTesting - 1) < 0.001 })
+        #expect(settled, "the replace row never reached full alpha")
         bar.layoutSubtreeIfNeeded()
 
         #expect(bar.showsReplace)

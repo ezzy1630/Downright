@@ -126,7 +126,10 @@ import Testing
         let doc = MarkdownParser.parse(text)
         let elapsed = Date().timeIntervalSince(start)
         #expect(doc.length > 0)
-        #expect(elapsed < 1.0, "100KB parse took \(elapsed)s")
+        // A coarse quadratic-behaviour probe, not the §12 benchmark: the
+        // release budget is enforced by drbench, so this ceiling only has to
+        // separate "linear-ish" from "accidentally quadratic" robustly.
+        #expect(elapsed < 5.0, "100KB parse took \(elapsed)s")
     }
 
     @Test func parsingIsDeterministic() {

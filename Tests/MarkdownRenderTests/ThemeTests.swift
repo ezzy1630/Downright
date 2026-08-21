@@ -4,7 +4,7 @@ import MarkdownCore
 import Testing
 @testable import MarkdownRender
 
-@Suite("Theming, typography and colour (§11.1, §11.2)")
+@Suite("Theming, typography and colour (§11.1, §11.2)", .serialized)
 final class ThemeTests {
 
     @Test func readerProfileCanOnlyAddReducedMotion() {
@@ -23,19 +23,18 @@ final class ThemeTests {
     private let aqua = NSAppearance(named: .aqua)!
     private let darkAqua = NSAppearance(named: .darkAqua)!
 
-    /// `select(named:)` persists to `UserDefaults` by design, so each test puts
-    /// the user's real preference back when it finishes.
-    private let savedSelection = UserDefaults.standard.string(forKey: ThemeStore.selectionDefaultsKey)
+    /// `select(named:)` persists to `UserDefaults` by design, so every store
+    /// here runs against an isolated suite — a test run must never read or
+    /// rewrite the user's real theme selection.
+    private static let isolatedDefaults = UserDefaults(
+        suiteName: "downright.tests.themes"
+    )!
 
     deinit {
-        if let savedSelection {
-            UserDefaults.standard.set(savedSelection, forKey: ThemeStore.selectionDefaultsKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: ThemeStore.selectionDefaultsKey)
-        }
+        Self.isolatedDefaults.removePersistentDomain(forName: "downright.tests.themes")
     }
 
-    private func store() -> ThemeStore { ThemeStore() }
+    private func store() -> ThemeStore { ThemeStore(defaults: Self.isolatedDefaults) }
 
     private func bundled() -> [Theme] {
         let names = Set(ThemeTests.bundledNames)
