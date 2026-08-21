@@ -277,29 +277,41 @@ final class ReleaseFeedURLProbe: ReleaseFeedProbe {
 
     private let session: URLSession
 
-    init() {
+    /// `session` is a test seam: production uses the locked-down ephemeral
+    /// configuration; tests inject one backed by a stub URLProtocol.
+    init(session: URLSession = URLSession(configuration: ReleaseFeedURLProbe.makeConfiguration())) {
+        self.session = session
+    }
+
+    nonisolated private static func makeConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieAcceptPolicy = .never
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
-        // The ETag is the cache; a URL cache on top of it only adds a second
-        // staleness policy that can hold a fresh feed back.
+        // The validators below are the cache; a URL cache on top of them only
+        // adds a second staleness policy that can hold a fresh feed back.
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
         configuration.waitsForConnectivity = false
-        session = URLSession(configuration: configuration)
+        return configuration
     }
 
     func probe(feed: URL, validator: String?) async -> ReleaseFeedProbeResult {
         var request = URLRequest(url: feed)
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        // An ETag round-trips verbatim. A body hash is ours, not the server's,
-        // so it must never be offered as one.
+        // An ETag round-trips verbatim, and so does a stored document date.
+        // A body hash is ours, not the server's, so it must never be offered
+        // as either.
         if let validator, validator.hasPrefix(Self.etagPrefix) {
             request.setValue(
                 String(validator.dropFirst(Self.etagPrefix.count)),
                 forHTTPHeaderField: "If-None-Match"
+            )
+        } else if let validator, validator.hasPrefix(Self.lastModifiedPrefix) {
+            request.setValue(
+                String(validator.dropFirst(Self.lastModifiedPrefix.count)),
+                forHTTPHeaderField: "If-Modified-Since"
             )
         }
         guard let (data, response) = try? await session.data(for: request),
@@ -316,12 +328,19 @@ final class ReleaseFeedURLProbe: ReleaseFeedProbe {
     }
 
     private static let etagPrefix = "etag:"
+    private static let lastModifiedPrefix = "lastModified:"
 
-    /// Prefer the server's own validator; fall back to hashing the body, which
-    /// keeps the watch working on a host that serves no `ETag` at all.
+    /// Prefer the server's own validator; fall back to the document date,
+    /// which keeps conditional requests working on a host that serves no
+    /// `ETag`; fall back further to hashing the body, which keeps the watch
+    /// working on a host that serves neither.
     private static func validator(for response: HTTPURLResponse, body: Data) -> String {
         if let etag = response.value(forHTTPHeaderField: "ETag"), !etag.isEmpty {
             return etagPrefix + etag
+        }
+        if let lastModified = response.value(forHTTPHeaderField: "Last-Modified"),
+           !lastModified.isEmpty {
+            return lastModifiedPrefix + lastModified
         }
         let digest = SHA256.hash(data: body)
         return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
