@@ -116,7 +116,49 @@ extension DocumentWindowController {
     }
 
     func presentSaveError(_ error: Error) {
-        presentOperationError("Couldn’t save \(markdownDocument.displayName)", error: error)
+        switch error {
+        case SaveError.fileMissing, SaveError.fileUnreadable:
+            presentSaveRecovery(error)
+        default:
+            presentOperationError("Couldn’t save \(markdownDocument.displayName)", error: error)
+        }
+    }
+
+    private func presentSaveRecovery(_ error: Error) {
+        guard saveRecoveryAlert == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "The original file can’t be saved safely"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save a Copy…")
+        alert.addButton(withTitle: "Recreate File")
+        alert.addButton(withTitle: "Discard Changes")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].toolTip = "Write your Markdown to a different path"
+        alert.buttons[1].toolTip = "Explicitly create or replace the original path"
+        alert.buttons[2].toolTip = "Stop trying to save these local edits"
+        alert.buttons[3].toolTip = "Keep editing without writing anything"
+        saveRecoveryAlert = alert
+
+        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self else { return }
+            self.saveRecoveryAlert = nil
+            switch response {
+            case .alertFirstButtonReturn:
+                self.saveAs()
+            case .alertSecondButtonReturn:
+                _ = self.markdownDocument.recreateMissingFile()
+            case .alertThirdButtonReturn:
+                self.markdownDocument.discardUnsavedChanges()
+            default:
+                break
+            }
+        }
+        if let window {
+            alert.beginSheetModal(for: window, completionHandler: handle)
+        } else {
+            handle(alert.runModal())
+        }
     }
 
     func presentOperationError(_ title: String, error: Error) {

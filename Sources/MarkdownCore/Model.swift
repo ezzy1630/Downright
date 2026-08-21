@@ -189,6 +189,10 @@ public final class MDBlock: @unchecked Sendable {
     /// Stable identity across reparses where possible, so fold/collapse state
     /// survives an agent rewriting an unrelated part of the file.
     public var identity: BlockIdentity
+    /// Safe README-style HTML annotations for this block, when the source is
+    /// entirely within the conservative presentational subset. Unsafe or
+    /// unknown HTML stays `nil` and is rendered literally.
+    public var safeHTML: SafeHTMLDocument?
 
     public init(
         content: BlockContent,
@@ -201,7 +205,8 @@ public final class MDBlock: @unchecked Sendable {
         depth: Int = 0,
         quoteDepth: Int = 0,
         subtreeHash: UInt64 = 0,
-        identity: BlockIdentity = .init(kind: 0, ordinal: 0)
+        identity: BlockIdentity = .init(kind: 0, ordinal: 0),
+        safeHTML: SafeHTMLDocument? = nil
     ) {
         self.content = content
         self.range = range
@@ -214,6 +219,7 @@ public final class MDBlock: @unchecked Sendable {
         self.quoteDepth = quoteDepth
         self.subtreeHash = subtreeHash
         self.identity = identity
+        self.safeHTML = safeHTML
     }
 }
 

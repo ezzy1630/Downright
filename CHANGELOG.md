@@ -14,6 +14,22 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
+- **Made saves fail closed around external file activity.** Downright now
+  distinguishes unchanged, changed, missing, and unreadable disk state; an
+  implicit save can no longer recreate a deleted file, swallow an atomic
+  replacement, or overwrite a generation that arrived at the save boundary.
+  Recovery offers explicit Save a Copy, Recreate File, Discard, and Cancel
+  choices, and preserves byte-level encoding and line-ending fidelity.
+- **Made Quick Look reads bounded under replacement races.** Preview and
+  fallback paths now enforce their byte ceiling on the read itself even when
+  a file grows or is atomically replaced after its metadata was inspected.
+- **Kept large external rewrites off the typing path.** Revision-checked
+  background parsing and incremental TextKit commits preserve selection and
+  scroll anchors while bounded real-window frame gates cover 10k–50k-line
+  documents, IME composition, split view, and concurrent scrolling.
+- **Repaired browser-rich paste boundaries.** HTML, WebArchive, RTF, and RTFD
+  imports preserve useful paragraph, list, table, code, and link structure
+  without guessing at unsupported image or vendor payloads.
 - **Fixed a crash on ordinary prose.** Any document containing a one-character
   word before `:digits` — "John 3:16", "meet at 9:30", `` `a:1` `` — fatally
   trapped the path-token scanner during the per-keystroke reparse.
@@ -74,6 +90,21 @@ every release; Sparkle orders updates by it.
 
 ### Added
 
+- **Calm, explicit document trust states.** The toolbar now communicates
+  Edited, Saving, briefly Saved, Changed on disk, Conflict, and Save failed,
+  with accessible labels and focused mutation provenance such as Paste,
+  Toggle Task, Replace, panel actions, and Undo.
+- **Contents / Outline is a first-class command.** It is visible in the
+  toolbar and overflow menu, remains available through View, the command
+  palette, accessibility, and configurable keybindings, and reuses the
+  pinnable inspector rather than adding a permanent sidebar.
+- **Universal clipboard flavors.** Copy now publishes lossless private
+  Markdown, plain text, RTF, and sanitized semantic HTML so native and browser
+  targets retain headings, lists, emphasis, links, tables, and code structure.
+- **Safe native rendering for common README HTML.** Presentational paragraphs,
+  headings, emphasis, links, local images, line breaks, disclosures, and basic
+  tables render in Document mode without executing HTML or changing source;
+  unknown and risky markup stays visible and inert.
 - **First-run setup panel.** Downright now installs itself. On first launch it
   offers to become the default Markdown app and to install the `down` command
   line tool, and — with no decision to make — registers its Quick Look
@@ -99,6 +130,12 @@ every release; Sparkle orders updates by it.
 
 ### Changed
 
+- The Welcome tour now derives every displayed shortcut from the configurable
+  command table, shows an honest Unassigned state, and remains accurate after
+  keybinding customization.
+- Development app bundles now use an isolated bundle identifier by default,
+  including their Quick Look extensions, so acceptance builds cannot displace
+  the installed daily-driver registration.
 - **Appearance now follows macOS reliably.** Theme selection no longer
   silently disables system following, the View menu exposes separate light
   and dark palettes, and Light/Dark transitions rebuild cached TextKit

@@ -145,11 +145,54 @@ import Testing
             == "![Alt](a.png)")
     }
 
+    @Test func dropsExecutableHTMLDestinationsWithoutDroppingVisibleWords() {
+        #expect(SmartPaste.markdown(forHTML:
+            "<p><a href=\"javascript:alert(1)\">keep me</a></p>") == "keep me")
+        #expect(SmartPaste.markdown(forHTML:
+            "<p>before<img src=\"data:text/html,evil\" alt=\"bad\">after</p>")
+            == "beforeafter")
+    }
+
     @Test func convertsHTMLLists() {
         #expect(SmartPaste.markdown(forHTML: "<ul><li>one</li><li>two</li></ul>")
-            == "- one\n- two")
+                == "- one\n- two")
         #expect(SmartPaste.markdown(forHTML: "<ol><li>one</li><li>two</li></ol>")
-            == "1. one\n2. two")
+                == "1. one\n2. two")
+    }
+
+    @Test func convertsSafariFragmentWithoutCollapsingBlocks() {
+        let html = """
+        <!DOCTYPE html><html><head><meta charset="utf-8"><style>body { color: red }</style></head><body><!--StartFragment-->
+        <div><h1>Safari selection</h1><p>Intro <strong>bold</strong> and <a href="https://example.com">link</a>.</p>
+        <ul><li>first<ul><li>nested <code>code</code></li></ul></li><li>second</li></ul>
+        <table><thead><tr><th>Name</th><th>Count</th></tr></thead><tbody><tr><td>Ada</td><td>1</td></tr><tr><td>Grace</td><td>22</td></tr></tbody></table>
+        <pre><code>let x = 1</code></pre><script>alert(1)</script><p>After<br>line</p></div>
+        <!--EndFragment--></body></html>
+        """
+        // Safari includes wrapper tags, indentation, and fragment markers in
+        // public.html. The visible structure must survive normal Paste.
+        // Whitespace-only lines are not allowed to split the list/table into
+        // prose, while executable content remains discarded.
+        let expected = """
+        # Safari selection
+
+        Intro **bold** and [link](https://example.com).
+
+        - first
+          - nested `code`
+        - second
+
+        | Name  | Count |
+        | ----- | ----- |
+        | Ada   | 1     |
+        | Grace | 22    |
+
+        ```
+        let x = 1
+        ```
+
+        """ + "\nAfter  \nline"
+        #expect(SmartPaste.markdown(forHTML: html) == expected)
     }
 
     @Test func convertsHTMLCodeAndTables() {
@@ -169,5 +212,17 @@ import Testing
     @Test func unknownTagsDegradeToTheirTextContent() {
         #expect(SmartPaste.markdown(forHTML: "<p>a <mark>highlighted</mark> word</p>")
             == "a highlighted word")
+    }
+
+    @Test func matchStyleHTMLKeepsBlockAndListLineBreaks() {
+        let html = "<h2>Title</h2><p>First <strong>paragraph</strong>.</p>"
+            + "<ul><li>one</li><li>two</li></ul><p>Last</p>"
+        #expect(SmartPaste.plainText(forHTML: html) == "Title\n\nFirst paragraph.\none\ntwo\n\nLast")
+    }
+
+    @Test func matchStyleHTMLCollapsesInlineWhitespaceOnly() {
+        #expect(SmartPaste.plainText(forHTML:
+            "<p>one <span style=\"color:red\">two</span>\t three</p>")
+            == "one two three")
     }
 }

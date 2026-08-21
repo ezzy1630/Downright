@@ -398,6 +398,9 @@ public final class MarkdownTextView: NSTextView {
 
     private var isApplyingSelection = false
     private var isPerformingSourceEdit = false
+    /// Human-scale provenance for the source mutation most recently reported
+    /// through `didEdit`. The app reads this synchronously in that callback.
+    public internal(set) var lastMutationProvenance = "Edit"
     /// A local edit should leave the caret in charge of the camera while its
     /// asynchronous parse result catches up.
     var shouldFollowCaretAfterLocalEdit = false
@@ -595,6 +598,37 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: - Document updates
+
+    /// Seeds a second pane over the same attributed storage. The primary pane
+    /// has already parsed, decorated, and built every source/display mapping;
+    /// repeating that document-wide work when opening Split View made a 50k
+    /// line document stall for minutes. Each pane still owns independent
+    /// layout fragments, selection, scrolling, and reveal state.
+    public func adoptSharedPresentation(from source: MarkdownTextView) {
+        guard textStorage === source.textStorage else { return }
+        parsedDocument = source.parsedDocument
+        paragraphIndex = source.paragraphIndex
+        baseHiddenRanges = source.baseHiddenRanges
+        hardWrapRanges = source.hardWrapRanges
+        hardWrapSubstitutions = source.hardWrapSubstitutions
+        baseDisplayMap = source.baseDisplayMap
+        baseLayoutMap = source.baseLayoutMap
+        displayMap = source.displayMap
+        revealParagraph = source.revealParagraph
+        updateGeneration = max(1, source.updateGeneration)
+        fragmentContext.frontMatterFields = source.fragmentContext.frontMatterFields
+        fragmentContext.documentHasH1 = source.fragmentContext.documentHasH1
+        substitution.displayMap = baseDisplayMap
+        contentStorage.configure(
+            paragraphIndex: paragraphIndex,
+            reflowRanges: hardWrapRanges,
+            displayMap: displayMap,
+            invalidating: nil
+        )
+        needsLayout = true
+        needsDisplay = true
+        gutterRail?.reload()
+    }
 
     private func sourceScopes(for dirty: DirtySet) -> [NSRange] {
         guard !dirty.isWholesale, let storage = textStorage else { return [] }
@@ -1320,6 +1354,14 @@ public final class MarkdownTextView: NSTextView {
         if let focus = sourceFocus.range {
             hidden.removeAll { NSIntersectionRange($0, focus).length > 0 }
         }
+        let lineBreakSubstitutions = effectivePolicy.rendersFragments
+            ? Self.safeHTMLLineBreakSubstitutions(in: document, excluding: sourceFocus.range)
+            : []
+        if !lineBreakSubstitutions.isEmpty {
+            hidden = Self.removingOverlaps(
+                hidden, with: lineBreakSubstitutions.map(\.sourceRange)
+            )
+        }
 
         let mathRanges = effectivePolicy.rendersFragments
             ? InlineMathDisplay.ranges(in: document).filter { range in
@@ -1330,9 +1372,7 @@ public final class MarkdownTextView: NSTextView {
         // The math replacement owns its delimiters and content as one visual
         // object. Keeping the marker substitutions too would overlap the
         // object range, causing DisplayMap to reject one of the entries.
-        hidden.removeAll { hiddenRange in
-            mathRanges.contains { NSIntersectionRange(hiddenRange, $0).length > 0 }
-        }
+        hidden = Self.removingOverlaps(hidden, with: mathRanges)
         let mathSubstitutions = effectivePolicy.rendersFragments
             ? InlineMathDisplay.substitutions(
                 in: document, styleSheet: styleSheet, excluding: sourceFocus.range)
@@ -1344,11 +1384,7 @@ public final class MarkdownTextView: NSTextView {
                 return NSIntersectionRange(reference.range, focus).length == 0
             }
             : []
-        hidden.removeAll { hiddenRange in
-            footnoteReferences.contains {
-                NSIntersectionRange(hiddenRange, $0.range).length > 0
-            }
-        }
+        hidden = Self.removingOverlaps(hidden, with: footnoteReferences.map(\.range))
         let footnoteSubstitutions = effectivePolicy.hidesInlineMarkers
             ? FootnoteReferenceDisplay.substitutions(
                 in: document, styleSheet: styleSheet, excluding: sourceFocus.range
@@ -1356,12 +1392,25 @@ public final class MarkdownTextView: NSTextView {
             : []
 
         baseHiddenRanges = hidden
-        let plan = HardWrapReflow.plan(
-            document: document,
-            text: (textStorage?.string ?? "") as NSString,
-            hiddenRanges: hidden,
-            enabled: configuration.reflowHardWrappedParagraphs
-        )
+        let source = (textStorage?.string ?? "") as NSString
+        let plan: HardWrapReflow.Plan
+        if configuration.reflowHardWrappedParagraphs,
+           Self.containsHardWrappedParagraph(in: document, text: source) {
+            plan = HardWrapReflow.plan(
+                document: document,
+                text: source,
+                hiddenRanges: hidden,
+                enabled: true
+            )
+        } else {
+            // Most generated large documents use one physical line per
+            // paragraph. HardWrapReflow still walks every character in every
+            // paragraph in that case, even though it cannot publish a
+            // substitution. Avoid that whole-document pass during a wholesale
+            // commit while preserving reflow for documents that actually have
+            // wrapped paragraphs.
+            plan = HardWrapReflow.Plan(ranges: [], substitutions: [])
+        }
         hardWrapRanges = plan.ranges
         hardWrapSubstitutions = plan.substitutions.filter(\.isHardWrapReflow)
         baseDisplayMap = DisplayMap(
@@ -1369,6 +1418,7 @@ public final class MarkdownTextView: NSTextView {
             substitutions: hidden.map(DisplaySubstitution.hide)
                 + mathSubstitutions
                 + footnoteSubstitutions
+                + lineBreakSubstitutions
                 + hardWrapSubstitutions
         )
         // Selection / hit-testing speak TextKit coordinates from the layout map
@@ -1376,6 +1426,111 @@ public final class MarkdownTextView: NSTextView {
         // substitution fallback path only.
         baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
         displayMap = baseLayoutMap
+    }
+
+    /// Hard-wrap planning is only meaningful when a paragraph contains a
+    /// physical line break. Checking that invariant once is linear in source
+    /// length and avoids a much more expensive character walk through every
+    /// single-line paragraph in a large generated document.
+    private static func containsHardWrappedParagraph(
+        in document: ParsedDocument,
+        text: NSString
+    ) -> Bool {
+        var found = false
+        document.root.walk { block in
+            guard !found, case .paragraph = block.content, block.range.length > 0 else { return }
+            found = text.rangeOfCharacter(
+                from: .newlines,
+                options: [],
+                range: block.range
+            ).location != NSNotFound
+        }
+        return found
+    }
+
+    /// Presents safe README structural tags with source-preserving display
+    /// replacements. The trailing zero-width joiners keep TextKit source
+    /// offsets one-to-one with the replacement, so selection, editing, and
+    /// copying continue to address the original tag bytes. Details gets its
+    /// authored disclosure state at the opening tag; table rows get a line
+    /// break at their closing tag so adjacent cells/rows cannot concatenate.
+    private static func safeHTMLLineBreakSubstitutions(
+        in document: ParsedDocument,
+        excluding excludedRange: NSRange?
+    ) -> [DisplaySubstitution] {
+        var substitutions: [DisplaySubstitution] = []
+        document.root.walk { block in
+            guard let html = block.safeHTML, html.isSafe else { return }
+            for annotation in html.annotations {
+                let replacementRange: NSRange
+                let replacementText: String
+                switch annotation.kind {
+                case .lineBreak:
+                    guard annotation.range.length > 0 else { continue }
+                    replacementRange = annotation.range
+                    replacementText = "\n"
+                case .details:
+                    // Replace only the opening tag, not the content. This
+                    // gives both open and closed details a stable native
+                    // disclosure marker without changing source bytes.
+                    guard let opening = annotation.tagRanges.first,
+                          opening.length > 0 else { continue }
+                    replacementRange = opening
+                    if case .details(let open) = annotation.kind {
+                        replacementText = open ? "▾" : "▸"
+                    } else {
+                        continue
+                    }
+                case .tableRow:
+                    // Rows are often emitted without physical newlines in
+                    // README HTML. A break on the closing tag keeps the row
+                    // model legible while preserving source coordinates.
+                    guard let closing = annotation.tagRanges.last,
+                          closing.length > 0 else { continue }
+                    replacementRange = closing
+                    replacementText = "\n"
+                default:
+                    continue
+                }
+                if let excludedRange,
+                   NSIntersectionRange(replacementRange, excludedRange).length > 0 {
+                    continue
+                }
+                let replacement = NSAttributedString(string:
+                    replacementText + String(repeating: "\u{200B}", count: replacementRange.length - 1)
+                )
+                substitutions.append(DisplaySubstitution(
+                    sourceRange: replacementRange,
+                    displayLength: replacementRange.length,
+                    replacement: replacement,
+                    preservesSourceOffsets: true
+                ))
+            }
+        }
+        return substitutions.sorted { $0.sourceRange.location < $1.sourceRange.location }
+    }
+
+    /// Removes ranges intersecting an ordered exclusion set in one merge pass.
+    /// The old nested `contains` walk made a document with inline math in every
+    /// paragraph quadratic while rebuilding its display map.
+    private static func removingOverlaps(_ ranges: [NSRange], with exclusions: [NSRange]) -> [NSRange] {
+        guard !ranges.isEmpty, !exclusions.isEmpty else { return ranges }
+        let orderedRanges = ranges.sorted { $0.location < $1.location }
+        let orderedExclusions = exclusions.sorted { $0.location < $1.location }
+        var kept: [NSRange] = []
+        kept.reserveCapacity(orderedRanges.count)
+        var exclusionIndex = 0
+        for range in orderedRanges {
+            while exclusionIndex < orderedExclusions.count,
+                  orderedExclusions[exclusionIndex].upperBound <= range.location {
+                exclusionIndex += 1
+            }
+            let overlaps = exclusionIndex < orderedExclusions.count
+                && orderedExclusions[exclusionIndex].location < range.upperBound
+                && orderedExclusions[exclusionIndex].upperBound > range.location
+            if !overlaps { kept.append(range) }
+        }
+        return kept
     }
 
     /// TextKit 2 elements keep source-length ranges even when Markdown syntax
@@ -1577,9 +1732,16 @@ public final class MarkdownTextView: NSTextView {
         // footnote in the document disappear for one frame on each keystroke,
         // then reappear at parse commit — a whole-page flash on documents that
         // use either feature.
-        let oldDisplayObjects = baseDisplayMap.substitutions.filter {
+        let previousLogicalMap = baseDisplayMap
+        let previousLayoutMap = baseLayoutMap
+        let oldDisplayObjects = previousLogicalMap.substitutions.filter {
             !$0.isHidden && !$0.isHardWrapReflow
         }
+        // Layout substitutions already carry their attributed zero-width or
+        // object replacements. Project those immutable payloads alongside the
+        // logical map instead of regenerating every marker replacement in a
+        // 50k-line document for each character typed.
+        let oldLayoutSubstitutions = previousLayoutMap.substitutions
         let projection = SourceEditProjection(
             edit: edit,
             insertedLength: insertedLength,
@@ -1592,6 +1754,15 @@ public final class MarkdownTextView: NSTextView {
         }
         let projectedHidden = oldHiddenRanges.compactMap(projectPresentationRange)
         let projectedDisplayObjects = oldDisplayObjects.compactMap {
+            substitution -> DisplaySubstitution? in
+            guard let range = projectPresentationRange(substitution.sourceRange) else {
+                return nil
+            }
+            var projected = substitution
+            projected.sourceRange = range
+            return projected
+        }
+        let projectedLayoutSubstitutions = oldLayoutSubstitutions.compactMap {
             substitution -> DisplaySubstitution? in
             guard let range = projectPresentationRange(substitution.sourceRange) else {
                 return nil
@@ -1622,13 +1793,19 @@ public final class MarkdownTextView: NSTextView {
         baseHiddenRanges = projectedHidden
         hardWrapRanges = projectedHardWrapRanges
         hardWrapSubstitutions = projectedHardWrapSubstitutions
-        baseDisplayMap = DisplayMap(
+        let projectedLogicalSubstitutions = projectedHidden.map(DisplaySubstitution.hide)
+            + projectedDisplayObjects
+            + projectedHardWrapSubstitutions
+        baseDisplayMap = previousLogicalMap.projectingStableTopology(
             paragraphs: paragraphIndex,
-            substitutions: projectedHidden.map(DisplaySubstitution.hide)
-                + projectedDisplayObjects
-                + projectedHardWrapSubstitutions
+            substitutions: projectedLogicalSubstitutions,
+            hiddenRanges: projectedHidden
         )
-        baseLayoutMap = layoutDisplayMap(from: baseDisplayMap)
+        baseLayoutMap = previousLayoutMap.projectingStableTopology(
+            paragraphs: paragraphIndex,
+            substitutions: projectedLayoutSubstitutions,
+            hiddenRanges: projectedHidden
+        )
         displayMap = baseLayoutMap
         // Physical fallback still collapses markers; layout map keeps TextKit
         // selection arithmetic aligned with content storage.
@@ -1829,6 +2006,15 @@ public final class MarkdownTextView: NSTextView {
         // when the caret only moved to a neighbouring paragraph, so the common
         // case costs exactly what it did before.
         let paragraphs = isFullRefresh ? [] : [revealParagraph, current].compactMap { $0 }
+        if !isFullRefresh, additionalScopes.isEmpty,
+           let current,
+           baseDisplayMap.substitutions(inParagraphContaining: current.location).isEmpty,
+           revealParagraph.map({
+               baseDisplayMap.substitutions(inParagraphContaining: $0.location).isEmpty
+           }) ?? true {
+            revealParagraph = current
+            return
+        }
         if !isFullRefresh, additionalScopes.isEmpty,
            sameSubstitutions(displayMap.substitutions, previousSubstitutions) {
             // Moving through plain prose changes the caret paragraph but not

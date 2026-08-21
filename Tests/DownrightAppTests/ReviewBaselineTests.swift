@@ -17,6 +17,19 @@ import MarkdownCore
 @Suite(.serialized)
 struct ReviewBaselineTests {
 
+    @MainActor
+    private func waitForExternalText(
+        _ text: String,
+        in document: MarkdownDocument,
+        timeout: TimeInterval = 2
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while document.text != text, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return document.text == text
+    }
+
     // MARK: - Fixtures
 
     private static func makeSandbox() throws -> URL {
@@ -54,7 +67,7 @@ struct ReviewBaselineTests {
     // MARK: - 1. A burst diffs against the baseline, not the previous write
 
     @Test @MainActor
-    func burstOfWritesReportsChangesAgainstTheOriginalBaseline() throws {
+    func burstOfWritesReportsChangesAgainstTheOriginalBaseline() async throws {
         let root = try Self.makeSandbox()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("report.md")
@@ -70,6 +83,7 @@ struct ReviewBaselineTests {
             try Data(write.utf8).write(to: url)
             document.handleExternalWrite()
             document.flushPendingExternalWrite()
+            #expect(await waitForExternalText(write, in: document))
         }
 
         #expect(document.text == Self.writes[2])
@@ -94,7 +108,7 @@ struct ReviewBaselineTests {
     /// one buffer replace, one reparse, one scroll restore — while still
     /// reporting every change the burst made.
     @Test @MainActor
-    func aDebouncedBurstAbsorbsOnceAndStillReportsEveryChange() throws {
+    func aDebouncedBurstAbsorbsOnceAndStillReportsEveryChange() async throws {
         let root = try Self.makeSandbox()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("report.md")
@@ -114,6 +128,7 @@ struct ReviewBaselineTests {
             document.handleExternalWrite()
         }
         document.flushPendingExternalWrite()
+        #expect(await waitForExternalText(Self.writes[2], in: document))
 
         #expect(appliedEvents == 1, "a burst must rebuild the document once, not once per write")
         #expect(document.text == Self.writes[2])
@@ -134,6 +149,7 @@ struct ReviewBaselineTests {
         try Data(Self.writes[2].utf8).write(to: url)
         first.handleExternalWrite()
         first.flushPendingExternalWrite()
+        #expect(await waitForExternalText(Self.writes[2], in: first))
 
         let markCount = first.changes.count
         #expect(markCount == 3)
@@ -405,7 +421,7 @@ struct ReviewBaselineTests {
     // MARK: - Undoing an external change is surfaced, not silent
 
     @Test @MainActor
-    func undoingAnExternalChangeSurfacesAConflict() throws {
+    func undoingAnExternalChangeSurfacesAConflict() async throws {
         let root = try Self.makeSandbox()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("report.md")
@@ -423,6 +439,7 @@ struct ReviewBaselineTests {
         try Data(Self.writes[2].utf8).write(to: url)
         document.handleExternalWrite()
         document.flushPendingExternalWrite()
+        #expect(await waitForExternalText(Self.writes[2], in: document))
         #expect(document.text == Self.writes[2])
         #expect(document.isDirty == false)
 

@@ -7,6 +7,9 @@ import Foundation
 public enum QuickLookPolicy {
     public static let memoryCeilingBytes = 60 * 1024 * 1024
     public static let largeFileThresholdBytes = 2 * 1024 * 1024
+    /// Full previews use the threshold as a hard cap, even if the file grows
+    /// after Quick Look's initial resource-value lookup.
+    public static let fullReadLimitBytes = largeFileThresholdBytes
     public static let prefixBlockCount = 60
     /// Bounded head read for oversized files — enough bytes to render the first
     /// `prefixBlockCount` blocks without ever loading the whole file.

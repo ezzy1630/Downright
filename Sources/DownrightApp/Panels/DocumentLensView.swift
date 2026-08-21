@@ -91,7 +91,7 @@ final class DocumentLensView: NSView, PanelSurface {
         reload()
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Document Lens")
+        setAccessibilityLabel(Command.documentLens.title)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -112,7 +112,7 @@ final class DocumentLensView: NSView, PanelSurface {
         tabControl.font = PanelFont.row
         tabControl.target = self
         tabControl.action = #selector(tabChanged(_:))
-        tabControl.setAccessibilityLabel("Document Lens sections")
+        tabControl.setAccessibilityLabel("Contents and Outline sections")
         tabControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabControl)
 

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Darwin
 
 // MARK: - Document IO (§3.1)
 //
@@ -17,6 +18,12 @@ import CryptoKit
 public enum DocumentIOError: Error, LocalizedError {
     case undecodable(URL)
     case unencodable(TextEncodingKind)
+    case targetChanged(URL, displaced: [Data])
+    /// The first swap succeeded, but the displaced generation could not be
+    /// read back. `recoveryURL` is deliberately part of the error: the
+    /// caller must never mistake the public path (which now contains our
+    /// bytes) for the external generation that was preserved beside it.
+    case displacedGenerationUnreadable(URL, recoveryURL: URL, underlying: Error)
 
     public var errorDescription: String? {
         switch self {
@@ -24,14 +31,36 @@ public enum DocumentIOError: Error, LocalizedError {
             return "Could not decode \(url.lastPathComponent) as text."
         case .unencodable(let encoding):
             return "The document contains characters that cannot be written as \(encoding.rawValue)."
+        case .targetChanged(let url, _):
+            return "\(url.lastPathComponent) changed while it was being saved. The external bytes were restored."
+        case .displacedGenerationUnreadable(let url, let recoveryURL, _):
+            return "\(url.lastPathComponent) could not be reconciled while it was being saved. The external bytes were preserved at \(recoveryURL.lastPathComponent)."
         }
     }
 }
 
 public enum DocumentIO {
     public static func read(contentsOf url: URL) throws -> (text: String, fidelity: ByteFidelity) {
+        let snapshot = try readSnapshot(contentsOf: url)
+        return (snapshot.text, snapshot.fidelity)
+    }
+
+    /// One read, used by save reconciliation so decoded text, byte fidelity,
+    /// and the generation token always describe the same filesystem snapshot.
+    public static func readSnapshot(
+        contentsOf url: URL
+    ) throws -> (text: String, fidelity: ByteFidelity, data: Data) {
         let data = try Data(contentsOf: url)
-        return try decode(data, from: url)
+        let decoded = try decode(data, from: url)
+        return (decoded.text, decoded.fidelity, data)
+    }
+
+    /// Decodes bytes already captured by the guarded save protocol without
+    /// reopening a path that may now name a different generation.
+    public static func decodeSnapshot(
+        _ data: Data, sourceURL: URL
+    ) throws -> (text: String, fidelity: ByteFidelity) {
+        try decode(data, from: sourceURL)
     }
 
     /// Reads at most `limit` bytes from the head of the file — a bounded read
@@ -52,7 +81,132 @@ public enum DocumentIO {
     }
 
     public static func write(_ text: String, to url: URL, fidelity: ByteFidelity) throws {
-        try encode(text, fidelity: fidelity).write(to: url, options: .atomic)
+        try encodedData(text, fidelity: fidelity).write(to: url, options: .atomic)
+    }
+
+    /// Replaces an existing path without a check/write gap. `RENAME_SWAP`
+    /// moves the exact displaced generation to the temporary path atomically;
+    /// if it is not the generation the caller inspected, a second swap puts
+    /// those external bytes back and the save fails closed. A concurrently
+    /// deleted target makes the first swap fail, so this operation never
+    /// recreates a missing file.
+    public static func replaceExistingAtomically(
+        with data: Data,
+        at url: URL,
+        expected: Data
+    ) throws {
+        try replaceExistingAtomically(
+            with: data, at: url, expected: expected,
+            afterDisplacedRead: nil, afterSwap: nil
+        )
+    }
+
+    /// Deterministic seam for the two-swap conflict rollback. Kept internal so
+    /// production callers cannot insert work inside the atomic protocol.
+    static func replaceExistingAtomicallyForTesting(
+        with data: Data,
+        at url: URL,
+        expected: Data,
+        afterDisplacedRead: @escaping () -> Void,
+        afterSwap: ((URL) -> Void)? = nil
+    ) throws {
+        try replaceExistingAtomically(
+            with: data, at: url, expected: expected,
+            afterDisplacedRead: afterDisplacedRead,
+            afterSwap: afterSwap
+        )
+    }
+
+    private static func replaceExistingAtomically(
+        with data: Data,
+        at url: URL,
+        expected: Data,
+        afterDisplacedRead: (() -> Void)?,
+        afterSwap: ((URL) -> Void)?
+    ) throws {
+        let directory = url.deletingLastPathComponent()
+        let temporary = directory.appendingPathComponent(".downright-save-\(UUID().uuidString)")
+        // Once the first swap succeeds, this path owns the displaced
+        // generation. Keep it until that generation has been read and the
+        // two-swap reconciliation has completed; a read failure must leave a
+        // recoverable URL rather than silently deleting the only external
+        // bytes.
+        var mayRemoveTemporary = false
+        defer {
+            if mayRemoveTemporary { try? FileManager.default.removeItem(at: temporary) }
+        }
+        try data.write(to: temporary, options: .withoutOverwriting)
+
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let permissions = attributes[.posixPermissions] {
+            try? FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: temporary.path)
+        }
+
+        guard renamex_np(temporary.path, url.path, UInt32(RENAME_SWAP)) == 0 else {
+            throw posixRenameError(path: url.path)
+        }
+        afterSwap?(temporary)
+        let displaced: Data
+        do {
+            displaced = try Data(contentsOf: temporary)
+        } catch {
+            throw DocumentIOError.displacedGenerationUnreadable(
+                url, recoveryURL: temporary, underlying: error
+            )
+        }
+        guard displaced == expected else {
+            afterDisplacedRead?()
+            // Swap, rather than replace, so a writer that landed after our
+            // first swap is retained at `temporary` instead of being erased.
+            guard renamex_np(temporary.path, url.path, UInt32(RENAME_SWAP)) == 0 else {
+                throw posixRenameError(path: url.path)
+            }
+            let postSwapTemporary: Data
+            do {
+                postSwapTemporary = try Data(contentsOf: temporary)
+            } catch {
+                // The public path now contains the external generation and
+                // the temporary path contains our attempted payload. Keep
+                // the latter too so no generation is silently lost. The
+                // recoverable external generation is the public path here.
+                throw DocumentIOError.displacedGenerationUnreadable(
+                    url, recoveryURL: url, underlying: error
+                )
+            }
+            if postSwapTemporary != data {
+                // Another writer replaced our payload between the two swaps.
+                // Put that newest external generation back at the public path;
+                // both external generations travel in the error so the caller
+                // can persist history before releasing the temporary file.
+                guard renamex_np(temporary.path, url.path, UInt32(RENAME_SWAP)) == 0 else {
+                    throw posixRenameError(path: url.path)
+                }
+                mayRemoveTemporary = true
+                throw DocumentIOError.targetChanged(
+                    url, displaced: [displaced, postSwapTemporary]
+                )
+            }
+            mayRemoveTemporary = true
+            throw DocumentIOError.targetChanged(url, displaced: [displaced])
+        }
+        // The inspected generation matched. The displaced file has now been
+        // read safely and no longer needs a recovery URL.
+        mayRemoveTemporary = true
+    }
+
+    private static func posixRenameError(path: String) -> Error {
+        NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(errno),
+            userInfo: [NSFilePathErrorKey: path]
+        )
+    }
+
+    /// The exact bytes `write` will place on disk. Callers that coordinate a
+    /// filesystem watcher use this to reconcile their own atomic replacement
+    /// by content rather than by a timing window.
+    public static func encodedData(_ text: String, fidelity: ByteFidelity) throws -> Data {
+        try encode(text, fidelity: fidelity)
     }
 
     /// Hex SHA-256 of the text's UTF-8 bytes.  Content-addresses snapshots
@@ -177,11 +331,8 @@ public enum DocumentIO {
 
     static func encode(_ text: String, fidelity: ByteFidelity) throws -> Data {
         var body = text
-        if fidelity.hasTrailingNewline {
-            if !body.hasSuffix("\n") { body += "\n" }
-        } else if body.hasSuffix("\n") {
-            body.removeLast()
-        }
+        // The text buffer owns whether a final newline exists. Fidelity owns
+        // how that newline is encoded, never whether a user's edit survives.
         switch fidelity.lineEnding {
         case .lf: break
         case .crlf: body = body.replacingOccurrences(of: "\n", with: "\r\n")

@@ -315,6 +315,7 @@ struct CommandPaletteModel {
 private enum CommandPaletteSynonyms {
     static let values: [Command: [String]] = [
         .sourceMode: ["markdown", "raw", "editor", "edit source", "full source"],
+        .documentLens: ["contents", "outline", "headings", "document lens", "table of contents"],
         .taskPanel: ["tasks", "todo", "checkbox", "checklist"],
         .toggleTaskAtCaret: ["check", "tick", "checkbox", "done"],
         .frontMatterEditor: ["metadata", "yaml", "toml", "properties"],

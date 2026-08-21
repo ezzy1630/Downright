@@ -90,20 +90,13 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 if Task.isCancelled { return LoadResult.failure }
                 let byteCount =
                     (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                switch QuickLookPolicy.presentation(forByteCount: byteCount) {
-                case .prefix:
-                    guard let head = DocumentIO.readHead(
-                        contentsOf: url,
-                        limit: QuickLookPolicy.prefixReadLimitBytes
-                    ) else { return LoadResult.failure }
-                    if Task.isCancelled { return LoadResult.failure }
-                    return LoadResult.prefix(head)
-                case .full:
-                    guard let (text, _) = try? DocumentIO.read(contentsOf: url) else {
-                        return LoadResult.failure
-                    }
-                    if Task.isCancelled { return LoadResult.failure }
-                    return LoadResult.full(text)
+                switch QuickLookLoader.load(contentsOf: url, hintedByteCount: byteCount) {
+                case .prefix(let text):
+                    return Task.isCancelled ? LoadResult.failure : LoadResult.prefix(text)
+                case .full(let text):
+                    return Task.isCancelled ? LoadResult.failure : LoadResult.full(text)
+                case nil:
+                    return LoadResult.failure
                 }
             }
             let loadResult = await withTaskCancellationHandler {

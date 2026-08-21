@@ -24,6 +24,8 @@ PLIST_VALUE() {
 
 VERSION="$(PLIST_VALUE CFBundleShortVersionString)"
 BUILD="$(PLIST_VALUE CFBundleVersion)"
+HOST_BUNDLE_IDENTIFIER="$(PLIST_VALUE CFBundleIdentifier)"
+SPOTLIGHT_BUNDLE_IDENTIFIER="$HOST_BUNDLE_IDENTIFIER.spotlight"
 
 echo "==> Building Spotlight importer ($SPOTLIGHT_CONFIGURATION)"
 swift build \
@@ -51,6 +53,7 @@ cp "$SOURCE" "$EXECUTABLE"
 sed \
     -e 's|\$(MARKETING_VERSION)|'"$VERSION"'|g' \
     -e 's|\$(CURRENT_PROJECT_VERSION)|'"$BUILD"'|g' \
+    -e 's|com\.ezzy\.downright\.spotlight|'"$SPOTLIGHT_BUNDLE_IDENTIFIER"'|g' \
     "$ROOT/Config/DownrightSpotlight-Info.plist" \
     > "$IMPORTER/Contents/Info.plist"
 cp "$ROOT/Resources/Spotlight/schema.xml" "$RESOURCES/schema.xml"
@@ -58,11 +61,11 @@ cp "$ROOT/Resources/Spotlight/schema.xml" "$RESOURCES/schema.xml"
 # The importer is nested code. Seal it before the host is sealed so both
 # ad-hoc development bundles and the production workflow have the same order.
 codesign --force --sign - \
-    --identifier com.ezzy.downright.spotlight.binary \
+    --identifier "$SPOTLIGHT_BUNDLE_IDENTIFIER.binary" \
     "$EXECUTABLE" 2>/dev/null \
     || echo "    (codesign unavailable, continuing unsigned)"
 codesign --force --sign - \
-    --identifier com.ezzy.downright.spotlight \
+    --identifier "$SPOTLIGHT_BUNDLE_IDENTIFIER" \
     "$IMPORTER" 2>/dev/null \
     || echo "    (codesign unavailable, continuing unsigned)"
 

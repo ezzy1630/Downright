@@ -12,13 +12,34 @@ enum SaveIntent {
     /// An explicit "keep my changes and write them over the file" decision,
     /// made by the user through the conflict bar.
     case keepMine
+    /// Recreates a path that is missing or replaces one that cannot currently
+    /// be read. This intent is only issued from the explicit recovery sheet;
+    /// autosave, close, quit, and task toggles must never choose it.
+    case recreateFile
 }
 
-enum SaveError: Error {
+enum SaveError: Error, LocalizedError {
     /// The save was refused because writing the buffer would clobber a newer
     /// on-disk version whose conflict had not been resolved.  The conflict has
     /// already been surfaced via `onExternalEvent`.
     case blockedByExternalConflict
+    /// The document disappeared after it was opened. A normal save must not
+    /// silently bring it back.
+    case fileMissing(URL)
+    /// The path still exists but could not be read, so overwriting it would be
+    /// an uninformed destructive action.
+    case fileUnreadable(URL, underlying: Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .blockedByExternalConflict:
+            return "The file changed on disk. Review the conflict before saving."
+        case .fileMissing:
+            return "The original file is missing. Choose Save a Copy or explicitly recreate it."
+        case .fileUnreadable(_, let error):
+            return "The original file could not be read: \(error.localizedDescription)"
+        }
+    }
 }
 
 /// Owns the command boundary AppKit otherwise keeps private.  Storage delegate
@@ -61,6 +82,36 @@ final class MarkdownUndoManager: UndoManager {
 /// user's back.
 @MainActor
 final class MarkdownDocument: NSObject {
+    /// The save boundary's complete view of the backing path. Read failures
+    /// are data, not an absence of evidence: only `.unchanged` permits an
+    /// implicit write.
+    enum DiskState {
+        case unchanged(data: Data, fidelity: ByteFidelity)
+        case changed(text: String, hunks: [ChangeHunk], data: Data, fidelity: ByteFidelity)
+        case missing
+        case unreadable(Error)
+    }
+
+    /// One explicit state vocabulary for native chrome and accessibility.
+    /// Provenance is intentionally a short action label rather than a second
+    /// state machine; it is useful in a tooltip without cluttering the toolbar.
+    struct PresentationState: Equatable {
+        enum Phase: Equatable {
+            case neutral
+            case edited
+            case saving
+            case saved
+            case changedOnDisk
+            case conflict
+            case saveFailed
+        }
+
+        var phase: Phase
+        var provenance: String?
+        var detail: String?
+
+        static let neutral = PresentationState(phase: .neutral, provenance: nil, detail: nil)
+    }
     /// What an external write did while the buffer was dirty (§8.1).
     struct Conflict {
         var incomingText: String
@@ -108,11 +159,19 @@ final class MarkdownDocument: NSObject {
     private(set) var isDirty = false
     /// Hash of what is currently on disk, as far as we know.
     private(set) var diskHash: String = ""
+    /// Raw-byte generation token for save compare-and-swap. `diskHash` is a
+    /// text/review identity and deliberately cannot distinguish BOM or CRLF.
+    private var diskByteHash: String = ""
+    /// Last text generation successfully read from or committed to disk.
+    /// Recovery discard returns here rather than leaving discarded edits in a
+    /// buffer that a later keystroke could accidentally make savable again.
+    private var lastCommittedText: String = ""
     /// An external write the buffer has not yet been reconciled with.  Non-nil
     /// while a conflict bar is showing — and, critically, stays non-nil even if
     /// that bar is dismissed — so an implicit save never silently writes the
     /// buffer over the newer on-disk version.
     private(set) var pendingConflict: Conflict?
+    private(set) var presentationState: PresentationState = .neutral
 
     /// The document as the reader last **finished reviewing** it.
     ///
@@ -141,7 +200,10 @@ final class MarkdownDocument: NSObject {
     /// that runs past a second should not be silent.
     var onParseActivity: ((Bool) -> Void)?
     var onExternalEvent: ((ExternalEvent) -> Void)?
+    /// Deterministic filesystem-race seam. Production never assigns it.
+    var beforeSaveCommitForTesting: (() -> Void)?
     var onDirtyChanged: ((Bool) -> Void)?
+    var onPresentationStateChanged: ((PresentationState) -> Void)?
     /// Undo and redo mutate storage outside `MarkdownTextView`'s source-edit
     /// path. The owner uses this boundary to lock every visible viewport before
     /// the synchronous reparse changes layout.
@@ -175,17 +237,43 @@ final class MarkdownDocument: NSObject {
     /// Trailing quiet-period debounce for external writes.  See
     /// `handleExternalWrite()`.
     private var pendingExternalWrite: DispatchWorkItem?
+    /// Invalidates background read/diff work when a newer filesystem event
+    /// lands before the prepared snapshot reaches the main actor.
+    private var externalPreparationGeneration: UInt64 = 0
     private var isAbsorbingBurst = false
     private var reparseScheduled = false
     private var isApplyingExternalChange = false
+    /// NSTextStorage delivers its delegate callback on a later main-actor
+    /// turn. Keep the resulting source text with each callback token so a
+    /// local edit that lands before the callback cannot spend the token meant
+    /// for the external transaction. This also lets a converged synchronous
+    /// undo/redo consume its own callback instead of leaving a stale token
+    /// behind for the next real edit.
+    private var ignoredExternalStorageCallbackTexts: [String] = []
     private var isApplyingBatch = false
     private var suppressReparse = false
     private let parseCoordinator: MarkdownParseCoordinator
     private var parseTask: Task<Void, Never>?
     private var parseControlTask: Task<Void, Never>?
     private(set) var revision = MarkdownParseRevision.zero
+    /// Most recent immutable snapshot accepted from the asynchronous parse
+    /// lane. This distinguishes structure-only first paint from full parse
+    /// convergence in diagnostics and rendered-window acceptance.
+    private(set) var lastAsyncParseRevision: MarkdownParseRevision?
     private var isClosed = false
     private var preferencesObservation: NSObjectProtocol?
+    private var savedStateWorkItem: DispatchWorkItem?
+    private struct PendingExternalRestore {
+        var previousText: String
+        var selection: NSRange
+        var anchor: ScrollAnchor
+    }
+    private var pendingExternalRestore: PendingExternalRestore?
+    /// Source ranges actually mutated by an external reconciliation. Existing
+    /// attributed runs move with an incremental NSTextStorage edit, so AST
+    /// identity churn from shifted offsets must not force a document-wide
+    /// redecorate.
+    private var nextExternalDirtyOverride: DirtySet?
     /// After open's structure-only first paint, the next full async parse must
     /// restyle wholesale — structure trees are not decoration-compatible.
     private var forceNextDirtyWholesale = false
@@ -229,6 +317,7 @@ final class MarkdownDocument: NSObject {
             NotificationCenter.default.removeObserver(preferencesObservation)
         }
         parseTask?.cancel()
+        savedStateWorkItem?.cancel()
         let coordinator = parseCoordinator
         Task { await coordinator.shutdown() }
     }
@@ -251,7 +340,8 @@ final class MarkdownDocument: NSObject {
         // Read before touching any state: a file that vanishes between the
         // link-follow and the read must leave the document exactly as the
         // caller's `close()` left it, not half-torn-down.
-        let (text, fidelity) = try DocumentIO.read(contentsOf: canonical)
+        let snapshot = try DocumentIO.readSnapshot(contentsOf: canonical)
+        let (text, fidelity) = (snapshot.text, snapshot.fidelity)
 
         isClosed = false
         enqueueParseControl { await $0.resume() }
@@ -272,7 +362,11 @@ final class MarkdownDocument: NSObject {
         suppressReparse = false
 
         diskHash = DocumentIO.contentHash(text)
+        diskByteHash = DocumentIO.contentHash(snapshot.data)
+        lastCommittedText = text
         isDirty = false
+        lastAsyncParseRevision = nil
+        publishPresentationState(.neutral)
 
         // Structure-only first paint for outline/state. The controller paints
         // decorations after applying zoom/folds; full decoration converges on
@@ -287,7 +381,11 @@ final class MarkdownDocument: NSObject {
 
         startWatching(canonical)
         forceNextDirtyWholesale = true
-        startAsyncReparse()
+        // First full paint must not depend on the serial typing lane's
+        // resume/discard control messages for a document that may have just
+        // been reused in place. The immutable revision gate makes this direct
+        // parse safe, and subsequent edits return to the coalescing lane.
+        startPriorityAsyncReparse()
     }
 
     // MARK: - Review baseline (§8.1, §8.2)
@@ -367,6 +465,7 @@ final class MarkdownDocument: NSObject {
     /// call site reads as intent rather than as cleanup.
     func markChangesReviewed() {
         changes.clear()
+        if !isDirty, pendingConflict == nil { publishPresentationState(.neutral) }
     }
 
     /// Adopts text with no backing file — used by `Compare` windows and by the
@@ -383,12 +482,13 @@ final class MarkdownDocument: NSObject {
         suppressReparse = false
         reparseSynchronously(notifying: true, wholesale: true)
         isDirty = false
+        publishPresentationState(.neutral)
     }
 
     func save(intent: SaveIntent = .normal) throws {
         guard let url else {
             let error = CocoaError(.fileNoSuchFile)
-            onSaveFailure?(error)
+            publishSaveFailure(error)
             throw error
         }
         let text = storage.string
@@ -398,57 +498,171 @@ final class MarkdownDocument: NSObject {
         // checkbox toggle, close alert) funnels through here, and none of them
         // may make the keep-mine call for the user.  Surface any unresolved
         // conflict — or one detected right now — and refuse to write.
-        if intent == .normal, isDirty {
-            if let conflict = pendingConflict {
+        var expectedDiskData: Data?
+        if intent != .recreateFile {
+            if intent == .normal, let conflict = pendingConflict {
                 throw presentBlockingConflict(conflict, incoming: conflict.incomingText, incomingHash: nil)
             }
-            if let detected = detectExternalChange() {
+            switch inspectDiskState() {
+            case .unchanged(let data, let freshFidelity):
+                expectedDiskData = data
+                fidelity = freshFidelity
+            case .changed(let incoming, let hunks, let data, let freshFidelity):
+                if intent == .normal {
+                    let conflict = Conflict(
+                        incomingText: incoming,
+                        hunks: hunks,
+                        changedBlockCount: hunks.count
+                    )
+                    throw presentBlockingConflict(
+                        conflict, incoming: incoming,
+                        incomingHash: SnapshotStore.hash(incoming)
+                    )
+                }
+                // Keep Mine is explicit about content, not byte formatting.
+                // Preserve the latest readable encoding/BOM/line-ending facts.
+                expectedDiskData = data
+                fidelity = freshFidelity
+            case .missing:
+                let error = SaveError.fileMissing(url)
+                publishSaveFailure(error)
+                throw error
+            case .unreadable(let underlying):
+                let error = SaveError.fileUnreadable(url, underlying: underlying)
+                publishSaveFailure(error)
+                throw error
+            }
+        } else {
+            // The recovery choice authorizes creation only while the path is
+            // still missing/unreadable. If a readable generation has appeared
+            // since the sheet was shown, it is external state and wins.
+            switch inspectDiskState() {
+            case .missing, .unreadable:
+                break
+            case .unchanged(let data, let freshFidelity):
+                expectedDiskData = data
+                fidelity = freshFidelity
+            case .changed(let incoming, let hunks, _, _):
                 let conflict = Conflict(
-                    incomingText: detected.text,
-                    hunks: detected.hunks,
-                    changedBlockCount: detected.hunks.count
+                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
                 )
                 throw presentBlockingConflict(
-                    conflict, incoming: detected.text,
-                    incomingHash: SnapshotStore.hash(detected.text)
+                    conflict, incoming: incoming, incomingHash: SnapshotStore.hash(incoming)
                 )
             }
         }
 
-        watcher?.suppressOwnWrite()
-        defer { watcher?.acknowledgeOwnWrite() }
+        publishPresentationState(PresentationState(
+            phase: .saving, provenance: presentationState.provenance, detail: nil
+        ))
+        let encoded: Data
         do {
-            try DocumentIO.write(text, to: url, fidelity: fidelity)
+            encoded = try DocumentIO.encodedData(text, fidelity: fidelity)
         } catch {
-            onSaveFailure?(error)
+            publishSaveFailure(error)
             throw error
         }
+        beforeSaveCommitForTesting?()
+        watcher?.suppressOwnWrite()
+        do {
+            if let expectedDiskData {
+                try DocumentIO.replaceExistingAtomically(
+                    with: encoded, at: url, expected: expectedDiskData
+                )
+            } else {
+                // Only the explicit Recreate File recovery action may create
+                // or replace without an inspected existing generation.
+                try encoded.write(to: url, options: .atomic)
+            }
+        } catch {
+            watcher?.cancelOwnWriteSuppression()
+            if let ioError = error as? DocumentIOError,
+               case .targetChanged(_, let generations) = ioError {
+                for data in generations {
+                    if let decoded = try? DocumentIO.decodeSnapshot(data, sourceURL: url) {
+                        SnapshotStore.shared.record(decoded.text, for: url, kind: .external)
+                    }
+                }
+            }
+            switch inspectDiskState() {
+            case .changed(let incoming, let hunks, _, _):
+                let conflict = Conflict(
+                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+                )
+                throw presentBlockingConflict(
+                    conflict, incoming: incoming, incomingHash: SnapshotStore.hash(incoming)
+                )
+            case .missing:
+                let missing = SaveError.fileMissing(url)
+                publishSaveFailure(missing)
+                throw missing
+            case .unreadable(let underlying):
+                let unreadable = SaveError.fileUnreadable(url, underlying: underlying)
+                publishSaveFailure(unreadable)
+                throw unreadable
+            case .unchanged:
+                break
+            }
+            publishSaveFailure(error)
+            throw error
+        }
+        watcher?.acknowledgeOwnWrite(contents: encoded)
 
         diskHash = DocumentIO.contentHash(text)
+        diskByteHash = DocumentIO.contentHash(encoded)
+        lastCommittedText = text
         pendingConflict = nil
         SnapshotStore.shared.record(text, for: url, kind: .local)
         setDirty(false)
         persistState()
+        publishSavedState()
     }
 
-    /// Re-reads the file and decides whether saving the buffer would clobber
-    /// bytes on disk that are newer than the last state we acknowledged.  A
-    /// plain dirty buffer (unsaved edits, file untouched) returns `nil`.
-    private func detectExternalChange() -> (text: String, hunks: [ChangeHunk])? {
-        guard let url, let (incoming, _) = try? DocumentIO.read(contentsOf: url) else { return nil }
+    /// Re-reads the path at the write boundary. Missing and unreadable are
+    /// distinct fail-closed states, never collapsed into "no change".
+    func inspectDiskState() -> DiskState {
+        guard let url else { return .missing }
+        let snapshot: (text: String, fidelity: ByteFidelity, data: Data)
+        do {
+            snapshot = try DocumentIO.readSnapshot(contentsOf: url)
+        } catch {
+            if !FileManager.default.fileExists(atPath: url.path) {
+                return .missing
+            }
+            return .unreadable(error)
+        }
+        let incoming = snapshot.text
         let incomingHash = SnapshotStore.hash(incoming)
-        guard incomingHash != diskHash else { return nil }
+        let incomingByteHash = DocumentIO.contentHash(snapshot.data)
+        guard incomingByteHash != diskByteHash else {
+            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+        }
+        // The decoded generation is still the one we opened; only its byte
+        // representation changed externally. Adopt those facts even when the
+        // buffer has local edits, so the edit is saved using the latest BOM,
+        // encoding, and line endings rather than silently reverting them.
+        if incomingHash == diskHash {
+            diskByteHash = incomingByteHash
+            fidelity = snapshot.fidelity
+            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+        }
         // If the disk already holds the buffer's bytes, writing is a no-op and
         // there is nothing being clobbered.  A trailing-newline-only difference
         // is likewise not a content change: it is an artifact `DocumentIO` will
         // reconcile on this very write, so it must not surface as a conflict or
         // block an autosave.
-        guard incomingHash != SnapshotStore.hash(storage.string),
-              !finalNewlineDifferenceOnly(storage.string, incoming) else {
+        guard incomingHash != SnapshotStore.hash(storage.string) else {
             diskHash = incomingHash
-            return nil
+            diskByteHash = incomingByteHash
+            fidelity = snapshot.fidelity
+            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
         }
-        return (incoming, TextDiff.hunks(old: storage.string, new: incoming))
+        return .changed(
+            text: incoming,
+            hunks: TextDiff.hunks(old: storage.string, new: incoming),
+            data: snapshot.data,
+            fidelity: snapshot.fidelity
+        )
     }
 
     /// True when `a` and `b` differ only by the presence of a single trailing
@@ -457,6 +671,13 @@ final class MarkdownDocument: NSObject {
     /// never reverts the user's trailing-newline edit and a save never blocks
     /// on a phantom conflict for one.
     private func finalNewlineDifferenceOnly(_ a: String, _ b: String) -> Bool {
+        Self.finalNewlineDifferenceOnlyValue(a, b)
+    }
+
+    nonisolated private static func finalNewlineDifferenceOnlyValue(
+        _ a: String,
+        _ b: String
+    ) -> Bool {
         func strippedNewline(_ s: String) -> String {
             if s.hasSuffix("\r\n") { return String(s.dropLast(2)) }
             if s.hasSuffix("\n") || s.hasSuffix("\r") { return String(s.dropLast()) }
@@ -475,6 +696,11 @@ final class MarkdownDocument: NSObject {
         pendingConflict = conflict
         if let incomingHash { diskHash = incomingHash }
         if let url { SnapshotStore.shared.record(incoming, for: url, kind: .external) }
+        publishPresentationState(PresentationState(
+            phase: .conflict,
+            provenance: presentationState.provenance,
+            detail: "Changed on disk"
+        ))
         onExternalEvent?(.conflict(conflict))
         return .blockedByExternalConflict
     }
@@ -495,8 +721,48 @@ final class MarkdownDocument: NSObject {
         }
     }
 
+    /// Explicit recovery action. No implicit path may call this.
+    func recreateMissingFile() -> Result<Void, Error> {
+        do {
+            try save(intent: .recreateFile)
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Explicitly abandons unsaved local changes after a failed save. The
+    /// in-memory text remains visible until the window closes, but it is no
+    /// longer eligible for autosave and the missing path is never resurrected.
+    func discardUnsavedChanges() {
+        let replacement: String
+        if let url, let snapshot = try? DocumentIO.readSnapshot(contentsOf: url) {
+            replacement = snapshot.text
+            fidelity = snapshot.fidelity
+            diskHash = DocumentIO.contentHash(snapshot.text)
+            diskByteHash = DocumentIO.contentHash(snapshot.data)
+            lastCommittedText = snapshot.text
+        } else {
+            replacement = lastCommittedText
+        }
+        suppressReparse = true
+        storage.beginEditing()
+        storage.replaceCharacters(
+            in: NSRange(location: 0, length: storage.length), with: replacement
+        )
+        storage.endEditing()
+        suppressReparse = false
+        undoManager.removeAllActions()
+        reparseSynchronously(notifying: true, wholesale: true)
+        pendingConflict = nil
+        setDirty(false)
+        publishPresentationState(.neutral)
+    }
+
     func close() {
         isClosed = true
+        savedStateWorkItem?.cancel()
+        pendingExternalRestore = nil
         cancelParseWork()
         cancelPendingExternalWrite()
         // Persist *before* discarding: closing a window is not a review, and the
@@ -569,7 +835,10 @@ final class MarkdownDocument: NSObject {
 
         let delta = (replacement as NSString).length - range.length
         changes.adjust(forEditIn: range, delta: delta)
-        if !isApplyingExternalChange { setDirty(true) }
+        if !isApplyingExternalChange {
+            noteMutation(undoManager.isApplyingUndoRedo ? "Undo" : (actionName ?? "Edit"))
+            setDirty(true)
+        }
         return true
     }
 
@@ -587,6 +856,7 @@ final class MarkdownDocument: NSObject {
         }
         guard !accepted.isEmpty else { return }
 
+        noteMutation(actionName)
         onWillApplyEdits?(accepted)
         isApplyingBatch = true
         defer { isApplyingBatch = false }
@@ -614,6 +884,58 @@ final class MarkdownDocument: NSObject {
         guard isDirty != value else { return }
         isDirty = value
         onDirtyChanged?(value)
+        if value, presentationState.phase != .conflict {
+            publishPresentationState(PresentationState(
+                phase: .edited,
+                provenance: presentationState.provenance ?? "Edit",
+                detail: nil
+            ))
+        }
+    }
+
+    /// Records the human-scale action that most recently changed source. This
+    /// is deliberately callable from view/controller seams (Paste, Replace,
+    /// panel actions) while parser and layout callbacks have no access to it.
+    func noteMutation(_ provenance: String) {
+        let value = provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        publishPresentationState(PresentationState(
+            phase: isDirty ? .edited : presentationState.phase,
+            provenance: value,
+            detail: presentationState.detail
+        ))
+    }
+
+    private func publishPresentationState(_ state: PresentationState) {
+        savedStateWorkItem?.cancel()
+        savedStateWorkItem = nil
+        guard state != presentationState else { return }
+        presentationState = state
+        onPresentationStateChanged?(state)
+    }
+
+    private func publishSaveFailure(_ error: Error) {
+        publishPresentationState(PresentationState(
+            phase: .saveFailed,
+            provenance: presentationState.provenance,
+            detail: error.localizedDescription
+        ))
+        onSaveFailure?(error)
+    }
+
+    private func publishSavedState() {
+        let provenance = presentationState.provenance
+        publishPresentationState(PresentationState(
+            phase: .saved, provenance: provenance, detail: nil
+        ))
+        let item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.isDirty, self.pendingConflict == nil else { return }
+                self.publishPresentationState(.neutral)
+            }
+        }
+        savedStateWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25, execute: item)
     }
 
     // MARK: - Parsing (§3.5)
@@ -686,15 +1008,41 @@ final class MarkdownDocument: NSObject {
         }
     }
 
+    /// External replacement must not wait behind an obsolete, non-cancellable
+    /// initial parse. Run this one snapshot concurrently and rely on the same
+    /// immutable revision/text checks used by the serial typing lane.
+    private func startPriorityAsyncReparse() {
+        guard !suppressReparse, !isClosed else { return }
+        let request = MarkdownParseRequest(
+            text: storage.string,
+            previous: parsed,
+            revision: revision
+        )
+        let coordinator = parseCoordinator
+        Task.detached(priority: .userInitiated) { [weak self, coordinator] in
+            let result = await coordinator.runImmediately(request)
+            await self?.applyAsyncParse(result)
+        }
+    }
+
     private func applyAsyncParse(_ result: MarkdownParseResult) {
         guard !isClosed,
               result.revision == revision,
               result.text == storage.string,
               result.document.text == result.text else { return }
         parsed = result.document
-        let dirty = forceNextDirtyWholesale ? DirtySet.wholesale : result.dirty
+        lastAsyncParseRevision = result.revision
+        let dirty = nextExternalDirtyOverride
+            ?? (forceNextDirtyWholesale ? DirtySet.wholesale : result.dirty)
+        nextExternalDirtyOverride = nil
         forceNextDirtyWholesale = false
         onReparse?(result.document, dirty)
+        if let restore = pendingExternalRestore {
+            pendingExternalRestore = nil
+            let restored = ScrollAnchoring.offset(for: restore.anchor, in: result.document)
+            restoreOffsetHandler?(restored)
+            restoreSelection(restore.previousText, restore.selection, near: restored)
+        }
     }
 
     private func cancelParseWork() {
@@ -758,7 +1106,7 @@ final class MarkdownDocument: NSObject {
         onExternalWriteActivity?(false)
     }
 
-    private func handleWatchEvent(_ event: FileWatcher.Event) {
+    func handleWatchEvent(_ event: FileWatcher.Event) {
         // `FileWatcher` dispatches to the main queue; a block already in
         // flight when `close()` ran cannot be retracted, and `stop()` only
         // cancels work that has not started.  A late event on a closed
@@ -768,6 +1116,11 @@ final class MarkdownDocument: NSObject {
         guard !isClosed else { return }
         switch event {
         case .removed:
+            publishPresentationState(PresentationState(
+                phase: .changedOnDisk,
+                provenance: presentationState.provenance,
+                detail: "File missing"
+            ))
             onExternalEvent?(.fileRemoved)
         case .restored:
             onExternalEvent?(.fileRestored)
@@ -808,6 +1161,7 @@ final class MarkdownDocument: NSObject {
     /// Internal rather than private so tests can drive an agent's write burst
     /// without racing a real filesystem watcher.
     func handleExternalWrite() {
+        externalPreparationGeneration &+= 1
         pendingExternalWrite?.cancel()
         if !isAbsorbingBurst {
             isAbsorbingBurst = true
@@ -831,62 +1185,158 @@ final class MarkdownDocument: NSObject {
         absorbExternalWrite()
     }
 
+    private struct PreparedExternalWrite: @unchecked Sendable {
+        let generation: UInt64
+        let url: URL
+        let capturedText: String
+        let baseline: String
+        let incoming: String
+        let fidelity: ByteFidelity
+        let incomingHash: String
+        let incomingByteHash: String
+        let baselineHunks: [ChangeHunk]
+        let applicationHunks: [ChangeHunk]
+    }
+
     private func absorbExternalWrite() {
         pendingExternalWrite = nil
-        defer { endBurstIfNeeded() }
-        guard let url, let (incoming, freshFidelity) = try? DocumentIO.read(contentsOf: url) else { return }
-        let incomingHash = SnapshotStore.hash(incoming)
-        let currentText = storage.string
-        guard incomingHash != SnapshotStore.hash(currentText) else {
-            diskHash = incomingHash
+        guard let url else {
+            endBurstIfNeeded()
             return
         }
+        let generation = externalPreparationGeneration
+        let capturedText = storage.string
+        let baseline = effectiveBaselineText(fallback: capturedText)
 
-        // A newline is a byte-fidelity property (`DocumentIO` reconciles it at
-        // save time), not document content.  If the on-disk bytes differ from
-        // the buffer only by the presence of a final newline — the common case
-        // is an external tool touching the file while the user trimmed its
-        // trailing newline — rewriting the buffer wholesale would silently
-        // restore the newline and revert that edit.  Acknowledge the disk state
-        // and keep the buffer.
-        if finalNewlineDifferenceOnly(currentText, incoming) {
-            diskHash = incomingHash
-            fidelity = freshFidelity
-            return
-        }
-
-        SnapshotStore.shared.record(incoming, for: url, kind: .external)
-        diskHash = incomingHash
-
-        if isDirty {  // Never clobber (§8.1).  The bar is non-modal; the buffer is
-            // untouched until the user picks.  Track it at the document level
-            // so implicit saves refuse to clobber even after the bar is
-            // dismissed.
-            //
-            // A conflict is diffed against the *buffer*, not against the review
-            // baseline: the question on screen is "my version or theirs", and
-            // the reader's own unsaved edits are one side of it.
-            let hunks = TextDiff.hunks(old: currentText, new: incoming)
-            let conflict = Conflict(
-                incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+        // File I/O, history reservation, and the two Myers diffs are pure or
+        // internally synchronized. Keeping them off the main actor is what
+        // lets a reader continue scrolling while a large agent rewrite lands.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let snapshot = try? DocumentIO.readSnapshot(contentsOf: url) else {
+                await self?.finishExternalPreparation(generation: generation, prepared: nil)
+                return
+            }
+            let incoming = snapshot.text
+            let freshFidelity = snapshot.fidelity
+            let incomingHash = SnapshotStore.hash(incoming)
+            let incomingByteHash = DocumentIO.contentHash(snapshot.data)
+            let currentHash = SnapshotStore.hash(capturedText)
+            if incomingHash != currentHash,
+               !Self.finalNewlineDifferenceOnlyValue(capturedText, incoming) {
+                SnapshotStore.shared.record(incoming, for: url, kind: .external)
+            }
+            let baselineHunks = incomingHash == currentHash
+                ? [] : TextDiff.hunks(old: baseline, new: incoming)
+            let applicationHunks = incomingHash == currentHash
+                ? [] : TextDiff.hunks(old: capturedText, new: incoming)
+            let prepared = PreparedExternalWrite(
+                generation: generation,
+                url: url,
+                capturedText: capturedText,
+                baseline: baseline,
+                incoming: incoming,
+                fidelity: freshFidelity,
+                incomingHash: incomingHash,
+                incomingByteHash: incomingByteHash,
+                baselineHunks: baselineHunks,
+                applicationHunks: applicationHunks
             )
-            pendingConflict = conflict
-            onExternalEvent?(.conflict(conflict))
+            await self?.finishExternalPreparation(generation: generation, prepared: prepared)
+        }
+    }
+
+    private func finishExternalPreparation(
+        generation: UInt64,
+        prepared: PreparedExternalWrite?
+    ) {
+        guard !isClosed else { return }
+        guard generation == externalPreparationGeneration else { return }
+        defer { endBurstIfNeeded() }
+        guard let prepared, url == prepared.url else { return }
+
+        // A local edit that landed while the background diff ran wins. The
+        // captured clean snapshot is no longer safe to apply, so compute the
+        // conflict against the current buffer on a fresh background turn.
+        guard storage.string == prepared.capturedText else {
+            let current = storage.string
+            externalPreparationGeneration &+= 1
+            let nextGeneration = externalPreparationGeneration
+            isAbsorbingBurst = true
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let hunks = TextDiff.hunks(old: current, new: prepared.incoming)
+                await self?.finishPreparedConflict(
+                    generation: nextGeneration,
+                    incoming: prepared.incoming,
+                    incomingHash: prepared.incomingHash,
+                    hunks: hunks
+                )
+            }
             return
         }
 
-        // The clean-buffer case is diffed against the review baseline.  This is
-        // the fix for "five writes in three seconds": every one of them reports
-        // what changed since the reader last looked, so writes 1–4 do not
-        // disappear behind write 5.
-        let baseline = effectiveBaselineText(fallback: currentText)
-        let hunks = TextDiff.hunks(old: baseline, new: incoming)
+        guard prepared.incomingHash != SnapshotStore.hash(prepared.capturedText) else {
+            diskHash = prepared.incomingHash
+            diskByteHash = prepared.incomingByteHash
+            fidelity = prepared.fidelity
+            if !isDirty, pendingConflict == nil { publishPresentationState(.neutral) }
+            return
+        }
+        if finalNewlineDifferenceOnly(prepared.capturedText, prepared.incoming) {
+            diskHash = prepared.incomingHash
+            diskByteHash = prepared.incomingByteHash
+            fidelity = prepared.fidelity
+            return
+        }
+
+        diskHash = prepared.incomingHash
+        diskByteHash = prepared.incomingByteHash
+        if isDirty {
+            presentPreparedConflict(incoming: prepared.incoming, hunks: prepared.applicationHunks)
+            return
+        }
 
         pendingConflict = nil
-        fidelity = freshFidelity
-        applyExternalText(incoming, hunks: hunks, baseline: baseline)
+        fidelity = prepared.fidelity
+        lastCommittedText = prepared.incoming
+        applyExternalText(
+            prepared.incoming,
+            hunks: prepared.baselineHunks,
+            baseline: prepared.baseline,
+            applicationHunks: prepared.applicationHunks
+        )
         unreadChanges = changes.isEmpty ? .none : .marked(count: changes.count)
+        let hunks = prepared.baselineHunks
+        publishPresentationState(PresentationState(
+            phase: .changedOnDisk,
+            provenance: nil,
+            detail: hunks.isEmpty ? nil : "\(hunks.count) changed block\(hunks.count == 1 ? "" : "s")"
+        ))
         onExternalEvent?(.applied(hunks: hunks))
+    }
+
+    private func finishPreparedConflict(
+        generation: UInt64,
+        incoming: String,
+        incomingHash: String,
+        hunks: [ChangeHunk]
+    ) {
+        guard !isClosed, generation == externalPreparationGeneration else { return }
+        defer { endBurstIfNeeded() }
+        diskHash = incomingHash
+        presentPreparedConflict(incoming: incoming, hunks: hunks)
+    }
+
+    private func presentPreparedConflict(incoming: String, hunks: [ChangeHunk]) {
+        let conflict = Conflict(
+            incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+        )
+        pendingConflict = conflict
+        publishPresentationState(PresentationState(
+            phase: .conflict,
+            provenance: presentationState.provenance,
+            detail: "Changed on disk"
+        ))
+        onExternalEvent?(.conflict(conflict))
     }
 
     /// The text to diff an incoming write against.  Falls back to the buffer
@@ -899,7 +1349,12 @@ final class MarkdownDocument: NSObject {
     /// Replaces the buffer in place, holding the reader's position by anchoring
     /// to the nearest unchanged heading rather than to a byte offset (§8.1),
     /// and putting the selection back afterwards.
-    func applyExternalText(_ incoming: String, hunks: [ChangeHunk], baseline: String? = nil) {
+    func applyExternalText(
+        _ incoming: String,
+        hunks: [ChangeHunk],
+        baseline: String? = nil,
+        applicationHunks preparedApplicationHunks: [ChangeHunk]? = nil
+    ) {
         // Adopting the on-disk version resolves any outstanding conflict.
         pendingConflict = nil
         let topOffset = currentTopOffsetProvider?() ?? 0
@@ -907,15 +1362,32 @@ final class MarkdownDocument: NSObject {
         let previousText = storage.string
         let previousSelection = currentSelectionProvider?() ?? NSRange(location: 0, length: 0)
 
-        adoptExternalBuffer(incoming)
+        // External replacement is a new immutable source generation just like
+        // a local character edit. Without advancing here, an initial/open parse
+        // still in flight can share the same revision and cause the coordinator
+        // to reject this newer snapshot as a duplicate.
+        invalidateParseWorkForEdit()
+        let applicationHunks = preparedApplicationHunks ?? (
+            (baseline ?? previousText) == previousText
+                ? hunks
+                : TextDiff.hunks(old: previousText, new: incoming)
+        )
+        adoptExternalBuffer(incoming, hunks: applicationHunks)
         setDirty(false)
 
-        reparseNow(wholesale: true)
         changes.apply(hunks: hunks, newText: incoming, oldText: baseline ?? previousText)
-
-        let restored = ScrollAnchoring.offset(for: anchor, in: parsed)
-        restoreOffsetHandler?(restored)
-        restoreSelection(previousText, previousSelection, near: restored)
+        pendingExternalRestore = PendingExternalRestore(
+            previousText: previousText,
+            selection: previousSelection,
+            anchor: anchor
+        )
+        nextExternalDirtyOverride = DirtySet(
+            ranges: applicationHunks.map {
+                TextDiff.anchorRange(for: $0, inNewTextOfLength: (incoming as NSString).length)
+            },
+            isWholesale: false
+        )
+        startPriorityAsyncReparse()
     }
 
     /// Puts the buffer's whole contents behind an external write, with an undo
@@ -928,7 +1400,7 @@ final class MarkdownDocument: NSObject {
     /// anything they had done.  So the undo restores the text *and* surfaces
     /// the disagreement it just created, through the same conflict bar that any
     /// other buffer-versus-disk disagreement uses.
-    private func adoptExternalBuffer(_ incoming: String) {
+    private func adoptExternalBuffer(_ incoming: String, hunks: [ChangeHunk]? = nil) {
         let previous = storage.string
         let whole = NSRange(location: 0, length: storage.length)
 
@@ -942,8 +1414,32 @@ final class MarkdownDocument: NSObject {
         undoManager.endUndoGrouping()
 
         isApplyingExternalChange = true
+        ignoredExternalStorageCallbackTexts.append(incoming)
         storage.beginEditing()
-        storage.replaceCharacters(in: whole, with: incoming)
+        if let hunks, !hunks.isEmpty {
+            let incomingText = incoming as NSString
+            for hunk in hunks.sorted(by: { $0.oldRange.location > $1.oldRange.location }) {
+                guard hunk.oldRange.location >= 0,
+                      hunk.oldRange.upperBound <= storage.length,
+                      hunk.newRange.location >= 0,
+                      hunk.newRange.upperBound <= incomingText.length else { continue }
+                storage.replaceCharacters(
+                    in: hunk.oldRange,
+                    with: incomingText.substring(with: hunk.newRange)
+                )
+            }
+            // Diff hunks are an optimisation, never a source of truth. If a
+            // capped/fallback diff cannot express the exact transformation,
+            // repair to the byte-faithful incoming text before publishing.
+            if storage.string != incoming {
+                storage.replaceCharacters(
+                    in: NSRange(location: 0, length: storage.length),
+                    with: incoming
+                )
+            }
+        } else {
+            storage.replaceCharacters(in: whole, with: incoming)
+        }
         storage.endEditing()
         isApplyingExternalChange = false
     }
@@ -1015,6 +1511,7 @@ final class MarkdownDocument: NSObject {
     /// Conflict resolution: take the version on disk, dropping local edits.
     func resolveConflictTakingTheirs(_ conflict: Conflict) {
         applyExternalText(conflict.incomingText, hunks: conflict.hunks)
+        publishPresentationState(.neutral)
     }
 
     /// Conflict resolution: keep the buffer and write it over the file.
@@ -1068,17 +1565,32 @@ extension MarkdownDocument: NSTextStorageDelegate {
         changeInLength delta: Int
     ) {
         guard editedMask.contains(.editedCharacters) else { return }
+        // Capture the post-edit source while the delegate callback is still
+        // describing this storage mutation. The task may run after another
+        // edit, so reading `storage.string` in the task would lose the
+        // transaction boundary and consume the wrong suppression token.
+        let callbackText = textStorage.string
         Task { @MainActor [weak self] in
-            self?.handleTextStorageEdit()
+            self?.handleTextStorageEdit(callbackText: callbackText)
         }
     }
 
-    private func handleTextStorageEdit() {
+    private func handleTextStorageEdit(callbackText: String) {
         guard !suppressReparse else { return }
+        if let tokenIndex = ignoredExternalStorageCallbackTexts.firstIndex(of: callbackText) {
+            ignoredExternalStorageCallbackTexts.remove(at: tokenIndex)
+            return
+        }
         // An explicit transaction may have already published its synchronous
         // parse before this delegate hop runs. Do not schedule a second parse
         // merely because NSTextStorage delivered the callback later.
         guard parsed.text != storage.string else { return }
+        // `NSTextStorageDelegate` is delivered on a later main-actor turn. The
+        // external transaction already submitted this exact snapshot; consume
+        // only its callback above. A subsequent user edit must take the normal
+        // path, invalidate the external parse, and own the camera.
+        pendingExternalRestore = nil
+        nextExternalDirtyOverride = nil
         invalidateParseWorkForEdit()
         if !isApplyingExternalChange {
             setDirty(true)

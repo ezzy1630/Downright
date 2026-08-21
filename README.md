@@ -69,6 +69,11 @@ performance, with the original Markdown remaining authoritative on disk.
 Supported files: `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`, `.mdc`, `.qmd`,
 and `.rmd`.
 
+CommonMark is the portable baseline and GitHub-flavored Markdown is the default
+interchange target. Downright also renders opt-in extensions without rewriting
+them into a proprietary format. See [Markdown compatibility](Docs/MARKDOWN-COMPATIBILITY.md)
+for the exact boundary, including safe raw-HTML behavior.
+
 ## Installation
 
 ### Download the app

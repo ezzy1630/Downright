@@ -17,6 +17,14 @@ public enum SmartPaste {
         return parser.run()
     }
 
+    /// Plain-text projection used by Paste and Match Style. Unlike the
+    /// Markdown conversion this intentionally drops links, emphasis markers,
+    /// and block syntax while retaining the words a rich-text source showed.
+    public static func plainText(forHTML html: String) -> String {
+        var parser = HTMLTextOnly(html: html)
+        return parser.run()
+    }
+
     /// Spreadsheet and terminal-table paste.  Returns nil when the text has no
     /// tab structure, so the caller can fall through to a plain paste.
     public static func markdownTable(forTabSeparated text: String) -> String? {
@@ -75,6 +83,99 @@ public enum SmartPaste {
     }
 }
 
+private struct HTMLTextOnly {
+    let html: String
+    private var output = ""
+    private var skipDepth = 0
+    private var pendingSpace = false
+
+    init(html: String) { self.html = html }
+
+    mutating func run() -> String {
+        var index = html.startIndex
+        while index < html.endIndex {
+            if html[index] == "<", let close = html[index...].firstIndex(of: ">") {
+                let raw = String(html[html.index(after: index)..<close])
+                let closing = raw.hasPrefix("/")
+                let name = String((closing ? raw.dropFirst() : Substring(raw))
+                    .prefix { $0.isLetter || $0.isNumber }).lowercased()
+                if ["script", "style", "head"].contains(name) {
+                    skipDepth += closing ? -1 : 1
+                    skipDepth = max(0, skipDepth)
+                } else if skipDepth == 0, !closing {
+                    if name == "br" || ["li", "tr"].contains(name) {
+                        appendBoundary(newlines: 1)
+                    } else if ["p", "div", "blockquote", "pre", "details", "summary",
+                               "table", "h1", "h2", "h3", "h4", "h5", "h6"].contains(name) {
+                        appendBoundary(newlines: 2)
+                    }
+                }
+                index = html.index(after: close)
+                continue
+            }
+            let next = html[index...].firstIndex(of: "<") ?? html.endIndex
+            if skipDepth == 0 {
+                appendText(decodeEntities(String(html[index..<next])))
+            }
+            index = next
+        }
+        return normalized(output)
+    }
+
+    private mutating func appendBoundary(newlines: Int) {
+        guard !output.isEmpty else { return }
+        pendingSpace = false
+        while output.last == " " { output.removeLast() }
+        let existing = output.reversed().prefix { $0 == "\n" }.count
+        guard existing < newlines else { return }
+        output.append(String(repeating: "\n", count: newlines - existing))
+    }
+
+    private mutating func appendText(_ text: String) {
+        let collapsed = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        if collapsed.isEmpty {
+            pendingSpace = pendingSpace || text.last?.isWhitespace == true
+            return
+        }
+        let leadingSpace = text.first?.isWhitespace == true
+        if (pendingSpace || leadingSpace), !output.isEmpty, !output.hasSuffix("\n"),
+           let first = collapsed.first,
+           !".,;:!?)]}".contains(first) {
+            output.append(" ")
+        }
+        output += collapsed
+        pendingSpace = text.last?.isWhitespace == true
+    }
+
+    private func normalized(_ value: String) -> String {
+        let lines = value.components(separatedBy: "\n").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var normalizedLines: [String] = []
+        var blankLines = 0
+        for line in lines {
+            if line.isEmpty {
+                blankLines += 1
+                if blankLines == 1, !normalizedLines.isEmpty { normalizedLines.append("") }
+            } else {
+                blankLines = 0
+                normalizedLines.append(line)
+            }
+        }
+        return normalizedLines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func decodeEntities(_ value: String) -> String {
+        value.replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+    }
+}
+
 // MARK: - HTML → markdown
 
 private struct HTMLToMarkdown {
@@ -113,9 +214,28 @@ private struct HTMLToMarkdown {
     /// Block tags each contribute their own `\n\n`, so a `</h2><p>` boundary
     /// produces four newlines.  Collapse any run to a single blank line.
     static func collapseBlankRuns(_ text: String) -> String {
+        // Browser fragments commonly carry indentation/newlines between tags.
+        // Those become a literal space when inline text is collapsed, leaving
+        // whitespace-only lines between list/table blocks.  Remove only those
+        // lines outside fenced code so a code sample's indentation remains
+        // lossless enough for a Markdown paste.
+        var cleanedLines: [String] = []
+        var inFence = false
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("```") {
+                inFence.toggle()
+                cleanedLines.append(line)
+            } else if inFence || !trimmed.isEmpty {
+                cleanedLines.append(line)
+            } else {
+                cleanedLines.append("")
+            }
+        }
+
         var out = ""
         var newlines = 0
-        for character in text {
+        for character in cleanedLines.joined(separator: "\n") {
             if character == "\n" {
                 newlines += 1
                 if newlines <= 2 { out.append(character) }
@@ -167,10 +287,14 @@ private struct HTMLToMarkdown {
         case "ul", "ol":
             if isClosing {
                 if !listStack.isEmpty { listStack.removeLast() }
-                append("\n")
+                // Nested lists are part of the current list item; adding a
+                // boundary here would turn every nested item into a separate
+                // paragraph. The outer list still needs a boundary before the
+                // next block.
+                if listStack.isEmpty { append("\n") }
             } else {
                 listStack.append((ordered: name == "ol", index: 0))
-                append("\n")
+                if listStack.count == 1 { append("\n") }
             }
         case "li":
             guard !isClosing else { return }
@@ -184,13 +308,27 @@ private struct HTMLToMarkdown {
                 append("\n" + indent + (entry.ordered ? "\(entry.index). " : "- "))
             }
         case "a":
-            append(isClosing ? "]" : "[")
-            if isClosing, let href = attribute("href", in: lastAnchor) { append("(\(href))") }
-            if !isClosing { lastAnchor = body }
+            if isClosing {
+                if let destination = activeAnchorDestination {
+                    append("](\(destination))")
+                }
+                activeAnchorDestination = nil
+            } else if let href = attribute("href", in: body),
+                      let destination = safeDestination(href) {
+                activeAnchorDestination = destination
+                append("[")
+            } else {
+                activeAnchorDestination = nil
+            }
         case "img":
             let alt = attribute("alt", in: body) ?? ""
             let src = attribute("src", in: body) ?? ""
-            if !src.isEmpty { append("![\(alt)](\(src))") }
+            if let destination = safeDestination(src) {
+                let escapedAlt = alt
+                    .replacingOccurrences(of: "[", with: "\\[")
+                    .replacingOccurrences(of: "]", with: "\\]")
+                append("![\(escapedAlt)](\(destination))")
+            }
         case "table":
             if isClosing {
                 inTable = false
@@ -216,7 +354,22 @@ private struct HTMLToMarkdown {
         }
     }
 
-    private var lastAnchor = ""
+    private var activeAnchorDestination: String?
+
+    /// Clipboard HTML is untrusted interchange data. Preserve useful web,
+    /// mail, file, fragment, and relative destinations while dropping schemes
+    /// that could become executable when the resulting Markdown is clicked.
+    private func safeDestination(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains(where: { $0.isWhitespace }) else { return nil }
+        if value.hasPrefix("#") { return value }
+        guard let components = URLComponents(string: value) else { return nil }
+        if let scheme = components.scheme?.lowercased(),
+           !["http", "https", "mailto", "file"].contains(scheme) {
+            return nil
+        }
+        return value.contains("(") || value.contains(")") ? "<\(value)>" : value
+    }
 
     private mutating func emit(text raw: String) {
         guard skipDepth == 0 else { return }

@@ -64,6 +64,21 @@ public enum MarkerPolicy {
         let revealAnchors = anchors(policy: policy, caret: caret, selections: selections)
 
         document.root.walk { block in
+            if policy.hidesInlineMarkers,
+               let html = block.safeHTML,
+               html.isSafe,
+               !revealAnchors.contains(where: { touches($0, block.range) }) {
+                for annotation in html.annotations {
+                    // Image tags become native image fragments over their
+                    // source range, so hiding the range as a marker would also
+                    // hide the fragment's display substitution.
+                    switch annotation.kind {
+                    case .image, .inert: continue
+                    default: break
+                    }
+                    out.append(contentsOf: annotation.tagRanges)
+                }
+            }
             if policy.hidesBlockMarkers, blockMarkersAreHidden(block) {
                 if let m = block.markerRange, m.length > 0 {
                     out.append(m)

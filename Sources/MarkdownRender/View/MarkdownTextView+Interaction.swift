@@ -755,7 +755,11 @@ extension MarkdownTextView {
     /// *source* range; nothing else is ever handed to the storage, which is
     /// how §3.1's guarantee survives contact with AppKit's editing pipeline.
     @discardableResult
-    public func performSourceEdit(range: NSRange, replacement: String) -> Bool {
+    public func performSourceEdit(
+        range: NSRange,
+        replacement: String,
+        provenance: String = "Edit"
+    ) -> Bool {
         guard isEditable, let storage = textStorage else { return false }
         let clamped = NSRange(location: max(0, min(range.location, storage.length)),
                               length: max(0, min(range.length, storage.length - min(range.location, storage.length))))
@@ -786,6 +790,7 @@ extension MarkdownTextView {
         let preservesParagraphStructure = !containsParagraphSeparator(deletedText)
             && !containsParagraphSeparator(replacement)
         projectFragmentPayloads(across: clamped, insertedLength: inserted)
+        lastMutationProvenance = provenance
         beginSourceEdit()
         storage.replaceCharacters(in: clamped, with: replacement)
         rebuildParagraphIndex()
@@ -874,6 +879,9 @@ extension MarkdownTextView {
     public override func insertText(_ string: Any, replacementRange: NSRange) {
         guard isEditable else { return }
         if hasMarkedText() || composingParagraph != nil {
+            let openedUndoGroup = undoManager?.groupingLevel == 0
+            if openedUndoGroup { undoManager?.beginUndoGrouping() }
+            defer { if openedUndoGroup { undoManager?.endUndoGrouping() } }
             super.insertText(string, replacementRange: replacementRange)
             return
         }
@@ -911,6 +919,12 @@ extension MarkdownTextView {
             composingParagraph = paragraphRange(containing: caret)
             refreshDisplayMapForComposition()
         }
+        // NSTextView registers marked-text replacement with its undo manager.
+        // Downright disables event grouping so source commands own exact undo
+        // boundaries; IME must therefore supply the group AppKit expects.
+        let openedUndoGroup = undoManager?.groupingLevel == 0
+        if openedUndoGroup { undoManager?.beginUndoGrouping() }
+        defer { if openedUndoGroup { undoManager?.endUndoGrouping() } }
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
     }
 
@@ -1003,15 +1017,45 @@ extension MarkdownTextView {
     }
 
     public override func paste(_ sender: Any?) {
+        applyPaste(mode: .smart)
+    }
+
+    /// Explicitly prefer Markdown semantics even when the selection is in a
+    /// literal block. This is the command counterpart to Downright's private
+    /// lossless clipboard flavour.
+    @objc public func pasteAsMarkdown(_ sender: Any?) {
+        applyPaste(mode: .markdown)
+    }
+
+    /// Insert only the source's visible words, dropping formatting and table
+    /// conversion. This mirrors AppKit's Paste and Match Style action.
+    @objc public func pasteAndMatchStyle(_ sender: Any?) {
+        applyPaste(mode: .matchStyle)
+    }
+
+    private func applyPaste(mode pasteMode: MarkdownPasteMode) {
         guard isEditable else { return }
         let pasteboard = NSPasteboard.general
         guard let payload = markdownPastePayload(from: pasteboard) else { return }
+        if case .image = payload {
+            // An unnamed bitmap has no honest Markdown destination until the
+            // document owner chooses an asset path. Never replace a selection
+            // with guessed placeholder text.
+            NSSound.beep()
+            return
+        }
         let range = sourceSelectedRange
         let selection = sourceText(in: range)
         let context = MarkdownSmartPaste.context(for: range, in: parsedDocument, mode: mode)
         let replacement = MarkdownSmartPaste.replacement(
-            for: payload, selection: selection, context: context)
-        performSourceEdit(range: range, replacement: replacement)
+            for: payload, selection: selection, context: context, mode: pasteMode)
+        let provenance: String
+        switch pasteMode {
+        case .smart: provenance = "Paste"
+        case .markdown: provenance = "Paste as Markdown"
+        case .matchStyle: provenance = "Paste and Match Style"
+        }
+        performSourceEdit(range: range, replacement: replacement, provenance: provenance)
     }
 
     private func sourceText(in range: NSRange) -> String {
@@ -1142,9 +1186,10 @@ extension MarkdownTextView {
         let visible = exportableAttributedString(range: range)
         let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
         let markdown = storage.attributedSubstring(from: markdownRange).string
-        pasteboard.declareTypes([.string, .rtf, .downrightMarkdown], owner: nil)
+        pasteboard.declareTypes([.string, .rtf, .html, .downrightMarkdown], owner: nil)
         pasteboard.setString(visible.string, forType: .string)
         pasteboard.setString(markdown, forType: .downrightMarkdown)
+        pasteboard.setString(ClipboardSemanticHTML.render(markdown: markdown), forType: .html)
         if let data = visible.rtf(
             from: NSRange(location: 0, length: visible.length),
             documentAttributes: [:]
@@ -1163,13 +1208,19 @@ extension MarkdownTextView {
     public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         let range = sourceSelectedRange
         guard range.length > 0, let storage = textStorage else { return false }
-        pboard.declareTypes([.string, .rtf, .downrightMarkdown], owner: nil)
+        pboard.declareTypes([.string, .rtf, .html, .downrightMarkdown], owner: nil)
         let rich = exportableAttributedString(range: range)
         pboard.setString(rich.string, forType: .string)
         let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
         pboard.setString(
             storage.attributedSubstring(from: markdownRange).string,
             forType: .downrightMarkdown
+        )
+        pboard.setString(
+            ClipboardSemanticHTML.render(
+                markdown: storage.attributedSubstring(from: markdownRange).string
+            ),
+            forType: .html
         )
         if let data = rich.rtf(from: NSRange(location: 0, length: rich.length), documentAttributes: [:]) {
             pboard.setData(data, forType: .rtf)
