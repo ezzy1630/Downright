@@ -98,13 +98,13 @@ every release; Sparkle orders updates by it.
 ### Added
 
 - **Calm, explicit document trust states.** The toolbar now communicates
-  Edited, Saving, briefly Saved, Changed on disk, Conflict, and Save failed,
+  Edited, Saving, briefly Saved, Changed externally, Conflict, and Save failed,
   with accessible labels and focused mutation provenance such as Paste,
   Toggle Task, Replace, panel actions, and Undo.
 - **Contents / Outline is a first-class command.** It is visible in the
-  toolbar and overflow menu, remains available through View, the command
-  palette, accessibility, and configurable keybindings, and reuses the
-  pinnable inspector rather than adding a permanent sidebar.
+  overflow menu and remains available through View, the command palette,
+  accessibility, and configurable keybindings. It reuses the pinnable
+  inspector rather than adding a permanent sidebar.
 - **Universal clipboard flavors.** Copy now publishes lossless private
   Markdown, plain text, RTF, and sanitized semantic HTML so native and browser
   targets retain headings, lists, emphasis, links, tables, and code structure.

@@ -46,7 +46,7 @@ struct WindowChromeTests {
             (.edited, "Edited"),
             (.saving, "Saving"),
             (.saved, "Saved"),
-            (.changedOnDisk, "Changed on disk"),
+            (.changedOnDisk, "Changed externally"),
             (.conflict, "Conflict"),
             (.saveFailed, "Save failed"),
         ]
@@ -61,6 +61,13 @@ struct WindowChromeTests {
         identity.documentState = .neutral
         #expect(identity.accessibilityLabel()?.contains("Edited") == false)
         #expect(identity.toolTip == nil)
+
+        identity.documentState = .init(
+            phase: .changedOnDisk, provenance: nil, detail: "File missing"
+        )
+        #expect(identity.accessibilityLabel()?.contains("File missing") == true)
+        #expect(identity.accessibilityLabel()?.contains("Changed externally") == false)
+        #expect(identity.toolTip?.contains("File missing: File missing") == false)
     }
 
     @Test

@@ -99,6 +99,7 @@ final class ToolbarDocumentIdentityView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let contextLabel = NSTextField(labelWithString: "")
     private let titleRow = NSStackView()
+    private let secondaryRow = NSStackView()
     private let textColumn = NSStackView()
     private var titleObservation: NSKeyValueObservation?
     private var subtitleObservation: NSKeyValueObservation?
@@ -180,16 +181,21 @@ final class ToolbarDocumentIdentityView: NSView {
 
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
-        titleRow.spacing = 5
         titleRow.detachesHiddenViews = true
-        titleRow.addArrangedSubview(stateLabel)
         titleRow.addArrangedSubview(titleLabel)
+
+        secondaryRow.orientation = .horizontal
+        secondaryRow.alignment = .centerY
+        secondaryRow.spacing = 5
+        secondaryRow.detachesHiddenViews = true
+        secondaryRow.addArrangedSubview(stateLabel)
+        secondaryRow.addArrangedSubview(contextLabel)
 
         textColumn.orientation = .vertical
         textColumn.alignment = .leading
         textColumn.spacing = Metrics.lineGap
         textColumn.addArrangedSubview(titleRow)
-        textColumn.addArrangedSubview(contextLabel)
+        textColumn.addArrangedSubview(secondaryRow)
 
         proxyButton.translatesAutoresizingMaskIntoConstraints = false
         textColumn.translatesAutoresizingMaskIntoConstraints = false
@@ -376,34 +382,33 @@ final class ToolbarDocumentIdentityView: NSView {
     }
 
     private var stateDescription: String? {
-        let title: String
-        switch documentState.phase {
-        case .neutral: return nil
-        case .edited: title = "Edited"
-        case .saving: title = "Saving"
-        case .saved: title = "Saved"
-        case .changedOnDisk: title = "Changed on disk"
-        case .conflict: title = "Conflict"
-        case .saveFailed: title = "Save failed"
-        }
+        guard let title = stateTitle else { return nil }
         let provenance = documentState.provenance.map { " — \($0)" } ?? ""
-        let detail = documentState.detail.map { ": \($0)" } ?? ""
+        let detail = documentState.detail.flatMap { $0 == title ? nil : ": \($0)" } ?? ""
         return title + provenance + detail
     }
 
-    private func refreshDocumentState() {
+    private var stateTitle: String? {
         switch documentState.phase {
-        case .neutral:
+        case .neutral: return nil
+        case .edited: return "Edited"
+        case .saving: return "Saving"
+        case .saved: return "Saved"
+        case .changedOnDisk:
+            return documentState.detail == "File missing" ? "File missing" : "Changed externally"
+        case .conflict: return "Conflict"
+        case .saveFailed: return "Save failed"
+        }
+    }
+
+    private func refreshDocumentState() {
+        if let stateTitle {
+            stateLabel.stringValue = stateTitle
+            stateLabel.isHidden = false
+        } else {
             stateLabel.stringValue = ""
             stateLabel.isHidden = true
-        case .edited: stateLabel.stringValue = "Edited"
-        case .saving: stateLabel.stringValue = "Saving"
-        case .saved: stateLabel.stringValue = "Saved"
-        case .changedOnDisk: stateLabel.stringValue = "On disk"
-        case .conflict: stateLabel.stringValue = "Conflict"
-        case .saveFailed: stateLabel.stringValue = "Save failed"
         }
-        if documentState.phase != .neutral { stateLabel.isHidden = false }
         refreshToolTip()
         refreshEmphasis()
         refreshAccessibility()
