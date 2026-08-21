@@ -44,11 +44,56 @@ every release; Sparkle orders updates by it.
 
 ### Changed
 
+- External-effect trust grants are now pinned to the exact URL you approved.
+  An "always allow" given to one link or automation inside a folder no longer
+  silently authorizes every future URL of that kind in the same folder — a
+  different scheme or address asks again. Grants recorded before this change
+  fail closed for external effects and are re-recorded with their URL the next
+  time you approve them; purely local permissions (reading assets, opening
+  paths) keep working untouched.
+- The occlusion save now belongs to the autosave setting it always behaved
+  like. With autosave off (the default), covering or miniaturizing a dirty
+  window no longer writes the file — previously it did, which is exactly the
+  unsolicited write the setting exists to prevent when an agent may be editing
+  the same file.
 - `SUScheduledCheckInterval` drops from 24 hours to 1 hour. It is now the
   fallback for an app that was asleep, offline, or in Low Power Mode while a
   build shipped, rather than the mechanism by which updates are noticed.
 
 ### Fixed
+
+- **A discarded buffer can no longer reach disk.** Choosing Discard in the
+  close or quit prompt used to leave the document dirty while queued autosave
+  work and window-occlusion saves stayed armed: the write could land while the
+  confirmation was still on screen or as the window tore down, committing the
+  very edits you had just declined to keep. Every implicit save path now stops
+  at the choice, and a closed document refuses writes outright.
+- **Closed an export hole that could produce live `javascript:` links.**
+  Browsers strip tabs and newlines out of URLs before parsing them, so a
+  destination written as `java<TAB>script:` passed the CLI exporter's scheme
+  block and came back to life inside the browser — the same trick also let a
+  tabbed `http:` image through as a live remote request. Destinations are now
+  normalized before analysis and emitted in that same normalized form.
+- Fragment metadata (code-block copy ranges, image-load invalidation, table
+  geometry) now follows edits made outside the text view's own typing funnel:
+  document commands, undo/redo, and absorbed external rewrites shift the
+  payload ranges along with the attribute runs they ride on. Copying a code
+  block after typing above it no longer grabs the wrong span.
+- The repository gate now fails when version consistency or theme contrast
+  checks fail, instead of printing their reports and exiting green.
+- Update probes on hosts that serve no `ETag` now send `If-Modified-Since`
+  from the stored document date, so an unchanged feed answers `304` instead of
+  being re-downloaded and hashed every cycle.
+- Saves flush the replacement generation to stable storage before the atomic
+  swap publishes it, so a crash or power loss right after a save cannot leave
+  the document file truncated or empty.
+- Agent hook commands single-quote the executable path, so no character in an
+  unusual install location can open a shell expansion context inside the
+  agent's settings. Hooks installed by earlier builds are recognized and
+  migrated to the quoted form in place instead of being duplicated.
+- The npm installer verifies the fetched install script against a pinned
+  SHA-256 before running it, so a compromised installer endpoint cannot execute
+  arbitrary code at user privileges.
 
 - Stopped idle history maintenance from rewriting every unchanged index, made
   long-session pruning half-hourly, and retained the newest history and reading

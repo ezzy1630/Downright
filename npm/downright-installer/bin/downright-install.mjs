@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 const installerURL = process.env.DOWNRIGHT_INSTALLER_URL ?? "https://downright.cc/install";
+
+// The installer endpoint serves the repository's Scripts/install-release.sh.
+// Piping a fetched script straight into bash would make any compromise of
+// that endpoint arbitrary code execution at user privileges, so the expected
+// SHA-256 is pinned here and verified before a single byte runs.  Update this
+// constant in the same commit that changes install-release.sh.
+const INSTALLER_SHA256 =
+  "f16cc08d8c3048c9e37b2aeaac1adfd84b0059036986ef009d9c03dda1d2b0f2";
 
 if (process.platform !== "darwin") {
   console.error("Downright is currently available through this installer on macOS only.");
@@ -20,8 +29,11 @@ try {
   }
 
   const script = await response.text();
-  if (!script.startsWith("#!/usr/bin/env bash") || !script.includes("DMG checksum verified")) {
-    throw new Error("installer endpoint did not return the expected Downright installer");
+  const digest = createHash("sha256").update(script).digest("hex");
+  if (digest !== INSTALLER_SHA256) {
+    throw new Error(
+      `installer script failed integrity check (expected ${INSTALLER_SHA256}, got ${digest})`,
+    );
   }
 
   const result = spawnSync("/bin/bash", ["-s", "downright-release-installer"], {

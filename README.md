@@ -233,6 +233,14 @@ APP_SOURCE=.build-xcode/Build/Products/Release/Downright.app Scripts/install.sh
 down README.md
 ```
 
+`install.sh` links the `down` CLI into `/usr/local/bin`, which needs write
+access on a default macOS setup. To link somewhere writable instead, set
+`BIN_DEST` (and put that directory on your `PATH`):
+
+```bash
+BIN_DEST="$HOME/.local/bin" APP_SOURCE=.build-xcode/Build/Products/Release/Downright.app Scripts/install.sh
+```
+
 For a faster SwiftPM development build without Finder extensions:
 
 ```bash
