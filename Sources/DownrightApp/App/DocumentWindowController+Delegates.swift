@@ -232,6 +232,33 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
     // MARK: Context menus (§7.1)
 
+    /// Opens a path token in the user's editor.  Returns false — and touches
+    /// nothing — when the token does not resolve to an existing file, matching
+    /// `didActivatePathToken` and the documented missing-path contract.
+    @discardableResult
+    func openPathTokenInEditor(_ token: PathToken) -> Bool {
+        guard let resolution = pathResolver?.resolve(token),
+              resolution.exists,
+              let url = resolution.url else { return false }
+        authorizeLocalEffect(.launchPathOrEditor, target: url) {
+            Preferences.shared.values.externalEditor.open(url, line: token.line)
+        }
+        return true
+    }
+
+    /// Reveals a path token's file in Finder; same missing-path rule as
+    /// `openPathTokenInEditor`.
+    @discardableResult
+    func revealPathTokenInFinder(_ token: PathToken) -> Bool {
+        guard let resolution = pathResolver?.resolve(token),
+              resolution.exists,
+              let url = resolution.url else { return false }
+        authorizeLocalEffect(.launchPathOrEditor, target: url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        return true
+    }
+
     func markdownTextView(_ view: MarkdownTextView, wantsContextMenuFor target: ContextTarget) -> NSMenu? {
         let menu = NSMenu()
         switch target.kind {
@@ -269,17 +296,14 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .pathToken(let token):
             menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
             menu.addItem(.separator())
+            // Missing paths stay inert on every surface, including this one:
+            // no editor launch and no Finder reveal may run for a target that
+            // does not exist (§ Workspace and path resolution).
             menu.addItem(actionItem("Open in Editor") { [weak self] in
-                guard let self, let resolution = self.pathResolver?.resolve(token), let url = resolution.url else { return }
-                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
-                    Preferences.shared.values.externalEditor.open(url, line: token.line)
-                }
+                _ = self?.openPathTokenInEditor(token)
             })
             menu.addItem(actionItem("Reveal in Finder") { [weak self] in
-                guard let self, let url = self.pathResolver?.resolve(token).url else { return }
-                self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
+                _ = self?.revealPathTokenInFinder(token)
             })
             menu.addItem(actionItem("Copy Path") {
                 NSPasteboard.general.clearContents()
