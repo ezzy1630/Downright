@@ -86,7 +86,7 @@ Download the latest signed and notarized release from
 3. Launch it once to configure Markdown file associations, Quick Look, and the
    CLI.
 
-### Homebrew
+### Homebrew cask
 
 The public tap installs the same production app into `/Applications`:
 
@@ -100,9 +100,9 @@ request in the release asset download count.
 This is the developer tap. The tap-free `brew install --cask downright`
 command is not advertised until an official Homebrew Cask is accepted.
 
-### Terminal installer
+### Command-line options
 
-The first-party installer downloads the latest signed build, verifies its
+The first-party shell installer downloads the latest signed build, verifies its
 published checksum and app signature, installs it into `/Applications`,
 registers the Finder integrations, and links `down` and `md` when possible:
 
@@ -111,7 +111,7 @@ curl -fsSL https://downright.cc/install | bash
 ```
 
 If Node.js 18 or newer is already installed, the npm launcher runs the same
-first-party installer:
+first-party macOS installer:
 
 ```bash
 npx --yes downright-installer
