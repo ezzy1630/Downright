@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MarkdownRender
 import Testing
 @testable import DownrightApp
 
@@ -1086,5 +1087,40 @@ struct ReleaseWatchSettingTests {
         coordinator.automaticallyChecksForUpdates = true
         coordinator.releaseFeedDidChange()
         #expect(engine.backgroundCheckCount == 2)
+    }
+}
+
+/// Linked release notes must never reach the WebKit-backed html document
+/// type: the update channel's host is outside the app's documented network
+/// surface, and a web engine would fetch remote subresources. The reduction
+/// keeps the text, drops the machinery.
+@Suite struct UpdateReleaseNotesReductionTests {
+    @Test @MainActor func stripsTagsAndKeepsReadableText() {
+        let html = """
+        <html><head><style>body { color: red }</style>​<script>alert(1)</script></head>
+        <body><h1>Downright 1.0.17</h1><p>First &amp; second &#8212; line</p>
+        <ul><li>one</li><li>two</li></ul><p>Bye<br/>now</p></body></html>
+        """
+        let text = UpdateNotesView.textFromHTML(Data(html.utf8))
+        #expect(text.contains("Downright 1.0.17"))
+        #expect(text.contains("First & second — line"))
+        #expect(text.contains("one") && text.contains("two"))
+        #expect(text.contains("Bye\nnow"))
+        #expect(!text.lowercased().contains("alert"), "script content is dropped whole")
+        #expect(!text.contains("{ color"), "style content is dropped whole")
+        #expect(!text.contains("<"), "no tags survive")
+    }
+
+    @Test @MainActor func nonHTMLDataPassesThroughAsText() {
+        let markdown = "## Notes\n- plain"
+        let view = UpdateNotesView.releaseNotesTextView(
+            for: Data(markdown.utf8),
+            sheet: StyleSheet(
+                theme: ThemeStore.shared.current,
+                appearance: NSAppearance.current,
+                reduceMotionOverride: false
+            )
+        )
+        #expect(view.string.contains("Notes"))
     }
 }

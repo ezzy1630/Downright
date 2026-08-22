@@ -623,26 +623,70 @@ final class UpdateNotesView: NSView {
         return textView
     }
 
-    /// Linked release notes arrive as HTML.  A web view is out of proportion
-    /// for a small panel; convert to a readable attributed string instead.
+    /// Linked release notes arrive as arbitrary HTML from the update
+    /// channel's host. `NSAttributedString`'s html document type runs the
+    /// WebKit content engine over it — remote subresource fetches included —
+    /// which is out of proportion for a small panel and outside the network
+    /// surface the app documents. Reduce the page to readable text instead;
+    /// Downright's own pipeline embeds Markdown in the appcast, so this path
+    /// only ever serves third-party-shaped notes.
     static func releaseNotesTextView(for data: Data, sheet: StyleSheet) -> NSTextView {
         let sample = String(data: data.prefix(1_024), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if sample.hasPrefix("<"),
-            let attributed = try? NSAttributedString(
-                data: data,
-                options: [.documentType: NSAttributedString.DocumentType.html],
-                documentAttributes: nil
-            ) {
-            let textView = NSTextView(frame: .zero)
-            textView.textStorage?.setAttributedString(attributed)
-            textView.isEditable = false
-            textView.isSelectable = true
-            textView.drawsBackground = false
-            textView.textContainerInset = NSSize(width: 4, height: 8)
-            return textView
+        if sample.hasPrefix("<") {
+            return markdownTextView(for: Self.textFromHTML(data), sheet: sheet)
         }
         // Not HTML — treat as plain text (or Markdown that Sparkle fetched raw).
         return markdownTextView(for: String(data: data, encoding: .utf8) ?? "", sheet: sheet)
+    }
+
+    /// Reduces an HTML page to plain text without a web engine. Block-level
+    /// boundaries become line breaks, script/style content is dropped whole,
+    /// and the handful of entities a release page actually uses are decoded.
+    static func textFromHTML(_ data: Data) -> String {
+        var text = String(data: data, encoding: .utf8) ?? ""
+        for (pattern, replacement) in [
+            ("<script[^>]*>.*?</script>", ""),
+            ("<style[^>]*>.*?</style>", ""),
+            ("<br\\s*/?>", "\n"),
+            ("</(p|div|h[1-6]|li|tr|blockquote|pre)>", "\n"),
+            ("<(p|div|h[1-6]|li|tr|blockquote|pre)[^>]*>", "\n"),
+            ("</?[a-zA-Z][^>]*>", ""),
+        ] {
+            text = text.replacingOccurrences(
+                of: pattern, with: replacement,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+        let entities = [
+            "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
+            "&apos;": "'", "&#39;": "'",
+        ]
+        for (entity, character) in entities {
+            text = text.replacingOccurrences(of: entity, with: character)
+        }
+        if let numeric = try? NSRegularExpression(
+            pattern: "&#(x?)([0-9a-fA-F]+);", options: [.caseInsensitive]
+        ) {
+            // Replace right to left so earlier ranges stay valid.
+            for match in numeric.matches(
+                in: text, range: NSRange(location: 0, length: (text as NSString).length)
+            ).reversed() {
+                let usesHex = match.range(at: 1).location != NSNotFound
+                    && (text as NSString).substring(with: match.range(at: 1)).lowercased() == "x"
+                let digits = match.range(at: 2)
+                guard digits.location != NSNotFound,
+                      let value = UInt32((text as NSString).substring(with: digits), radix: usesHex ? 16 : 10),
+                      let scalar = Unicode.Scalar(value),
+                      value >= 0x20
+                else { continue }
+                text = (text as NSString).replacingCharacters(
+                    in: match.range, with: String(Character(scalar))
+                )
+            }
+        }
+        return text
+            .replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
