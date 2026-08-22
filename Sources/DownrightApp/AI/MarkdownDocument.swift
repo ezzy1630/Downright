@@ -250,6 +250,11 @@ final class MarkdownDocument: NSObject {
     /// undo/redo consume its own callback instead of leaving a stale token
     /// behind for the next real edit.
     private var ignoredExternalStorageCallbackTexts: [String] = []
+    /// Upper bound on unconsumed suppression tokens. Each one holds a
+    /// whole-document string; the bound keeps a run of unmatched callbacks
+    /// from accumulating unbounded state and keeps the exact-match scan in
+    /// `handleTextStorageEdit` cheap.
+    private static let maximumIgnoredExternalCallbackTexts = 8
     private var isApplyingBatch = false
     private var suppressReparse = false
     private let parseCoordinator: MarkdownParseCoordinator
@@ -791,6 +796,11 @@ final class MarkdownDocument: NSObject {
         // Discard change marks owned by a torn-down document so they cannot
         // leak across to the next file opened in the same window.
         changes.reset()
+        // Undo registrations target `self`, so every entry retains the whole
+        // document (storage, parsed tree, watcher reference). A closed
+        // document can never serve another undo, and without this the stack
+        // keeps it — and everything it holds — un-deallocable.
+        undoManager.removeAllActions()
         enqueueParseControl { await $0.suspend() }
         watcher?.stop()
         watcher = nil
@@ -1469,7 +1479,14 @@ final class MarkdownDocument: NSObject {
         undoManager.endUndoGrouping()
 
         isApplyingExternalChange = true
+        // Bounded: a token whose callback never arrives (a racing local edit
+        // changed the post-edit text before delivery) must not retain a
+        // whole-document copy forever, and the oldest entries are precisely
+        // the ones whose transactions are already over.
         ignoredExternalStorageCallbackTexts.append(incoming)
+        if ignoredExternalStorageCallbackTexts.count > Self.maximumIgnoredExternalCallbackTexts {
+            ignoredExternalStorageCallbackTexts.removeFirst()
+        }
         storage.beginEditing()
         if let hunks, !hunks.isEmpty {
             let incomingText = incoming as NSString
