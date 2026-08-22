@@ -260,6 +260,68 @@ struct AppLayerTests {
         #expect(store.content(for: record) == .text(text))
     }
 
+    /// Regression: a present-but-undecodable index used to be treated as an
+    /// empty one, so the next record overwrote it with a single-entry index
+    /// and the following prune garbage-collected every object the old index
+    /// referenced — one corrupt file became permanent history loss.
+    @Test func recordNeverOverwritesAnUnreadableIndex() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-record-unreadable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        let file = snapshotIndexFile(for: document, historyDirectory: historyDirectory)
+
+        let first = "first version\n"
+        #expect(store.record(first, for: document, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+        let versionsBefore = store.versions(for: document)
+        #expect(versionsBefore.count == 1)
+
+        try Data("not json".utf8).write(to: file, options: .atomic)
+        let corruptedBytes = try Data(contentsOf: file)
+
+        // Recording after corruption must not replace the unreadable index.
+        #expect(store.record("second version\n", for: document, kind: .external) != nil)
+        await store.waitForPendingWrites()
+        #expect(try Data(contentsOf: file) == corruptedBytes,
+                "the undecodable index file must be left exactly as it was")
+        #expect(store.content(forHash: versionsBefore[0].hash) == .text(first),
+                "the recorded object must survive a prune that fails closed")
+    }
+
+    /// The `forget` sweep shares prune's rule: with an undecodable index in
+    /// play, reference knowledge is incomplete and nothing may be deleted.
+    @Test func forgetDoesNotSweepObjectsBehindAnUnreadableIndex() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-forget-unreadable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+
+        let kept = root.appendingPathComponent("kept.md")
+        let keptText = "kept behind a corrupt index\n"
+        #expect(store.record(keptText, for: kept, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+
+        let forgotten = root.appendingPathComponent("forgotten.md")
+        #expect(store.record("forgotten\n", for: forgotten, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+
+        // Corrupt the *kept* document's index, then forget the other one.
+        let keptIndex = snapshotIndexFile(for: kept, historyDirectory: historyDirectory)
+        try Data("not json".utf8).write(to: keptIndex, options: .atomic)
+
+        store.forget(forgotten)
+        await store.waitForPendingWrites()
+
+        let keptVersions = store.versions(for: kept)
+        #expect(keptVersions.isEmpty, "the corrupt index reads as no versions")
+        #expect(store.content(forHash: SnapshotStore.hash(keptText)) == .text(keptText),
+                "its objects must not be swept while its index is unreadable")
+    }
+
     @Test func pruneKeepsOldHistoryForLiveDocument() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("downright-prune-\(UUID().uuidString)", isDirectory: true)
