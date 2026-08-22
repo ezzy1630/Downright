@@ -66,8 +66,31 @@ func expandedMarkdownPaths(_ paths: [String]) -> [String] {
     return results.sorted()
 }
 
-func stdinFile() -> URL? {
-    guard isatty(FileHandle.standardInput.fileDescriptor) == 0 else { return nil }
+/// 1-based source line containing the UTF-16 `offset`, with the same
+/// line-ending semantics as MarkdownCore's line index (LF, CRLF, lone CR).
+/// Diagnostics print in the conventional `file:line:` shape, so an offset
+/// must never be shown in the line-number position.
+func lineNumber(at offset: Int, in text: String) -> Int {
+    let ns = text as NSString
+    let clamped = max(0, min(offset, ns.length))
+    var line = 1
+    var i = 0
+    while i < clamped {
+        let c = ns.character(at: i)
+        if c == 0x0A {
+            line += 1
+            i += 1
+        } else if c == 0x0D {
+            line += 1
+            i += (i + 1 < clamped && ns.character(at: i + 1) == 0x0A) ? 2 : 1
+        } else {
+            i += 1
+        }
+    }
+    return line
+}
+
+func stdinFile() -> URL? {    guard isatty(FileHandle.standardInput.fileDescriptor) == 0 else { return nil }
     let data = FileHandle.standardInput.readDataToEndOfFile()
     guard !data.isEmpty else { return nil }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Downright", isDirectory: true)
@@ -211,9 +234,11 @@ case .check(let json, let target, let paths):
             guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) else { writeError("cannot encode JSON", status: 70) }
             FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data("\n".utf8))
         } else {
-            for diagnostic in diagnostics { print("\(path):\(diagnostic.range.location + 1): \(diagnostic.severity.rawValue): \(diagnostic.message) [\(diagnostic.id)]") }
+            for diagnostic in diagnostics {
+                print("\(path):\(lineNumber(at: diagnostic.range.location, in: content)): \(diagnostic.severity.rawValue): \(diagnostic.message) [\(diagnostic.id)]")
+            }
             for diagnostic in compatibility {
-                print("\(path):\(diagnostic.range.location + 1): warning: \(diagnostic.title) [target:\(target?.rawValue ?? "unknown")]")
+                print("\(path):\(lineNumber(at: diagnostic.range.location, in: content)): warning: \(diagnostic.title) [target:\(target?.rawValue ?? "unknown")]")
             }
         }
     }
