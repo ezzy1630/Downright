@@ -173,6 +173,53 @@ struct FileWatcherTests {
         #expect(events.isRestored(at: 2))
     }
 
+    /// Regression: an external atomic save observed inside its unlink→rename
+    /// gap used to be delivered as `.removed` — the sibling scan looks for
+    /// the *old* inode, which the replacement does not have. A tentative
+    /// removal now waits out one bounded re-probe.
+    @Test("an external atomic replacement observed mid-gap is a change, not a removal")
+    func atomicReplacementObservedMidGapIsNotARemoval() async throws {
+        let fixture = try Fixture(contents: "document")
+        defer { fixture.remove() }
+        let events = EventCollector()
+        let watcher = FileWatcher(url: fixture.url) { events.append($0) }
+        defer { watcher.stop() }
+
+        watcher.checkNowForTesting()
+
+        // The unlink phase of an external atomic save: the watched path is
+        // missing and the old inode is gone (a parked sibling would make
+        // this an ordinary rename, which follows immediately).
+        try FileManager.default.removeItem(at: fixture.url)
+        watcher.checkNowForTesting()
+        #expect(events.count == 0, "the transient gap must not be reported")
+
+        // The rename phase lands new content at the path before the probe.
+        try Data("rewritten".utf8).write(to: fixture.url)
+        watcher.resolveRemovalProbeForTesting()
+
+        try await expectEventCount(events, 1)
+        #expect(events.isChanged(at: 0), "the replacement must arrive as a change")
+    }
+
+    @Test("a genuine removal is still delivered once the re-probe resolves")
+    func trueRemovalIsStillDelivered() async throws {
+        let fixture = try Fixture(contents: "document")
+        defer { fixture.remove() }
+        let events = EventCollector()
+        let watcher = FileWatcher(url: fixture.url) { events.append($0) }
+        defer { watcher.stop() }
+
+        watcher.checkNowForTesting()
+        try FileManager.default.removeItem(at: fixture.url)
+        watcher.checkNowForTesting()
+        #expect(events.count == 0, "the probe has not resolved yet")
+        watcher.resolveRemovalProbeForTesting()
+
+        try await expectEventCount(events, 1)
+        #expect(events.isRemoved(at: 0))
+    }
+
     private func settle() async throws {
         try await Task.sleep(nanoseconds: 350_000_000)
     }

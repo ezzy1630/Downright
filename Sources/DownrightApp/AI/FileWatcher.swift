@@ -91,6 +91,15 @@ final class FileWatcher {
     private var suppressionBaseline: Snapshot?
     private var expectedOwnSnapshot: Snapshot?
     private var ownWriteGeneration: UInt64 = 0
+    /// A tentative removal waits out one bounded re-probe before being
+    /// delivered. External atomic saves pass through a window where the path
+    /// does not exist (unlink, then rename into place); our own writes filter
+    /// that transient through suppression state, and an external writer gets
+    /// this probe instead of a phantom "the file is gone".
+    private var pendingRemovalProbe: DispatchWorkItem?
+    /// Shorter than the document layer's quiet period, longer than any local
+    /// unlink→rename gap, so a genuine deletion is reported promptly.
+    private var removalProbeInterval: TimeInterval = 0.35
     /// Metadata is the cheap path for ordinary polls. Every few polls we
     /// still hash unchanged metadata so an in-place rewrite that preserves
     /// inode, size, and timestamps is detected even on filesystems whose
@@ -159,6 +168,8 @@ final class FileWatcher {
         pollTimer = nil
         coalesceWorkItem?.cancel()
         coalesceWorkItem = nil
+        pendingRemovalProbe?.cancel()
+        pendingRemovalProbe = nil
         forceContentDigestOnNextCheck = false
     }
 
@@ -414,6 +425,12 @@ final class FileWatcher {
         onQueue { ownWriteWatchdogDeadline = .distantPast }
     }
 
+    /// Runs the tentative-removal resolution synchronously, so race tests can
+    /// pin both outcomes of the removal grace without waiting out its interval.
+    func resolveRemovalProbeForTesting() {
+        onQueue { resolveTentativeRemoval() }
+    }
+
     /// Drives directory-watch event matching directly, without depending on
     /// FSEvents delivery timing.
     func deliverDirectoryEventForTesting(paths: [String]) {
@@ -467,6 +484,47 @@ final class FileWatcher {
             return
         }
 
+        guard now != lastSnapshot else { return }
+        let previous = lastSnapshot
+
+        if now.size < 0, previous.size >= 0 {
+            // Rename following stays immediate — the old inode is findable
+            // right now, and deferring it would stall Save As / rename UX.
+            if previous.inode != 0,
+               let relocated = FileWatcher.locate(previous, in: url.deletingLastPathComponent()) {
+                retarget(to: relocated)
+                let newURL = url
+                deliver(.renamed(to: newURL))
+                return
+            }
+            scheduleRemovalReprobe()
+            return
+        }
+
+        pendingRemovalProbe?.cancel()
+        pendingRemovalProbe = nil
+        lastSnapshot = now
+        deliver(event(for: now, previous: previous))
+    }
+
+    /// One bounded re-probe before committing a removal. When the probe runs,
+    /// the same snapshot-and-classify logic decides: the file came back (an
+    /// external atomic replacement) and is reported as the change it became,
+    /// or it is still gone and `.removed` is delivered.
+    private func scheduleRemovalReprobe() {
+        guard pendingRemovalProbe == nil else { return }
+        let gen = generation
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == gen else { return }
+            self.pendingRemovalProbe = nil
+            self.resolveTentativeRemoval()
+        }
+        pendingRemovalProbe = item
+        queue.asyncAfter(deadline: .now() + removalProbeInterval, execute: item)
+    }
+
+    private func resolveTentativeRemoval() {
+        let now = FileWatcher.snapshot(of: url, includeContentDigest: true)
         guard now != lastSnapshot else { return }
         let previous = lastSnapshot
         lastSnapshot = now
