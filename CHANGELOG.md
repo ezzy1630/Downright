@@ -157,6 +157,10 @@ every release; Sparkle orders updates by it.
 - `down check` prints conventional `file:line:` diagnostics with real line
   numbers instead of UTF-16 offsets.
 
+- **Indenting and outdenting now renumber ordered lists**, as §6.4 always
+  promised: outdenting a nested item into its parent list repairs duplicate
+  and stale numbers in the same keystroke, inside the same undo group.
+
 - **A discarded buffer can no longer reach disk.** Choosing Discard in the
   close or quit prompt used to leave the document dirty while queued autosave
   work and window-occlusion saves stayed armed: the write could land while the

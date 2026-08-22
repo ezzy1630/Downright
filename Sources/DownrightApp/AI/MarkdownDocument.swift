@@ -899,7 +899,13 @@ final class MarkdownDocument: NSObject {
         return true
     }
 
-    func apply(_ edits: [TextEdit], actionName: String) {
+    /// Applies structural-command edits as one explicit transaction.
+    ///
+    /// When `tidyRules` is given, the transaction follows the documented
+    /// sequence — apply edit, reparse, plan tidy rules, apply tidy edit — all
+    /// inside the *same* undo group, so ⌘Z undoes the command and its
+    /// automatic repair together (§6.4: indenting renumbers ordered lists).
+    func apply(_ edits: [TextEdit], actionName: String, tidyRules: Set<TidyRule>? = nil) {
         guard !edits.isEmpty else { return }
         // Back to front so earlier offsets stay valid, matching
         // `[TextEdit].applied(to:)`.
@@ -920,6 +926,21 @@ final class MarkdownDocument: NSObject {
         undoManager.beginUndoGrouping()
         for edit in accepted {
             replace(edit.range, with: edit.replacement, actionName: nil)
+        }
+        if let tidyRules, !tidyRules.isEmpty {
+            // Reparse silently mid-batch: the plan must see the tree as the
+            // landed edits shape it, and the trailing `reparseNow()` below
+            // remains the single notification point.
+            reparseSynchronously(notifying: false, wholesale: false)
+            var tidyLastStart = Int.max
+            for edit in TidyDocument.plan(parsed, rules: tidyRules)
+                .sorted(by: { $0.range.location > $1.range.location }) {
+                guard edit.range.upperBound <= tidyLastStart,
+                      edit.range.upperBound <= storage.length
+                else { continue }
+                tidyLastStart = edit.range.location
+                replace(edit.range, with: edit.replacement, actionName: nil)
+            }
         }
         undoManager.setActionName(actionName)
         undoManager.endUndoGrouping()
