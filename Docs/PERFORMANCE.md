@@ -7,18 +7,25 @@ pipeline. Do not replace a failed measurement with a claim.
 
 | Metric | Target | Method | Pass condition |
 |---|---:|---|---|
-| Cold launch to first rendered pixel, 100 KB | <250 ms | App launch capture | p95 below target |
-| Keystroke response, 5,000-line file | <8 ms | Source edit, paragraph map, dirty decoration | p95 below target |
-| Scroll | 120 fps on ProMotion | Long-document scroll trace | No sustained frame drop |
-| Structural zoom | <300 ms | Level 1–5 transition trace | Anchor stays fixed; no dropped frames |
+| Cold launch to first rendered pixel, 100 KB | <250 ms | App launch capture | p95 below target · *manual release gate* |
+| Keystroke response, 5,000-line file | <8 ms | Source edit, paragraph map, dirty decoration (`drbench`, release) | p95 below target |
+| Scroll | 120 fps on ProMotion | Long-document scroll trace | No sustained frame drop · *manual release gate* |
+| Structural zoom | <300 ms | Level 1–5 transition trace | Anchor stays fixed; no dropped frames · *manual release gate* |
 | Document↔Source swipe, engage and abandon (give path) | <8 ms | `PresentationSwipeBudgetTests`, 2,000-line file | Below target; nothing rendered inside the gesture |
 | Document↔Source swipe, engage (drag path) | <50 ms | `PresentationSwitchBudget`, documents under its line budget | Below target; measured 6 ms at 240 lines, 26 ms at 950 |
 | Document↔Source swipe, per tracking frame | <1 ms | `PresentationSwipeBudgetTests` | Below target |
-| Quick Look preview | <400 ms | Preview extension render | p95 below target |
+| Quick Look preview | <400 ms | Preview extension render | p95 below target · *no automated measurement yet — manual* |
 | Quick Look peak memory | <60 MB | Resident memory polling | Never exceeds target |
-| 1 MB document memory | <150 MB | App open and idle measurement | Peak below target |
+| 1 MB document memory | <150 MB | App open and idle measurement | Peak below target · *manual release gate* |
 | Quick Look safety fallback | 60 MB | Memory guard | Plain text fallback above guard |
 | Large Quick Look file | 2 MB | Preview policy | Initial blocks plus Open in App |
+
+Rows marked *manual release gate* have no automated enforcement vehicle in
+the repository today. They are claims to re-measure at release time, not
+gates a CI run proves; do not cite them as enforced. The memory-guard and
+policy rows are asserted by unit tests, the swipe rows by dedicated budget
+suites, and the keystroke/convergence rows by `drbench` with
+`RUN_DRBENCH=1`.
 
 The swipe budgets exist because the obvious implementation misses them by an
 order of magnitude. Dragging the Source presentation in under the fingers

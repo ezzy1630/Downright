@@ -338,6 +338,68 @@ struct AppLayerTests {
         #expect(FileManager.default.fileExists(atPath: file.path))
     }
 
+    /// The per-document size budget trims a document's own history oldest
+    /// first and never drops its newest version.
+    @Test func perDocumentByteCapEvictsOldestFirstAndKeepsNewest() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-cap-perdoc-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        // Any real text exceeds this budget, so every recorded version is
+        // trimmable except the newest, which retention always keeps.
+        store.maximumBytesPerDocument = 8
+
+        let first = "first version of the document body\n"
+        let second = "second version of the document body, revised\n"
+        let third = "third version of the document body, revised again\n"
+        #expect(store.record(first, for: document, kind: .baseline) != nil)
+        #expect(store.record(second, for: document, kind: .external) != nil)
+        #expect(store.record(third, for: document, kind: .external) != nil)
+        await store.waitForPendingWrites()
+
+        await runSnapshotPrune(store)
+
+        let versions = store.versions(for: document)
+        #expect(versions.count == 1, "the per-document budget sheds older versions")
+        #expect(store.text(for: versions[0]) == third,
+                "the newest version survives the budget")
+    }
+
+    /// The global backstop must shed history fairly: no single document may
+    /// lose its newest version, whatever its neighbours have been doing.
+    @Test func globalByteCapKeepsEveryDocumentsNewestVersion() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-cap-global-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        // A zero-byte backstop forces the global pass to shed everything it
+        // legitimately can while retention rules hold.
+        store.maximumBytes = 0
+
+        for name in ["a.md", "b.md"] {
+            let url = root.appendingPathComponent(name)
+            for index in 0..<3 {
+                #expect(store.record(
+                    "version \(index) of \(name)\n", for: url,
+                    kind: index == 0 ? .baseline : .external
+                ) != nil)
+            }
+        }
+        await store.waitForPendingWrites()
+
+        await runSnapshotPrune(store)
+
+        for name in ["a.md", "b.md"] {
+            let url = root.appendingPathComponent(name)
+            let versions = store.versions(for: url)
+            #expect(versions.count == 1, "\(name) keeps exactly its newest version")
+            #expect(store.text(for: versions[0]) == "version 2 of \(name)\n")
+        }
+    }
+
     @Test func pruneDoesNotRewriteUnchangedIndex() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("downright-prune-\(UUID().uuidString)", isDirectory: true)

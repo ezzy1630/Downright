@@ -3,11 +3,17 @@ import Foundation
 // MARK: - Subtree hashing (§3.5)
 //
 // FNV-1a over the block kind, its source bytes and its children's hashes.  Not
-// cryptographic and doesn't need to be: a collision costs one redundant
-// re-decoration, and 64 bits over a document's worth of blocks makes even that
-// vanishingly unlikely.  It is chosen over SipHash because it is seedless and
-// therefore stable across launches, which is what lets a hash be compared with
-// one computed by the previous parse.
+// cryptographic and doesn't need to be: 64 bits over a document's worth of
+// blocks makes a collision vanishingly unlikely.  It is chosen over SipHash
+// because it is seedless and therefore stable across launches, which is what
+// lets a hash be compared with one computed by the previous parse.
+//
+// Be honest about the failure mode if you touch this: equal hashes are read as
+// "unchanged" by every consumer, so a collision does not cost redundant work —
+// it *misses* a restyle (ASTDiff treats the pair as equal) or replays a stale
+// attribute program (the decoration program cache keys on this hash). FNV-1a
+// is linear and seedless, so collisions are constructible by an adversary who
+// controls document bytes; accidental ones are not a realistic concern.
 
 enum FNV {
     static let offsetBasis: UInt64 = 0xcbf2_9ce4_8422_2325
