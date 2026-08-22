@@ -11,7 +11,7 @@ const installerURL = process.env.DOWNRIGHT_INSTALLER_URL ?? "https://downright.c
 // SHA-256 is pinned here and verified before a single byte runs.  Update this
 // constant in the same commit that changes install-release.sh.
 const INSTALLER_SHA256 =
-  "f16cc08d8c3048c9e37b2aeaac1adfd84b0059036986ef009d9c03dda1d2b0f2";
+  "2a78e36dd43fb2e21e62153536e1efaf00239f3441f8f2cd11cc3c49add9e869";
 
 if (process.platform !== "darwin") {
   console.error("Downright is currently available through this installer on macOS only.");
