@@ -88,8 +88,21 @@ actor MarkdownParseCoordinator {
     /// non-cancellable cmark parse. Actor reentrancy permits the Sendable worker
     /// operation to overlap the stale request; the document revision gate still
     /// decides which result may commit.
+    ///
+    /// A coordinator that is suspended or shut down must not spend a parse on
+    /// this request. The returned placeholder carries the request's own text,
+    /// so the document's `document.text == text` gate rejects it — same
+    /// contract as a result that raced a newer edit.
     func runImmediately(_ request: MarkdownParseRequest) async -> MarkdownParseResult {
-        await worker.run(
+        guard !isSuspended, !isShutdown else {
+            return MarkdownParseResult(
+                revision: request.revision,
+                text: request.text,
+                document: ParsedDocument.empty,
+                dirty: DirtySet(ranges: [], isWholesale: false)
+            )
+        }
+        return await worker.run(
             text: request.text,
             previous: request.previous,
             revision: request.revision

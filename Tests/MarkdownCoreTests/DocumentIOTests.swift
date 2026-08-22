@@ -140,6 +140,28 @@ import Testing
         #expect(head?.utf8.count == 28)
     }
 
+    /// The bounded head must agree with a full decode about the encoding.
+    /// It used to sniff only UTF-8, so a UTF-16 file's head came back as
+    /// NUL-riddled mojibake in thumbnails and Spotlight while the app itself
+    /// opened the same file correctly.
+    @Test func readHeadMatchesFullDecodeForWideEncodings() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let text = "# Título\n\nContenido — con acentos.\n"
+        for (name, data) in [
+            ("bom16.md", text.data(using: .utf16)!),
+            ("bomless16.md", text.data(using: .utf16LittleEndian)!),
+            ("bom8.md", Data([0xEF, 0xBB, 0xBF]) + Data(text.utf8)),
+            ("plain8.md", Data(text.utf8)),
+        ] {
+            let url = directory.appendingPathComponent(name)
+            try data.write(to: url)
+            let full = try DocumentIO.decodeSnapshot(data, sourceURL: url).text
+            let head = try #require(DocumentIO.readHead(contentsOf: url, limit: 64 * 1024))
+            #expect(head == full, "\(name): head must decode like a full read")
+        }
+    }
+
     @Test func readHeadReturnsNilForMissingFile() {
         #expect(DocumentIO.readHead(
             contentsOf: URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString).md"),

@@ -75,6 +75,54 @@ import Testing
         ) == "Title\n\nBody\n")
     }
 
+    // MARK: Headings inside containers (blockquote markers, list items)
+
+    /// Regression: a heading nested in a blockquote or list item does not
+    /// begin with `#` after its leading whitespace — the container marker
+    /// sits in front — so it used to take the setext-normalization branch,
+    /// which consumed the *following* line as an underline and silently
+    /// deleted the quoted body.
+    @Test func demoteInsideBlockquoteKeepsTheQuotedBody() {
+        let text = "# Top\n> ## Deep\n> hidden secret\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.demoteHeading(doc, headingIndex: 1))
+        #expect(out == "# Top\n> ### Deep\n> hidden secret\n")
+    }
+
+    @Test func promoteInsideListItemKeepsTheMarker() {
+        let text = "- intro\n- ## Deep\n- tail\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.promoteHeading(doc, headingIndex: 0))
+        #expect(out == "- intro\n- # Deep\n- tail\n")
+    }
+
+    /// A setext heading inside a list item normalizes to ATX while keeping
+    /// the item marker and consuming exactly its own underline line.
+    @Test func setextInsideListItemNormalizesWithoutStrayUnderline() {
+        let text = "- Title\n  =====\n- tail\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.setHeadingLevel(doc, headingIndex: 0, level: 2))
+        #expect(out == "- ## Title\n- tail\n")
+    }
+
+    /// The old setext branch bailed out entirely when the heading was the
+    /// document's final line (no next line to index), so demote silently
+    /// did nothing.
+    @Test func rewriteLevelWorksWithoutATrailingNewline() {
+        for text in ["## Deep", "# Top\n## Deep"] {
+            let doc = MarkdownParser.parse(text)
+            let out = apply(text, Restructure.demoteHeading(doc, headingIndex: doc.headings.count - 1))
+            #expect(out == text.replacingOccurrences(of: "## Deep", with: "### Deep"))
+        }
+    }
+
+    @Test func headingToBodyTextKeepsContainerMarkers() {
+        let text = "> # Title\n> body\n"
+        let doc = MarkdownParser.parse(text)
+        let out = apply(text, Restructure.headingToBodyText(doc, headingIndex: 0))
+        #expect(out == "> Title\n> body\n")
+    }
+
     @Test func clampsAtTheEnds() {
         let top = MarkdownParser.parse("# A\n\n## B\n")
         #expect(Restructure.promoteHeading(top, headingIndex: 0).isEmpty)

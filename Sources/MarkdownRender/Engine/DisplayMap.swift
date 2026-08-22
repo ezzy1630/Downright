@@ -355,6 +355,15 @@ public struct DisplaySubstitution: Equatable {
         DisplaySubstitution(sourceRange: range, displayLength: 0, replacement: nil, isHidden: true)
     }
 
+    /// Builds an expanding substitution. Invariant every consumer of
+    /// `sourceOffset(forTextKit:)` silently relies on: `displayLength` must
+    /// never exceed `sourceRange.length`. The TextKit→source router treats a
+    /// TextKit offset as a source offset inside the substitution's paragraph,
+    /// which is only sound while display space stays numerically ≤ source
+    /// space. Every current producer uses `hide`, same-length
+    /// `replaceHidden`, or single-glyph math attachments; if you ever need a
+    /// true expansion, the router has to grow real per-substitution mapping
+    /// first.
     public static func replace(_ range: NSRange, with string: NSAttributedString) -> DisplaySubstitution {
         DisplaySubstitution(sourceRange: range, displayLength: string.length, replacement: string)
     }

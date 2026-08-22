@@ -260,6 +260,68 @@ struct AppLayerTests {
         #expect(store.content(for: record) == .text(text))
     }
 
+    /// Regression: a present-but-undecodable index used to be treated as an
+    /// empty one, so the next record overwrote it with a single-entry index
+    /// and the following prune garbage-collected every object the old index
+    /// referenced — one corrupt file became permanent history loss.
+    @Test func recordNeverOverwritesAnUnreadableIndex() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-record-unreadable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        let file = snapshotIndexFile(for: document, historyDirectory: historyDirectory)
+
+        let first = "first version\n"
+        #expect(store.record(first, for: document, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+        let versionsBefore = store.versions(for: document)
+        #expect(versionsBefore.count == 1)
+
+        try Data("not json".utf8).write(to: file, options: .atomic)
+        let corruptedBytes = try Data(contentsOf: file)
+
+        // Recording after corruption must not replace the unreadable index.
+        #expect(store.record("second version\n", for: document, kind: .external) != nil)
+        await store.waitForPendingWrites()
+        #expect(try Data(contentsOf: file) == corruptedBytes,
+                "the undecodable index file must be left exactly as it was")
+        #expect(store.content(forHash: versionsBefore[0].hash) == .text(first),
+                "the recorded object must survive a prune that fails closed")
+    }
+
+    /// The `forget` sweep shares prune's rule: with an undecodable index in
+    /// play, reference knowledge is incomplete and nothing may be deleted.
+    @Test func forgetDoesNotSweepObjectsBehindAnUnreadableIndex() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-forget-unreadable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+
+        let kept = root.appendingPathComponent("kept.md")
+        let keptText = "kept behind a corrupt index\n"
+        #expect(store.record(keptText, for: kept, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+
+        let forgotten = root.appendingPathComponent("forgotten.md")
+        #expect(store.record("forgotten\n", for: forgotten, kind: .baseline) != nil)
+        await store.waitForPendingWrites()
+
+        // Corrupt the *kept* document's index, then forget the other one.
+        let keptIndex = snapshotIndexFile(for: kept, historyDirectory: historyDirectory)
+        try Data("not json".utf8).write(to: keptIndex, options: .atomic)
+
+        store.forget(forgotten)
+        await store.waitForPendingWrites()
+
+        let keptVersions = store.versions(for: kept)
+        #expect(keptVersions.isEmpty, "the corrupt index reads as no versions")
+        #expect(store.content(forHash: SnapshotStore.hash(keptText)) == .text(keptText),
+                "its objects must not be swept while its index is unreadable")
+    }
+
     @Test func pruneKeepsOldHistoryForLiveDocument() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("downright-prune-\(UUID().uuidString)", isDirectory: true)
@@ -274,6 +336,68 @@ struct AppLayerTests {
         try writeSnapshotIndex(path: url.path, age: 90 * 24 * 60 * 60, to: file)
         await runSnapshotPrune(store)
         #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    /// The per-document size budget trims a document's own history oldest
+    /// first and never drops its newest version.
+    @Test func perDocumentByteCapEvictsOldestFirstAndKeepsNewest() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-cap-perdoc-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        let document = root.appendingPathComponent("document.md")
+        // Any real text exceeds this budget, so every recorded version is
+        // trimmable except the newest, which retention always keeps.
+        store.maximumBytesPerDocument = 8
+
+        let first = "first version of the document body\n"
+        let second = "second version of the document body, revised\n"
+        let third = "third version of the document body, revised again\n"
+        #expect(store.record(first, for: document, kind: .baseline) != nil)
+        #expect(store.record(second, for: document, kind: .external) != nil)
+        #expect(store.record(third, for: document, kind: .external) != nil)
+        await store.waitForPendingWrites()
+
+        await runSnapshotPrune(store)
+
+        let versions = store.versions(for: document)
+        #expect(versions.count == 1, "the per-document budget sheds older versions")
+        #expect(store.text(for: versions[0]) == third,
+                "the newest version survives the budget")
+    }
+
+    /// The global backstop must shed history fairly: no single document may
+    /// lose its newest version, whatever its neighbours have been doing.
+    @Test func globalByteCapKeepsEveryDocumentsNewestVersion() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("downright-cap-global-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let historyDirectory = root.appendingPathComponent("history", isDirectory: true)
+        let store = SnapshotStore(historyDirectory: historyDirectory)
+        // A zero-byte backstop forces the global pass to shed everything it
+        // legitimately can while retention rules hold.
+        store.maximumBytes = 0
+
+        for name in ["a.md", "b.md"] {
+            let url = root.appendingPathComponent(name)
+            for index in 0..<3 {
+                #expect(store.record(
+                    "version \(index) of \(name)\n", for: url,
+                    kind: index == 0 ? .baseline : .external
+                ) != nil)
+            }
+        }
+        await store.waitForPendingWrites()
+
+        await runSnapshotPrune(store)
+
+        for name in ["a.md", "b.md"] {
+            let url = root.appendingPathComponent(name)
+            let versions = store.versions(for: url)
+            #expect(versions.count == 1, "\(name) keeps exactly its newest version")
+            #expect(store.text(for: versions[0]) == "version 2 of \(name)\n")
+        }
     }
 
     @Test func pruneDoesNotRewriteUnchangedIndex() async throws {

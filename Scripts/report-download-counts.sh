@@ -51,9 +51,27 @@ done
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
+# Temporary files removed on exit. A single handler because the pagination
+# loop below re-points nothing: every consumer appends here.
+CLEANUP_FILES=()
+cleanup() {
+    local file
+    for file in "${CLEANUP_FILES[@]:-}"; do
+        [ -n "$file" ] && rm -f "$file"
+    done
+}
+trap cleanup EXIT
+
 CURL_ARGS=(-fsSL -H 'Accept: application/vnd.github+json')
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-    CURL_ARGS+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    # The token goes through a curl config file rather than the command
+    # line: arguments are world-readable in `ps` output for as long as the
+    # request runs, and this report can run on developer machines.
+    CURL_CONFIG="$(mktemp)"
+    chmod 600 "$CURL_CONFIG"
+    CLEANUP_FILES+=("$CURL_CONFIG")
+    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" > "$CURL_CONFIG"
+    CURL_ARGS+=(--config "$CURL_CONFIG")
 fi
 
 REMOTE="$(git -C "$ROOT" config --get remote.origin.url || true)"
@@ -67,7 +85,7 @@ if [ "$ALL" = "1" ]; then
     # The releases endpoint defaults to 30 results. Keep following pages so
     # the README counter remains cumulative as the project grows.
     RELEASES_FILE="$(mktemp)"
-    trap 'rm -f "$RELEASES_FILE"' EXIT
+    CLEANUP_FILES+=("$RELEASES_FILE")
     PAGE=1
     while :; do
         RESPONSE="$(curl "${CURL_ARGS[@]}" \

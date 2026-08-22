@@ -30,6 +30,15 @@ import Testing
         #expect(pressReturn("- top\n  - nested\n", at: 16) == "- top\n  - nested\n  - \n")
     }
 
+    /// Regression: `markerRange` excludes the container indentation, so
+    /// dropping the indentation from the front of the *marker text* stripped
+    /// into the bullet itself; `*`/`+` items fell through to a `-`.
+    @Test func continuesNestedItemsWithTheirOwnMarkerCharacter() {
+        #expect(pressReturn("* top\n  * nested\n", at: 16) == "* top\n  * nested\n  * \n")
+        #expect(pressReturn("+ top\n  + nested\n", at: 16) == "+ top\n  + nested\n  + \n")
+        #expect(pressReturn("- top\n  * nested\n", at: 16) == "- top\n  * nested\n  * \n")
+    }
+
     /// §6.4: "outdent-and-exit on an empty item."
     @Test func emptyItemAtTopLevelExitsTheList() {
         #expect(pressReturn("- one\n- \n", at: 8) == "- one\n\n")

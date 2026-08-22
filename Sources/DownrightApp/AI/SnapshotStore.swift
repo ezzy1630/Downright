@@ -144,7 +144,9 @@ final class SnapshotStore: @unchecked Sendable {
 
         var state = stateByDocument[documentKey] ?? DocumentState()
         if !state.isLoaded {
-            state.newestHash = loadIndex(for: url).versions.last?.hash
+            if case .loaded(let existing) = loadIndexState(for: url) {
+                state.newestHash = existing.versions.last?.hash
+            }
             state.isLoaded = true
         }
         guard state.newestHash != hash else {
@@ -159,10 +161,20 @@ final class SnapshotStore: @unchecked Sendable {
 
         queue.async { [self] in
             writeObjectIfNeeded(hash: hash, data: data)
-            var idx = loadIndex(for: url)
-            guard idx.versions.last?.hash != hash else { return }
-            idx.versions.append(record)
-            saveIndex(idx, for: url)
+            // The object above is safe regardless of index health: while any
+            // present-but-undecodable index exists, pruning fails closed and
+            // will not treat it as unreferenced. The index itself is only
+            // rewritten when it is readable or genuinely absent.
+            switch loadIndexState(for: url) {
+            case .loaded(var idx):
+                guard idx.versions.last?.hash != hash else { return }
+                idx.versions.append(record)
+                saveIndex(idx, for: url)
+            case .missing:
+                saveIndex(Index(path: url.path, versions: [record]), for: url)
+            case .unreadable:
+                break
+            }
             pruneIfDue()
         }
         return record
@@ -171,7 +183,8 @@ final class SnapshotStore: @unchecked Sendable {
     // MARK: - Reading
 
     func versions(for url: URL) -> [VersionRecord] {
-        loadIndex(for: url).versions
+        if case .loaded(let index) = loadIndexState(for: url) { return index.versions }
+        return []
     }
 
     func text(for record: VersionRecord) -> String? {
@@ -315,11 +328,24 @@ final class SnapshotStore: @unchecked Sendable {
         indexDirectory.appendingPathComponent(Self.documentKey(for: url) + ".json")
     }
 
-    private func loadIndex(for url: URL) -> Index {
-        guard let data = try? Data(contentsOf: indexURL(for: url)),
+    /// The three answers an index file can give. "Absent" and "present but
+    /// undecodable" must stay distinct: overwriting the latter replaces every
+    /// version it references with a one-entry index, and the following prune
+    /// garbage-collects those now-unreferenced objects — permanent history
+    /// loss caused by a repairable bit of corruption.
+    private enum IndexLoad {
+        case loaded(Index)
+        case missing
+        case unreadable
+    }
+
+    private func loadIndexState(for url: URL) -> IndexLoad {
+        let fileURL = indexURL(for: url)
+        guard fm.fileExists(atPath: fileURL.path) else { return .missing }
+        guard let data = try? Data(contentsOf: fileURL),
               let index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
-        else { return Index(path: url.path, versions: []) }
-        return index
+        else { return .unreadable }
+        return .loaded(index)
     }
 
     private func saveIndex(_ index: Index, for url: URL) {
@@ -465,7 +491,12 @@ final class SnapshotStore: @unchecked Sendable {
         for indexFile in indexes where indexFile.pathExtension == "json" {
             guard let data = try? Data(contentsOf: indexFile),
                   let index = try? JSONDecoder.snapshotDecoder.decode(Index.self, from: data)
-            else { continue }
+            else {
+                // An index that cannot be decoded may be the only thing
+                // referencing its objects. Same fail-closed rule as prune():
+                // with incomplete reference knowledge, delete nothing.
+                return
+            }
             referenced.formUnion(index.versions.map(\.hash))
         }
         for object in objectInventory() where !referenced.contains(object.hash) {

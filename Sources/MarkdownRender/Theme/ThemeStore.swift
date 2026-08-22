@@ -121,6 +121,12 @@ public final class ThemeStore {
         return decode(contents.filter { $0.pathExtension.lowercased() == "json" })
     }
 
+    /// A theme is a palette, not a data set. Bound every read so a runaway
+    /// file in the hot-reloaded user folder cannot turn each reload event —
+    /// one per editor save burst in that directory — into an unbounded
+    /// allocation on the watch queue.
+    private static let maximumThemeFileBytes = 8 * 1024 * 1024
+
     /// A theme that fails to decode is skipped rather than surfaced: with hot
     /// reload the file is very often half-written, and the next event brings
     /// the good version a moment later.
@@ -130,7 +136,14 @@ public final class ThemeStore {
             .filter { !$0.lastPathComponent.hasPrefix(".") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { url in
-                guard let data = try? Data(contentsOf: url) else { return nil }
+                let values = try? url.resourceValues(
+                    forKeys: [.isRegularFileKey, .fileSizeKey]
+                )
+                guard values?.isRegularFile == true,
+                      let size = values?.fileSize,
+                      size > 0, size <= maximumThemeFileBytes,
+                      let data = try? Data(contentsOf: url)
+                else { return nil }
                 return try? decoder.decode(Theme.self, from: data)
             }
     }
@@ -281,6 +294,12 @@ final class DirectoryWatcher {
     private let url: URL
     private let onChange: () -> Void
     private let queue = DispatchQueue(label: "com.downright.theme-watch")
+    /// Watch state is touched from three threads: `start()` runs on the
+    /// constructing thread, source events and restarts run on `queue`, and
+    /// `deinit` can land anywhere. Lock-guarded rather than queue-confined —
+    /// `queue.sync` from `deinit` could deadlock if the last release ever
+    /// happened inside a queue block.
+    private let stateLock = NSLock()
     private var source: DispatchSourceFileSystemObject?
     private var descriptor: CInt = -1
     private var pending: DispatchWorkItem?
@@ -294,10 +313,10 @@ final class DirectoryWatcher {
     deinit { stop() }
 
     private func start() {
-        descriptor = open(url.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
+        let opened = open(url.path, O_EVTONLY)
+        guard opened >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
+            fileDescriptor: opened,
             eventMask: [.write, .extend, .attrib, .rename, .delete],
             queue: queue
         )
@@ -311,9 +330,12 @@ final class DirectoryWatcher {
             }
             self.scheduleReload()
         }
-        source.setCancelHandler { [descriptor] in close(descriptor) }
+        source.setCancelHandler { [opened] in close(opened) }
+        stateLock.lock()
+        descriptor = opened
         self.source = source
         source.resume()
+        stateLock.unlock()
     }
 
     private func restart() {
@@ -322,17 +344,25 @@ final class DirectoryWatcher {
     }
 
     private func stop() {
-        source?.cancel()
-        source = nil
+        stateLock.lock()
+        let source = self.source
+        self.source = nil
         descriptor = -1
+        // Cancelling inside the lock keeps stop atomic against a racing
+        // start(): the cancel handler closes exactly the descriptor that was
+        // current when the decision to stop was made.
+        source?.cancel()
+        stateLock.unlock()
     }
 
     /// One save produces a burst of events; coalescing keeps the reload — and
     /// therefore the full redecorate it triggers — to one per burst.
     private func scheduleReload() {
+        stateLock.lock()
         pending?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.onChange() }
         pending = work
+        stateLock.unlock()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 }

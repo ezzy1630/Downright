@@ -1,10 +1,10 @@
 import AppKit
 import Foundation
 
-/// Appearance and theme names shared by the app and its sandboxed Quick Look
-/// extension.  Quick Look is a separate process, so the ordinary app defaults
-/// domain is not visible there; the small app-group store keeps this setting
-/// explicit instead of making the extension guess from the last document.
+/// Appearance and theme names shared by the host app and its Quick Look
+/// extension.  See `PreviewAppearanceStore` below for how the names actually
+/// travel between processes — not an app group, despite what the type name
+/// might suggest.
 public enum PreviewAppearance: String, CaseIterable, Codable, Sendable {
     case system
     case light
@@ -30,7 +30,10 @@ public enum PreviewAppearance: String, CaseIterable, Codable, Sendable {
 /// Deliberately tiny bridge between the host app and Quick Look. Quick Look is
 /// sandboxed and a local/ad-hoc build cannot carry an App Group without a
 /// provisioning profile, so these namespaced values live in the macOS global
-/// preferences domain. Missing or malformed values mean System.
+/// preferences domain (`kCFPreferencesAnyApplication`). Missing or malformed
+/// values mean System. Whether a sandboxed `.appex` can read this domain is
+/// runtime-dependent; the packaged acceptance surface, not unit tests, owns
+/// proving the setting actually reaches the extension.
 public enum PreviewAppearanceStore {
     public static let appearanceKey = "com.ezzy.downright.quickLook.appearance"
     public static let lightThemeKey = "com.ezzy.downright.quickLook.lightTheme"

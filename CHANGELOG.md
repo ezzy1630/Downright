@@ -134,6 +134,33 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
+- **Restructuring a heading inside a quote or list no longer eats the next
+  line.** Demoting `> ## Deep` used to take the setext-normalization path,
+  which consumed the *following* line as an underline — the quoted body
+  vanished. Level changes now require a genuinely two-line setext shape, keep
+  the container marker in front of the hashes, and Heading to Body Text stops
+  stripping `> `/`- ` off nested headings. List continuation on Return keeps
+  a nested item's own `*`/`+` bullet instead of falling back to `-`.
+- **An external atomic save is not reported as a deletion.** A write observed
+  inside the brief unlink→rename window could surface "the file is gone";
+  a tentative removal now waits out one short re-probe and reports what the
+  path became.
+- **A corrupt version-timeline index is left alone.** Recording a new version
+  used to overwrite an unreadable history index and let the next prune sweep
+  every object it referenced; the store now refuses to touch an index it
+  cannot decode.
+- **Installers cannot destroy the app they replace.** An interruption during
+  the swap used to delete the only copy of the installed app along with its
+  staging directory; the previous installation is now restored or preserved
+  on every exit path, and the local installer closes Downright refusal-first
+  instead of killing it silently.
+- `down check` prints conventional `file:line:` diagnostics with real line
+  numbers instead of UTF-16 offsets.
+
+- **Indenting and outdenting now renumber ordered lists**, as §6.4 always
+  promised: outdenting a nested item into its parent list repairs duplicate
+  and stale numbers in the same keystroke, inside the same undo group.
+
 - **A discarded buffer can no longer reach disk.** Choosing Discard in the
   close or quit prompt used to leave the document dirty while queued autosave
   work and window-occlusion saves stayed armed: the write could land while the

@@ -481,7 +481,14 @@ extension DocumentWindowController: CommandResponder {
         let line = (markdownDocument.text as NSString).lineRange(for: selectionRange())
         let edits = ListEditing.indent(markdownDocument.parsed, lineRange: line, outdent: outdent)
         guard !edits.isEmpty else { return false }
-        markdownDocument.apply(edits, actionName: outdent ? "Outdent" : "Indent")
+        // §6.4: indent and outdent renumber ordered lists automatically. The
+        // rule only touches markers that genuinely disagree with their
+        // position in their own list.
+        markdownDocument.apply(
+            edits,
+            actionName: outdent ? "Outdent" : "Indent",
+            tidyRules: [.orderedListNumbers]
+        )
         return true
     }
 

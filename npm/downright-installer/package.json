@@ -1,6 +1,6 @@
 {
   "name": "downright-installer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Install the signed Downright macOS app from its latest release",
   "type": "module",
   "bin": {
@@ -9,6 +9,9 @@
   "engines": {
     "node": ">=18"
   },
+  "os": [
+    "darwin"
+  ],
   "files": [
     "bin",
     "README.md"

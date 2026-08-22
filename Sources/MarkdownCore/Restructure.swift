@@ -65,14 +65,20 @@ public enum Restructure {
             )]
         }
 
-        let source = doc.substring(firstLine)
-        let indent = source.leadingIndent
-        let markerStart = firstLine.location + indent.utf16.count
-        guard heading.contentRange.location >= markerStart else { return [] }
+        // Anchor at the parser-owned block start. For a plain ATX line that
+        // sits just past the leading indent; for a heading inside a
+        // blockquote or list item it sits past the container marker, which
+        // must survive the conversion instead of being stripped away.
+        let markerLocation = heading.range.location
+        guard markerLocation >= firstLine.location,
+              markerLocation <= firstLine.upperBound,
+              heading.contentRange.location >= markerLocation,
+              heading.contentRange.location <= firstLine.upperBound
+        else { return [] }
         var edits = [TextEdit(
             range: NSRange(
-                location: markerStart,
-                length: heading.contentRange.location - markerStart
+                location: markerLocation,
+                length: heading.contentRange.location - markerLocation
             ),
             replacement: "",
             summary: "Heading to body text"
@@ -118,22 +124,45 @@ public enum Restructure {
         _ doc: ParsedDocument, _ heading: HeadingNode, to level: Int
     ) -> TextEdit? {
         let line = doc.range(ofLine: doc.line(at: heading.range.location))
-        let source = doc.substring(line)
-        let indent = source.leadingIndent
-        let hashes = source.dropFirst(indent.count).prefix { $0 == "#" }
-        if hashes.count != heading.level {
+
+        // A setext heading's block spans its underline line; an ATX heading
+        // is always confined to its own source line. Only a genuine setext
+        // shape may consume a second line. (A heading nested in a blockquote
+        // or list item also fails the naive "line starts with N hashes"
+        // probe below, because the container marker sits in front — it must
+        // never fall into the two-line path.)
+        let isSetext = heading.range.upperBound > line.upperBound
+
+        if isSetext {
             // Setext can express only H1/H2. The direct picker still promises
             // H1...H6, so normalize this heading to ATX while preserving the
-            // title's exact source bytes, indentation, and original line
-            // ending.  The *source* span, not `heading.title`: the parsed
-            // title is plain text, and rebuilding from it would strip the
-            // emphasis and code markers the line carries.
+            // container prefix before the block start, the title's exact
+            // source bytes, and the original line ending.  The *source*
+            // span, not `heading.title`: the parsed title is plain text, and
+            // rebuilding from it would strip the emphasis and code markers
+            // the line carries.
             let titleLineNumber = doc.line(at: line.location)
             guard titleLineNumber < doc.lineStarts.count else { return nil }
+            // A setext underline always sits on the immediately following
+            // source line. (The block range itself cannot be trusted for
+            // this: inside a list item cmark reports an end past the
+            // container's next sibling.) `lineStarts` is indexed by 0-based
+            // line, so the 1-based number of a line indexes the *following*
+            // line's start.
             let underlineStart = doc.lineStarts[titleLineNumber]
             let removalEnd = titleLineNumber + 1 < doc.lineStarts.count
                 ? doc.lineStarts[titleLineNumber + 1]
                 : doc.length
+            // Defensive shape check: only consume the second line when it
+            // really is an underline (`=` / `-` runs). Anything else must
+            // never be deleted by a level change.
+            let underlineText = doc.substring(
+                NSRange(location: underlineStart, length: removalEnd - underlineStart)
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !underlineText.isEmpty, underlineText.allSatisfy({ $0 == "=" || $0 == "-" })
+            else { return nil }
+            let prefixLength = max(0, min(heading.range.location - line.location, line.length))
+            let prefix = doc.substring(NSRange(location: line.location, length: prefixLength))
             let separator = line.upperBound < underlineStart
                 ? doc.substring(NSRange(
                     location: line.upperBound,
@@ -143,12 +172,21 @@ public enum Restructure {
             let rawTitle = doc.substring(heading.contentRange)
             return TextEdit(
                 range: NSRange(location: line.location, length: removalEnd - line.location),
-                replacement: "\(indent)\(String(repeating: "#", count: level)) \(rawTitle)\(separator)",
+                replacement: "\(prefix)\(String(repeating: "#", count: level)) \(rawTitle)\(separator)",
                 summary: "H\(heading.level) → H\(level): \(heading.title)"
             )
         }
+
+        // ATX: replace exactly the `#` run at the parser-owned block start.
+        // For a plain line that equals the old leading-indent position; for a
+        // nested heading the run sits behind the container marker.
+        let nsSource = doc.substring(line) as NSString
+        let columnInLine = heading.range.location - line.location
+        guard columnInLine >= 0, columnInLine <= nsSource.length else { return nil }
+        let hashes = nsSource.substring(from: columnInLine).prefix { $0 == "#" }
+        guard hashes.utf16.count == heading.level else { return nil }
         return TextEdit(
-            range: NSRange(location: line.location + indent.utf16.count, length: hashes.count),
+            range: NSRange(location: heading.range.location, length: hashes.utf16.count),
             replacement: String(repeating: "#", count: level),
             summary: "H\(heading.level) → H\(level): \(heading.title)"
         )

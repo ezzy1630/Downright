@@ -57,7 +57,12 @@ public enum ListEditing {
             let punctuation = markerText.contains(")") ? ")" : "."
             next += "\(ordinal + 1)\(punctuation) "
         } else {
-            let bullet = markerText.dropFirst(indent.count).first.map(String.init) ?? "-"
+            // `markerRange` is parser-owned and excludes the container
+            // indentation, so the bullet character is just the marker's first
+            // non-whitespace character. (Stripping `indent` off the front of
+            // the marker text used to eat into `*`/`+` markers and fall back
+            // to `-`.)
+            let bullet = markerText.trimmingCharacters(in: .whitespaces).first.map(String.init) ?? "-"
             next += bullet + " "
         }
         if checkbox != nil { next += "[ ] " }

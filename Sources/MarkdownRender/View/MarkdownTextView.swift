@@ -688,7 +688,15 @@ public final class MarkdownTextView: NSTextView {
         parsedDocument = document
         hoveredLinkRange = nil
         updateGeneration &+= 1
-        if isWholesaleUpdate { pathExistence.removeAll(keepingCapacity: true) }
+        if isWholesaleUpdate {
+            pathExistence.removeAll(keepingCapacity: true)
+            // Collapse overrides are keyed by bare source offsets. After a
+            // wholesale rewrite those offsets belong to different blocks, so
+            // remembered open/closed choices would attach themselves to
+            // unrelated content; fall back to the parsed default instead.
+            codeCollapseOverrides.removeAll(keepingCapacity: true)
+            fragmentContext.collapseOverrides = codeCollapseOverrides
+        }
         fragmentContext.frontMatterFields = (document.frontMatter?.fields ?? []).map { ($0.key, $0.value) }
         fragmentContext.documentHasH1 = document.headings.contains { $0.level == 1 }
         // Text changed, so any table geometry cached for a previous revision

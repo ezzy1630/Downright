@@ -223,6 +223,60 @@ struct DocumentTrustStateTests {
         document.close()
     }
 
+    /// §6.4: indent/outdent renumber ordered lists automatically, and the
+    /// renumbering lands in the SAME undo group as the indentation — one ⌘Z
+    /// restores the original text exactly.
+    @Test @MainActor
+    func outdentingAnOrderedListRenumbersInOneUndoGroup() throws {
+        let fixture = try Fixture(text: "1. one\n   1. child\n2. two\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+
+        // Outdent the nested item: the raw edit only removes its indent.
+        document.ensureParsedCurrent()
+        let line = (document.text as NSString).lineRange(for: NSRange(location: 7, length: 0))
+        let edits = ListEditing.indent(document.parsed, lineRange: line, outdent: true)
+        #expect(!edits.isEmpty)
+        document.apply(edits, actionName: "Outdent", tidyRules: [.orderedListNumbers])
+
+        #expect(document.text == "1. one\n2. child\n3. two\n",
+                "the outdented list is renumbered automatically")
+
+        // One undo step removes the renumber and the indent together.
+        document.undoManager.undo()
+        #expect(document.text == "1. one\n   1. child\n2. two\n")
+        document.close()
+    }
+
+    /// The Discard composition, end to end: whatever implicit save work was
+    /// already queued when the user pressed Discard must find a clean buffer
+    /// afterwards and leave the declined bytes off disk.
+    @Test @MainActor
+    func lateImplicitSaveAfterDiscardWritesNothing() throws {
+        let fixture = try Fixture(text: "on disk\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        #expect(document.replace(
+            NSRange(location: 0, length: document.storage.length),
+            with: "declined\n", actionName: "Paste"
+        ))
+        let diskBefore = try Data(contentsOf: fixture.url)
+
+        // The alert handler's action for "Discard Changes".
+        document.discardUnsavedChanges()
+        #expect(!document.isDirty)
+
+        guard case .success = document.saveIfNeeded() else {
+            Issue.record("a discarded buffer must read as clean to implicit saves")
+            return
+        }
+        #expect(try Data(contentsOf: fixture.url) == diskBefore,
+                "the declined edits must not reach disk through any later save")
+        document.close()
+    }
+
     @Test @MainActor
     func byteOnlyExternalRewriteUpdatesFidelityBeforeSaving() throws {
         let fixture = try Fixture(text: "one\ntwo\n")

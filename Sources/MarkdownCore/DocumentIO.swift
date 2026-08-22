@@ -69,15 +69,42 @@ public enum DocumentIO {
     /// UTF-8 scalar, so trailing bytes are trimmed until the head decodes.
     /// Returns `nil` when the file cannot be opened or its head cannot be
     /// decoded at all.
+    ///
+    /// Encoding detection matches a full `decode`, so a UTF-16/32 file's head
+    /// comes back as its real text instead of NUL-riddled mojibake: the
+    /// bounded surfaces must agree with what opening the file in the app
+    /// shows.
     public static func readHead(contentsOf url: URL, limit: Int) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: limit) else { return nil }
-        if let text = String(data: data, encoding: .utf8) { return text }
-        for drop in 1...3 where data.count > drop {
-            if let text = String(data: data.dropLast(drop), encoding: .utf8) { return text }
+        guard let data = try? handle.read(upToCount: limit), !data.isEmpty else { return nil }
+
+        let bom = detectBOM(data)
+        let body = data.dropFirst(bom?.length ?? 0)
+        let encoding: TextEncodingKind
+        if let bom {
+            encoding = bom.encoding
+        } else if let guessed = sniffBOMlessUTF16or32(body) {
+            encoding = guessed
+        } else if String(data: body, encoding: .utf8) != nil {
+            encoding = .utf8
+        } else {
+            encoding = .latin1
         }
-        return String(data: data, encoding: .isoLatin1)
+        if encoding.codeUnitWidth > 1 {
+            if let text = String(data: body, encoding: encoding.stringEncoding) { return text }
+            let trimmed = adjustTruncation(body, encoding: encoding)
+            if let text = String(data: trimmed, encoding: encoding.stringEncoding) { return text }
+        } else {
+            // A torn multi-byte UTF-8 tail: trim up to three bytes before
+            // the never-failing Latin-1 fallback hides the problem.
+            for drop in 0...3 where drop == 0 || data.count > drop {
+                if let text = String(data: data.dropLast(drop), encoding: .utf8) { return text }
+            }
+            return String(data: body, encoding: .isoLatin1)
+        }
+        // Corrupt beyond either repair path.
+        return String(data: body, encoding: .isoLatin1)
     }
 
     public static func write(_ text: String, to url: URL, fidelity: ByteFidelity) throws {
