@@ -17,6 +17,10 @@ CHECKSUM_PATH="$WORK_DIR/Downright.dmg.sha256"
 STAGED_APP="$WORK_DIR/Downright.app"
 BACKUP_APP="$WORK_DIR/previous.app"
 DEVICE=""
+# Set once the staged app is verified in place. Until then the backup is
+# the only copy of the user's installed Downright, so every exit path must
+# preserve or restore it rather than delete it.
+INSTALL_FINALIZED=0
 
 log() {
     printf '==> %s\n' "$*"
@@ -34,7 +38,21 @@ cleanup() {
     if [ -n "$DEVICE" ]; then
         hdiutil detach "$DEVICE" -force >/dev/null 2>&1 || true
     fi
-    rm -rf "$WORK_DIR"
+    if [ "${INSTALL_FINALIZED:-0}" != "1" ] && [ -e "$BACKUP_APP" ]; then
+        # The staged app never took over. Put the previous installation
+        # back; if that is impossible, keep it on disk and say where it is
+        # instead of deleting it with the work directory.
+        if move_into_app_parent "$BACKUP_APP" "$APP_DEST" 2>/dev/null; then
+            printf 'The previous Downright.app was restored.\n' >&2
+        else
+            printf 'warning: the previous app could not be restored automatically.\n' >&2
+            printf 'It is preserved at: %s\n' "$BACKUP_APP" >&2
+            WORK_DIR=""
+        fi
+    fi
+    if [ -n "$WORK_DIR" ]; then
+        rm -rf "$WORK_DIR"
+    fi
     exit "$status"
 }
 
@@ -56,8 +74,10 @@ fi
 
 mkdir -p "$MOUNT_DIR"
 log "Downloading the latest Downright release"
-curl -fsSL --retry 3 --retry-delay 1 "$RELEASE_BASE_URL/Downright.dmg" -o "$DMG_PATH"
-curl -fsSL --retry 3 --retry-delay 1 "$RELEASE_BASE_URL/Downright.dmg.sha256" -o "$CHECKSUM_PATH"
+curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 600 \
+    "$RELEASE_BASE_URL/Downright.dmg" -o "$DMG_PATH"
+curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 60 \
+    "$RELEASE_BASE_URL/Downright.dmg.sha256" -o "$CHECKSUM_PATH"
 
 EXPECTED_SHA="$(awk 'NF { print tolower($1); exit }' "$CHECKSUM_PATH")"
 ACTUAL_SHA="$(shasum -a 256 "$DMG_PATH" | awk '{ print tolower($1) }')"
@@ -91,11 +111,13 @@ if [ -e "$APP_DEST" ]; then
 fi
 
 if ! move_into_app_parent "$STAGED_APP" "$APP_DEST"; then
-    if [ -e "$BACKUP_APP" ]; then
-        move_into_app_parent "$BACKUP_APP" "$APP_DEST" || true
-    fi
+    # cleanup() restores the backup on the way out; if even that fails it
+    # preserves the backup and prints its location.
     fail "could not install the application in $APP_DEST"
 fi
+
+codesign --verify --deep --strict "$APP_DEST" >/dev/null
+INSTALL_FINALIZED=1
 
 if [ -e "$BACKUP_APP" ]; then
     if [ -w "$WORK_DIR" ]; then
@@ -104,8 +126,6 @@ if [ -e "$BACKUP_APP" ]; then
         sudo rm -rf "$BACKUP_APP"
     fi
 fi
-
-codesign --verify --deep --strict "$APP_DEST" >/dev/null
 
 if [ "${DOWNRIGHT_SKIP_SYSTEM_INTEGRATION:-0}" != "1" ]; then
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
