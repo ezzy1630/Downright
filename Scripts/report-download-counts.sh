@@ -2,8 +2,9 @@
 # Report GitHub Release asset download counts for Downright.
 #
 # GitHub counts asset downloads, not unique people. DMGs represent acquisition
-# requests, including direct downloads and Homebrew cask installs. Sparkle ZIPs
-# represent updates and must not be added to the acquisition total.
+# requests across all installation channels (direct download, Homebrew cask,
+# curl script, npm/npx installer). Sparkle ZIPs represent updates and must not
+# be added to the acquisition total.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -40,12 +40,25 @@ protocol UpdateEngine: AnyObject {
 /// Owns an `SPUUpdater` configured with the app's Info.plist feed settings and
 /// Downright's custom user driver.  All calls must be made on the main thread,
 /// which the `@MainActor` annotation on the protocol enforces.
+///
+/// The updater's delegate is `BackgroundDownloadNotifier`, not the engine
+/// itself: `SPUUpdater` takes its delegate at construction, before `self` is
+/// usable, and with automatic downloads enabled that delegate is the *only*
+/// channel that learns a silent background cycle finished — Sparkle routes
+/// those cycles through `SPUAutomaticUpdateDriver`, which never presents
+/// through the user driver at all.  Without this wiring a staged update would
+/// install on quit with no pill and no panel, which is exactly the silence
+/// the coordinator's `downloadedUpdate` state exists to prevent.
 final class SparkleUpdateEngine: UpdateEngine {
     private let updater: SPUUpdater
     private let driver: DownrightUpdateDriver
+    private let notifier = BackgroundDownloadNotifier()
     private(set) var isRunning = false
 
-    var onBackgroundDownloadCompleted: ((String) -> Void)?
+    var onBackgroundDownloadCompleted: ((String) -> Void)? {
+        get { notifier.handler }
+        set { notifier.handler = newValue }
+    }
 
     init?(userDriver: DownrightUpdateDriver) {
         self.driver = userDriver
@@ -58,13 +71,12 @@ final class SparkleUpdateEngine: UpdateEngine {
         guard UpdateConfiguration.isValid(infoDictionary: host.infoDictionary ?? [:]) else {
             return nil
         }
-        let updater = SPUUpdater(
+        self.updater = SPUUpdater(
             hostBundle: host,
             applicationBundle: host,
             userDriver: userDriver,
-            delegate: nil
+            delegate: notifier
         )
-        self.updater = updater
     }
 
     func start() throws {
@@ -104,6 +116,18 @@ final class SparkleUpdateEngine: UpdateEngine {
     }
 
     var lastUpdateCheckDate: Date? { updater.lastUpdateCheckDate }
+}
+
+/// The one `SPUUpdaterDelegate` callback Downright needs.  A download finished
+/// — including the silent background ones that never reach the user driver —
+/// so the coordinator can raise the "Restart to Update" pill on every surface.
+@MainActor
+final class BackgroundDownloadNotifier: NSObject, SPUUpdaterDelegate {
+    var handler: ((String) -> Void)?
+
+    func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+        handler?(item.displayVersionString)
+    }
 }
 
 enum UpdateStartError: Error {
