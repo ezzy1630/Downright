@@ -1,7 +1,7 @@
 # Releasing Downright
 
 Downright is distributed **outside the Mac App Store**, signed and notarised,
-updated via Sparkle 2.9.5 with a fully custom user interface (spec §3.4 and the
+updated via Sparkle 2.9.6 with a fully custom user interface (spec §3.4 and the
 custom-updater spec). No standard Sparkle window ever appears; `UpdateCoordinator`
 owns every visible interaction.
 
@@ -18,7 +18,7 @@ no Xcode project involved. What it cannot do:
 | Developer ID signing and notarisation | Requires a certificate in the login keychain and an App Store Connect API key. |
 
 Everything else — the app, the render packages, the CLI, the tests, and the
-Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.5 binary
+Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.6 binary
 XCFramework (pinned exactly in `Package.swift`), so building the app needs
 network access the first time.
 
@@ -227,7 +227,7 @@ nothing may rewrite the XML afterwards — the `SURequireSignedFeed=YES`
 contract. The private key is passed to both tools through standard input from
 the `SPARKLE_ED25519_PRIVATE_KEY` secret and is never written to disk or logged.
 `sign_update --verify` (also via stdin) is the workflow's post-sign validation;
-Sparkle 2.9.5 ships no `appcast_validate` binary.
+Sparkle 2.9.6 ships no `appcast_validate` binary.
 
 ## Bundle verification
 

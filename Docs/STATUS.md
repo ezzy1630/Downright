@@ -43,7 +43,7 @@ app draws rather than a second implementation that could drift.
 
 ### Sparkle is embedded via SPM, released via the workflow
 
-Sparkle 2.9.5 is a SwiftPM dependency linked by the host app. Update checks are
+Sparkle 2.9.6 is a SwiftPM dependency linked by the host app. Update checks are
 gated on the Sparkle Info.plist block, which only signed production bundles
 carry — dev/ad-hoc bundles disable the updater. Signing, notarization,
 stapling, and appcast production run through
