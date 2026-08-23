@@ -29,7 +29,7 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
-      - name: Calculate the cumulative DMG count
+      - name: Calculate the cumulative total download count
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -38,7 +38,7 @@ jobs:
           Scripts/report-download-counts.sh --all --json > "$RUNNER_TEMP/download-counter/report.json"
           TOTAL="$(jq -er '.downloads.acquisition_dmgs' "$RUNNER_TEMP/download-counter/report.json")"
           jq -n --arg total "$TOTAL" \
-            '{schemaVersion: 1, label: "DMG downloads", message: $total, color: "307afe"}' \
+            '{schemaVersion: 1, label: "total downloads", message: $total, color: "307afe"}' \
             > "$RUNNER_TEMP/download-counter/downloads.json"
 
       - name: Publish the Shields endpoint
@@ -52,5 +52,5 @@ jobs:
           git rm -rf --ignore-unmatch .
           cp "$RUNNER_TEMP/download-counter/downloads.json" downloads.json
           git add downloads.json
-          git commit -m "chore: refresh DMG download counter"
+          git commit -m "chore: refresh total download counter"
           git push --force origin "HEAD:$BADGE_BRANCH"
