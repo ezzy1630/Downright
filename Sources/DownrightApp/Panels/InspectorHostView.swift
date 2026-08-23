@@ -23,6 +23,7 @@ enum InspectorSection: Int, CaseIterable, Equatable {
 final class InspectorHostView: NSView {
     private static let switcherSections: [InspectorSection] = [.tasks, .history, .context]
     var onClose: (() -> Void)?
+    var onSelectionChange: ((InspectorSection?) -> Void)?
 
     /// The header is chrome like any other panel's, so it follows the theme
     /// rather than the system label colours (§11.3).  A host may assign this;
@@ -238,6 +239,7 @@ final class InspectorHostView: NSView {
 
     func select(_ section: InspectorSection) {
         guard views[section] != nil else { return }
+        let selectionChanged = selectedSection != section
         selectedSection = section
         updateHeaderChrome()
         if let index = Self.switcherSections.firstIndex(of: section) {
@@ -245,6 +247,7 @@ final class InspectorHostView: NSView {
         }
         for (candidate, view) in views { view.isHidden = candidate != section }
         setAccessibilityValue("\(section.title) section")
+        if selectionChanged { onSelectionChange?(section) }
     }
 
     /// How many surfaces the host is holding — a caller closing one needs to
@@ -349,11 +352,14 @@ final class InspectorHostView: NSView {
             sectionControl.setEnabled(false, forSegment: index)
         }
         guard selectedSection == section else { updateHeaderChrome(); return }
-        selectedSection = views.keys.sorted { $0.rawValue < $1.rawValue }.first
-        if let selectedSection { select(selectedSection) }
+        if let fallback = views.keys.sorted(by: { $0.rawValue < $1.rawValue }).first {
+            select(fallback)
+        }
         else {
+            selectedSection = nil
             updateHeaderChrome()
             setAccessibilityValue("No inspector section")
+            onSelectionChange?(nil)
         }
     }
 

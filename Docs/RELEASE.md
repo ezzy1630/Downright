@@ -1,7 +1,7 @@
 # Releasing Downright
 
 Downright is distributed **outside the Mac App Store**, signed and notarised,
-updated via Sparkle 2.9.5 with a fully custom user interface (spec §3.4 and the
+updated via Sparkle 2.9.6 with a fully custom user interface (spec §3.4 and the
 custom-updater spec). No standard Sparkle window ever appears; `UpdateCoordinator`
 owns every visible interaction.
 
@@ -18,7 +18,7 @@ no Xcode project involved. What it cannot do:
 | Developer ID signing and notarisation | Requires a certificate in the login keychain and an App Store Connect API key. |
 
 Everything else — the app, the render packages, the CLI, the tests, and the
-Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.5 binary
+Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.6 binary
 XCFramework (pinned exactly in `Package.swift`), so building the app needs
 network access the first time.
 
@@ -174,12 +174,12 @@ Scripts/report-download-counts.sh --all --json
 ```
 
 Use the sum of all stable and versioned `.dmg` counts as the acquisition metric;
-this includes direct downloads and Homebrew cask installs. Do not add the
-Sparkle ZIP count to it: those archives are update downloads from existing
-installations. GitHub's counter is an asset-request count, not a unique-person
-or completed-install count.
+this includes direct downloads, Homebrew cask installs, curl script installs,
+and the npm launcher. Do not add the Sparkle ZIP count to it: those archives are
+update downloads from existing installations. GitHub's counter is an
+asset-request count, not a unique-person or completed-install count.
 
-The README's DMG-download badge is backed by
+The README's total-downloads badge is backed by
 `.github/workflows/download-count.yml`. It refreshes daily, after each push to
 `main`, after a successful release, or on manual dispatch, and publishes the
 Shields-compatible endpoint to the `automation/download-count` branch so
@@ -227,7 +227,7 @@ nothing may rewrite the XML afterwards — the `SURequireSignedFeed=YES`
 contract. The private key is passed to both tools through standard input from
 the `SPARKLE_ED25519_PRIVATE_KEY` secret and is never written to disk or logged.
 `sign_update --verify` (also via stdin) is the workflow's post-sign validation;
-Sparkle 2.9.5 ships no `appcast_validate` binary.
+Sparkle 2.9.6 ships no `appcast_validate` binary.
 
 ## Bundle verification
 

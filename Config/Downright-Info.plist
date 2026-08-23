@@ -24,7 +24,7 @@
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<!-- Sparkle 2.9.5 updater configuration (spec §3.4).
+	<!-- Sparkle 2.9.6 updater configuration (spec §3.4).
 	     SUPublicEDKey is a committed placeholder: the real Ed25519 public key
 	     is injected at release build time from the SPARKLE_ED25519_PUBLIC_KEY
 	     secret (see .github/workflows/release.yml).  Dev bundles built by

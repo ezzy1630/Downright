@@ -33,8 +33,8 @@ fi
 if [ -z "$GEN_KEYS" ]; then
     echo "Sparkle's generate_keys not found. Fetch the pinned tools and point this" >&2
     echo "script at them explicitly:" >&2
-    echo "  curl -fsSL -o /tmp/sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.9.5/Sparkle-2.9.5.tar.xz" >&2
-    echo "  echo '015336b601493e05c237964954bff6191370003d94edefe663724c88840d73cc  /tmp/sparkle.tar.xz' | shasum -a 256 -c -" >&2
+    echo "  curl -fsSL -o /tmp/sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.9.6/Sparkle-2.9.6.tar.xz" >&2
+    echo "  echo '52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192  /tmp/sparkle.tar.xz' | shasum -a 256 -c -" >&2
     echo "  mkdir -p /tmp/sparkle-tools && tar xf /tmp/sparkle.tar.xz -C /tmp/sparkle-tools" >&2
     echo "  SPARKLE_KEYS_TOOL=/tmp/sparkle-tools/bin/generate_keys Scripts/generate-sparkle-keys.sh" >&2
     exit 1

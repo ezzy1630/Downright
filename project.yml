@@ -19,7 +19,7 @@ packages:
     path: .
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    exactVersion: 2.9.5
+    exactVersion: 2.9.6
 targets:
   Downright:
     type: application

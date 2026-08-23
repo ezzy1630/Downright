@@ -286,9 +286,7 @@ extension DocumentWindowController {
     }
 
     func showSiblingSearch() {
-        guard let scanner else { return }
-        siblingSearchGeneration &+= 1
-        let generation = siblingSearchGeneration
+        guard scanner != nil else { return }
         showFindInspector(replace: false)
         // The header names the surface that opened (§7.2): with results
         // installed this is no longer a bare "Search" — it is the sibling
@@ -299,29 +297,101 @@ extension DocumentWindowController {
             panel.delegate = self
             panel.styleSheet = currentStyleSheet
             searchResults = panel
-            searchInspector?.setResults(panel)
         }
+        // Ordinary Find replaces the SearchInspector but deliberately retains
+        // the shared session. Reattach the retained results view whenever this
+        // surface opens so background work never updates a detached panel.
+        searchInspector?.setResults(searchResults)
+
+        // The field is the authority for what the reader can see. A previous
+        // find session may still retain its query after its UI closes; using
+        // that hidden value here produced results for text absent from the
+        // newly opened sibling-search field.
+        let query = findBar?.currentQuery ?? FindQuery()
+        runFind(query, scrollToMatch: false)
+    }
+
+    /// Immediately retires results for the old visible query. The filesystem
+    /// pass itself stays behind the find-as-you-type debounce, but an older
+    /// background pass must become stale on the keystroke, not sixty
+    /// milliseconds later when the new pass starts.
+    func stageSiblingSearch(for query: FindQuery) {
+        guard siblingSearchActive else { return }
+        siblingSearchCancellation?.cancel()
+        siblingSearchCancellation = nil
+        siblingSearchGeneration &+= 1
+        searchResults?.query = query.text
+        searchResults?.searchedFileCount = scanner?.siblings.count ?? 0
+        searchResults?.hits = []
+        searchResults?.isSearching = !query.isEmpty && FindEngine.isValid(query)
+    }
+
+    /// Runs the on-demand sibling scan for the query currently visible in the
+    /// field. Each pass owns a generation so a slow result can never replace a
+    /// newer one.
+    func refreshSiblingSearch(for query: FindQuery) {
+        guard siblingSearchActive,
+              inspectorHost?.selectedSection == .search,
+              let scanner
+        else { return }
+        stageSiblingSearch(for: query)
+        let generation = siblingSearchGeneration
+        guard !query.isEmpty, FindEngine.isValid(query) else { return }
 
         let urls = scanner.siblings.map(\.url)
-        let query = currentFindQuery
-        // Hand the panel what and where before the pass runs, so the
-        // searching and empty states can name both instead of a bare "No
-        // matches" floating in an empty list.
-        searchResults?.query = query.text
-        searchResults?.searchedFileCount = urls.count
-        searchResults?.isSearching = true
+        let scannerID = ObjectIdentifier(scanner)
+        let runner = siblingSearchRunner
+        var normalizedQuery = query
+        // A selection range belongs to the open document. Applying it to
+        // every sibling would search arbitrary offsets in unrelated files.
+        normalizedQuery.scope = nil
+        let crossFileQuery = normalizedQuery
+        let cancellation = SiblingSearchCancellationToken()
+        siblingSearchCancellation = cancellation
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let hits = SiblingSearch.search(query, in: urls)
+        siblingSearchQueue.async {
+            guard !cancellation.isCancelled else { return }
+            let hits = runner(crossFileQuery, urls) { cancellation.isCancelled }
+            guard !cancellation.isCancelled else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self,
+                      self.siblingSearchActive,
                       self.siblingSearchGeneration == generation,
-                      self.currentFindQuery == query
+                      self.siblingSearchCancellation === cancellation,
+                      self.scanner.map(ObjectIdentifier.init) == scannerID,
+                      self.currentFindQuery == query,
+                      self.findBar?.currentQuery == query
                 else { return }
                 self.searchResults?.hits = hits
                 self.searchResults?.isSearching = false
             }
         }
+    }
+
+    func cancelSiblingSearch() {
+        siblingSearchCancellation?.cancel()
+        siblingSearchCancellation = nil
+        siblingSearchGeneration &+= 1
+        searchResults?.isSearching = false
+    }
+
+    /// A scanner replacement changes the directory scope. Retire work tied to
+    /// the old instance and rerun the visible query against the new file list.
+    func siblingSearchScannerDidChange() {
+        guard scanner != nil else {
+            siblingSearchCancellation?.cancel()
+            siblingSearchCancellation = nil
+            siblingSearchGeneration &+= 1
+            searchResults?.searchedFileCount = 0
+            searchResults?.hits = []
+            searchResults?.isSearching = false
+            return
+        }
+        guard siblingSearchActive else { return }
+        // A document hop clears the local FindSession while retaining the
+        // visible field. Run the normal Find path so both authorities adopt
+        // the field's query before the sibling result is allowed to publish.
+        runFind(findBar?.currentQuery ?? FindQuery(), scrollToMatch: false)
     }
 }
 
