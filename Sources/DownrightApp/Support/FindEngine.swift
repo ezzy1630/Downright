@@ -8,7 +8,7 @@ import MarkdownCore
 /// range findable at all — the view's job is then to reveal whatever contains
 /// the hit, which it can only do if the engine reports hits it currently isn't
 /// showing.  A search over the rendered text would silently lose them.
-struct FindQuery: Equatable {
+struct FindQuery: Equatable, Sendable {
     var text: String = ""
     var isRegex: Bool = false
     var caseSensitive: Bool = false
@@ -129,7 +129,7 @@ final class FindSession {
 enum SiblingSearch {
     static let maximumFileBytes = 4 * 1_024 * 1_024
     static let maximumTotalBytes = 32 * 1_024 * 1_024
-    struct Hit: Identifiable {
+    struct Hit: Identifiable, Sendable {
         var id: String { "\(url.path):\(range.location)" }
         var url: URL
         var displayName: String
@@ -142,10 +142,16 @@ enum SiblingSearch {
         var lineNumber: Int
     }
 
-    static func search(_ query: FindQuery, in urls: [URL], limitPerFile: Int = 20) -> [Hit] {
+    static func search(
+        _ query: FindQuery,
+        in urls: [URL],
+        limitPerFile: Int = 20,
+        shouldCancel: @Sendable () -> Bool = { false }
+    ) -> [Hit] {
         var hits: [Hit] = []
         var bytesRead = 0
         for url in urls {
+            guard !shouldCancel() else { return hits }
             guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
                   size >= 0,
                   size <= maximumFileBytes,
@@ -153,11 +159,14 @@ enum SiblingSearch {
             else { continue }
             bytesRead += size
             guard let (text, _) = try? DocumentIO.read(contentsOf: url) else { continue }
+            guard !shouldCancel() else { return hits }
             let ranges = FindEngine.matches(in: text, query: query)
             guard !ranges.isEmpty else { continue }
+            guard !shouldCancel() else { return hits }
 
             let document = MarkdownParser.parse(text, options: .structureOnly)
             for range in ranges.prefix(limitPerFile) {
+                guard !shouldCancel() else { return hits }
                 let context = contextRange(for: range, in: document)
                 hits.append(Hit(
                     url: url,

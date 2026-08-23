@@ -95,6 +95,10 @@ final class SearchInspectorView: NSView {
     required init?(coder: NSCoder) { nil }
 
     func setResults(_ view: NSView?) {
+        if let view, results === view, view.superview === resultHost {
+            guidance.isHidden = true
+            return
+        }
         results?.removeFromSuperview()
         results = view
         guidance.isHidden = view != nil

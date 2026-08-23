@@ -11,6 +11,26 @@ private final class FloatingOverlayHostView: NSView {
     }
 }
 
+typealias SiblingSearchRunner = @Sendable (
+    FindQuery,
+    [URL],
+    @Sendable () -> Bool
+) -> [SiblingSearch.Hit]
+
+/// A filesystem pass cannot be interrupted while Foundation is inside one
+/// read, but it can stop before parsing that file or opening the next one.
+/// The lock is the whole synchronization contract for this cross-queue flag.
+final class SiblingSearchCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+
+    func cancel() {
+        lock.withLock { cancelled = true }
+    }
+}
+
 /// One window over one document.
 ///
 /// The window owns the document, the text surface, and every transient panel.
@@ -48,7 +68,26 @@ final class DocumentWindowController: NSWindowController {
     var changeSummaryTopConstraint: NSLayoutConstraint?
     private var changeSummaryDismissWorkItem: DispatchWorkItem?
     var searchResults: SearchResultsPanelView?
+    /// Sibling search is a presentation state, not a mode to keep in sync.
+    /// Deriving it from the visible inspector also lets an in-place document
+    /// hop rebind the retained search surface to the replacement scanner.
+    var siblingSearchActive: Bool {
+        searchResults != nil
+            && searchInspector != nil
+            && findBar != nil
+            && scanner != nil
+            && inspectorHost?.selectedSection == .search
+            && floatingSurface?.isDismissing == false
+    }
     var siblingSearchGeneration = 0
+    let siblingSearchQueue = DispatchQueue(
+        label: "com.ezzy.downright.sibling-search",
+        qos: .userInitiated
+    )
+    var siblingSearchCancellation: SiblingSearchCancellationToken?
+    var siblingSearchRunner: SiblingSearchRunner = { query, urls, shouldCancel in
+        SiblingSearch.search(query, in: urls, shouldCancel: shouldCancel)
+    }
     var searchInspector: SearchInspectorView?
     var historyInspector: HistoryInspectorView?
     var inspectorHost: InspectorHostView?
@@ -101,7 +140,22 @@ final class DocumentWindowController: NSWindowController {
     private var floatingOverlayHost: FloatingOverlayHostView!
 
     // State
-    var scanner: SiblingScanner?
+    var scanner: SiblingScanner? {
+        didSet {
+            guard oldValue !== scanner else { return }
+            oldValue?.onChange = nil
+            let scannerID = scanner.map(ObjectIdentifier.init)
+            scanner?.onChange = { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.scanner.map(ObjectIdentifier.init) == scannerID
+                    else { return }
+                    self.siblingSearchScannerDidChange()
+                }
+            }
+            siblingSearchScannerDidChange()
+        }
+    }
     var pathResolver: PathResolver?
     private var resolvesPathTokens = Preferences.shared.values.resolvePathTokens
     private var isClearingDisabledPathState = false
@@ -385,6 +439,7 @@ final class DocumentWindowController: NSWindowController {
     func resetTransientChrome() {
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
+        cancelSiblingSearch()
         autosaveWorkItem?.cancel()
         cachedMetricsDocumentID = nil
         cachedSectionMetrics = []
@@ -1145,6 +1200,7 @@ final class DocumentWindowController: NSWindowController {
     /// main thread; coalescing them into one run per idle tick makes typing in
     /// the search field cheap instead of O(document) per character.
     func scheduleFindQuery(_ query: FindQuery) {
+        stageSiblingSearch(for: query)
         guard !query.isEmpty else {
             runFind(query)  // clearing the field must take effect immediately
             return
@@ -1997,6 +2053,13 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func showInInspector(_ view: NSView, section: InspectorSection) {
+        // A close can still be springing toward the toolbar when the command
+        // is invoked again. That surface will remove itself on arrival, so it
+        // cannot safely host the reopened panel; retire it and create a fresh
+        // surface whose lifecycle belongs to this presentation.
+        if floatingSurface?.isDismissing == true {
+            removeFloatingSurface()
+        }
         let host: InspectorHostView
         if let inspectorHost { host = inspectorHost }
         else {
@@ -2008,6 +2071,9 @@ final class DocumentWindowController: NSWindowController {
             created.styleSheet = activeStyleSheet
             created.onClose = { [weak self] in
                 self?.closeInspector()
+            }
+            created.onSelectionChange = { [weak self] section in
+                self?.inspectorSelectionDidChange(section)
             }
             inspectorHost = created
             host = created
@@ -2030,12 +2096,22 @@ final class DocumentWindowController: NSWindowController {
         refreshToolbarSelectionState()
     }
 
+    private func inspectorSelectionDidChange(_ section: InspectorSection?) {
+        cancelSiblingSearch()
+        guard section == .search,
+              siblingSearchActive,
+              let query = findBar?.currentQuery
+        else { return }
+        runFind(query, scrollToMatch: false)
+    }
+
     /// Closing is the arrival run backwards: the panel folds up toward the
     /// toolbar control that opened it, and only then does the pane give its
     /// width back to the document.  Collapsing first would make the panel
     /// vanish and the text jump in the same frame, which is the snap this
     /// replaces.
     func closeInspector(restoringFocus: Bool = true) {
+        cancelSiblingSearch()
         guard floatingSurface != nil else {
             refreshToolbarSelectionState()
             return
@@ -2210,6 +2286,7 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func dismissFindBar() {
+        cancelSiblingSearch()
         guard let leaving = findBar else { return }
 
         findBarExitGeneration &+= 1
@@ -2378,6 +2455,7 @@ final class DocumentWindowController: NSWindowController {
         }
         findBar?.statusText = findSession.statusText
         findBar?.isQueryValid = FindEngine.isValid(query)
+        refreshSiblingSearch(for: query)
         refreshDensityBands()
         if scrollToMatch, let match = findSession.currentMatch {
             source.scroll(toOffset: match.location, position: .center, animated: false)
@@ -2630,6 +2708,7 @@ final class DocumentWindowController: NSWindowController {
         stopSpeaking()
         derivedUIRefreshWorkItem?.cancel()
         findRefreshWorkItem?.cancel()
+        cancelSiblingSearch()
         autosaveWorkItem?.cancel()
         removeFocusDimmingViews(animated: false)
         removeFloatingSurface()
