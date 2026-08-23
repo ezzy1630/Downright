@@ -1033,7 +1033,7 @@ enum PreferencesForms {
             .section("Updates"),
             .note("Downright checks a signed update feed over HTTPS. A downloaded update installs when you quit, so an editing session is never interrupted."),
             .toggle("Automatically check for updates",
-                    help: "Checks once a day. The menu command still works while this is off.",
+                    help: "Checks about every hour, and watches the release feed while the app is open. The menu command still works while this is off.",
                     get: { UpdateCoordinator.shared.automaticallyChecksForUpdates },
                     set: { value in UpdateCoordinator.shared.automaticallyChecksForUpdates = value }),
             .toggle("Automatically download and install updates",
