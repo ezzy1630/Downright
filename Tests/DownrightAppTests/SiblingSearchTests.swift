@@ -336,6 +336,11 @@ struct SiblingSearchTests {
 
         let controller = try fixture.openController()
         defer { controller.close() }
+        controller.activeStyleSheet = StyleSheet(
+            theme: ThemeStore.shared.current,
+            appearance: NSApp.effectiveAppearance,
+            reduceMotionOverride: true
+        )
         controller.showSiblingSearch()
         let firstInspector = try #require(controller.searchInspector)
         let results = try #require(controller.searchResults)

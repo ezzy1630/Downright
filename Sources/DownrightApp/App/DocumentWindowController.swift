@@ -2197,8 +2197,13 @@ final class DocumentWindowController: NSWindowController {
             ? documentPanes.map { $0.textView.makeViewportRepair() }
             : []
         defer { viewportRepairs.forEach { $0() } }
+        let retainedSiblingResults = searchResults
         if searchInspector != nil {
             dismissFindBar()
+            // Reduce Motion finishes dismissal synchronously, before the
+            // ordinary Find bar below exists. Preserve the sibling session
+            // across that handoff just as the animated path does naturally.
+            if searchResults == nil { searchResults = retainedSiblingResults }
         }
 
         let existingQuery = findBar?.currentQuery
@@ -2267,8 +2272,13 @@ final class DocumentWindowController: NSWindowController {
     }
 
     func showFindInspector(replace: Bool) {
+        let retainedSiblingResults = searchResults
         if searchInspector == nil, findBar != nil {
             dismissFindBar()
+            // The Reduce Motion path completes before the sibling inspector
+            // below is installed. Keep the retained panel alive so reopening
+            // can reattach it instead of silently starting a new session.
+            if searchResults == nil { searchResults = retainedSiblingResults }
         }
 
         let inspector: SearchInspectorView
