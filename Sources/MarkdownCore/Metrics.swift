@@ -11,41 +11,63 @@ import NaturalLanguage
 enum PlainText {
     /// Readable text of one block, markers removed.
     static func of(_ block: MDBlock, in text: NSString) -> String {
-        switch block.content {
-        case .codeBlock, .mermaid, .mathBlock, .htmlBlock, .frontMatter, .thematicBreak:
-            return ""
-        case .table(let table):
-            return table.rows
-                .map { row in row.cells.map { of(spans: $0.inlines, in: text) }.joined(separator: " ") }
-                .joined(separator: " ")
-        default:
-            break
-        }
-        if !block.inlines.isEmpty { return of(spans: block.inlines, in: text) }
-        return block.children.map { of($0, in: text) }.filter { !$0.isEmpty }.joined(separator: " ")
+        var out = ""
+        append(block: block, in: text, to: &out)
+        return out
     }
 
     static func of(spans: [InlineSpan], in text: NSString) -> String {
         var out = ""
+        append(spans: spans, in: text, to: &out)
+        return out
+    }
+
+    private static func append(block: MDBlock, in text: NSString, to out: inout String) {
+        switch block.content {
+        case .codeBlock, .mermaid, .mathBlock, .htmlBlock, .frontMatter, .thematicBreak:
+            return
+        case .table(let table):
+            for (rIdx, row) in table.rows.enumerated() {
+                if rIdx > 0 && !out.isEmpty { out.append(" ") }
+                for (cIdx, cell) in row.cells.enumerated() {
+                    if cIdx > 0 && !out.isEmpty { out.append(" ") }
+                    append(spans: cell.inlines, in: text, to: &out)
+                }
+            }
+            return
+        default:
+            break
+        }
+        if !block.inlines.isEmpty {
+            append(spans: block.inlines, in: text, to: &out)
+            return
+        }
+        for (index, child) in block.children.enumerated() {
+            let beforeCount = out.count
+            append(block: child, in: text, to: &out)
+            if out.count > beforeCount && index < block.children.count - 1 {
+                out.append(" ")
+            }
+        }
+    }
+
+    private static func append(spans: [InlineSpan], in text: NSString, to out: inout String) {
         for span in spans {
             switch span.kind {
             case .text, .pathToken:
-                out += text.substring(with: span.range)
+                out.append(text.substring(with: span.range))
             case .inlineCode:
-                out += text.substring(with: span.contentRange)
+                out.append(text.substring(with: span.contentRange))
             case .softBreak, .lineBreak:
-                out += " "
-            case .inlineHTML, .inlineMath:
+                out.append(" ")
+            case .inlineHTML, .inlineMath, .footnoteReference:
                 continue
             case .wikilink(let target, let label):
-                out += label ?? target
-            case .footnoteReference:
-                continue
+                out.append(label ?? target)
             default:
-                out += of(spans: span.children, in: text)
+                append(spans: span.children, in: text, to: &out)
             }
         }
-        return out
     }
 
     /// Prose within `range`, used for read time and word counts.
@@ -236,8 +258,13 @@ public enum Metrics {
         var count = 0
         var inWord = false
         for scalar in prose.unicodeScalars {
-            let isWord = CharacterSet.alphanumerics.contains(scalar)
-                || scalar == "'" || scalar == "\u{2019}" || scalar == "-"
+            let v = scalar.value
+            let isWord: Bool
+            if v < 128 {
+                isWord = (v >= 0x30 && v <= 0x39) || (v >= 0x41 && v <= 0x5A) || (v >= 0x61 && v <= 0x7A) || v == 0x27 || v == 0x2D
+            } else {
+                isWord = scalar == "\u{2019}" || scalar.properties.isAlphabetic || scalar.properties.numericType != nil
+            }
             if isWord {
                 if !inWord { count += 1; inWord = true }
             } else {

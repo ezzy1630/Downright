@@ -60,7 +60,10 @@ enum WritingDirection {
     static func of(_ text: String, limit: Int = 1024) -> NSWritingDirection {
         for scalar in text.unicodeScalars.prefix(limit) {
             if isRightToLeft(scalar) { return .rightToLeft }
-            if CharacterSet.letters.contains(scalar) { return .leftToRight }
+            let v = scalar.value
+            if (v >= 0x41 && v <= 0x5A) || (v >= 0x61 && v <= 0x7A) || (v >= 128 && scalar.properties.isAlphabetic) {
+                return .leftToRight
+            }
         }
         return .leftToRight
     }
