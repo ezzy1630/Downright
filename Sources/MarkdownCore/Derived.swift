@@ -246,10 +246,25 @@ struct DerivedStructures {
                 markRange: checkbox.markRange,
                 contentRange: block.contentRange,
                 text: Self.taskLabel(for: block, in: map.text),
-                headingIndex: headings.lastIndex { $0.range.location < block.range.location },
+                headingIndex: Self.headingIndex(before: block.range.location, in: headings),
                 indentLevel: indent
             )
         }
+    }
+
+    private static func headingIndex(before location: Int, in headings: [HeadingNode]) -> Int? {
+        guard !headings.isEmpty else { return nil }
+        var lo = 0, hi = headings.count - 1, best = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if headings[mid].range.location < location {
+                best = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        return best >= 0 ? best : nil
     }
 
     /// A task's label is its *own* source line, from just after the `[ ]`
@@ -364,8 +379,10 @@ enum Slug {
                 out.append("-")
             }
         }
-        while out.hasPrefix("-") { out.removeFirst() }
-        while out.hasSuffix("-") { out.removeLast() }
-        return out
+        var start = out.startIndex
+        var end = out.endIndex
+        while start < end && out[start] == "-" { start = out.index(after: start) }
+        while end > start && out[out.index(before: end)] == "-" { end = out.index(before: end) }
+        return String(out[start..<end])
     }
 }

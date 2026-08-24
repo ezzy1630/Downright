@@ -63,14 +63,16 @@ enum FNV {
     /// intermediate `String` or large scratch buffer is ever allocated.
     static func combine(_ hash: UInt64, _ text: NSString, range: NSRange) -> UInt64 {
         var h = hash
-        var buffer = [unichar](repeating: 0, count: 256)
         var index = range.location
         let end = min(range.upperBound, text.length)
-        while index < end {
-            let chunk = Swift.min(256, end - index)
-            text.getCharacters(&buffer, range: NSRange(location: index, length: chunk))
-            h = combine(h, utf16: buffer, count: chunk)
-            index += chunk
+        withUnsafeTemporaryAllocation(of: unichar.self, capacity: 256) { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            while index < end {
+                let chunk = Swift.min(256, end - index)
+                text.getCharacters(baseAddress, range: NSRange(location: index, length: chunk))
+                h = combine(h, utf16: baseAddress, count: chunk)
+                index += chunk
+            }
         }
         return h
     }
