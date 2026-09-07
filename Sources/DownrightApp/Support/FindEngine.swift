@@ -37,16 +37,24 @@ enum FindEngine {
         search(in: text, query: query)?.results.map(\.range) ?? []
     }
 
-    private static func search(
-        in text: String, query: FindQuery
-    ) -> (regex: NSRegularExpression, results: [NSTextCheckingResult])? {
+    fileprivate struct SearchResult {
+        let text: String
+        let regex: NSRegularExpression
+        let results: [NSTextCheckingResult]
+    }
+
+    fileprivate static func search(in text: String, query: FindQuery) -> SearchResult? {
         guard let pattern = query.pattern,
               let regex = try? NSRegularExpression(pattern: pattern, options: query.options)
         else { return nil }
         let full = NSRange(location: 0, length: (text as NSString).length)
         let scope = query.scope.map { NSIntersectionRange($0, full) } ?? full
         guard scope.length > 0 else { return nil }
-        return (regex, regex.matches(in: text, options: [], range: scope).filter { $0.range.length > 0 })
+        return SearchResult(
+            text: text,
+            regex: regex,
+            results: regex.matches(in: text, options: [], range: scope).filter { $0.range.length > 0 }
+        )
     }
 
     /// Whether a partially typed regex is currently valid, for the field's
@@ -88,6 +96,7 @@ final class FindSession {
     private(set) var query = FindQuery()
     private(set) var matches: [NSRange] = []
     private(set) var currentIndex: Int?
+    private var searchResult: FindEngine.SearchResult?
 
     var isEmpty: Bool { matches.isEmpty }
     var count: Int { matches.count }
@@ -106,8 +115,25 @@ final class FindSession {
 
     func update(query: FindQuery, in text: String, caret: Int) {
         self.query = query
-        matches = FindEngine.matches(in: text, query: query)
+        searchResult = FindEngine.search(in: text, query: query)
+        matches = searchResult?.results.map(\.range) ?? []
         currentIndex = matches.firstIndex { $0.location >= caret } ?? (matches.isEmpty ? nil : 0)
+    }
+
+    /// Uses the captures from the search that selected this hit, without running
+    /// the regex again. Edits may precede the debounced find refresh, so check
+    /// the exact UTF-16 snapshot before trusting any cached source range.
+    func replacementEdit(in text: String, template: String) -> TextEdit? {
+        if searchResult?.text.utf16.elementsEqual(text.utf16) != true {
+            update(query: query, in: text, caret: currentMatch?.location ?? 0)
+        }
+        guard let searchResult, let currentIndex,
+              searchResult.results.indices.contains(currentIndex) else { return nil }
+        let result = searchResult.results[currentIndex]
+        let replacement = query.isRegex
+            ? searchResult.regex.replacementString(for: result, in: searchResult.text, offset: 0, template: template)
+            : template
+        return TextEdit(range: result.range, replacement: replacement, summary: "Replace")
     }
 
     @discardableResult
@@ -125,6 +151,7 @@ final class FindSession {
         query = FindQuery()
         matches = []
         currentIndex = nil
+        searchResult = nil
     }
 }
 
