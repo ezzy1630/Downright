@@ -91,12 +91,12 @@ expected_path = (
     "/ezzy1630/Downright/releases/download/"
     + urllib.parse.quote(expected_tag, safe="") + "/"
 )
-asset = parsed.path.removeprefix(expected_path)
+asset = urllib.parse.unquote(parsed.path.removeprefix(expected_path))
 if (parsed.scheme != "https" or parsed.netloc != "github.com"
-        or parsed.query or parsed.fragment
+        or parsed.params or parsed.query or parsed.fragment
         or not parsed.path.startswith(expected_path)
-        or not asset or "/" in asset
-        or urllib.parse.unquote(asset) in (".", "..")):
+        or not asset or "/" in asset or "\\" in asset
+        or asset in (".", "..")):
     fail(f"latest enclosure does not point at Downright release {expected_tag!r}")
 
 try:

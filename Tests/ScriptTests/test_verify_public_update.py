@@ -110,12 +110,17 @@ class PublicUpdateVerifierTests(unittest.TestCase):
             expected.replace("auto-test/", "old/") + "?tag=auto-test",
             expected + "?redirect=elsewhere",
             expected + "#auto-test",
+            expected + ";download=1",
             expected.replace("github.com", "user@github.com"),
             expected.replace("github.com", "github.com:443"),
             expected.replace("https://", "http://"),
             expected.replace("update.zip", ""),
             expected.replace("update.zip", "nested/update.zip"),
             expected.replace("update.zip", "%2e%2e"),
+            expected.replace("update.zip", "%2e"),
+            expected.replace("update.zip", "nested%2Fupdate.zip"),
+            expected.replace("update.zip", "nested%5Cupdate.zip"),
+            expected.replace("update.zip", "nested\\update.zip"),
         ]
         for url in invalid_urls:
             with self.subTest(url=url):

@@ -52,7 +52,17 @@ if [[ "$SELECTED_DEVELOPER" == /Library/Developer/CommandLineTools* ]] \
 fi
 
 echo "==> Release verifier regression tests"
-if ! python3 -B -m unittest discover -s Tests/ScriptTests -p 'test_*.py'; then
+if ! python3 -B - <<'PY'
+import sys
+import unittest
+
+suite = unittest.defaultTestLoader.discover("Tests/ScriptTests", pattern="test_*.py")
+if suite.countTestCases() == 0:
+    sys.exit("Release verifier regression suite discovered no tests")
+result = unittest.TextTestRunner().run(suite)
+sys.exit(0 if result.wasSuccessful() and result.testsRun > 0 else 1)
+PY
+then
     echo "    FAILED"
     exit 1
 fi
