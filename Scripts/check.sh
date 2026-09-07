@@ -51,6 +51,12 @@ if [[ "$SELECTED_DEVELOPER" == /Library/Developer/CommandLineTools* ]] \
     TEST_FLAGS=(-Xswiftc -F -Xswiftc "$CLT_FRAMEWORKS")
 fi
 
+echo "==> Release verifier regression tests"
+if ! python3 -B -m unittest discover -s Tests/ScriptTests -p 'test_*.py'; then
+    echo "    FAILED"
+    exit 1
+fi
+
 echo "==> Build"
 if ! swift build --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.log" 2>&1; then
     echo "    FAILED"

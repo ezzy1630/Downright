@@ -533,7 +533,7 @@ jobs:
 
       # --------------------------------------------------------------- publish
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.release_identity.outputs.release_tag }}
           name: Downright ${{ env.MARKETING_VERSION }} (build ${{ env.BUILD }})
@@ -620,7 +620,7 @@ jobs:
     steps:
       - name: Deploy signed appcast to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   verify-public-update:
     needs: [release, deploy]
