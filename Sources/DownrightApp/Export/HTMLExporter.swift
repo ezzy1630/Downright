@@ -285,8 +285,12 @@ struct HTMLExporter {
     private func resolveHref(_ destination: String) -> String {
         // A relative link to another markdown file points at that file's
         // exported sibling, so a folder of exports stays navigable.
-        guard !destination.contains("://"), destination.hasSuffix(".md") else { return destination }
-        return String(destination.dropLast(3)) + ".html"
+        guard let components = URLComponents(string: destination),
+              components.scheme == nil, components.host == nil else { return destination }
+        let suffixStart = destination.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? destination.endIndex
+        let path = destination[..<suffixStart]
+        guard path.hasSuffix(".md") else { return destination }
+        return String(path.dropLast(3)) + ".html" + destination[suffixStart...]
     }
 
     /// Schemes a Markdown document may legitimately hand to a browser as an
@@ -321,9 +325,9 @@ struct HTMLExporter {
             return missingImage(source: source, alt: alt, caption: caption)
         }
         guard let base = baseDirectory else {
-            // No document folder to resolve against: keep the reference as-is
-            // rather than guessing a path to read.
-            return "<figure><img src=\"\(escape(source))\" alt=\"\(escape(alt))\">\(caption)</figure>"
+            // An unsaved document has no asset root. Do not let the browser
+            // resolve an unverified path relative to the eventual export.
+            return missingImage(source: source, alt: alt, caption: caption)
         }
         // Confined to `baseDirectory`.  No containment check here and a source
         // of `../../.ssh/id_rsa` would resolve (and be base64-inlined) into the
