@@ -111,6 +111,20 @@ public enum DocumentIO {
         try encodedData(text, fidelity: fidelity).write(to: url, options: .atomic)
     }
 
+    /// Publishes a complete new file only if the destination is still absent.
+    /// Recovery must not overwrite an external writer that recreated the path
+    /// after the document inspected it.
+    public static func createAtomically(with data: Data, at url: URL) throws {
+        let temporary = url.deletingLastPathComponent()
+            .appendingPathComponent(".downright-save-\(UUID().uuidString)")
+        try data.write(to: temporary, options: .withoutOverwriting)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try syncTemporaryToStableStorage(temporary)
+        guard renamex_np(temporary.path, url.path, UInt32(RENAME_EXCL)) == 0 else {
+            throw posixRenameError(path: url.path)
+        }
+    }
+
     /// Replaces an existing path without a check/write gap. `RENAME_SWAP`
     /// moves the exact displaced generation to the temporary path atomically;
     /// if it is not the generation the caller inspected, a second swap puts
