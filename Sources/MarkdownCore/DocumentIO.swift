@@ -117,8 +117,8 @@ public enum DocumentIO {
     public static func createAtomically(with data: Data, at url: URL) throws {
         let temporary = url.deletingLastPathComponent()
             .appendingPathComponent(".downright-save-\(UUID().uuidString)")
-        try data.write(to: temporary, options: .withoutOverwriting)
         defer { try? FileManager.default.removeItem(at: temporary) }
+        try data.write(to: temporary, options: .withoutOverwriting)
         try syncTemporaryToStableStorage(temporary)
         guard renamex_np(temporary.path, url.path, UInt32(RENAME_EXCL)) == 0 else {
             throw posixRenameError(path: url.path)

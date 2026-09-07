@@ -956,13 +956,15 @@ struct AppLayerTests {
         [section](plan.md#steps) [query](plan.md?mode=read#steps)
         [encoded](my%20plan.md#next) [remote](https://example.com/plan.md#steps)
         [network](//example.com/plan.md) [mail](mailto:plan.md)
+        [spaces](<my plan.md#steps>)
         """)
         let html = HTMLExporter(
             document: document, theme: ThemeStore.shared.current,
             title: "T", baseDirectory: nil, imageProvider: nil
         ).html()
         for destination in ["plan.html#steps", "plan.html?mode=read#steps", "my%20plan.html#next",
-                            "https://example.com/plan.md#steps", "//example.com/plan.md", "mailto:plan.md"] {
+                            "https://example.com/plan.md#steps", "//example.com/plan.md", "mailto:plan.md",
+                            "my plan.html#steps"] {
             #expect(html.contains("href=\"\(destination)\""))
         }
     }

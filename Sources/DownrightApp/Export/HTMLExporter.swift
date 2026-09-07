@@ -285,8 +285,7 @@ struct HTMLExporter {
     private func resolveHref(_ destination: String) -> String {
         // A relative link to another markdown file points at that file's
         // exported sibling, so a folder of exports stays navigable.
-        guard let components = URLComponents(string: destination),
-              components.scheme == nil, components.host == nil else { return destination }
+        guard !hasURLScheme(destination), !destination.hasPrefix("//") else { return destination }
         let suffixStart = destination.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? destination.endIndex
         let path = destination[..<suffixStart]
         guard path.hasSuffix(".md") else { return destination }
