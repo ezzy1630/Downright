@@ -190,8 +190,10 @@ extension DocumentWindowController {
 
     // MARK: - Export (§9.5)
 
-    private func exporter(forPrint: Bool) -> HTMLExporter {
-        HTMLExporter(
+    func exporter(forPrint: Bool) -> HTMLExporter {
+        // Export captures the current buffer even while its async parse is pending.
+        markdownDocument.ensureParsedCurrent()
+        return HTMLExporter(
             document: markdownDocument.parsed,
             theme: currentStyleSheet.theme,
             title: markdownDocument.displayName,

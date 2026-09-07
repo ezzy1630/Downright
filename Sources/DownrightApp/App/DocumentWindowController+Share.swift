@@ -44,14 +44,7 @@ extension DocumentWindowController: @preconcurrency NSSharingServicePickerDelega
         // The same renderer Print and Export PDF use, so what the receiver
         // opens is what the printer would have produced — a stylesheet made
         // for paper, not a screenshot of the current theme (§9.5).
-        let exporter = HTMLExporter(
-            document: markdownDocument.parsed,
-            theme: currentStyleSheet.theme,
-            title: markdownDocument.displayName,
-            baseDirectory: markdownDocument.url?.deletingLastPathComponent(),
-            imageProvider: NativeFragmentImageProvider(styleSheet: currentStyleSheet),
-            forPrint: true
-        )
+        let exporter = exporter(forPrint: true)
         beginActivity()
         defer { endActivity() }
         let url: URL
