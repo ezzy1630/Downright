@@ -12,14 +12,16 @@ extension DocumentWindowController {
     /// Follows a link to another markdown file in this same window (§7.1 —
     /// ⌘-click is what opens a new one).  Persists the current document's
     /// state first so its reading position survives the hop.
-    func openInPlace(_ url: URL) {
-        guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return }
+    @discardableResult
+    func openInPlace(_ url: URL) -> Bool {
+        guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return false }
         let previousURL = markdownDocument.url
         resetTransientChrome()
         markdownDocument.close()
         do {
             try open(url, mode: mode)
             resetWorkspaceState(for: url)
+            return true
         } catch {
             // The hop died mid-flight (the target vanished between the click
             // and the read).  The document is closed and watcherless now; put
@@ -29,12 +31,13 @@ extension DocumentWindowController {
                 do {
                     try open(previousURL, mode: mode)
                     resetWorkspaceState(for: previousURL)
-                    return
+                    return false
                 } catch {
                     // The previous file is gone too; fall through to the beep.
                 }
             }
             NSSound.beep()
+            return false
         }
     }
 

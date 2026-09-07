@@ -21,7 +21,7 @@ struct FindQuery: Equatable, Sendable {
     fileprivate var pattern: String? {
         guard !text.isEmpty else { return nil }
         let escaped = isRegex ? text : NSRegularExpression.escapedPattern(for: text)
-        return wholeWord ? "\\b\(escaped)\\b" : escaped
+        return wholeWord ? "\\b(?:\(escaped))\\b" : escaped
     }
 
     fileprivate var options: NSRegularExpression.Options {
@@ -34,17 +34,19 @@ enum FindEngine {
     /// half-typed regex — the user is still typing and an error dialog per
     /// keystroke would be intolerable.
     static func matches(in text: String, query: FindQuery) -> [NSRange] {
+        search(in: text, query: query)?.results.map(\.range) ?? []
+    }
+
+    private static func search(
+        in text: String, query: FindQuery
+    ) -> (regex: NSRegularExpression, results: [NSTextCheckingResult])? {
         guard let pattern = query.pattern,
               let regex = try? NSRegularExpression(pattern: pattern, options: query.options)
-        else { return [] }
-
+        else { return nil }
         let full = NSRange(location: 0, length: (text as NSString).length)
         let scope = query.scope.map { NSIntersectionRange($0, full) } ?? full
-        guard scope.length > 0 else { return [] }
-
-        return regex.matches(in: text, options: [], range: scope)
-            .map(\.range)
-            .filter { $0.length > 0 }
+        guard scope.length > 0 else { return nil }
+        return (regex, regex.matches(in: text, options: [], range: scope).filter { $0.range.length > 0 })
     }
 
     /// Whether a partially typed regex is currently valid, for the field's
@@ -57,18 +59,23 @@ enum FindEngine {
     /// Expands `$1`-style references when the query is a regex; otherwise the
     /// template is literal, which is what a non-regex user expects of a `$`.
     static func replacement(for match: NSRange, in text: String, query: FindQuery, template: String) -> String {
-        guard query.isRegex, let pattern = query.pattern,
-              let regex = try? NSRegularExpression(pattern: pattern, options: query.options),
-              let result = regex.firstMatch(in: text, options: [.anchored], range: match)
+        guard query.isRegex,
+              let search = search(in: text, query: query),
+              let result = search.results.first(where: { $0.range == match })
         else { return template }
-        return regex.replacementString(for: result, in: text, offset: 0, template: template)
+        // Preserve the original search scope: narrowing it to the matched text
+        // changes lookarounds, anchors, and captures that depend on surrounding text.
+        return search.regex.replacementString(for: result, in: text, offset: 0, template: template)
     }
 
     static func replaceAllEdits(in text: String, query: FindQuery, template: String) -> [TextEdit] {
-        matches(in: text, query: query).map { range in
+        guard let search = search(in: text, query: query) else { return [] }
+        return search.results.map { result in
             TextEdit(
-                range: range,
-                replacement: replacement(for: range, in: text, query: query, template: template),
+                range: result.range,
+                replacement: query.isRegex
+                    ? search.regex.replacementString(for: result, in: text, offset: 0, template: template)
+                    : template,
                 summary: "Replace"
             )
         }
