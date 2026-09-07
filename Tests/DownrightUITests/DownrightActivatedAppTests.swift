@@ -133,7 +133,8 @@ final class DownrightActivatedAppTests: XCTestCase {
         // Save action. A disabled panel must fail this test rather than being
         // bypassed through the exporter or a direct write.
         app.typeKey("e", modifierFlags: [.command, .control])
-        let save = app.buttons["Save"].firstMatch
+        let savePanel = app.dialogs["save-panel"]
+        let save = savePanel.buttons["OKButton"]
         XCTAssertTrue(save.waitForExistence(timeout: 10), "Export HTML did not open a save panel")
         app.typeKey("g", modifierFlags: [.command, .shift])
         app.typeText(root.path)
