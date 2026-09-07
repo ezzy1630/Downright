@@ -109,6 +109,57 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(XCTAttachment(screenshot: window.screenshot()))
     }
 
+    func testHTMLExportThroughSavePanelPreservesEditedMarkdown() throws {
+        let original = try Data(contentsOf: fixture)
+        let edited = "# Export acceptance current buffer\n\n[Next section](sibling.md#details)\n"
+        let destination = root.appendingPathComponent("activated-fixture.html")
+
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
+        let source = app.radioButtons["Source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        source.click()
+        let editor = window.textViews.firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeKey("a", modifierFlags: .command)
+        editor.typeText(edited)
+        XCTAssertEqual(editor.value as? String, edited)
+
+        // Exercise the actual command and NSSavePanel, including its enabled
+        // Save action. A disabled panel must fail this test rather than being
+        // bypassed through the exporter or a direct write.
+        app.typeKey("e", modifierFlags: [.command, .control])
+        let save = app.buttons["Save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10), "Export HTML did not open a save panel")
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(root.path)
+        app.typeKey(.return, modifierFlags: [])
+        let saveEnabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"),
+            object: save
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [saveEnabled], timeout: 10), .completed,
+                       "Save never became enabled after choosing the export folder")
+        save.click()
+        XCTAssertTrue(waitForFile(destination, timeout: 15), "the save panel did not create the HTML export")
+        let html = try String(contentsOf: destination, encoding: .utf8)
+        XCTAssertTrue(html.contains(">Export acceptance current buffer</h1>"))
+        XCTAssertTrue(html.contains("href=\"sibling.html#details\""))
+        XCTAssertEqual(editor.value as? String, edited, "export changed the source buffer")
+
+        // Occlusion autosave may legitimately persist the edit while the panel
+        // is open. Both generations remain Markdown; export must never write
+        // HTML or its rewritten sibling link back to the source document.
+        let sourceBytes = try Data(contentsOf: fixture)
+        XCTAssertTrue(sourceBytes == original || sourceBytes == Data(edited.utf8),
+                      "export rewrote the source file beyond the user's edit")
+        add(XCTAttachment(screenshot: window.screenshot()))
+    }
+
     func testSplitViewCreatesTwoInteractiveDocumentPanes() throws {
         app.launch()
         app.activate()
