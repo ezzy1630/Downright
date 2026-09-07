@@ -565,7 +565,10 @@ extension DocumentWindowController: FindBarDelegate {
             markdownDocument.apply(edits, actionName: "Replace All")
             runFind(currentFindQuery)
             replaceResults("Replaced \(edits.count)")
-        } else if let edit = findSession.replacementEdit(in: markdownDocument.text, template: replacement) {
+        } else if let edit = findSession.replacementEdit(
+            in: markdownDocument.text, template: replacement,
+            caret: containerTextView.sourceSelectedRange.location
+        ) {
             applyInPlaceDocumentEdits([edit], actionName: "Replace")
             runFind(currentFindQuery)
             replaceResults("Replaced 1")

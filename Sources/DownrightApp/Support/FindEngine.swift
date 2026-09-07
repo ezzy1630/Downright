@@ -122,10 +122,12 @@ final class FindSession {
 
     /// Uses the captures from the search that selected this hit, without running
     /// the regex again. Edits may precede the debounced find refresh, so check
-    /// the exact UTF-16 snapshot before trusting any cached source range.
-    func replacementEdit(in text: String, template: String) -> TextEdit? {
+    /// the exact UTF-16 snapshot before trusting any cached source range. A
+    /// changed snapshot re-derives the hit from the editor's current caret;
+    /// a cached match position may no longer identify the same occurrence.
+    func replacementEdit(in text: String, template: String, caret: Int) -> TextEdit? {
         if searchResult?.text.utf16.elementsEqual(text.utf16) != true {
-            update(query: query, in: text, caret: currentMatch?.location ?? 0)
+            update(query: query, in: text, caret: caret)
         }
         guard let searchResult, let currentIndex,
               searchResult.results.indices.contains(currentIndex) else { return nil }
