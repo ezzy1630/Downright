@@ -202,6 +202,26 @@ struct DocumentTrustStateTests {
     }
 
     @Test @MainActor
+    func recreationDoesNotOverwriteAFileCreatedAtCommitBoundary() throws {
+        let fixture = try Fixture(text: "before\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
+        try FileManager.default.removeItem(at: fixture.url)
+        document.beforeSaveCommitForTesting = {
+            try! Data("external\n".utf8).write(to: fixture.url, options: .atomic)
+        }
+        guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile() else {
+            Issue.record("recreation must not replace a concurrent external creation")
+            return
+        }
+        #expect(try Data(contentsOf: fixture.url) == Data("external\n".utf8))
+        #expect(document.isDirty)
+    }
+
+    @Test @MainActor
     func discardedEditsCannotReturnOnTheNextKeystroke() throws {
         let fixture = try Fixture(text: "saved\n")
         defer { fixture.remove() }
@@ -307,6 +327,71 @@ struct DocumentTrustStateTests {
         try document.save()
         #expect(try Data(contentsOf: fixture.url) == Data("body".utf8))
         document.close()
+    }
+
+    @Test @MainActor
+    func cleanExternalFinalNewlineEditSurvivesTheNextSave() async throws {
+        let fixture = try Fixture(text: "body\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        try Data("body".utf8).write(to: fixture.url, options: .atomic)
+        document.handleExternalWrite()
+        document.flushPendingExternalWrite()
+        for _ in 0..<100 where document.text != "body" {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(document.text == "body")
+        #expect(!document.isDirty)
+        document.replace(NSRange(location: 0, length: 4), with: "changed", actionName: "Typing")
+        try document.save()
+        #expect(try Data(contentsOf: fixture.url) == Data("changed".utf8))
+    }
+
+    @Test @MainActor
+    func watcherDoesNotUndoALocalFinalNewlineEdit() async throws {
+        let fixture = try Fixture(text: "body\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 4, length: 1), with: "", actionName: "Delete")
+        var finished = false
+        document.onExternalWriteActivity = { active in if !active { finished = true } }
+        document.handleExternalWrite()
+        document.flushPendingExternalWrite()
+        for _ in 0..<100 where !finished {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(finished)
+        #expect(document.text == "body")
+        #expect(document.isDirty)
+        #expect(document.pendingConflict == nil)
+        try document.save()
+        #expect(try Data(contentsOf: fixture.url) == Data("body".utf8))
+    }
+
+    @Test @MainActor
+    func takingTheirsAdoptsRecoveryTextAndByteFidelity() throws {
+        let fixture = try Fixture(text: "original\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
+        let incoming = Data([0xEF, 0xBB, 0xBF]) + Data("theirs\r\n".utf8)
+        try incoming.write(to: fixture.url, options: .atomic)
+        _ = document.saveIfNeeded()
+        let conflict = try #require(document.pendingConflict)
+        try FileManager.default.removeItem(at: fixture.url)
+        document.resolveConflictTakingTheirs(conflict)
+        #expect(try DocumentIO.encodedData(document.text, fidelity: document.fidelity) == incoming)
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "discard me\n", actionName: "Typing")
+        document.discardUnsavedChanges()
+        #expect(document.text == "theirs\n")
+        #expect(!document.isDirty)
+        #expect(!FileManager.default.fileExists(atPath: fixture.url.path))
     }
 
     @Test @MainActor

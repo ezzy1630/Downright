@@ -117,6 +117,8 @@ final class MarkdownDocument: NSObject {
         var incomingText: String
         var hunks: [ChangeHunk]
         var changedBlockCount: Int
+        var incomingFidelity: ByteFidelity? = nil
+        var incomingByteHash: String? = nil
     }
 
     enum ExternalEvent {
@@ -520,6 +522,7 @@ final class MarkdownDocument: NSObject {
         // may make the keep-mine call for the user.  Surface any unresolved
         // conflict — or one detected right now — and refuse to write.
         var expectedDiskData: Data?
+        var requiresMissingPath = false
         if intent != .recreateFile {
             if intent == .normal, let conflict = pendingConflict {
                 throw presentBlockingConflict(conflict, incoming: conflict.incomingText, incomingHash: nil)
@@ -533,7 +536,9 @@ final class MarkdownDocument: NSObject {
                     let conflict = Conflict(
                         incomingText: incoming,
                         hunks: hunks,
-                        changedBlockCount: hunks.count
+                        changedBlockCount: hunks.count,
+                        incomingFidelity: freshFidelity,
+                        incomingByteHash: DocumentIO.contentHash(data)
                     )
                     throw presentBlockingConflict(
                         conflict, incoming: incoming,
@@ -558,14 +563,17 @@ final class MarkdownDocument: NSObject {
             // still missing/unreadable. If a readable generation has appeared
             // since the sheet was shown, it is external state and wins.
             switch inspectDiskState() {
-            case .missing, .unreadable:
+            case .missing:
+                requiresMissingPath = true
+            case .unreadable:
                 break
             case .unchanged(let data, let freshFidelity):
                 expectedDiskData = data
                 fidelity = freshFidelity
-            case .changed(let incoming, let hunks, _, _):
+            case .changed(let incoming, let hunks, let data, let freshFidelity):
                 let conflict = Conflict(
-                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count,
+                    incomingFidelity: freshFidelity, incomingByteHash: DocumentIO.contentHash(data)
                 )
                 throw presentBlockingConflict(
                     conflict, incoming: incoming, incomingHash: SnapshotStore.hash(incoming)
@@ -590,6 +598,8 @@ final class MarkdownDocument: NSObject {
                 try DocumentIO.replaceExistingAtomically(
                     with: encoded, at: url, expected: expectedDiskData
                 )
+            } else if requiresMissingPath {
+                try DocumentIO.createAtomically(with: encoded, at: url)
             } else {
                 // Only the explicit Recreate File recovery action may create
                 // or replace without an inspected existing generation.
@@ -606,9 +616,10 @@ final class MarkdownDocument: NSObject {
                 }
             }
             switch inspectDiskState() {
-            case .changed(let incoming, let hunks, _, _):
+            case .changed(let incoming, let hunks, let data, let freshFidelity):
                 let conflict = Conflict(
-                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count,
+                    incomingFidelity: freshFidelity, incomingByteHash: DocumentIO.contentHash(data)
                 )
                 throw presentBlockingConflict(
                     conflict, incoming: incoming, incomingHash: SnapshotStore.hash(incoming)
@@ -688,9 +699,9 @@ final class MarkdownDocument: NSObject {
 
     /// True when `a` and `b` differ only by the presence of a single trailing
     /// newline (LF, CRLF or lone CR are all counted).  Used to treat the final
-    /// newline as byte-fidelity rather than as content, so an external absorb
-    /// never reverts the user's trailing-newline edit and a save never blocks
-    /// on a phantom conflict for one.
+    /// newline as byte-fidelity when reconciling a dirty buffer, so an external
+    /// absorb never reverts the user's trailing-newline edit. Clean buffers
+    /// still adopt the exact incoming text.
     private func finalNewlineDifferenceOnly(_ a: String, _ b: String) -> Bool {
         Self.finalNewlineDifferenceOnlyValue(a, b)
     }
@@ -1300,8 +1311,7 @@ final class MarkdownDocument: NSObject {
             let incomingHash = SnapshotStore.hash(incoming)
             let incomingByteHash = DocumentIO.contentHash(snapshot.data)
             let currentHash = SnapshotStore.hash(capturedText)
-            if incomingHash != currentHash,
-               !Self.finalNewlineDifferenceOnlyValue(capturedText, incoming) {
+            if incomingHash != currentHash {
                 snapshotStore.record(incoming, for: url, kind: .external)
             }
             let baselineHunks = incomingHash == currentHash
@@ -1347,6 +1357,8 @@ final class MarkdownDocument: NSObject {
                     generation: nextGeneration,
                     incoming: prepared.incoming,
                     incomingHash: prepared.incomingHash,
+                    incomingFidelity: prepared.fidelity,
+                    incomingByteHash: prepared.incomingByteHash,
                     hunks: hunks
                 )
             }
@@ -1360,7 +1372,7 @@ final class MarkdownDocument: NSObject {
             if !isDirty, pendingConflict == nil { publishPresentationState(.neutral) }
             return
         }
-        if finalNewlineDifferenceOnly(prepared.capturedText, prepared.incoming) {
+        if isDirty, finalNewlineDifferenceOnly(prepared.capturedText, prepared.incoming) {
             diskHash = prepared.incomingHash
             diskByteHash = prepared.incomingByteHash
             fidelity = prepared.fidelity
@@ -1370,7 +1382,10 @@ final class MarkdownDocument: NSObject {
         diskHash = prepared.incomingHash
         diskByteHash = prepared.incomingByteHash
         if isDirty {
-            presentPreparedConflict(incoming: prepared.incoming, hunks: prepared.applicationHunks)
+            presentPreparedConflict(
+                incoming: prepared.incoming, hunks: prepared.applicationHunks,
+                fidelity: prepared.fidelity, byteHash: prepared.incomingByteHash
+            )
             return
         }
 
@@ -1397,17 +1412,25 @@ final class MarkdownDocument: NSObject {
         generation: UInt64,
         incoming: String,
         incomingHash: String,
+        incomingFidelity: ByteFidelity,
+        incomingByteHash: String,
         hunks: [ChangeHunk]
     ) {
         guard !isClosed, generation == externalPreparationGeneration else { return }
         defer { endBurstIfNeeded() }
         diskHash = incomingHash
-        presentPreparedConflict(incoming: incoming, hunks: hunks)
+        presentPreparedConflict(
+            incoming: incoming, hunks: hunks,
+            fidelity: incomingFidelity, byteHash: incomingByteHash
+        )
     }
 
-    private func presentPreparedConflict(incoming: String, hunks: [ChangeHunk]) {
+    private func presentPreparedConflict(
+        incoming: String, hunks: [ChangeHunk], fidelity: ByteFidelity, byteHash: String
+    ) {
         let conflict = Conflict(
-            incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+            incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count,
+            incomingFidelity: fidelity, incomingByteHash: byteHash
         )
         pendingConflict = conflict
         publishPresentationState(PresentationState(
@@ -1568,7 +1591,8 @@ final class MarkdownDocument: NSObject {
 
         let hunks = TextDiff.hunks(old: previous, new: incoming)
         let conflict = Conflict(
-            incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count
+            incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count,
+            incomingFidelity: fidelity, incomingByteHash: diskByteHash
         )
         pendingConflict = conflict
         unreadChanges = .none
@@ -1609,6 +1633,14 @@ final class MarkdownDocument: NSObject {
 
     /// Conflict resolution: take the version on disk, dropping local edits.
     func resolveConflictTakingTheirs(_ conflict: Conflict) {
+        // The accepted generation is also the recovery baseline. A subsequent
+        // deletion and Discard must not revive the text from before the conflict.
+        lastCommittedText = conflict.incomingText
+        // Text and byte facts travel together even if the path changes again
+        // while the user is reviewing the conflict.
+        if let incomingFidelity = conflict.incomingFidelity { fidelity = incomingFidelity }
+        diskHash = DocumentIO.contentHash(conflict.incomingText)
+        if let incomingByteHash = conflict.incomingByteHash { diskByteHash = incomingByteHash }
         applyExternalText(conflict.incomingText, hunks: conflict.hunks)
         publishPresentationState(.neutral)
     }

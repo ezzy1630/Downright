@@ -38,14 +38,17 @@ FEED_FILE="$WORK_DIR/appcast.xml"
 ERROR_FILE="$WORK_DIR/error.txt"
 
 validate_feed() {
-    curl -fsSL --max-time 30 --retry 2 --retry-delay 1 "$FEED_URL" -o "$FEED_FILE"
-    xmllint --noout "$FEED_FILE"
+    # This function is called in an `if`, so Bash disables errexit inside it.
+    # Return explicitly on every failed prerequisite, including a failed fetch
+    # that leaves a previous attempt's feed on disk.
+    curl -fsSL --max-time 30 --retry 2 --retry-delay 1 "$FEED_URL" -o "$FEED_FILE" || return 1
+    xmllint --noout "$FEED_FILE" || return 1
 
-    # Feed signatures are Sparkle comments appended by generate_appcast rather
-    # than XML nodes. Keep both checks explicit so a valid-looking but unsigned
+    # Feed signatures are appended Sparkle comments rather than XML nodes.
+    # Keep both checks explicit so a valid-looking but unsigned
     # feed cannot pass this public-boundary gate.
-    grep -Eq 'sparkle-signatures:' "$FEED_FILE"
-    grep -Eq 'edSignature:[[:space:]]*[A-Za-z0-9+/=]+' "$FEED_FILE"
+    grep -Eq 'sparkle-signatures:' "$FEED_FILE" || return 1
+    grep -Eq 'edSignature:[[:space:]]*[A-Za-z0-9+/=]+' "$FEED_FILE" || return 1
 
     python3 - "$FEED_FILE" "$EXPECTED_SHORT_VERSION" "$EXPECTED_BUILD" "$EXPECTED_RELEASE_TAG" <<'PY'
 import sys
@@ -84,10 +87,17 @@ url = enclosure.attrib.get("url", "")
 if not url:
     fail("latest enclosure has no URL")
 parsed = urllib.parse.urlparse(url)
-if parsed.scheme != "https" or not parsed.netloc:
-    fail("latest enclosure URL is not an HTTPS URL")
-if expected_tag not in url:
-    fail(f"latest enclosure does not point at release {expected_tag!r}")
+expected_path = (
+    "/ezzy1630/Downright/releases/download/"
+    + urllib.parse.quote(expected_tag, safe="") + "/"
+)
+asset = urllib.parse.unquote(parsed.path.removeprefix(expected_path))
+if (parsed.scheme != "https" or parsed.netloc != "github.com"
+        or parsed.params or parsed.query or parsed.fragment
+        or not parsed.path.startswith(expected_path)
+        or not asset or "/" in asset or "\\" in asset
+        or asset in (".", "..")):
+    fail(f"latest enclosure does not point at Downright release {expected_tag!r}")
 
 try:
     length = int(enclosure.attrib.get("length", "0"))
