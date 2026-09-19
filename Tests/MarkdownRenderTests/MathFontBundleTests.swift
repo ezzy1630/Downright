@@ -58,12 +58,19 @@ struct MathFontBundleTests {
 
     /// A bundle whose `.otf` was lost in an incomplete copy must not count: the
     /// probe deliberately looks for the font file, not the directory over it.
-    @Test func aBundleMissingTheFontFileIsDeclined() throws {
+    @Test(arguments: [false, true])
+    func aBundleMissingTheFontFileIsDeclinedByBoth(deep: Bool) throws {
         try withTemporaryDirectory { root in
-            let fonts = root.appendingPathComponent(bundleName)
-                .appendingPathComponent("mathFonts.bundle")
+            let fonts = deep
+                ? root.appendingPathComponent(bundleName)
+                    .appendingPathComponent("Contents/Resources/mathFonts.bundle")
+                : root.appendingPathComponent(bundleName)
+                    .appendingPathComponent("mathFonts.bundle")
             try FileManager.default.createDirectory(at: fonts, withIntermediateDirectories: true)
             #expect(!MathFontBundle.probe(roots: [root]))
+            // The oracle has to agree, or it cannot witness the incomplete-copy
+            // false positive the probe exists to rule out.
+            #expect(!MathFontBundle.resolverWouldFind(roots: [root]))
         }
     }
 

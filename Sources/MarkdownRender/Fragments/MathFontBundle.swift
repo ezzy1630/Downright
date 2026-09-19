@@ -48,10 +48,16 @@ enum MathFontBundle {
     /// the two together; nothing else should need this.
     static func resolverWouldFind(roots: [URL]) -> Bool {
         roots.contains { root in
-            guard let bundle = Bundle(url: root.appendingPathComponent(bundleName)) else {
-                return false
-            }
-            return bundle.url(forResource: "mathFonts", withExtension: "bundle") != nil
+            guard let bundle = Bundle(url: root.appendingPathComponent(bundleName)),
+                  let fonts = bundle.url(forResource: "mathFonts", withExtension: "bundle")
+            else { return false }
+            // The font file itself, not the directory over it. SwiftMath
+            // force-unwraps its way down to this `.otf`, so a bundle that lost
+            // it in an incomplete copy must read as a miss on both sides —
+            // otherwise the oracle cannot catch the false positive `probe` is
+            // here to avoid.
+            return FileManager.default.fileExists(
+                atPath: fonts.appendingPathComponent("latinmodern-math.otf").path)
         }
     }
 

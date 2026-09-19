@@ -69,17 +69,61 @@ class BundleArchitectureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_symlinked_helper_is_still_verified(self):
-        """`find -type f` skips symlinks; a nested binary must not escape that way."""
+        """A nested binary reachable only as a symlink must not escape the gate.
+
+        The target is stored *outside* the bundle on purpose. If it lived under
+        Contents as a regular file, a plain `-type f` walk would find the thin
+        binary directly and this test would stay green even if symlink handling
+        regressed — proving nothing about the behaviour it is named for.
+        """
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+            outside = pathlib.Path(temporary) / "outside-the-bundle"
+            outside.mkdir()
+            shutil.copy2(self.root / "arm64-helper", outside / "real-helper")
+            app = pathlib.Path(temporary) / "An App.app"
+            macos = app / "Contents" / "MacOS"
+            macos.mkdir(parents=True)
+            shutil.copy2(self.root / "universal-host", macos / "Downright")
+            (macos / "down").symlink_to(outside / "real-helper")
+            result = subprocess.run(
+                [str(ROOT / "Scripts/verify-bundle-architectures.sh"), str(app)],
+                text=True, capture_output=True, timeout=TIMEOUT)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("missing x86_64", result.stderr)
+
+    def test_a_symlinked_directory_is_not_descended(self):
+        """Following symlinked directories would make the verdict depend on
+        files outside the bundle (and could spin on a loop). A symlink *to a
+        directory* holding a thin binary must therefore not be walked into."""
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+            outside = pathlib.Path(temporary) / "outside-the-bundle"
+            outside.mkdir()
+            shutil.copy2(self.root / "arm64-helper", outside / "stranger")
+            app = pathlib.Path(temporary) / "An App.app"
+            macos = app / "Contents" / "MacOS"
+            macos.mkdir(parents=True)
+            shutil.copy2(self.root / "universal-host", macos / "Downright")
+            (app / "Contents" / "Elsewhere").symlink_to(outside, target_is_directory=True)
+            result = subprocess.run(
+                [str(ROOT / "Scripts/verify-bundle-architectures.sh"), str(app)],
+                text=True, capture_output=True, timeout=TIMEOUT)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_symlink_loop_does_not_hang_or_pass_silently(self):
+        """A loop must not be walked into, and must not leave the gate
+        reporting success having enumerated nothing."""
         with tempfile.TemporaryDirectory(dir=self.root) as temporary:
             app = pathlib.Path(temporary) / "An App.app"
             macos = app / "Contents" / "MacOS"
             macos.mkdir(parents=True)
             shutil.copy2(self.root / "universal-host", macos / "Downright")
-            shutil.copy2(self.root / "arm64-helper", app / "Contents" / "real-helper")
-            (macos / "down").symlink_to("../real-helper")
+            shutil.copy2(self.root / "arm64-helper", macos / "down")
+            (app / "Contents" / "Loop").symlink_to(app / "Contents", target_is_directory=True)
             result = subprocess.run(
                 [str(ROOT / "Scripts/verify-bundle-architectures.sh"), str(app)],
                 text=True, capture_output=True, timeout=TIMEOUT)
+            # The real thin helper is still caught; the loop neither hangs nor
+            # swallows the verdict.
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("missing x86_64", result.stderr)
 

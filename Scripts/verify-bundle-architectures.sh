@@ -14,17 +14,30 @@ if [ -z "$HOST_ARCHS" ]; then
     exit 1
 fi
 
-# `-L` so a nested Mach-O reachable only through a symlink is still checked:
-# frameworks reach their binary through Versions/Current, and `-type f` alone
-# never matches a symlink. A versioned framework is therefore scanned twice,
-# which costs time and cannot change the verdict.
 LIST="$(mktemp)"
-trap 'rm -f "$LIST"' EXIT
-# The enumeration must be able to fail loudly. Inside a `while … done < <(find)`
-# the exit status of `find` is discarded, so an unreadable subtree would leave
-# the gate reporting success having checked nothing.
-if ! find -L "$APP/Contents" -type f -print0 > "$LIST" 2>/dev/null; then
+ERRORS="$(mktemp)"
+trap 'rm -f "$LIST" "$ERRORS"' EXIT
+
+# Symlinks are matched (`-type l`) but not descended through: a nested binary
+# reachable only as a symlink — a framework's Versions/Current/… — must still be
+# verified, while following symlinked *directories* would let the gate wander
+# outside the bundle (making the verdict depend on external state) or spin on a
+# symlink loop. `file` and `lipo` both dereference, so a symlinked Mach-O is
+# still read, and a dangling one is simply not Mach-O.
+#
+# The enumeration must also be able to fail loudly. Inside a
+# `while … done < <(find)` the exit status of `find` is discarded, so an
+# unreadable subtree would leave the gate reporting success having checked
+# nothing. Its stderr is kept out of the NUL-separated list but surfaced, never
+# swallowed.
+if ! find "$APP/Contents" \( -type f -o -type l \) -print0 > "$LIST" 2> "$ERRORS"; then
     echo "cannot enumerate bundle contents: $APP/Contents" >&2
+    cat "$ERRORS" >&2
+    exit 1
+fi
+if [ -s "$ERRORS" ]; then
+    echo "errors while enumerating $APP/Contents:" >&2
+    cat "$ERRORS" >&2
     exit 1
 fi
 
