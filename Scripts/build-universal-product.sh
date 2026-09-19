@@ -56,5 +56,13 @@ else
     # produced was ad-hoc signed. Without this the merged binary is "not signed
     # at all", which fails the enclosing bundle's seal. The release pipeline
     # replaces this with the Developer ID signature later.
-    codesign --force --sign - "$OUTPUT" 2>/dev/null
+    #
+    # codesign's own stderr is deliberately not discarded. In the acceptance
+    # lane this is the only signature the embedded CLI ever gets, so a failure
+    # here must say why rather than abort bare on `set -e` — an unexplained
+    # unsigned binary is the failure class this script exists to remove.
+    if ! codesign --force --sign - "$OUTPUT"; then
+        echo "build-universal-product: could not re-seal $OUTPUT" >&2
+        exit 1
+    fi
 fi

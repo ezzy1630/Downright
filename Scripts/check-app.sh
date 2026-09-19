@@ -113,9 +113,12 @@ CLI_HOST_ARCHS="$(lipo -archs "$APP/Contents/MacOS/Downright" 2>/dev/null || tru
     echo "check-app: cannot read host architectures from $APP/Contents/MacOS/Downright" >&2
     exit 1
 }
+# The same configuration the rest of this lane uses, so a Debug acceptance run
+# does not end up with a release CLI beside a debug Spotlight importer.
 # shellcheck disable=SC2086  # CLI_HOST_ARCHS is a deliberate word list.
 "$ROOT/Scripts/build-universal-product.sh" \
-    down down release "$SPOTLIGHT_SCRATCH" "$APP/Contents/MacOS/down" $CLI_HOST_ARCHS
+    down down "$SPOTLIGHT_CONFIGURATION" "$SPOTLIGHT_SCRATCH" \
+    "$APP/Contents/MacOS/down" $CLI_HOST_ARCHS
 chmod +x "$APP/Contents/MacOS/down"
 
 # Xcode places SwiftPM resources at bundle/Contents/Resources, while the
