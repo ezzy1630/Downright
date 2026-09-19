@@ -94,8 +94,9 @@ sample count. Keep the corpus shape, build mode, and budget labels stable, and
 add a focused case when a new pipeline or document type can change the cost.
 
 Percentiles are nearest-rank, which makes the sample count part of the gate's
-meaning: the nearest-rank p95 of fewer than 21 samples **is** the maximum
-sample. A budgeted case measured over 15 runs is really asserting "the worst of
+meaning: the nearest-rank p95 of fewer than 20 samples **is** the maximum
+sample (the index is `ceil(0.95n) - 1`, which reaches `n - 1` for every
+`n` below 20). A budgeted case measured over 15 runs is really asserting "the worst of
 15 runs passes", so on a shared CI runner a single scheduler stall fails a
 signed release on unchanged code. Budgeted cases therefore take enough runs for
 the 95th percentile to be a percentile; do not lower the run count of a case

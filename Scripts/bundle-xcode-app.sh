@@ -103,8 +103,16 @@ else
 fi
 
 echo "==> Embedding down CLI"
+# Read the architectures first so a failed lookup is an error rather than an
+# empty flag list: `set -e` does not catch a command substitution in a `for`
+# word list, and an empty array trips `set -u` on macOS's bash 3.2.
+CLI_HOST_ARCHS="$(lipo -archs "$APP/Contents/MacOS/Downright" 2>/dev/null || true)"
+[ -n "$CLI_HOST_ARCHS" ] || {
+    echo "error: cannot read host architectures from $APP/Contents/MacOS/Downright" >&2
+    exit 1
+}
 CLI_ARCH_FLAGS=()
-for arch in $(lipo -archs "$APP/Contents/MacOS/Downright"); do
+for arch in $CLI_HOST_ARCHS; do
     CLI_ARCH_FLAGS+=(--arch "$arch")
 done
 # SwiftPM may place products directly under the scratch directory or under a

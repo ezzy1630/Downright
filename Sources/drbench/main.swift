@@ -22,8 +22,9 @@ var budgetViolated = false
 /// Nearest-rank percentile over an ascending sample array.
 ///
 /// Sample count is load-bearing for any budget that gates a release.  The
-/// nearest-rank p95 of fewer than 21 samples *is* the maximum sample, so a
-/// 15-run budget was really "the worst of 15 runs must pass".  On a shared CI
+/// nearest-rank p95 of fewer than 20 samples *is* the maximum sample — the
+/// index is `ceil(0.95n) - 1`, which reaches `n - 1` exactly while `0.05n < 1`
+/// — so a 15-run budget was really "the worst of 15 runs must pass".  On a shared CI
 /// runner one scheduler stall then fails a signed release on unchanged code —
 /// which is exactly what happened to the convergence gate.  Budgeted cases
 /// below therefore take enough runs for the 95th percentile to be a percentile.

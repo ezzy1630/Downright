@@ -66,8 +66,14 @@ else
 fi
 
 # Match nested executable architectures to the host, including universal builds.
-check "$("$(dirname "$0")/verify-bundle-architectures.sh" "$APP" && echo 1 || echo 0)" \
-    "all nested binaries support the host architectures"
+# Branch on the verifier's exit status rather than routing it through captured
+# stdout: any future progress line there would otherwise turn every bundle
+# verification into a silent FAIL.  Its diagnostics already go to stderr.
+if "$(dirname "$0")/verify-bundle-architectures.sh" "$APP"; then
+    check 1 "all nested binaries support the host architectures"
+else
+    check 0 "all nested binaries support the host architectures"
+fi
 
 # --- CLI ---------------------------------------------------------------------
 check "$([ -x "$MACOS/down" ] && echo 1 || echo 0)" "down CLI embedded"

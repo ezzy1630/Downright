@@ -25,15 +25,35 @@ import Foundation
 enum MathFontBundle {
 
     /// `true` when SwiftMath's resolver will find its fonts in this process.
-    static let isAvailable: Bool = {
+    static let isAvailable: Bool = probe(roots: candidateRoots)
+
+    /// The predicate itself, over an explicit list of roots.
+    ///
+    /// Separated from `isAvailable` so a test can hand it a materialised bundle
+    /// in either layout and assert it agrees with what `Bundle` — which is how
+    /// `MathResourceBundle` actually resolves the font — would have found. The
+    /// bug this guards is a probe that is stricter than the resolver it
+    /// predicts, whose only symptom is math quietly not rendering.
+    static func probe(roots: [URL]) -> Bool {
         let fileManager = FileManager.default
-        return candidateRoots.contains { root in
+        return roots.contains { root in
             let bundle = root.appendingPathComponent(bundleName)
             return probePaths.contains { probe in
                 fileManager.fileExists(atPath: bundle.appendingPathComponent(probe).path)
             }
         }
-    }()
+    }
+
+    /// What `MathResourceBundle` would resolve for the same roots.  A test pins
+    /// the two together; nothing else should need this.
+    static func resolverWouldFind(roots: [URL]) -> Bool {
+        roots.contains { root in
+            guard let bundle = Bundle(url: root.appendingPathComponent(bundleName)) else {
+                return false
+            }
+            return bundle.url(forResource: "mathFonts", withExtension: "bundle") != nil
+        }
+    }
 
     private static let bundleName = "SwiftMath_SwiftMath.bundle"
 

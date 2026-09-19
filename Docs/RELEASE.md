@@ -241,7 +241,7 @@ Scripts/verify-bundle.sh Downright.app --production    # + feed URL & key checks
 
 It checks Sparkle and its nested XPC helpers, bundle-relative runtime paths,
 the Quick Look extensions, the `down` CLI, host/extension version equality,
-and matching CPU architectures for every nested Mach-O binary,
+matching CPU architectures for every nested Mach-O binary,
 the privacy manifest, and (in production mode) the exact feed URL and a
 non-placeholder public key.
 

@@ -54,7 +54,7 @@ struct SafeHTMLTests {
         """
         let mixed = MarkdownParser.parse(withADistantAngleBracket)
         let annotated = mixed.root.children.compactMap(\.safeHTML)
-        #expect(annotated.count == 1)
+        try #require(annotated.count == 1)
         #expect(annotated[0].isSafe)
         #expect(annotated[0].annotations.contains { if case .strong = $0.kind { true } else { false } })
         // The blocks shared with the first document are unchanged: turning the

@@ -46,6 +46,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="$(gh release view --json tagName --jq .tagName)"
+          # Before the first release there is nothing to attach the badge to,
+          # and `gh release view` exits non-zero. A metrics refresh with no
+          # destination is a no-op, not a failed workflow.
+          TAG="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then
+            echo "no published release yet; nothing to attach the counter to"
+            exit 0
+          fi
           # Metrics are mutable; signed application archives and feeds are not.
           gh release upload "$TAG" "$RUNNER_TEMP/download-counter/downloads.json" --clobber
