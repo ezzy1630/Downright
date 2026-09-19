@@ -107,6 +107,12 @@ every release; Sparkle orders updates by it.
 
 ### Changed
 
+- Reparsing a large document is about 13% faster. Every block was searching its
+  own text for an angle bracket through Foundation's Unicode-aware comparison
+  machinery, which cost 6% of a full parse on documents containing no HTML at
+  all; the line scan the parser already performs now answers that question once
+  for the whole document. On a 120 KB file the full convergence pipeline drops
+  from roughly 31 ms to 27 ms.
 - External-effect trust grants are now pinned to the exact URL you approved.
   An "always allow" given to one link or automation inside a folder no longer
   silently authorizes every future URL of that kind in the same folder — a
@@ -134,6 +140,23 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
+- **The `down` CLI and Spotlight indexing work on Intel Macs again.** The app
+  itself was built universal, but the embedded command-line tool and the
+  Spotlight metadata importer were compiled for the build machine's
+  architecture alone, so on an Intel Mac both were unusable while the app
+  around them ran fine. Both now match the host bundle, and a bundle whose
+  nested binaries do not cover every architecture of the app that contains
+  them no longer verifies.
+- **A file with Windows line endings no longer reports a conflict that isn't
+  there.** Reconciling a CRLF file against its version on disk compared one
+  character too few, so a document that differed only by its final newline
+  read as edited elsewhere and blocked the save behind a conflict bar.
+- **Relinking an image to a path with a space keeps the image.** The repair
+  percent-encoded the destination, which is right for a URL and wrong for a
+  local file — the renderer resolves the literal path, so the reference
+  pointed at a filename that did not exist. Spaces and parentheses now travel
+  in CommonMark angle delimiters instead, and undoing a repair that changed
+  the destination's length restores the original text rather than failing.
 - **Restructuring a heading inside a quote or list no longer eats the next
   line.** Demoting `> ## Deep` used to take the setext-normalization path,
   which consumed the *following* line as an underline — the quoted body
