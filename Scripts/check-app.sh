@@ -104,13 +104,19 @@ if [ "$APP_ACCEPTANCE_PRODUCTION" = "0" ]; then
 fi
 
 echo "==> Embedding the CLI and flattening Xcode resource bundles"
-swift build -c release --scratch-path "$SPOTLIGHT_SCRATCH" --product down
-CLI_BIN="$(swift build -c release --scratch-path "$SPOTLIGHT_SCRATCH" --product down --show-bin-path)/down"
-[ -x "$CLI_BIN" ] || {
-    echo "check-app: SwiftPM did not produce the down CLI: $CLI_BIN" >&2
+# The CLI has to cover every architecture of the host it is embedded in. This
+# lane builds a universal host in the production configuration, and a host-only
+# CLI inside it is precisely the defect that shipped to Intel Macs — the bundle
+# verifier now rejects it, so build the slices the host actually has.
+CLI_HOST_ARCHS="$(lipo -archs "$APP/Contents/MacOS/Downright" 2>/dev/null || true)"
+[ -n "$CLI_HOST_ARCHS" ] || {
+    echo "check-app: cannot read host architectures from $APP/Contents/MacOS/Downright" >&2
     exit 1
 }
-cp "$CLI_BIN" "$APP/Contents/MacOS/down"
+# shellcheck disable=SC2086  # CLI_HOST_ARCHS is a deliberate word list.
+"$ROOT/Scripts/build-universal-product.sh" \
+    down down release "$SPOTLIGHT_SCRATCH" "$APP/Contents/MacOS/down" $CLI_HOST_ARCHS
+chmod +x "$APP/Contents/MacOS/down"
 
 # Xcode places SwiftPM resources at bundle/Contents/Resources, while the
 # runtime resolvers and the shared bundle verifier use the flat layout. Lift

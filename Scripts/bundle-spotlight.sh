@@ -30,34 +30,25 @@ SPOTLIGHT_BUNDLE_IDENTIFIER="$HOST_BUNDLE_IDENTIFIER.spotlight"
 # Match the assembled host, including universal archives built on Apple Silicon.
 # The architectures are read into a variable first so the lookup can fail: a
 # command substitution in a `for` word list is not caught by `set -e`, and an
-# empty ARCH_FLAGS would either abort on `set -u` (bash 3.2, which is what
-# /bin/bash is on macOS) or quietly build host-only — the exact single-arch
-# result this is here to prevent.
+# empty list would either abort on `set -u` (bash 3.2, which is what /bin/bash
+# is on macOS) or quietly build host-only — the exact single-arch result this is
+# here to prevent.
 HOST_ARCHS="$(lipo -archs "$APP/Contents/MacOS/Downright" 2>/dev/null || true)"
 [ -n "$HOST_ARCHS" ] || {
     echo "error: cannot read host architectures from $APP/Contents/MacOS/Downright" >&2
     exit 1
 }
-ARCH_FLAGS=()
-for arch in $HOST_ARCHS; do
-    ARCH_FLAGS+=(--arch "$arch")
-done
 
-echo "==> Building Spotlight importer ($SPOTLIGHT_CONFIGURATION)"
-swift build "${ARCH_FLAGS[@]}" \
-    -c "$SPOTLIGHT_CONFIGURATION" \
-    --scratch-path "$SPOTLIGHT_SCRATCH" \
-    --product DownrightSpotlightImporter
-BIN_DIR="$(swift build "${ARCH_FLAGS[@]}" \
-    -c "$SPOTLIGHT_CONFIGURATION" \
-    --scratch-path "$SPOTLIGHT_SCRATCH" \
-    --product DownrightSpotlightImporter \
-    --show-bin-path)"
-SOURCE="$BIN_DIR/libDownrightSpotlightImporter.dylib"
-[ -f "$SOURCE" ] || {
-    echo "error: SwiftPM did not produce $SOURCE" >&2
-    exit 1
-}
+echo "==> Building Spotlight importer ($SPOTLIGHT_CONFIGURATION) for $HOST_ARCHS"
+SOURCE="$SPOTLIGHT_SCRATCH-universal/libDownrightSpotlightImporter.dylib"
+# shellcheck disable=SC2086  # HOST_ARCHS is a deliberate word list.
+"$ROOT/Scripts/build-universal-product.sh" \
+    DownrightSpotlightImporter \
+    libDownrightSpotlightImporter.dylib \
+    "$SPOTLIGHT_CONFIGURATION" \
+    "$SPOTLIGHT_SCRATCH" \
+    "$SOURCE" \
+    $HOST_ARCHS
 
 IMPORTER="$APP/Contents/Library/Spotlight/DownrightSpotlight.mdimporter"
 EXECUTABLE="$IMPORTER/Contents/MacOS/DownrightSpotlight"
