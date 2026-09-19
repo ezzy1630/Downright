@@ -100,6 +100,16 @@ struct BlockBuilder {
 
     private var text: NSString { map.text }
 
+    /// Source-addressed HTML annotations for `range`, or nil when the range
+    /// cannot hold any.  The document-wide flag short-circuits the common case
+    /// (no `<` anywhere) without searching each block, and the search that does
+    /// run takes the NSString the parser already holds rather than bridging and
+    /// allocating a substring per block.
+    private func safeHTML(in range: NSRange) -> SafeHTMLDocument? {
+        guard map.mayContainHTML else { return nil }
+        return SafeHTMLParser.parse(text, range: range)
+    }
+
     mutating func block(for markup: Markup, depth: Int, quoteDepth: Int) -> MDBlock? {
         guard var range = map.range(markup.range, lineOffset: lineOffset) else { return nil }
 
@@ -142,7 +152,7 @@ struct BlockBuilder {
             return MDBlock(
                 content: .htmlBlock, range: range, contentRange: range,
                 depth: depth, quoteDepth: quoteDepth,
-                safeHTML: SafeHTMLParser.parse(map.text as String, range: range)
+                safeHTML: safeHTML(in: range)
             )
 
         default:
@@ -246,7 +256,7 @@ struct BlockBuilder {
         // A paragraph may contain a complete inline HTML element tree (for
         // example `<p><strong>README</strong></p>`). Keep one source-addressed
         // annotation set so the renderer can style it without rewriting text.
-        block.safeHTML = SafeHTMLParser.parse(map.text as String, range: range)
+        block.safeHTML = safeHTML(in: range)
         return block
     }
 
