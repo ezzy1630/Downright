@@ -111,17 +111,13 @@ CLI_HOST_ARCHS="$(lipo -archs "$APP/Contents/MacOS/Downright" 2>/dev/null || tru
     echo "error: cannot read host architectures from $APP/Contents/MacOS/Downright" >&2
     exit 1
 }
-CLI_ARCH_FLAGS=()
-for arch in $CLI_HOST_ARCHS; do
-    CLI_ARCH_FLAGS+=(--arch "$arch")
-done
-# SwiftPM may place products directly under the scratch directory or under a
-# target-triple directory, depending on the active toolchain. Ask SwiftPM for
-# the active binary directory instead of assuming one of those layouts.
-swift build "${CLI_ARCH_FLAGS[@]}" -c release --scratch-path "$SWIFTPM_SCRATCH" --product down
-CLI_BIN="$(swift build "${CLI_ARCH_FLAGS[@]}" -c release --scratch-path "$SWIFTPM_SCRATCH" --product down --show-bin-path)/down"
-test -x "$CLI_BIN"
-cp "$CLI_BIN" "$APP/Contents/MacOS/down"
+# One slice per architecture, merged with lipo — see the note in
+# Scripts/build-universal-product.sh for why SwiftPM's own multi-arch build is
+# not used.
+# shellcheck disable=SC2086  # CLI_HOST_ARCHS is a deliberate word list.
+"$ROOT/Scripts/build-universal-product.sh" \
+    down down release "$SWIFTPM_SCRATCH" "$APP/Contents/MacOS/down" $CLI_HOST_ARCHS
+chmod +x "$APP/Contents/MacOS/down"
 
 echo "==> Flattening resource bundles"
 # Xcode emits SwiftPM resource bundles as deep bundles (Contents/Resources/…),

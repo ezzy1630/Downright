@@ -191,14 +191,14 @@ jobs:
           set -euo pipefail
           APP=".build-release/Downright.xcarchive/Products/Applications/Downright.app"
           echo "APP=$APP" >> "$GITHUB_ENV"
-          swift build --arch arm64 --arch x86_64 -c release --scratch-path .build-release-spm --product down
-          # SwiftPM puts products directly under the scratch directory on
-          # older toolchains, but adds the target triple on newer ones. Ask
-          # SwiftPM for the active binary directory instead of assuming one
-          # of those layouts.
-          CLI_BIN="$(swift build --arch arm64 --arch x86_64 -c release --scratch-path .build-release-spm --product down --show-bin-path)/down"
-          test -x "$CLI_BIN"
-          cp "$CLI_BIN" "$APP/Contents/MacOS/down"
+          # The archive is universal, so the CLI embedded in it must be too.
+          # One slice per architecture, merged with lipo — SwiftPM's own
+          # multi-arch build is not usable here; see the note in
+          # Scripts/build-universal-product.sh.
+          Scripts/build-universal-product.sh \
+            down down release .build-release-spm "$APP/Contents/MacOS/down" arm64 x86_64
+          chmod +x "$APP/Contents/MacOS/down"
+          lipo -archs "$APP/Contents/MacOS/down"
           # XcodeGen's `embed: true` for an SPM framework has produced both a
           # direct product and an archive-only BuildProductsPath across Xcode
           # releases. Prefer the already-embedded archive product, then the
