@@ -89,9 +89,28 @@ For a render capture:
 swift run -c release drbench render Docs/sample.md /tmp/downright.png read 1000 1400
 ```
 
-The benchmark warms each case, then reports p50 and p95. Keep the corpus shape,
-build mode, run count, and budget labels stable. Add a focused case when a new
-pipeline or document type can change the cost.
+The benchmark warms each case, then reports p50, p95, the maximum, and the
+sample count. Keep the corpus shape, build mode, and budget labels stable, and
+add a focused case when a new pipeline or document type can change the cost.
+
+Percentiles are nearest-rank, which makes the sample count part of the gate's
+meaning: the nearest-rank p95 of fewer than 20 samples **is** the maximum
+sample (the index is `ceil(0.95n) - 1`, which reaches `n - 1` for every
+`n` below 20). A budgeted case measured over 15 runs is really asserting "the worst of
+15 runs passes", so on a shared CI runner a single scheduler stall fails a
+signed release on unchanged code. Budgeted cases therefore take enough runs for
+the 95th percentile to be a percentile; do not lower the run count of a case
+that gates a release.
+
+The convergence case always prints its parse, diff, and decoration phases, so a
+miss is diagnosable from the log the failing run already wrote rather than
+needing a rerun on a machine that is no longer stalling. Full release benchmark
+output is retained in gate failure logs, and the benchmark's scratch directory
+follows `SCRATCH` (or an explicit `BENCH_SCRATCH`) to isolate concurrent checks.
+
+The cold-open corpus is truncated to exactly 100 KB, the size §12 states the
+budget for; generate past the target before truncating, because `prefix` on a
+shorter document silently measures the shorter document.
 
 ## Phase gates
 

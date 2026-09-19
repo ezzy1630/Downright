@@ -79,10 +79,15 @@ public struct SafeHTMLDocument: Sendable, Equatable {
 /// text. This is not used by HTML export, whose safety rules remain separate.
 public enum SafeHTMLParser {
     public static func parse(_ text: String, range: NSRange? = nil) -> SafeHTMLDocument? {
-        let source = text as NSString
+        parse(text as NSString, range: range)
+    }
+
+    // The Markdown parser already holds NSString source. Avoid bridging and
+    // allocating a paragraph substring merely to rule out HTML on every edit.
+    static func parse(_ source: NSString, range: NSRange? = nil) -> SafeHTMLDocument? {
         let bounds = range ?? NSRange(location: 0, length: source.length)
         guard bounds.location >= 0, bounds.length > 0, bounds.upperBound <= source.length else { return nil }
-        guard source.substring(with: bounds).contains("<") else { return nil }
+        guard source.range(of: "<", options: .literal, range: bounds).location != NSNotFound else { return nil }
 
         var parser = Parser(source: source, bounds: bounds)
         return parser.parse()

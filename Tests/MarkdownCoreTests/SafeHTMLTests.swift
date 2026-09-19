@@ -30,6 +30,39 @@ struct SafeHTMLTests {
         #expect(documents.flatMap(\.annotations).contains { if case .image(source: "Docs/demo.png", alt: "Demo") = $0.kind { true } else { false } })
     }
 
+    /// The parser skips the per-block HTML search entirely when the source
+    /// holds no `<` at all, which is the common case and 6% of a full parse.
+    /// The shortcut is document-wide, so it must not depend on *where* the
+    /// angle bracket is: a `<` that only appears in an unrelated block still
+    /// has to leave every other block's annotations exactly as they were.
+    @Test func theDocumentWideHTMLShortcutDoesNotChangeAnnotations() throws {
+        let withoutAngleBrackets = """
+        # Title
+
+        A paragraph with **bold**, `code`, and a [link](https://example.com).
+
+        - [ ] a task
+        """
+        let plain = MarkdownParser.parse(withoutAngleBrackets)
+        #expect(plain.root.children.allSatisfy { $0.safeHTML == nil })
+
+        // Same document, plus one unrelated block that does contain `<`.
+        let withADistantAngleBracket = withoutAngleBrackets + """
+
+
+        <p align="center"><strong>Footer</strong></p>
+        """
+        let mixed = MarkdownParser.parse(withADistantAngleBracket)
+        let annotated = mixed.root.children.compactMap(\.safeHTML)
+        try #require(annotated.count == 1)
+        #expect(annotated[0].isSafe)
+        #expect(annotated[0].annotations.contains { if case .strong = $0.kind { true } else { false } })
+        // The blocks shared with the first document are unchanged: turning the
+        // shortcut off must not start annotating text that has no tags in it.
+        let shared = mixed.root.children.prefix(plain.root.children.count)
+        #expect(shared.allSatisfy { $0.safeHTML == nil })
+    }
+
     @Test func unsafeOrUnknownHTMLRemainsLiteralAndInert() throws {
         for source in [
             #"<script>alert(1)</script>"#,

@@ -9,7 +9,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 - This checkout is the native app. `/Volumes/Neural/downright-website` is the Astro site; `/Volumes/Neural/product-downright` is a separate product/media workspace. Do not substitute one for another.
 - Source, SwiftPM bundles, Xcode bundles, `/Applications/Downright.app`, Finder extensions, mounted DMGs, and public releases are distinct surfaces. Name the surface in scope before changing or validating it.
 - Treat this file as durable policy, not a status page. Never rely on hard-coded SHAs, branch divergence, version/build numbers, test counts, benchmark results, release tags, download totals, or installed-app identity.
-- Resolve volatile state at task start from its live authority:
+- Resolve only the volatile state relevant to the task or a claim from its live authority. A documentation edit does not require querying releases or inspecting the installed app:
   - checkout: `git status --short --branch`, `HEAD`, and refreshed upstream state when current upstream truth is required;
   - local version/build: `Config/version.env`;
   - current tests and budgets: the relevant scripts’ fresh output;
@@ -17,7 +17,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
   - running app state: exact bundle path, `Info.plist` version/build, executable identity, and process path.
 - If live verification is unavailable or intentionally skipped, label conclusions snapshot-only. If this or a nested instruction file changes during the task, reread the applicable instructions before continuing.
 - When a change alters an architectural, validation, privacy, or release contract named here, update this file and the relevant project documentation in the same change. Do not append dated status snapshots.
-- Consult the relevant contract before changing behavior: `PRODUCT.md`, `DESIGN.md`, `Docs/ARCHITECTURE.md`, `Docs/QUICKLOOK.md`, `Docs/PERFORMANCE.md`, or `Docs/RELEASE.md`. `project.yml` is the XcodeGen source; `Config/version.env` is the canonical version/build source. Report conflicting guidance rather than silently choosing one.
+- Consult the relevant contract before changing behavior: `PRODUCT.md`, `DESIGN.md`, `Docs/ARCHITECTURE.md`, `Docs/QUICKLOOK.md`, `Docs/PERFORMANCE.md`, or `Docs/RELEASE.md`. `project.yml` is the XcodeGen source; `Config/version.env` is the canonical version/build source. Report material conflicts with the requested behavior or applicable contract; pause only work whose correctness or authorization depends on resolving them.
 
 ## Product Invariants
 
@@ -31,9 +31,9 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 
 ## Validation by Surface
 
-- Use focused tests while iterating, then run `Scripts/check.sh` as the authoritative source gate. Do not substitute bare `swift test`; zero executed tests or a masked pipeline failure is a failed gate.
-- Give concurrent checks unique scratch/build locations using the supported variables: `SCRATCH`, `TEST_SCRATCH`, `APP_ACCEPTANCE_SCRATCH`, and `SPOTLIGHT_SCRATCH`. If source, `HEAD`, or relevant outputs change during validation, discard the result and rerun on the intended snapshot.
-- `Scripts/bundle-app.sh` is appropriate for host-only iteration but does not prove Finder extensions. Use `Scripts/bundle-xcode-app.sh` and `Scripts/check-app.sh` for Quick Look, thumbnails, Finder integration, or production-shaped app acceptance. Development/ad-hoc bundles do not prove production Sparkle behavior.
+- For code changes, use focused tests while iterating, then run `Scripts/check.sh` as the authoritative source gate. For documentation-only changes, inspect content, links, and referenced commands without rebuilding the app. Do not substitute bare `swift test`; zero executed tests or a masked pipeline failure is a failed gate.
+- Give concurrent checks unique scratch/build locations using the supported variables: `SCRATCH`, `TEST_SCRATCH`, `APP_ACCEPTANCE_SCRATCH`, and `SPOTLIGHT_SCRATCH`. Release benchmarks default to `${SCRATCH}-bench`; `BENCH_SCRATCH` can override that location. If source, `HEAD`, or relevant outputs change during validation, discard the result and rerun on the intended snapshot.
+- `Scripts/bundle-app.sh` is appropriate for host-only iteration but does not prove Finder extensions. Use `Scripts/bundle-xcode-app.sh` and `Scripts/check-app.sh` for Quick Look, thumbnails, Finder integration, or production-shaped app acceptance. Development/ad-hoc bundles do not prove production Sparkle behavior. Every nested Mach-O must support all architectures of its host; universal release archives must include Intel and Apple Silicon CLI and Spotlight binaries.
 - When the installed app is the acceptance surface, install the intended artifact explicitly with `APP_SOURCE=... Scripts/install.sh`, stop stale Downright instances when safe, and verify bundle path, version/build, executable identity, signature, embedded components, and running process before exercising the feature.
 - Use a disposable document copy for destructive editing, Replace All, task toggles, metadata, save/discard, or conflict QA. Restore task-created preferences/state afterward.
 - For changed visual or interaction behavior, verify the relevant journey in the exact app: launch, first visible frame, transition, settled state, real pointer/keyboard interaction, dismissal, rapid reopen or interruption, and resize. Check only the relevant light/dark and accessibility states.

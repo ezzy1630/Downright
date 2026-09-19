@@ -28,6 +28,12 @@ struct SourceMap {
     /// A pure-ASCII line lets a UTF-8 byte offset be used directly as a UTF-16
     /// offset.  This is the overwhelmingly common case and worth the fast path.
     private let lineIsASCII: [Bool]
+    /// True when the source contains at least one `<`.  `SafeHTMLParser` can
+    /// only ever annotate a range that holds one, and the per-block search for
+    /// it went through Foundation's Unicode-aware comparison machinery — 6% of
+    /// a full parse on a document with no HTML at all.  The line scan below
+    /// already visits every scalar, so answering the question once is free.
+    let mayContainHTML: Bool
 
     var lineCount: Int { lineStarts.count }
 
@@ -42,6 +48,7 @@ struct SourceMap {
         var offset = 0
         var lineASCII = true
         var sawCR = false
+        var sawAngleBracket = false
 
         for scalar in string.unicodeScalars {
             let width = scalar.value > 0xFFFF ? 2 : 1
@@ -67,6 +74,8 @@ struct SourceMap {
                 ascii.append(lineASCII)
                 lineASCII = true
                 sawCR = true
+            case "<":
+                sawAngleBracket = true
             default:
                 if !scalar.isASCII { lineASCII = false }
             }
@@ -79,6 +88,7 @@ struct SourceMap {
         lineStarts = starts
         lineEnds = ends
         lineIsASCII = ascii
+        mayContainHTML = sawAngleBracket
     }
 
     /// 0-based index of the line containing `offset`.

@@ -711,7 +711,8 @@ final class MarkdownDocument: NSObject {
         _ b: String
     ) -> Bool {
         func strippedNewline(_ s: String) -> String {
-            if s.hasSuffix("\r\n") { return String(s.dropLast(2)) }
+            // CRLF is one Swift Character, even though it has two UTF-16 units.
+            if s.hasSuffix("\r\n") { return String(s.dropLast()) }
             if s.hasSuffix("\n") || s.hasSuffix("\r") { return String(s.dropLast()) }
             return s
         }

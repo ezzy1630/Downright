@@ -43,14 +43,19 @@ jobs:
 
       - name: Publish the Shields endpoint
         env:
-          BADGE_BRANCH: automation/download-count
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch --orphan "$BADGE_BRANCH"
-          git rm -rf --ignore-unmatch .
-          cp "$RUNNER_TEMP/download-counter/downloads.json" downloads.json
-          git add downloads.json
-          git commit -m "chore: refresh total download counter"
-          git push --force origin "HEAD:$BADGE_BRANCH"
+          # Before the first release there is nothing to attach the badge to,
+          # and that is a no-op rather than a failed workflow. Distinguish it
+          # from a real API failure: `gh release list` exits 0 with no output
+          # when a repository simply has no releases, and non-zero on an
+          # expired token, rate limit, or transient error — which must surface
+          # rather than let the badge silently go stale behind a green run.
+          if [ -z "$(gh release list --limit 1)" ]; then
+            echo "no published release yet; nothing to attach the counter to"
+            exit 0
+          fi
+          TAG="$(gh release view --json tagName --jq .tagName)"
+          # Metrics are mutable; signed application archives and feeds are not.
+          gh release upload "$TAG" "$RUNNER_TEMP/download-counter/downloads.json" --clobber

@@ -25,14 +25,41 @@ import Foundation
 enum MathFontBundle {
 
     /// `true` when SwiftMath's resolver will find its fonts in this process.
-    static let isAvailable: Bool = {
+    static let isAvailable: Bool = probe(roots: candidateRoots)
+
+    /// The predicate itself, over an explicit list of roots.
+    ///
+    /// Separated from `isAvailable` so a test can hand it a materialised bundle
+    /// in either layout and assert it agrees with what `Bundle` — which is how
+    /// `MathResourceBundle` actually resolves the font — would have found. The
+    /// bug this guards is a probe that is stricter than the resolver it
+    /// predicts, whose only symptom is math quietly not rendering.
+    static func probe(roots: [URL]) -> Bool {
         let fileManager = FileManager.default
-        return candidateRoots.contains { root in
-            fileManager.fileExists(
-                atPath: root.appendingPathComponent(bundleName)
-                    .appendingPathComponent(probePath).path)
+        return roots.contains { root in
+            let bundle = root.appendingPathComponent(bundleName)
+            return probePaths.contains { probe in
+                fileManager.fileExists(atPath: bundle.appendingPathComponent(probe).path)
+            }
         }
-    }()
+    }
+
+    /// What `MathResourceBundle` would resolve for the same roots.  A test pins
+    /// the two together; nothing else should need this.
+    static func resolverWouldFind(roots: [URL]) -> Bool {
+        roots.contains { root in
+            guard let bundle = Bundle(url: root.appendingPathComponent(bundleName)),
+                  let fonts = bundle.url(forResource: "mathFonts", withExtension: "bundle")
+            else { return false }
+            // The font file itself, not the directory over it. SwiftMath
+            // force-unwraps its way down to this `.otf`, so a bundle that lost
+            // it in an incomplete copy must read as a miss on both sides —
+            // otherwise the oracle cannot catch the false positive `probe` is
+            // here to avoid.
+            return FileManager.default.fileExists(
+                atPath: fonts.appendingPathComponent("latinmodern-math.otf").path)
+        }
+    }
 
     private static let bundleName = "SwiftMath_SwiftMath.bundle"
 
@@ -40,7 +67,19 @@ enum MathFontBundle {
     /// so probing the `.otf` itself — rather than the bundle around it — also
     /// covers a bundle that was copied incompletely.  Latin Modern is the face
     /// every render starts from (`MTFontManager.latinModernFont`).
-    private static let probePath = "mathFonts.bundle/latinmodern-math.otf"
+    ///
+    /// Both layouts a resource bundle comes in have to be listed, because
+    /// `MathResourceBundle` reaches the fonts through `Bundle`, which resolves
+    /// either one.  SwiftPM has emitted a flat bundle and — from Swift 6.4's
+    /// build layout — a deep one; the release pipeline flattens deep bundles
+    /// before signing, so a flat-only probe agreed with SwiftMath in a shipped
+    /// app while silently declining every formula under `swift test`.  A probe
+    /// that is stricter than the resolver it predicts is a false negative, and
+    /// a false negative here means math quietly stops rendering.
+    private static let probePaths = [
+        "mathFonts.bundle/latinmodern-math.otf",
+        "Contents/Resources/mathFonts.bundle/latinmodern-math.otf",
+    ]
 
     /// The roots `MathResourceBundle.resources` consults, in its order.
     ///
