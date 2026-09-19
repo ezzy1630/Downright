@@ -317,6 +317,38 @@ struct DocumentTrustStateTests {
         document.close()
     }
 
+    @Test(arguments: [false, true]) @MainActor
+    func mixedLineEndingExternalEditPreservesConflictDetection(changesContent: Bool) async throws {
+        let fixture = try Fixture(text: "original\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        #expect(document.replace(
+            NSRange(location: 0, length: document.storage.length),
+            with: "header\na", actionName: "Replace"
+        ))
+        let incoming = Data((changesContent ? "header\nab\r\n" : "header\na\r\n").utf8)
+        try incoming.write(to: fixture.url, options: .atomic)
+        var finished = false
+        document.onExternalWriteActivity = { if !$0 { finished = true } }
+        document.handleExternalWrite()
+        document.flushPendingExternalWrite()
+        for _ in 0..<100 where !finished {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(finished)
+        #expect(document.text == "header\na")
+        #expect((document.pendingConflict != nil) == changesContent)
+        if changesContent {
+            guard case .failure = document.saveIfNeeded() else {
+                Issue.record("an external content change must block saving")
+                return
+            }
+        }
+        #expect(try Data(contentsOf: fixture.url) == incoming)
+    }
+
     @Test @MainActor
     func removingFinalNewlineIsARealUserEdit() throws {
         let fixture = try Fixture(text: "body\n")
