@@ -532,6 +532,11 @@ jobs:
           SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
 
       - name: Prepare download counter endpoint
+        # A README badge must never be able to fail a signed release. The
+        # counter needs a live API call, so it is allowed to fail: the publish
+        # step below skips an asset that is not there, and the daily counter
+        # workflow uploads it to this release the next time it runs.
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
