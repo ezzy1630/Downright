@@ -24,6 +24,8 @@ struct AssetReference: Sendable {
     let kind: AssetReferenceKind
     let url: URL?
     let line: Int
+    /// The destination range excludes these existing Markdown delimiters.
+    var isAngleDelimited: Bool = false
 }
 
 struct AssetMetadata: Sendable {
@@ -102,7 +104,11 @@ enum AssetReferenceParser {
                         title: resolved.title,
                         kind: kind,
                         url: resolve(resolved.source, kind: kind, context: context),
-                        line: document.line(at: span.range.location)
+                        line: document.line(at: span.range.location),
+                        isAngleDelimited: resolved.range.location > 0
+                            && resolved.range.upperBound < document.length
+                            && (document.text as NSString).character(at: resolved.range.location - 1) == 0x3C
+                            && (document.text as NSString).character(at: resolved.range.upperBound) == 0x3E
                     ))
                 }
             }
