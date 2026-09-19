@@ -28,9 +28,10 @@ enum MathFontBundle {
     static let isAvailable: Bool = {
         let fileManager = FileManager.default
         return candidateRoots.contains { root in
-            fileManager.fileExists(
-                atPath: root.appendingPathComponent(bundleName)
-                    .appendingPathComponent(probePath).path)
+            let bundle = root.appendingPathComponent(bundleName)
+            return probePaths.contains { probe in
+                fileManager.fileExists(atPath: bundle.appendingPathComponent(probe).path)
+            }
         }
     }()
 
@@ -40,7 +41,19 @@ enum MathFontBundle {
     /// so probing the `.otf` itself — rather than the bundle around it — also
     /// covers a bundle that was copied incompletely.  Latin Modern is the face
     /// every render starts from (`MTFontManager.latinModernFont`).
-    private static let probePath = "mathFonts.bundle/latinmodern-math.otf"
+    ///
+    /// Both layouts a resource bundle comes in have to be listed, because
+    /// `MathResourceBundle` reaches the fonts through `Bundle`, which resolves
+    /// either one.  SwiftPM has emitted a flat bundle and — from Swift 6.4's
+    /// build layout — a deep one; the release pipeline flattens deep bundles
+    /// before signing, so a flat-only probe agreed with SwiftMath in a shipped
+    /// app while silently declining every formula under `swift test`.  A probe
+    /// that is stricter than the resolver it predicts is a false negative, and
+    /// a false negative here means math quietly stops rendering.
+    private static let probePaths = [
+        "mathFonts.bundle/latinmodern-math.otf",
+        "Contents/Resources/mathFonts.bundle/latinmodern-math.otf",
+    ]
 
     /// The roots `MathResourceBundle.resources` consults, in its order.
     ///
