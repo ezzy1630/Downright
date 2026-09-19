@@ -16,14 +16,20 @@ import Testing
 struct MathFontBundleTests {
     private let bundleName = "SwiftMath_SwiftMath.bundle"
 
-    /// Materialises `SwiftMath_SwiftMath.bundle` under `root`, in one of the
-    /// two layouts SwiftPM has emitted, and returns the root.
+    /// Where `mathFonts.bundle` sits under `root` in each of the two layouts
+    /// SwiftPM has emitted.  Defined once: this suite exists to pin these paths
+    /// against drift, so a second copy of the strings would be the very
+    /// divergence it is guarding.
+    private func fontsDirectory(deep: Bool, in root: URL) -> URL {
+        root.appendingPathComponent(bundleName)
+            .appendingPathComponent(deep ? "Contents/Resources" : "")
+            .appendingPathComponent("mathFonts.bundle")
+    }
+
+    /// Materialises a complete `SwiftMath_SwiftMath.bundle` under `root`.
+    @discardableResult
     private func makeBundle(deep: Bool, in root: URL) throws -> URL {
-        let fonts = deep
-            ? root.appendingPathComponent(bundleName)
-                .appendingPathComponent("Contents/Resources/mathFonts.bundle")
-            : root.appendingPathComponent(bundleName)
-                .appendingPathComponent("mathFonts.bundle")
+        let fonts = fontsDirectory(deep: deep, in: root)
         try FileManager.default.createDirectory(at: fonts, withIntermediateDirectories: true)
         try Data().write(to: fonts.appendingPathComponent("latinmodern-math.otf"))
         return root
@@ -61,12 +67,12 @@ struct MathFontBundleTests {
     @Test(arguments: [false, true])
     func aBundleMissingTheFontFileIsDeclinedByBoth(deep: Bool) throws {
         try withTemporaryDirectory { root in
-            let fonts = deep
-                ? root.appendingPathComponent(bundleName)
-                    .appendingPathComponent("Contents/Resources/mathFonts.bundle")
-                : root.appendingPathComponent(bundleName)
-                    .appendingPathComponent("mathFonts.bundle")
-            try FileManager.default.createDirectory(at: fonts, withIntermediateDirectories: true)
+            // Build the complete bundle, then take away only the font, so this
+            // case cannot drift from the layout the tests above assert.
+            try makeBundle(deep: deep, in: root)
+            try FileManager.default.removeItem(
+                at: fontsDirectory(deep: deep, in: root)
+                    .appendingPathComponent("latinmodern-math.otf"))
             #expect(!MathFontBundle.probe(roots: [root]))
             // The oracle has to agree, or it cannot witness the incomplete-copy
             // false positive the probe exists to rule out.
