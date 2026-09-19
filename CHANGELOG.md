@@ -151,12 +151,6 @@ every release; Sparkle orders updates by it.
   there.** Reconciling a CRLF file against its version on disk compared one
   character too few, so a document that differed only by its final newline
   read as edited elsewhere and blocked the save behind a conflict bar.
-- **Relinking an image to a path with a space keeps the image.** The repair
-  percent-encoded the destination, which is right for a URL and wrong for a
-  local file — the renderer resolves the literal path, so the reference
-  pointed at a filename that did not exist. Spaces and parentheses now travel
-  in CommonMark angle delimiters instead, and undoing a repair that changed
-  the destination's length restores the original text rather than failing.
 - **Restructuring a heading inside a quote or list no longer eats the next
   line.** Demoting `> ## Deep` used to take the setext-normalization path,
   which consumed the *following* line as an underline — the quoted body
