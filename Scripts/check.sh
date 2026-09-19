@@ -198,9 +198,9 @@ echo "    ok"
 if [ "${RUN_DRBENCH:-0}" = "1" ]; then
     echo "==> Bench (release, budgets enforced)"
     BENCH_RELEASE_LOG="$LOG_DIR/downright-bench-release-$LOG_TAG.log"
-    if ! swift run -c release --scratch-path .build-bench drbench > "$BENCH_RELEASE_LOG" 2>&1; then
+    if ! swift run -c release --scratch-path "${BENCH_SCRATCH:-${SCRATCH}-bench}" drbench > "$BENCH_RELEASE_LOG" 2>&1; then
         echo "    FAILED — a performance budget was violated (or the build failed)"
-        grep -aE "✗|❌|error:" "$BENCH_RELEASE_LOG" | sort -u | head -40
+        tail -80 "$BENCH_RELEASE_LOG"
         exit 1
     fi
     grep -aE "Typing response p95|End-to-end semantic convergence" "$BENCH_RELEASE_LOG" || true

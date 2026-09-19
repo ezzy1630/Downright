@@ -19,6 +19,20 @@ import MarkdownRender
 /// CI gate can treat the budget as a promise, not a wish (§12).
 var budgetViolated = false
 
+/// Nearest-rank percentile over an ascending sample array.
+///
+/// Sample count is load-bearing for any budget that gates a release.  The
+/// nearest-rank p95 of fewer than 21 samples *is* the maximum sample, so a
+/// 15-run budget was really "the worst of 15 runs must pass".  On a shared CI
+/// runner one scheduler stall then fails a signed release on unchanged code —
+/// which is exactly what happened to the convergence gate.  Budgeted cases
+/// below therefore take enough runs for the 95th percentile to be a percentile.
+func percentile(_ ascending: [Double], _ p: Double) -> Double {
+    precondition(!ascending.isEmpty)
+    let rank = Int((p * Double(ascending.count)).rounded(.up))
+    return ascending[min(ascending.count - 1, max(0, rank - 1))]
+}
+
 @discardableResult
 func measure(_ label: String, budget: Double? = nil, runs: Int = 25, _ body: () -> Void) -> Double {
     // One warm-up so first-call lazy initialisation isn't charged to the p50.
@@ -31,10 +45,11 @@ func measure(_ label: String, budget: Double? = nil, runs: Int = 25, _ body: () 
         samples.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
     }
     samples.sort()
-    let p50 = samples[samples.count / 2]
-    let p95 = samples[min(samples.count - 1, Int((Double(samples.count) * 0.95).rounded(.down)))]
+    let p50 = percentile(samples, 0.50)
+    let p95 = percentile(samples, 0.95)
 
     var line = String(format: "  %-44@  p50 %8.3f ms   p95 %8.3f ms", label as NSString, p50, p95)
+    line += String(format: "   max %8.3f ms (n=%d)", samples.last!, samples.count)
     if let budget {
         line += p95 <= budget
             ? String(format: "   ✓ under %.0f ms", budget)
@@ -160,13 +175,19 @@ func agentDocument(lines targetLines: Int) -> String {
 // MARK: - Run
 
 let document5k = agentDocument(lines: 5_000)
-let document100k = String(agentDocument(lines: 2_000).prefix(100_000))
+// The cold-open budget is stated for 100 KB, so the corpus has to reach it.
+// `agentDocument(lines: 2_000)` stops at roughly 48 KB, and `prefix(100_000)`
+// of a shorter string is that shorter string — this case silently measured
+// less than half the documented document size.  Generate past the target and
+// then truncate to it.
+let document100k = String(agentDocument(lines: 6_000).prefix(100_000))
 
 print("""
 
 Downright performance budget (§12)
   build: \(isDebugBuild ? "DEBUG — numbers are not the product promise, rebuild with -c release" : "release")
   corpus: \(document5k.count) chars, \(document5k.count(where: { $0 == "\n" })) lines
+  cold-open corpus: \(document100k.count) chars
 
 """)
 
@@ -239,14 +260,25 @@ let typingP95 = measure("edit + paragraph map", budget: 8, runs: 100) {
 
 print("\nSemantic convergence (end to end; outside the typing budget)")
 let convergenceStorage = NSTextStorage(string: editedText)
-let convergenceP95 = measure("worker pipeline", budget: 100, runs: 15) {
+let convergenceP95 = measure("worker pipeline", budget: 100, runs: 60) {
     let fresh = MarkdownParser.parse(editedText)
     let set = ASTDiff.dirtySet(old: baseline, new: fresh)
     engine.decorate(convergenceStorage, document: fresh, dirty: set)
 }
 
+// Always break the pipeline into its phases.  A budget miss on a hosted runner
+// is diagnosed from the log the run already produced, and printing this only
+// after a failure means the one run that needed the evidence is the one run
+// whose numbers came from a machine that was already stalling.
+print("  … phase breakdown (same corpus, not separately budgeted)")
+measure("  parse phase", runs: 15) { _ = MarkdownParser.parse(editedText) }
+measure("  diff phase", runs: 15) { _ = ASTDiff.dirtySet(old: baseline, new: edited) }
+measure("  decoration phase", runs: 15) {
+    engine.decorate(convergenceStorage, document: edited, dirty: dirty)
+}
+
 print("\nCold open (§12 — first rendered pixel under 250 ms for 100 KB)")
-measure("parse 100 KB", budget: 250, runs: 10) { _ = MarkdownParser.parse(document100k) }
+measure("parse 100 KB", budget: 250, runs: 30) { _ = MarkdownParser.parse(document100k) }
 
 print("\nOther")
 measure("StructuralZoom.plan, skeleton", runs: 10) { _ = StructuralZoom.plan(baseline, level: .skeleton) }
