@@ -191,12 +191,12 @@ jobs:
           set -euo pipefail
           APP=".build-release/Downright.xcarchive/Products/Applications/Downright.app"
           echo "APP=$APP" >> "$GITHUB_ENV"
-          swift build -c release --scratch-path .build-release-spm --product down
+          swift build --arch arm64 --arch x86_64 -c release --scratch-path .build-release-spm --product down
           # SwiftPM puts products directly under the scratch directory on
           # older toolchains, but adds the target triple on newer ones. Ask
           # SwiftPM for the active binary directory instead of assuming one
           # of those layouts.
-          CLI_BIN="$(swift build -c release --scratch-path .build-release-spm --product down --show-bin-path)/down"
+          CLI_BIN="$(swift build --arch arm64 --arch x86_64 -c release --scratch-path .build-release-spm --product down --show-bin-path)/down"
           test -x "$CLI_BIN"
           cp "$CLI_BIN" "$APP/Contents/MacOS/down"
           # XcodeGen's `embed: true` for an SPM framework has produced both a
@@ -531,6 +531,17 @@ jobs:
         env:
           SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
 
+      - name: Prepare download counter endpoint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          Scripts/report-download-counts.sh --all --json > "$RUNNER_TEMP/download-report.json"
+          TOTAL="$(jq -er '.downloads.acquisition_dmgs' "$RUNNER_TEMP/download-report.json")"
+          jq -n --arg total "$TOTAL" \
+            '{schemaVersion: 1, label: "total downloads", message: $total, color: "307afe"}' \
+            > artifacts/downloads.json
+
       # --------------------------------------------------------------- publish
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -549,6 +560,7 @@ jobs:
             artifacts/Downright-${{ steps.release_identity.outputs.tag }}-dSYMs.zip
             artifacts/Downright-${{ steps.release_identity.outputs.tag }}-dSYMs.zip.sha256
             artifacts/*.delta
+            artifacts/downloads.json
           body_path: artifacts/RELEASE-NOTES.md
 
       - name: Verify public asset URL

@@ -65,6 +65,10 @@ else
     check 0 "main executable present"
 fi
 
+# Match nested executable architectures to the host, including universal builds.
+check "$("$(dirname "$0")/verify-bundle-architectures.sh" "$APP" && echo 1 || echo 0)" \
+    "all nested binaries support the host architectures"
+
 # --- CLI ---------------------------------------------------------------------
 check "$([ -x "$MACOS/down" ] && echo 1 || echo 0)" "down CLI embedded"
 

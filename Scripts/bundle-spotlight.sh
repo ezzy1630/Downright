@@ -27,12 +27,18 @@ BUILD="$(PLIST_VALUE CFBundleVersion)"
 HOST_BUNDLE_IDENTIFIER="$(PLIST_VALUE CFBundleIdentifier)"
 SPOTLIGHT_BUNDLE_IDENTIFIER="$HOST_BUNDLE_IDENTIFIER.spotlight"
 
+# Match the assembled host, including universal archives built on Apple Silicon.
+ARCH_FLAGS=()
+for arch in $(lipo -archs "$APP/Contents/MacOS/Downright"); do
+    ARCH_FLAGS+=(--arch "$arch")
+done
+
 echo "==> Building Spotlight importer ($SPOTLIGHT_CONFIGURATION)"
-swift build \
+swift build "${ARCH_FLAGS[@]}" \
     -c "$SPOTLIGHT_CONFIGURATION" \
     --scratch-path "$SPOTLIGHT_SCRATCH" \
     --product DownrightSpotlightImporter
-BIN_DIR="$(swift build \
+BIN_DIR="$(swift build "${ARCH_FLAGS[@]}" \
     -c "$SPOTLIGHT_CONFIGURATION" \
     --scratch-path "$SPOTLIGHT_SCRATCH" \
     --product DownrightSpotlightImporter \

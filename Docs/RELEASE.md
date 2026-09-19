@@ -182,8 +182,9 @@ asset-request count, not a unique-person or completed-install count.
 The README's total-downloads badge is backed by
 `.github/workflows/download-count.yml`. It refreshes daily, after each push to
 `main`, after a successful release, or on manual dispatch, and publishes the
-Shields-compatible endpoint to the `automation/download-count` branch so
-protected `main` does not need a scheduled write.
+Shields-compatible `downloads.json` asset on the latest production release.
+Only this metrics asset is mutable; signed app archives and appcasts remain
+immutable. This avoids extra branches and scheduled commits to `main`.
 
 ## DMG packaging
 
@@ -240,6 +241,7 @@ Scripts/verify-bundle.sh Downright.app --production    # + feed URL & key checks
 
 It checks Sparkle and its nested XPC helpers, bundle-relative runtime paths,
 the Quick Look extensions, the `down` CLI, host/extension version equality,
+and matching CPU architectures for every nested Mach-O binary,
 the privacy manifest, and (in production mode) the exact feed URL and a
 non-placeholder public key.
 

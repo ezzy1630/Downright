@@ -103,11 +103,15 @@ else
 fi
 
 echo "==> Embedding down CLI"
+CLI_ARCH_FLAGS=()
+for arch in $(lipo -archs "$APP/Contents/MacOS/Downright"); do
+    CLI_ARCH_FLAGS+=(--arch "$arch")
+done
 # SwiftPM may place products directly under the scratch directory or under a
 # target-triple directory, depending on the active toolchain. Ask SwiftPM for
 # the active binary directory instead of assuming one of those layouts.
-swift build -c release --scratch-path "$SWIFTPM_SCRATCH" --product down
-CLI_BIN="$(swift build -c release --scratch-path "$SWIFTPM_SCRATCH" --product down --show-bin-path)/down"
+swift build "${CLI_ARCH_FLAGS[@]}" -c release --scratch-path "$SWIFTPM_SCRATCH" --product down
+CLI_BIN="$(swift build "${CLI_ARCH_FLAGS[@]}" -c release --scratch-path "$SWIFTPM_SCRATCH" --product down --show-bin-path)/down"
 test -x "$CLI_BIN"
 cp "$CLI_BIN" "$APP/Contents/MacOS/down"
 
