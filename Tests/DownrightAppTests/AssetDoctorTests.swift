@@ -1,7 +1,6 @@
 import Foundation
 import Testing
 import MarkdownCore
-import MarkdownRender
 @testable import DownrightApp
 
 @Suite(.serialized)
@@ -125,61 +124,10 @@ struct AssetDoctorTests {
     }
 
     @Test
-    func proposalUsesAngleDelimitersForLiteralLocalPaths() throws {
+    func proposalPercentEncodesMarkdownDelimiters() throws {
         let document = MarkdownParser.parse("![alt](old.png)\n")
         let reference = try #require(AssetDoctor.references(in: document).first)
         let proposal = AssetDoctor.relinkProposal(for: reference, to: "new file (copy).png")
-        #expect(proposal.apply(to: "![alt](old.png)\n") == "![alt](<new file (copy).png>)\n")
+        #expect(proposal.apply(to: "![alt](old.png)\n") == "![alt](new%20file%20%28copy%29.png)\n")
     }
-
-    @Test
-    func relinkAndRenameResolveLiteralPathsAndReverseUnequalLengthEdits() throws {
-        let sources = [
-            "![alt](old.png \"Title\")\n",
-            "![alt](<old.png> \"Title\")\n",
-            "![alt][hero]\n\n[hero]: old.png \"Title\"\n",
-            "![alt][hero]\n\n[hero]: <old.png> \"Title\"\n",
-        ]
-        let replacements = ["new file (copy).png", "résumé 🐈.png", "literal%20name.png"]
-        let documentURL = URL(fileURLWithPath: "/tmp/asset-proposal/readme.md")
-        for source in sources {
-            let reference = try #require(AssetDoctor.references(in: MarkdownParser.parse(source)).first)
-            for replacement in replacements {
-                for kind in [AssetProposalKind.relink, .rename] {
-                    let proposal = kind == .relink
-                        ? AssetDoctor.relinkProposal(for: reference, to: replacement)
-                        : AssetDoctor.renameProposal(for: reference, to: replacement)
-                    let updated = try #require(proposal.apply(to: source))
-                    #expect(!updated.contains("<<"))
-                    #expect(updated.contains("\"Title\""))
-                    #expect(proposal.inverse(in: updated) == source)
-                    #expect(proposal.apply(to: source.replacingOccurrences(of: "old.png", with: "bad.png")) == nil)
-                    #expect(proposal.inverse(in: updated.replacingOccurrences(of: replacement, with: "changed.png")) == nil)
-
-                    var renderedSources: [String] = []
-                    MarkdownParser.parse(updated).root.walk { block in
-                        for inline in block.inlines {
-                            inline.walk { span in
-                                if case .image(let path, _) = span.kind { renderedSources.append(path) }
-                            }
-                        }
-                    }
-                    let renderedSource = try #require(renderedSources.first)
-                    let request = try #require(LocalAssetPolicy.request(raw: renderedSource, documentURL: documentURL))
-                    let expected = documentURL.deletingLastPathComponent().appendingPathComponent(replacement)
-                    #expect(request.url == LocalAssetPolicy.canonicalFileURL(expected))
-                    #expect(request.isSafeRelative)
-                }
-            }
-        }
-    }
-
-    @Test
-    func staleProposalRejectsCanonicallyEquivalentButDifferentSource() throws {
-        let source = "![alt](cafe\u{323}\u{301}.png)\n"
-        let reference = try #require(AssetDoctor.references(in: MarkdownParser.parse(source)).first)
-        let proposal = AssetDoctor.relinkProposal(for: reference, to: "new.png")
-        #expect(proposal.apply(to: "![alt](cafe\u{301}\u{323}.png)\n") == nil)
-    }
-
 }

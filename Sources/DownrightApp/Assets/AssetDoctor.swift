@@ -59,7 +59,7 @@ struct AssetSourceProposal: Sendable {
     func apply(to source: String) -> String? {
         let text = source as NSString
         guard range.location >= 0, range.upperBound <= text.length,
-              text.substring(with: range).utf16.elementsEqual(expectedSource.utf16) else { return nil }
+              text.substring(with: range) == expectedSource else { return nil }
         let result = NSMutableString(string: source)
         result.replaceCharacters(in: range, with: replacement)
         return result as String
@@ -67,23 +67,18 @@ struct AssetSourceProposal: Sendable {
 
     func inverse(in source: String) -> String? {
         let inverse = AssetSourceProposal(
-            kind: kind,
-            range: NSRange(location: range.location, length: replacement.utf16.count),
-            expectedSource: replacement,
+            kind: kind, range: range, expectedSource: replacement,
             replacement: inverseReplacement, inverseReplacement: expectedSource
         )
         return inverse.apply(to: source)
     }
 }
 
-private func markdownSafeDestination(_ source: String, isAngleDelimited: Bool) -> String {
-    // Local image rendering resolves literal paths. Percent-encoding a space
-    // would point at a different filename; CommonMark angle delimiters carry
-    // spaces and parentheses without changing the path the renderer receives.
-    guard !isAngleDelimited,
-          source.rangeOfCharacter(from: .whitespacesAndNewlines) != nil
-            || source.contains("(") || source.contains(")") else { return source }
-    return "<\(source)>"
+private func markdownSafeDestination(_ source: String) -> String {
+    source.replacingOccurrences(of: "%", with: "%25")
+        .replacingOccurrences(of: " ", with: "%20")
+        .replacingOccurrences(of: "(", with: "%28")
+        .replacingOccurrences(of: ")", with: "%29")
 }
 
 struct AssetDoctor {
@@ -188,7 +183,7 @@ struct AssetDoctor {
             kind: .relink,
             range: reference.destinationRange,
             expectedSource: reference.sourceText,
-            replacement: markdownSafeDestination(replacement, isAngleDelimited: reference.isAngleDelimited),
+            replacement: markdownSafeDestination(replacement),
             inverseReplacement: reference.sourceText
         )
     }
@@ -198,7 +193,7 @@ struct AssetDoctor {
             kind: .rename,
             range: reference.destinationRange,
             expectedSource: reference.sourceText,
-            replacement: markdownSafeDestination(replacement, isAngleDelimited: reference.isAngleDelimited),
+            replacement: markdownSafeDestination(replacement),
             inverseReplacement: reference.sourceText
         )
     }

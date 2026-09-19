@@ -53,10 +53,7 @@ struct AssetDoctorViewTests {
 
         view.apply(proposal)
 
-        // A local image is resolved as a literal path, so a space is carried by
-        // CommonMark angle delimiters rather than percent-encoded into a
-        // filename that does not exist on disk.
-        #expect(delegate.applied?.replacement == "<assets/new image.png>")
+        #expect(delegate.applied?.replacement == "assets/new%20image.png")
         #expect(delegate.selected == nil)
     }
 
