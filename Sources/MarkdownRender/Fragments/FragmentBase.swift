@@ -66,9 +66,6 @@ struct TableLayoutKey: Hashable {
 /// View-side state the fragments read while drawing.  A class so a fragment
 /// can hold it weakly and never keep the view alive.
 public final class FragmentContext {
-    #if DEBUG
-    var debugProseDrawCount = 0
-    #endif
     public weak var textView: MarkdownTextView?
     public var styleSheet: StyleSheet { didSet { styleToken = StyleToken.of(styleSheet) } }
     /// Cache token for rendered images; see `StyleToken`.
@@ -314,17 +311,6 @@ public final class ProseFragment: NSTextLayoutFragment {
     }
 
     public override func draw(at point: CGPoint, in context: CGContext) {
-        #if DEBUG
-        if let owner = self.context, owner.debugProseDrawCount < 6,
-           ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] != nil {
-            owner.debugProseDrawCount += 1
-            let lines = textLineFragments.map { String(describing: $0.typographicBounds) }
-            let detail = "proseDraw \(owner.debugProseDrawCount) point=\(point) frame=\(layoutFragmentFrame) "
-                + "surface=\(renderingSurfaceBounds) state=\(state.rawValue) lines=\(lines) "
-                + "ctm=\(context.ctm) clip=\(context.boundingBoxOfClipPath)\n"
-            FileHandle.standardError.write(Data(detail.utf8))
-        }
-        #endif
         if let styleSheet = self.context?.styleSheet {
             drawInlineCodePills(at: point, styleSheet: styleSheet, in: context)
             super.draw(at: point, in: context)

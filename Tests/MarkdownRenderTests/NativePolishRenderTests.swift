@@ -80,8 +80,14 @@ struct NativePolishRenderTests {
             let source = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage, styleSheet: sheet)
             source.update(document: MarkdownParser.parse(text), dirty: .wholesale)
             let pane = MarkdownContainerView(storage: storage, styleSheet: sheet, sharingPresentationOf: source)
-            attachedElementCounts.append(pane.textView.cachedLayoutElementCountForTesting)
+            // A newly attached empty-sized scroller has no visible elements.
+            // Measure actual viewport preparation, rather than constructor
+            // cache side effects, with all bounds and positivity checks intact.
+            pane.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
+            pane.layoutSubtreeIfNeeded()
+            pane.textView.prepareForDisplay()
             #expect(pane.textView.textContainerOrigin == NSPoint(x: RenderMetrics.revealSlack, y: RenderMetrics.verticalInset))
+            attachedElementCounts.append(pane.textView.cachedLayoutElementCountForTesting)
             #expect(storage.string == text)
         }
         // Attachment may warm a viewport, but doubling document length must

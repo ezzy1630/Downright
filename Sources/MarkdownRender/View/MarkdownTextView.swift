@@ -637,6 +637,17 @@ public final class MarkdownTextView: NSTextView {
     /// repeating that document-wide work when opening Split View made a 50k
     /// line document stall for minutes. Each pane still owns independent
     /// layout fragments, selection, scrolling, and reveal state.
+    func attachSharedStorage(_ storage: NSTextStorage, presentationOf source: MarkdownTextView) {
+        precondition(storage === source.textStorage)
+        let wasApplyingSelection = isApplyingSelection
+        isApplyingSelection = true
+        defer { isApplyingSelection = wasApplyingSelection }
+        contentStorage.performEditingTransaction {
+            contentStorage.textStorage = storage
+            adoptSharedPresentation(from: source)
+        }
+    }
+
     public func adoptSharedPresentation(from source: MarkdownTextView) {
         guard textStorage === source.textStorage else { return }
         parsedDocument = source.parsedDocument
@@ -2940,13 +2951,6 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: - Geometry
-
-    /// This surface is top-aligned and owns its height and scroll anchoring.
-    /// AppKit's getter resolves the document's used bounds, eagerly laying out
-    /// every fragment when a shared pane is attached to its scroll view.
-    public override var textContainerOrigin: NSPoint {
-        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
-    }
 
     public func rect(forOffset offset: Int) -> NSRect? {
         let textKit = displayMap.textKitOffset(forSource: offset)

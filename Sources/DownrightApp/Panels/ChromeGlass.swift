@@ -320,7 +320,10 @@ final class ChromeGlass: Motion.SpringSurfaceView {
     }
 
     private func chromePath(in rect: CGRect, inset: CGFloat) -> CGPath {
-        switch roundedCorners {
+        // Insets of a not-yet-sized view produce CGRect.null. CoreGraphics
+        // rejects its infinite coordinates while startup chrome is laid out.
+        guard !rect.isEmpty, !rect.isInfinite else { return CGMutablePath() }
+        return switch roundedCorners {
         case .all:
             PanelMetrics.continuousRoundedPath(
                 rect: rect,

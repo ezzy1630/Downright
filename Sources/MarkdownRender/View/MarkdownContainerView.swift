@@ -81,14 +81,19 @@ public final class MarkdownContainerView: NSView {
         storage: NSTextStorage, styleSheet: StyleSheet,
         sharingPresentationOf source: MarkdownTextView? = nil
     ) {
+        // Let AppKit establish the scroll surface against an empty buffer.
+        // Attaching a nonempty shared buffer makes its origin calculation
+        // resolve the entire document before it has viewport geometry.
+        let initialStorage = source == nil ? storage : NSTextStorage()
         textView = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: styleSheet.measureWidth, height: 100),
-                                    storage: storage, styleSheet: styleSheet, sharingPresentationOf: source)
+                                    storage: initialStorage, styleSheet: styleSheet, sharingPresentationOf: source)
         scrollView = NSScrollView(frame: .zero)
         gutter = GutterRailView(textView: textView)
         footnoteMargin = FootnoteMarginView(textView: textView)
         super.init(frame: .zero)
 
         scrollView.documentView = textView
+        if let source { textView.attachSharedStorage(storage, presentationOf: source) }
         // The contents map is the document's persistent scroll affordance, and
         // an overlay thumb (invisible until the user scrolls) gives position
         // feedback without a second, unrelated right-hand sidebar.  Overlay

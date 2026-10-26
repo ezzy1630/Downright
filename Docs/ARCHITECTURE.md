@@ -79,6 +79,12 @@ native selection retires that edit position and resolves against visible text.
 A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
+AppKit owns the text-container origin and viewport surface lifecycle. Preserve
+its native geometry calculation; keep large-file layout lazy by suppressing
+synthetic selection work and bounding explicit layout requests.
+Attach a shared pane's scroll surface while empty, then bind the shared storage
+and adopt its presentation in one content-storage editing transaction. This
+establishes native geometry without sizing an entire file during attachment.
 Replacing a document discards the previous buffer's queued viewport/resize repairs
 before sizing the new presentation. Its shrink must not capture a reading anchor
 from the old camera; ordinary edits and mode changes continue preserving anchors.
