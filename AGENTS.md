@@ -26,6 +26,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 - Preserve selection, undo, revision convergence, and a semantic source/reading anchor for operations expected to preserve position. Explicit navigation may move to its target; verify both the target and post-navigation anchor.
 - Split panes adopt the current parsed presentation before any operation that can decorate their shared storage. Local document navigation commits history only after a successful open and restores the recorded file and semantic reading anchor.
 - Keep the one-TextKit-2-surface architecture unless the task explicitly changes that contract. Incremental typing must not cause a whole-document rebuild; length-changing edits must invalidate all shifted ranges and fragments.
+- Keep hidden-marker layout text lazy: document-wide maps retain source ranges, and requested text elements materialize styled fillers with source-length UTF-16 mapping.
 - Make source mutations and undo boundaries explicit. Storage, autosave, watcher, and external-write changes need focused coverage for the relevant clean/dirty states and, when applicable, atomic replacement, deletion/rename, own-write suppression, conflict/review, failure, and recovery.
 - Returning to the exact saved source by editing or undo clears local dirty state without saving; it must not erase a pending external conflict.
 - Never translate an I/O failure into “no change,” recreate a deleted file silently, overwrite source after a rendering failure, or save after the user chose Discard.

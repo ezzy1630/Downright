@@ -28,6 +28,15 @@ struct SourceMap {
     /// A pure-ASCII line lets a UTF-8 byte offset be used directly as a UTF-16
     /// offset.  This is the overwhelmingly common case and worth the fast path.
     private let lineIsASCII: [Bool]
+    private struct ColumnCheckpoint {
+        let byteOffset: Int
+        let utf16Offset: Int
+    }
+    /// Sparse checkpoints bound conversion work on long Unicode lines. Short
+    /// lines and ASCII lines allocate none; a per-byte map would cost more
+    /// memory than the source. The index lives only for this parse.
+    private let columnCheckpoints: [Int: [ColumnCheckpoint]]
+    private static let checkpointStride = 128
     /// True when the source contains at least one `<`.  `SafeHTMLParser` can
     /// only ever annotate a range that holds one, and the per-block search for
     /// it went through Foundation's Unicode-aware comparison machinery — 6% of
@@ -49,6 +58,9 @@ struct SourceMap {
         var lineASCII = true
         var sawCR = false
         var sawAngleBracket = false
+        var lineBytes = 0
+        var checkpoints: [Int: [ColumnCheckpoint]] = [:]
+        var currentCheckpoints: [ColumnCheckpoint] = []
 
         for scalar in string.unicodeScalars {
             let width = scalar.value > 0xFFFF ? 2 : 1
@@ -65,29 +77,45 @@ struct SourceMap {
             }
             switch scalar {
             case "\n":
+                if !currentCheckpoints.isEmpty {
+                    checkpoints[starts.count - 1] = currentCheckpoints
+                    currentCheckpoints = []
+                }
                 ends.append(offset)
                 ascii.append(lineASCII)
                 lineASCII = true
+                lineBytes = 0
                 starts.append(offset + width)
             case "\r":
+                if !currentCheckpoints.isEmpty {
+                    checkpoints[starts.count - 1] = currentCheckpoints
+                    currentCheckpoints = []
+                }
                 ends.append(offset)
                 ascii.append(lineASCII)
                 lineASCII = true
+                lineBytes = 0
                 sawCR = true
-            case "<":
-                sawAngleBracket = true
             default:
+                if scalar == "<" { sawAngleBracket = true }
                 if !scalar.isASCII { lineASCII = false }
+                if !lineASCII,
+                   lineBytes - (currentCheckpoints.last?.byteOffset ?? 0) >= Self.checkpointStride {
+                    currentCheckpoints.append(ColumnCheckpoint(byteOffset: lineBytes, utf16Offset: offset))
+                }
+                lineBytes += Self.utf8Width(scalar)
             }
             offset += width
         }
         if sawCR { starts.append(offset) }
+        if !currentCheckpoints.isEmpty { checkpoints[starts.count - 1] = currentCheckpoints }
         ends.append(offset)
         ascii.append(lineASCII)
 
         lineStarts = starts
         lineEnds = ends
         lineIsASCII = ascii
+        columnCheckpoints = checkpoints
         mayContainHTML = sawAngleBracket
     }
 
@@ -114,11 +142,31 @@ struct SourceMap {
 
         var utf16 = start
         var bytes = 0
-        let lineText = text.substring(with: NSRange(location: start, length: end - start))
-        for scalar in lineText.unicodeScalars {
-            if bytes >= byteOffset { break }
-            bytes += SourceMap.utf8Width(scalar)
-            utf16 += scalar.value > 0xFFFF ? 2 : 1
+        if let checkpoints = columnCheckpoints[index] {
+            var lo = 0, hi = checkpoints.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if checkpoints[mid].byteOffset <= byteOffset { lo = mid + 1 } else { hi = mid }
+            }
+            if lo > 0 {
+                let checkpoint = checkpoints[lo - 1]
+                bytes = checkpoint.byteOffset
+                utf16 = checkpoint.utf16Offset
+            }
+        }
+        // Read the existing UTF-16 buffer rather than copying the line for
+        // every endpoint. A column inside a scalar still rounds up as before.
+        while utf16 < end, bytes < byteOffset {
+            let unit = text.character(at: utf16)
+            switch unit {
+            case 0..<0x80: bytes += 1
+            case 0x80..<0x800: bytes += 2
+            case 0xD800..<0xDC00:
+                bytes += 4
+                utf16 += 1
+            default: bytes += 3
+            }
+            utf16 += 1
         }
         return min(end, utf16)
     }

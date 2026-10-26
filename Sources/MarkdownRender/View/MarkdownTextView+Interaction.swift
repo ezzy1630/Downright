@@ -1288,7 +1288,7 @@ extension MarkdownTextView {
                 out.append(storage.attributedSubstring(
                     from: NSRange(location: cursor, length: sub.sourceRange.location - cursor)))
             }
-            if let replacement = sub.replacement { out.append(replacement) }
+            if let replacement = sub.resolvedReplacement(in: storage) { out.append(replacement) }
             cursor = sub.sourceRange.upperBound
         }
         if cursor < hi {

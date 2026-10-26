@@ -319,11 +319,24 @@ struct SourceEditProjection: Sendable {
 /// All are the same operation on the same map, which is why they cannot
 /// disagree about caret arithmetic.
 public struct DisplaySubstitution: Equatable {
+    private enum Content: Equatable {
+        case omitted
+        case attributed(NSAttributedString)
+        case sourceStyledWordJoiners
+    }
+
+    private var content: Content
     public var sourceRange: NSRange
     public var displayLength: Int
-    /// Attributed replacement; `nil` means "omit", and its length must equal
-    /// `displayLength`.
-    public var replacement: NSAttributedString?
+    /// An eagerly supplied replacement. Source-styled hidden markers keep only
+    /// a range descriptor; use `resolvedReplacement(in:)` to render an entry.
+    public var replacement: NSAttributedString? {
+        get {
+            if case .attributed(let string) = content { return string }
+            return nil
+        }
+        set { content = newValue.map(Content.attributed) ?? .omitted }
+    }
     /// True when the source is semantically hidden, even if a grouped TextKit
     /// element has to carry a same-length replacement for coordinate safety.
     public var isHidden: Bool
@@ -345,7 +358,7 @@ public struct DisplaySubstitution: Equatable {
     ) {
         self.sourceRange = sourceRange
         self.displayLength = displayLength
-        self.replacement = replacement
+        self.content = replacement.map(Content.attributed) ?? .omitted
         self.isHidden = isHidden
         self.isHardWrapReflow = isHardWrapReflow
         self.preservesSourceOffsets = preservesSourceOffsets
@@ -353,6 +366,47 @@ public struct DisplaySubstitution: Equatable {
 
     public static func hide(_ range: NSRange) -> DisplaySubstitution {
         DisplaySubstitution(sourceRange: range, displayLength: 0, replacement: nil, isHidden: true)
+    }
+
+    /// A source-length layout placeholder whose attributes are read only when
+    /// TextKit requests its paragraph. An offscreen marker retains no string,
+    /// attribute dictionary, or copy of the document's storage.
+    static func sourceStyledHidden(_ range: NSRange) -> DisplaySubstitution {
+        var substitution = DisplaySubstitution(
+            sourceRange: range, displayLength: range.length,
+            isHidden: true, preservesSourceOffsets: true)
+        substitution.content = .sourceStyledWordJoiners
+        return substitution
+    }
+
+    fileprivate var hasValidReplacementLength: Bool {
+        switch content {
+        case .omitted: return displayLength == 0
+        case .attributed(let string): return string.length == displayLength
+        case .sourceStyledWordJoiners: return displayLength == sourceRange.length
+        }
+    }
+
+    /// Resolves display text against the current source attributes. The map is
+    /// projected across edits before layout, so shifted markers read their new
+    /// source offset rather than retaining a stale attributed-string payload.
+    public func resolvedReplacement(in storage: NSAttributedString) -> NSAttributedString? {
+        switch content {
+        case .omitted: return nil
+        case .attributed(let string): return string
+        case .sourceStyledWordJoiners:
+            let joiners = String(repeating: "\u{2060}", count: max(0, sourceRange.length))
+            let offset = sourceRange.location
+            guard offset >= 0, offset < storage.length else {
+                return NSAttributedString(string: joiners)
+            }
+            // Preserve Foundation's own attribute dictionary without a Swift
+            // dictionary round trip. Only a requested paragraph pays this cost.
+            let styled = NSMutableAttributedString(attributedString:
+                storage.attributedSubstring(from: NSRange(location: offset, length: 1)))
+            styled.replaceCharacters(in: NSRange(location: 0, length: 1), with: joiners)
+            return styled
+        }
     }
 
     /// Builds an expanding substitution. Invariant every consumer of
@@ -446,7 +500,7 @@ public struct DisplayMap {
                   range.location >= lastEnd,
                   range.upperBound <= paragraphs.length,
                   sub.displayLength >= 0,
-                  (sub.replacement?.length ?? 0) == sub.displayLength else { continue }
+                  sub.hasValidReplacementLength else { continue }
             while paragraph + 1 < paragraphs.starts.count, paragraphs.starts[paragraph + 1] <= range.location {
                 paragraph += 1
             }
@@ -865,7 +919,7 @@ public struct DisplayMap {
                 out.append(storage.attributedSubstring(
                     from: NSRange(location: cursor, length: sub.sourceRange.location - cursor)))
             }
-            if let replacement = sub.replacement { out.append(replacement) }
+            if let replacement = sub.resolvedReplacement(in: storage) { out.append(replacement) }
             cursor = sub.sourceRange.upperBound
         }
         if cursor < paragraphRange.upperBound {
@@ -896,7 +950,7 @@ public struct DisplayMap {
                     length: substitution.sourceRange.location - cursor
                 )))
             }
-            if let replacement = substitution.replacement {
+            if let replacement = substitution.resolvedReplacement(in: storage) {
                 out.append(replacement)
             }
             cursor = substitution.sourceRange.upperBound

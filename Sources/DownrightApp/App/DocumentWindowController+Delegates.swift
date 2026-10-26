@@ -219,6 +219,10 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         return pathResolver?.cachedResolution(for: token)?.exists ?? true
     }
 
+    func markdownTextViewShouldHandleSelectionChange(_ view: MarkdownTextView) -> Bool {
+        !isOpeningDocument
+    }
+
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {
         guard !isOpeningDocument else { return }
         synchronizePanes(from: view)

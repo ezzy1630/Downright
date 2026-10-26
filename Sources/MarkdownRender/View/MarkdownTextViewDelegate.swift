@@ -83,6 +83,9 @@ public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, wantsContextMenuFor target: ContextTarget) -> NSMenu?
     /// Return false to draw a path token as missing (§8.4).
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool
+    /// A host replacing a document can defer selection-driven geometry until
+    /// the new source/display map is ready. Native selection still updates.
+    func markdownTextViewShouldHandleSelectionChange(_ view: MarkdownTextView) -> Bool
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView)
     func markdownTextViewDidScroll(_ view: MarkdownTextView)
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus)
@@ -133,6 +136,7 @@ public extension MarkdownTextViewDelegate {
     func markdownTextView(_ view: MarkdownTextView, didRequestHeadingLevel level: Int?, headingIndex: Int) {}
     func markdownTextView(_ view: MarkdownTextView, wantsContextMenuFor target: ContextTarget) -> NSMenu? { nil }
     func markdownTextView(_ view: MarkdownTextView, pathExistsFor token: PathToken) -> Bool { true }
+    func markdownTextViewShouldHandleSelectionChange(_ view: MarkdownTextView) -> Bool { true }
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {}
     func markdownTextViewDidScroll(_ view: MarkdownTextView) {}
     func markdownTextView(_ view: MarkdownTextView, didChangeSourceFocus focus: SourceFocus) {}

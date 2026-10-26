@@ -47,7 +47,73 @@ The 8 ms keystroke target is the P0 architecture gate. Semantic parsing runs
 outside this synchronous path. Its result is revision checked before the app
 applies dirty decoration.
 
-## Current local benchmark
+## Local optimization check (2026-10-25)
+
+Release builds on Apple M4, macOS 27.0 (26A5406e), based on checkout
+`9be0680ec7131dffb8af9a64b6cdbcdb274d3292` plus the local performance changes.
+These are same-machine observations, not cross-machine promises.
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Unicode inline-heavy parse, p95 | 48.811 ms | 11.212 ms |
+| Fuzzy match, 12-character query / 1,500-character heading, p95 | 11.036 ms | 0.912 ms |
+| Fresh-open live heap allocations | 402.0 MiB | 132.3 MiB |
+| Fresh-open settled physical footprint | 423.6 MiB | 224.6 MiB |
+| Fresh-open peak physical footprint | 637.9 MiB | 369.6 MiB |
+
+The native stress document is 1,032,709 UTF-8 bytes, 57,043 lines, and 16,298
+tasks. Memory compares fresh isolated host apps before and after the layout
+fixes; both already include the parser and search changes. `heap` measures live
+allocations, while `vmmap -summary` measures footprint including allocator
+overhead and compressed memory. These are different from resident memory.
+The first post-change resident sample was 184,736 KiB, so this stress case
+still does **not** satisfy the 150 MB peak memory target. Idle CPU sampled at
+0%; that observation is not an enforced energy budget. After the editing,
+mode-switching, and scrolling exercise, footprint sampled at 350 MiB. The
+fresh-open improvement does not establish a bounded interactive-session peak.
+
+The final `RUN_DRBENCH=1 Scripts/check.sh` passed 1,386 tests (with the two
+existing headless known-issue sites) and all release
+budgets (typing/storage p95 0.16 ms; semantic convergence p95 29.02 ms).
+The native host exercised editing, undo, save, source/rendered presentation,
+scrolling, and window resizing; undo/save restored the fixture's exact bytes.
+Finder extensions, cold-launch first-pixel timing, and 120 Hz frame delivery
+were not validated by this pass.
+
+### Session-memory continuation
+
+On the same machine and stress document, the subsequent lazy-marker and
+autorelease-lifetime changes were measured against the first pass's code:
+
+| Native session measurement | Before | After |
+|---|---:|---:|
+| Lifetime peak physical footprint | 449.2 MiB | 204.1–252.2 MiB |
+| Post-workload physical footprint | 394.8 MiB | 113.8–155.7 MiB |
+| Post-workload live heap, first optimized run | 146.7 MiB | 116.1 MiB |
+
+The workload starts with a fresh isolated release host and the same file, enters
+Source, inserts seven characters, saves, undoes seven times, saves again, scrolls
+down and up two pages, and performs three further Source/Document cycles. The
+fixture's 1,032,709 bytes were restored exactly. Kernel lifetime peak counters
+(`rusage_info_v4.ri_lifetime_max_phys_footprint`, cross-checked with `heap`) include
+brief spikes beyond the periodic sampler's window. Live heap and physical
+footprint remain distinct metrics; shared-library RSS is not either of them.
+The optimized range covers two fresh-process runs. It is an observed range,
+not a percentile or a guaranteed ceiling. The full source gate passed 1,389
+tests with the two existing headless known-issue sites, and release p95 was
+0.15 ms for typing/storage and 28.35 ms for semantic convergence.
+
+The memory regression initially failed because every hidden marker retained an
+attributed string. Maps now retain source-styled range descriptors and resolve
+text only for requested paragraphs. Per-block and per-pass autorelease pools
+bound decoration temporaries. Speech, clipboard, theme, projected-edit, and
+caret checks cover the dependent paths. An additional per-marker pool experiment
+did not improve the fresh-open peak and was removed.
+
+The 150 MB **peak** target is still unmet by this stress case. These session
+numbers do not establish a universal memory ceiling or a 120 Hz scroll budget.
+
+## Historical pipeline baseline
 
 Measured with the release executable from `Sources/drbench/main.swift` on
 2026-08-06. Corpus: 120,825 characters and 4,885 lines of generated agent-like
@@ -92,6 +158,41 @@ swift run -c release drbench render Docs/sample.md /tmp/downright.png read 1000 
 The benchmark warms each case, then reports p50, p95, the maximum, and the
 sample count. Keep the corpus shape, build mode, and budget labels stable, and
 add a focused case when a new pipeline or document type can change the cost.
+
+The Unicode inline-heavy case uses one 16,800-byte line containing accented
+text, CJK, emoji, and repeated formatting/link spans. Keep it alongside the
+ASCII corpus: repeatedly converting cmark's UTF-8 columns by copying and
+rescanning the entire line makes this shape quadratic. Source positions use
+sparse, parse-local checkpoints on long Unicode lines and read the existing
+UTF-16 buffer between checkpoints. ASCII and short lines allocate no
+checkpoints; no per-byte conversion table is retained in the document.
+
+Outline search has a separate regression case in
+`OptimizationRegressionTests.fuzzyMatcherHandlesLongRepeatedHeadings`: a
+12-character query against a 1,500-character heading. Its printed duration is
+informational and depends on build configuration. The matcher keeps the same
+scoring and highlight positions while using a running prefix maximum for gap
+scores, bounding matching work to query length times heading length. Alignment
+tests cover consecutive, separated, boundary, and case-sensitive bonuses.
+
+Large-document opening must keep offscreen elements lazy. The top-aligned text
+view computes its container origin from its insets; AppKit's default getter
+can resolve the whole document's used bounds. During an open, the controller
+also defers selection-driven geometry until the new display map is installed,
+so AppKit's transient storage-repair selection cannot force layout to EOF.
+`EditingKeyReproTests.openingLargeDocumentDoesNotMaterializeEveryParagraph`
+checks the existing element cache after displaying the viewport. Do not count
+fragments by enumerating the document: that enumeration creates fragments and
+invalidates the measurement.
+
+Hidden-marker substitutions retain descriptors rather than attributed word-joiner
+strings for every marker in the document. A requested paragraph resolves the
+fillers against current storage attributes; speech and rich-copy projection use
+the same resolver so source coordinates remain intact. The decorator drains
+Foundation temporaries per block and per pass, and its reported elapsed time
+includes that cleanup. Measure session peaks with the kernel's lifetime maximum
+physical-footprint counter as well as periodic samples: polling alone can miss
+a short allocation spike during a presentation change.
 
 Percentiles are nearest-rank, which makes the sample count part of the gate's
 meaning: the nearest-rank p95 of fewer than 20 samples **is** the maximum

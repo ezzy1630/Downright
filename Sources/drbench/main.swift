@@ -225,6 +225,14 @@ for (name, mutate) in variants {
     measure(name, runs: 15) { _ = MarkdownParser.parse(document5k, options: options) }
 }
 
+// Source columns arrive as UTF-8 bytes. Many inline spans on one Unicode
+// line expose repeated line scans that the ASCII agent corpus cannot catch.
+let unicodeInlineLine = String(repeating: "**café 😀 漢字** [résumé](file.md) ", count: 400)
+print("\nUnicode source positions (\(unicodeInlineLine.utf8.count) bytes, one inline-heavy line)")
+measure("Unicode inline-heavy parse", runs: 10) {
+    _ = MarkdownParser.parse(unicodeInlineLine)
+}
+
 print("\nDiff")
 let baseline = MarkdownParser.parse(document5k)
 var editedText = document5k

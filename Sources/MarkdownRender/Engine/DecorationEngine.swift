@@ -166,8 +166,16 @@ public final class DecorationEngine {
     @discardableResult
     public func decorate(_ storage: NSTextStorage, document: ParsedDocument, dirty: DirtySet) -> DecorationResult {
         let started = CFAbsoluteTimeGetCurrent()
+        var result = autoreleasepool {
+            decorateStorage(storage, document: document, dirty: dirty)
+        }
+        result.elapsed = CFAbsoluteTimeGetCurrent() - started
+        return result
+    }
+
+    private func decorateStorage(_ storage: NSTextStorage, document: ParsedDocument, dirty: DirtySet) -> DecorationResult {
         let full = NSRange(location: 0, length: storage.length)
-        guard full.length > 0 else { return DecorationResult(elapsed: CFAbsoluteTimeGetCurrent() - started) }
+        guard full.length > 0 else { return DecorationResult() }
 
         // Settle the document's direction before any paragraph style is built.
         // The factory drops its cache only when the answer actually changes, so
@@ -179,13 +187,13 @@ public final class DecorationEngine {
         if dirty.isWholesale {
             targets = [full]
         } else if dirty.ranges.isEmpty {
-            return DecorationResult(elapsed: CFAbsoluteTimeGetCurrent() - started)
+            return DecorationResult()
         } else {
             // Grow each dirty range to whole blocks: a paragraph's style is a
             // property of the paragraph, not of the characters that changed.
             targets = RangeSet.normalized(dirty.ranges.compactMap { clip(blockBounds(of: $0, in: document), to: full) })
         }
-        guard !targets.isEmpty else { return DecorationResult(elapsed: CFAbsoluteTimeGetCurrent() - started) }
+        guard !targets.isEmpty else { return DecorationResult() }
 
         // Only a *wholesale* Source pass earns the shortcut.  An incremental
         // commit in Source mode re-decorates whole blocks while the source
@@ -221,8 +229,7 @@ public final class DecorationEngine {
 
         return DecorationResult(
             attributeRanges: state.attributeRanges,
-            fragmentCount: state.fragmentCount,
-            elapsed: CFAbsoluteTimeGetCurrent() - started
+            fragmentCount: state.fragmentCount
         )
     }
 
@@ -413,6 +420,15 @@ public final class DecorationEngine {
         guard block.range.location < state.target.upperBound,
               state.target.location < block.range.upperBound else { return }
 
+        // Attribute mutation creates Foundation temporaries. A wholesale pass
+        // over a large file must not keep all of them until the next event-loop
+        // drain. Storage and cached programs retain the attributes they need.
+        autoreleasepool {
+            decorateBlock(block, context: context, state: &state)
+        }
+    }
+
+    private func decorateBlock(_ block: MDBlock, context: BlockContext, state: inout DecorateState) {
         var childContext = context
         switch block.content {
         case .document:

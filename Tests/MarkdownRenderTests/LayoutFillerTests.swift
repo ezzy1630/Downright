@@ -6,8 +6,8 @@ import Testing
 // The layout map stands a run of word joiners in for every hidden Markdown
 // marker so TextKit elements keep source-length ranges (§6.1).  Those joiners
 // have to carry the storage's own attributes at the marker, or the line they
-// sit on picks up the wrong metrics.  Building them is on the keystroke path,
-// so the construction is deliberately indirect — these tests pin the result.
+// sit on picks up the wrong metrics. Offscreen markers retain only descriptors;
+// these tests resolve them against storage as a requested paragraph would.
 
 private let markerRichText = """
 # Heading one
@@ -25,6 +25,47 @@ Some **bold** text with `code` and *emphasis* on one line.
 
 More prose with [a link](https://example.com) and **more bold**.
 """
+
+@MainActor
+@Test("Hidden-marker maps do not retain attributed strings for offscreen syntax")
+func hiddenMarkersKeepOnlyRangeDescriptors() {
+    let text = String(repeating: "Some **bold** and `code` text.\n\n", count: 1_000)
+    let storage = NSTextStorage(string: text)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 720, height: 420), storage: storage)
+    view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+    let hidden = view.currentDisplayMap.substitutions.filter(\.isHidden)
+    #expect(hidden.count > 3_000)
+    #expect(hidden.allSatisfy { $0.replacement == nil })
+    #expect(storage.string == text)
+}
+
+@MainActor
+@Test("Lazy fillers resolve the shifted source attributes after an edit")
+func lazyFillersFollowProjectedSourceAttributes() {
+    let (view, storage) = decoratedView()
+    #expect(view.performSourceEdit(range: NSRange(location: 0, length: 0), replacement: "new\n\n"))
+    let hidden = view.currentDisplayMap.substitutions.filter(\.isHidden)
+    #expect(!hidden.isEmpty)
+    for substitution in hidden {
+        #expect(fillerMatchesStorage(substitution, storage: storage))
+        #expect(substitution.resolvedReplacement(in: storage)?.length == substitution.sourceRange.length)
+    }
+    #expect(storage.string == "new\n\n" + markerRichText)
+}
+
+@MainActor
+@Test("Lazy fillers read current theme attributes without retaining old styles")
+func lazyFillersReadCurrentAttributes() throws {
+    let storage = NSMutableAttributedString(string: "**bold**", attributes: [.foregroundColor: NSColor.red])
+    let substitution = DisplaySubstitution.sourceStyledHidden(NSRange(location: 0, length: 2))
+    let first = try #require(substitution.resolvedReplacement(in: storage))
+    #expect(first.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .red)
+    storage.addAttribute(.foregroundColor, value: NSColor.blue, range: NSRange(location: 0, length: 2))
+    let second = try #require(substitution.resolvedReplacement(in: storage))
+    #expect(second.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .blue)
+    #expect(first.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .red)
+}
 
 @MainActor
 private func decoratedView() -> (MarkdownTextView, NSTextStorage) {
@@ -55,7 +96,7 @@ private func renderingAttributes(
 private func fillerMatchesStorage(
     _ substitution: DisplaySubstitution, storage: NSTextStorage
 ) -> Bool {
-    guard let replacement = substitution.replacement, replacement.length > 0 else { return true }
+    guard let replacement = substitution.resolvedReplacement(in: storage), replacement.length > 0 else { return false }
     let actual = renderingAttributes(of: replacement, at: 0)
     let expected = renderingAttributes(of: storage, at: substitution.sourceRange.location)
     return NSDictionary(dictionary: actual).isEqual(to: expected)
@@ -107,12 +148,15 @@ func themeSwapRebuildsDisplayedParagraphAttributes() throws {
 @MainActor
 @Test("Hidden-marker layout fillers are source-length runs of word joiners")
 func layoutFillersPreserveSourceLength() {
-    let (view, _) = decoratedView()
+    let (view, storage) = decoratedView()
     let hidden = view.currentDisplayMap.substitutions.filter { $0.isHidden }
     #expect(!hidden.isEmpty)
 
     for substitution in hidden {
-        guard let replacement = substitution.replacement else { continue }
+        guard let replacement = substitution.resolvedReplacement(in: storage) else {
+            Issue.record("hidden marker has no resolved layout text")
+            continue
+        }
         #expect(replacement.length == substitution.sourceRange.length)
         #expect(replacement.string.allSatisfy { $0 == "\u{2060}" })
     }
