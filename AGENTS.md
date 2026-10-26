@@ -34,6 +34,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 
 ## Validation by Surface
 
+- CI must retain source-test progress and collect diagnostics only from the gate’s descendant processes. Diagnostic collection must preserve test exit status and existing budgets.
 - For code changes, use focused tests while iterating, then run `Scripts/check.sh` as the authoritative source gate. For documentation-only changes, inspect content, links, and referenced commands without rebuilding the app. Do not substitute bare `swift test`; zero executed tests or a masked pipeline failure is a failed gate.
 - Give concurrent checks unique scratch/build locations using the supported variables: `SCRATCH`, `TEST_SCRATCH`, `APP_ACCEPTANCE_SCRATCH`, and `SPOTLIGHT_SCRATCH`. Release benchmarks default to `${SCRATCH}-bench`; `BENCH_SCRATCH` can override that location. If source, `HEAD`, or relevant outputs change during validation, discard the result and rerun on the intended snapshot.
 - `Scripts/bundle-app.sh` is appropriate for host-only iteration but does not prove Finder extensions. Use `Scripts/bundle-xcode-app.sh` and `Scripts/check-app.sh` for Quick Look, thumbnails, Finder integration, or production-shaped app acceptance. Development/ad-hoc bundles do not prove production Sparkle behavior. Every nested Mach-O must support all architectures of its host; universal release archives must include Intel and Apple Silicon CLI and Spotlight binaries.

@@ -185,3 +185,8 @@ zoom, folding, find, tasks, paths, Quick Look limits, and accessibility.
 Performance gates are defined in [PERFORMANCE.md](PERFORMANCE.md). The
 implementation must pass `Scripts/check.sh` and the release benchmark before a
 phase is complete.
+
+CI streams source-test progress while retaining the complete scratch-specific
+log. If the test phase remains running, a diagnostic helper captures its own
+descendant process tree and test/compiler stacks. This distinguishes compilation
+stalls from runtime waits without changing test deadlines, exit status, or budgets.
