@@ -29,7 +29,9 @@ and drag the density gutter.
 
 - Default to a readable measure of about 68–72 characters. Honor explicit
   60–110 character measures from settings and reader profiles; constrain the
-  column to available space in narrow windows and split panes.
+  column to available space in narrow windows and split panes. At compact
+  widths, give the text and code blocks priority over the document map; retain
+  enough pane width for the marker rail and fixed block bleed.
 - Use a single document column with generous side space.
 - Keep the toolbar unified and quiet. Show Source Focus chrome only while it
   is active.

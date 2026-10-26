@@ -123,9 +123,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
 
         case .localFile(let url):
             guard let link = LocalDocumentLink(url.absoluteString, documentURL: markdownDocument.url) else { return }
-            authorizeLocalEffect(.launchPathOrEditor, target: link.url) {
-                self.openLocalLink(link, modifiers: modifiers)
-            }
+            openLocalLink(link, modifiers: modifiers, authorizing: true)
             return
 
         case .automation(let url):
@@ -140,16 +138,20 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             if DocumentTypes.isMarkdown(link.url.pathExtension) {
                 openLocalLink(link, modifiers: modifiers)
             } else {
-                authorizeLocalEffect(.launchPathOrEditor, target: link.url) {
-                    self.openLocalLink(link, modifiers: modifiers)
-                }
+                openLocalLink(link, modifiers: modifiers, authorizing: true)
             }
         }
     }
 
-    private func openLocalLink(_ link: LocalDocumentLink, modifiers: NSEvent.ModifierFlags) {
+    private func openLocalLink(_ link: LocalDocumentLink, modifiers: NSEvent.ModifierFlags, authorizing: Bool = false) {
         guard FileManager.default.fileExists(atPath: link.url.path) else {
             presentOperationError("Couldn’t open linked file", error: CocoaError(.fileReadNoSuchFile))
+            return
+        }
+        if authorizing {
+            authorizeLocalEffect(.launchPathOrEditor, target: link.url) {
+                self.openLocalLink(link, modifiers: modifiers)
+            }
             return
         }
         if DocumentTypes.isMarkdown(link.url.pathExtension) {

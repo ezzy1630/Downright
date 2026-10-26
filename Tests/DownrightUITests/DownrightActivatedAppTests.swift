@@ -91,18 +91,16 @@ final class DownrightActivatedAppTests: XCTestCase {
         // the 44pt reveal slack and 36pt top inset, using native pointer input.
         editor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: 60, dy: 49)).click()
-        let opened = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label BEGINSWITH %@", "sibling.md"), object: window
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 10), .completed,
-                       "A real link click must open the sibling in this window without a system error")
+        // Query the renamed window afresh. A predicate on an already resolved
+        // XCUIElement can keep its pre-navigation label snapshot.
+        let opened = app.windows.matching(NSPredicate(format: "label BEGINSWITH %@", "sibling.md")).firstMatch
+        XCTAssertTrue(opened.waitForExistence(timeout: 10),
+                      "A real link click must open the sibling in this window without a system error")
         XCTAssertEqual(app.windows.count, 1)
         app.typeKey("[", modifierFlags: [.command, .control])
-        let returned = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label BEGINSWITH %@", fixture.lastPathComponent), object: window
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed)
-        add(XCTAttachment(screenshot: window.screenshot()))
+        let returned = app.windows.matching(NSPredicate(format: "label BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
+        XCTAssertTrue(returned.waitForExistence(timeout: 10))
+        add(XCTAttachment(screenshot: returned.screenshot()))
     }
 
     func testDeletingAccidentalSpaceClosesWithoutSavePrompt() throws {

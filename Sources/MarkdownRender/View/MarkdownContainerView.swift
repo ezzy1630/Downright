@@ -169,15 +169,25 @@ public final class MarkdownContainerView: NSView {
         let densityMap = (leadingAccessory as? DensityGutterView)
             ?? (trailingAccessory as? DensityGutterView)
         let hasLeadingDensityMap = leadingAccessory is DensityGutterView
-        let leadingWidth = hasLeadingDensityMap
+        var leadingWidth = hasLeadingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
             : (leadingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 24 } ?? 0)
-        let trailingWidth = trailingAccessory.map {
+        var trailingWidth = trailingAccessory.map {
             if $0 is DensityGutterView {
                 return $0.fittingSize.width > 0 ? $0.fittingSize.width : DensityGutterView.width
             }
             return $0.fittingSize.width > 0 ? $0.fittingSize.width : 14
         } ?? 0
+        // A compact pane needs the marker rail and fixed code bleed before
+        // it can afford the document map. Keep Focus Mode's visibility owned
+        // by the controller; only remove the map's geometric reservation.
+        let minimumContentWidth = RenderMetrics.minimumProseWidth + RenderMetrics.codeBleed
+            + gutterWidth + RenderMetrics.revealSlack
+            + NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
+        if bounds.width - leadingWidth - trailingWidth < minimumContentWidth {
+            if leadingAccessory is DensityGutterView { leadingWidth = 0 }
+            if trailingAccessory is DensityGutterView { trailingWidth = 0 }
+        }
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
         let showsNoteLane = bounds.width >= 1100 && textView.mode != .source
         let noteLane: CGFloat = showsNoteLane ? 230 : 0
@@ -272,6 +282,9 @@ public final class MarkdownContainerView: NSView {
                 width: hasLeadingDensityMap ? leadingWidth : trailingWidth,
                 height: bounds.height
             )
+            // AppKit allows sublayers to draw outside a zero-width view.
+            // Clip only the compact map so no stray ticks remain over text.
+            densityMap.clipsToBounds = densityMap.frame.width == 0
             // Keep the stick above the scroll view / marker rail so its hit
             // lane stays responsive.
             addSubview(densityMap, positioned: .above, relativeTo: nil)

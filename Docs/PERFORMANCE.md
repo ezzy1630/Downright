@@ -56,7 +56,7 @@ These are same-machine observations, not cross-machine promises.
 | Measurement | Before | After |
 |---|---:|---:|
 | Unicode inline-heavy parse, p95 | 48.811 ms | 11.212 ms |
-| Fuzzy match, 12-character query / 1,500-character heading, p95 | 11.036 ms | 0.912 ms |
+| Fuzzy match, 12-character query / 1,500-character heading, single invocation | 11.036 ms | 0.912 ms |
 | Fresh-open live heap allocations | 402.0 MiB | 132.3 MiB |
 | Fresh-open settled physical footprint | 423.6 MiB | 224.6 MiB |
 | Fresh-open peak physical footprint | 637.9 MiB | 369.6 MiB |
@@ -72,8 +72,8 @@ still does **not** satisfy the 150 MB peak memory target. Idle CPU sampled at
 mode-switching, and scrolling exercise, footprint sampled at 350 MiB. The
 fresh-open improvement does not establish a bounded interactive-session peak.
 
-The final `RUN_DRBENCH=1 Scripts/check.sh` passed 1,386 tests (with the two
-existing headless known-issue sites) and all release
+The gate run accompanying this first measurement, `RUN_DRBENCH=1 Scripts/check.sh`, passed 1,386 tests (with the two
+existing headless known-issue sites) and the automated release
 budgets (typing/storage p95 0.16 ms; semantic convergence p95 29.02 ms).
 The native host exercised editing, undo, save, source/rendered presentation,
 scrolling, and window resizing; undo/save restored the fixture's exact bytes.
@@ -99,7 +99,7 @@ fixture's 1,032,709 bytes were restored exactly. Kernel lifetime peak counters
 brief spikes beyond the periodic sampler's window. Live heap and physical
 footprint remain distinct metrics; shared-library RSS is not either of them.
 The optimized range covers two fresh-process runs. It is an observed range,
-not a percentile or a guaranteed ceiling. The full source gate passed 1,389
+not a percentile or a guaranteed ceiling. The source gate accompanying those continuation measurements passed 1,389
 tests with the two existing headless known-issue sites, and release p95 was
 0.15 ms for typing/storage and 28.35 ms for semantic convergence.
 

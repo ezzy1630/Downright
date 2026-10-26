@@ -488,7 +488,7 @@ struct HTMLExporter {
         }
         .downright {
           /* Measure capped in ch so it tracks the font, not the window (§11.1). */
-          max-width: \(Int(typography.measureCharacters))ch;
+          max-width: \(Int(TypographyConfig.clampedMeasureCharacters(typography.measureCharacters)))ch;
           margin: 4rem auto;
           padding: 0 1.5rem;
           hanging-punctuation: first last;

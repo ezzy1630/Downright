@@ -19,7 +19,8 @@ let outputURL = arguments.count >= 2
     : repositoryRoot.appendingPathComponent("Docs/marketing/github-social-preview.png")
 let masterURL = repositoryRoot.appendingPathComponent("Resources/AppIcon.png")
 
-guard let masterRep = NSBitmapImageRep(data: try Data(contentsOf: masterURL)) else {
+guard let masterData = try? Data(contentsOf: masterURL),
+      let masterRep = NSBitmapImageRep(data: masterData) else {
     FileHandle.standardError.write(Data("missing icon master: \(masterURL.path)\n".utf8))
     exit(66)
 }

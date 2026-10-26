@@ -83,6 +83,19 @@ struct NativePolishRegressionTests {
         #expect(controller.splitContainer != nil)
     }
 
+    @Test func splitDividerAndResizeKeepBothPanesReadable() {
+        let split = ThemedSplitView(styleSheet: .current, minimumPaneWidth: 256)
+        split.frame = NSRect(x: 0, y: 0, width: 1_000, height: 400)
+        split.addArrangedSubview(NSView())
+        split.addArrangedSubview(NSView())
+        split.setPosition(900, ofDividerAt: 0)
+        #expect(split.arrangedSubviews.allSatisfy { $0.frame.width >= 256 })
+        let oldSize = split.frame.size
+        split.frame.size.width = 520
+        split.splitView(split, resizeSubviewsWithOldSize: oldSize)
+        #expect(split.arrangedSubviews.allSatisfy { $0.frame.width >= 256 })
+    }
+
     @Test func autosaveWaitsUntilTypingHasBeenIdle() async throws {
         let url = try fixture("before\n")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -97,7 +110,13 @@ struct NativePolishRegressionTests {
         controller.markdownDocument.replace(NSRange(location: 0, length: 5), with: "second", actionName: "Edit")
         try await Task.sleep(for: .seconds(1.1))
         #expect(try String(contentsOf: url, encoding: .utf8) == "before\n")
-        try await Task.sleep(for: .seconds(1.1))
+        // The no-save assertion above straddles the superseded deadline.
+        // After that, wait for the actual write rather than assuming the main
+        // queue must execute the idle timer within a 200ms CI scheduling margin.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while try String(contentsOf: url, encoding: .utf8) != "second\n", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(try String(contentsOf: url, encoding: .utf8) == "second\n")
     }
 
@@ -134,6 +153,33 @@ struct NativePolishRegressionTests {
         #expect(controller.jumpHistory.current?.offset == 10)
         controller.goBack()
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
+    }
+
+    @Test func linkedHeadingRestoresBothDestinationSplitViewports() throws {
+        let first = try fixture("# First\n")
+        let prefix = (1...60).map { "Paragraph \($0).\n\n" }.joined()
+        let target = try fixture(prefix + "## Target\n\n" + prefix)
+        defer { try? FileManager.default.removeItem(at: first); try? FileManager.default.removeItem(at: target) }
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(target, mode: .live)
+        controller.showWindow(nil)
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        controller.primaryContainer.textView.prepareForDisplay()
+        controller.toggleSplitView()
+        #expect(controller.openInPlace(first))
+        #expect(controller.openInPlace(target, fragment: "target"))
+        let secondary = try #require(controller.splitContainer)
+        let primaryOffset = controller.primaryContainer.textView.topVisibleOffset
+        let secondaryOffset = secondary.textView.topVisibleOffset
+        #expect(primaryOffset > prefix.utf16.count - 100)
+        #expect(abs(primaryOffset - secondaryOffset) < 40)
+        controller.goBack()
+        #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
+        controller.goForward()
+        #expect(controller.markdownDocument.url == target.resolvingSymlinksInPath())
+        #expect(controller.primaryContainer.textView.topVisibleOffset > prefix.utf16.count - 100)
+        #expect(try #require(controller.splitContainer).textView.topVisibleOffset > prefix.utf16.count - 100)
     }
 
     @Test(arguments: [CGFloat(60), 80, 110])

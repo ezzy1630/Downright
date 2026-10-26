@@ -648,6 +648,7 @@ public final class MarkdownTextView: NSTextView {
         revealParagraph = source.revealParagraph
         appliedSourceFocus = source.appliedSourceFocus
         elision = source.elision
+        elisionWasIdentity = source.elisionWasIdentity
         expandedElisionRanges = source.expandedElisionRanges
         codeCollapseOverrides = source.codeCollapseOverrides
         updateGeneration = max(1, source.updateGeneration)
@@ -659,6 +660,7 @@ public final class MarkdownTextView: NSTextView {
         fragmentContext.collapseOverrides = codeCollapseOverrides
         fragmentContext.frontMatterFields = source.fragmentContext.frontMatterFields
         fragmentContext.documentHasH1 = source.fragmentContext.documentHasH1
+        refreshFragmentAccessibility()
         substitution.displayMap = baseDisplayMap
         contentStorage.configure(
             paragraphIndex: paragraphIndex,

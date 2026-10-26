@@ -47,6 +47,9 @@ fi
 if [ -z "$SPOTLIGHT_CONFIGURATION" ]; then
     SPOTLIGHT_CONFIGURATION="$(printf '%s' "$CONFIGURATION" | tr '[:upper:]' '[:lower:]')"
 fi
+# Development overrides isolate the host for editor acceptance; CLI discovery
+# and system-extension registration intentionally retain their production IDs.
+# The production acceptance lane below always exercises the canonical identity.
 HOST_BUNDLE_IDENTIFIER="${DOWNRIGHT_HOST_BUNDLE_IDENTIFIER:-com.ezzy.downright.acceptance}"
 
 case "$APP_ACCEPTANCE_PRODUCTION" in

@@ -23,6 +23,7 @@ struct EditingKeyReproTests {
         print("LAZY_OPEN materialized elements: \(elements)")
         #expect(controller.markdownDocument.text == text)
         #expect(controller.primaryContainer.textView.sourceSelectedRange == NSRange(location: 0, length: 0))
+        #expect(elements > 0)
         #expect(elements < 1_000)
     }
 

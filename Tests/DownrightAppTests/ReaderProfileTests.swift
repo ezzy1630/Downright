@@ -17,6 +17,7 @@ struct ReaderProfileTests {
     func profileClampsReadingMeasure() {
         #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 10).measureCharacters == 60)
         #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 100).measureCharacters == 100)
+        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 120).measureCharacters == 110)
     }
 
     @Test
@@ -41,6 +42,23 @@ struct ReaderProfileTests {
         #expect(picker.profiles.count == 6)
         #expect(picker.selectedProfile.name == "Presentation")
         #expect(delegate.previewed.last?.id == ReaderProfileID.presentation.rawValue)
+    }
+
+    @Test func pickerSupportsTheFullReadingMeasure() throws {
+        let store = InMemoryReaderProfileStore()
+        let profile = ReaderProfile(id: "wide", name: "Wide", measureCharacters: 83)
+        store.saveCustomProfiles([profile])
+        let picker = ReaderProfilePickerView(store: store)
+        picker.selectProfile(id: profile.id)
+        let popup = try #require(picker.subviews.compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == "Measure width" })
+        #expect(popup.titleOfSelectedItem == "83 characters")
+        #expect(popup.itemTitles.contains("60 characters"))
+        #expect(popup.itemTitles.contains("110 characters"))
+        popup.selectItem(withTitle: "110 characters")
+        popup.sendAction(popup.action, to: popup.target)
+        #expect(picker.selectedProfile.measureCharacters == 110)
+        picker.saveCustomProfileForTesting(name: "Widest")
+        #expect(store.profiles.last?.measureCharacters == 110)
     }
 
     @Test

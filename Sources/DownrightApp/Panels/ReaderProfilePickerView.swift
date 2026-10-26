@@ -38,6 +38,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private let deleteButton = NSButton(title: "Delete Custom", target: nil, action: nil)
     private let revertButton = NSButton(title: "Revert", target: nil, action: nil)
     private let doneButton = NSButton(title: "Done", target: nil, action: nil)
+    private let measureChoices = Array(Int(TypographyConfig.measureRange.lowerBound)...Int(TypographyConfig.measureRange.upperBound))
     private var controls: [NSPopUpButton] = []
     private var isReloading = false
 
@@ -117,7 +118,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         addSubview(deleteButton)
 
         addControl(label: "Typography scale", titles: ReaderTypographyScale.allCases.map(\.title))
-        addControl(label: "Measure width", titles: ["68 characters", "70 characters", "72 characters"])
+        addControl(label: "Measure width", titles: measureChoices.map { "\($0) characters" })
         addControl(label: "Chrome density", titles: ReaderChromeDensity.allCases.map(\.title))
         addControl(label: "Motion", titles: ReaderMotionPreference.allCases.map(\.title))
 
@@ -208,7 +209,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private func loadControls() {
         isReloading = true
         controls[safe: 0]?.selectItem(at: ReaderTypographyScale.allCases.firstIndex(of: selectedProfile.typographyScale) ?? 0)
-        let measure = [68, 70, 72].firstIndex(of: Int(selectedProfile.measureCharacters)) ?? 1
+        let measure = measureChoices.firstIndex(of: Int(TypographyConfig.clampedMeasureCharacters(selectedProfile.measureCharacters))) ?? 10
         controls[safe: 1]?.selectItem(at: measure)
         controls[safe: 2]?.selectItem(at: ReaderChromeDensity.allCases.firstIndex(of: selectedProfile.chromeDensity) ?? 0)
         controls[safe: 3]?.selectItem(at: ReaderMotionPreference.allCases.firstIndex(of: selectedProfile.motionPreference) ?? 0)
@@ -231,7 +232,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         guard sender.indexOfSelectedItem >= 0 else { return }
         var profile = selectedProfile
         if controls.indices.contains(0), sender === controls[0] { profile.typographyScale = ReaderTypographyScale.allCases[sender.indexOfSelectedItem] }
-        else if controls.indices.contains(1), sender === controls[1] { profile.measureCharacters = CGFloat([68, 70, 72][sender.indexOfSelectedItem]) }
+        else if controls.indices.contains(1), sender === controls[1] { profile.measureCharacters = CGFloat(measureChoices[sender.indexOfSelectedItem]) }
         else if controls.indices.contains(2), sender === controls[2] { profile.chromeDensity = ReaderChromeDensity.allCases[sender.indexOfSelectedItem] }
         else if controls.indices.contains(3), sender === controls[3] { profile.motionPreference = ReaderMotionPreference.allCases[sender.indexOfSelectedItem] }
         selectedProfile = profile

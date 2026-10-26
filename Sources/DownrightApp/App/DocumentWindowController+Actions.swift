@@ -28,9 +28,9 @@ extension DocumentWindowController {
             resetWorkspaceState(for: url)
             let targetOffset: Int
             if let fragment, let offset = linkedHeadingOffset(fragment) {
-                cancelInitialReadingRestore()
+                prepareForExplicitNavigation()
                 containerTextView.scroll(toOffset: offset, position: .top, animated: false)
-                synchronizePanes(from: containerTextView)
+                synchronizePanes(from: containerTextView, viewport: true)
                 targetOffset = offset
             } else { targetOffset = markdownDocument.restoredOffset() }
             if recordingHistory {

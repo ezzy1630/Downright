@@ -10,6 +10,11 @@ APP_SOURCE="${APP_SOURCE:-}"
 APP_DEST="${APP_DEST:-/Applications/Downright.app}"
 BIN_DEST="${BIN_DEST:-/usr/local/bin}"
 
+if [ -n "$APP_SOURCE" ] && [ ! -d "$APP_SOURCE" ]; then
+    echo "error: requested app artifact does not exist: $APP_SOURCE" >&2
+    exit 1
+fi
+
 if [ -z "$APP_SOURCE" ]; then
     if [ -d "$XCODE_APP/Contents/PlugIns/DownrightQL.appex" ] \
         && { [ ! -d "$SWIFTPM_APP" ] \

@@ -21,7 +21,7 @@ class InstallTests(unittest.TestCase):
         self.fake_bin.mkdir()
         self.write_executable(self.fake_bin / "pgrep", "exit 1\n")
         self.write_executable(self.fake_bin / "codesign", 'exit "${FAKE_CODESIGN_STATUS:-0}"\n')
-        for command in ["qlmanage", "pluginkit", "md"]:
+        for command in ["qlmanage", "pluginkit"]:
             self.write_executable(self.fake_bin / command, "exit 0\n")
         self.source = self.root / "candidate.app"
         (self.source / "Contents/MacOS").mkdir(parents=True)
@@ -66,7 +66,24 @@ class InstallTests(unittest.TestCase):
             os.readlink(self.bin_destination / "down"),
             str(self.destination / "Contents/MacOS/down"),
         )
+        self.assertEqual(os.readlink(self.bin_destination / "md"), str(self.destination / "Contents/MacOS/down"))
         self.assert_no_staging_directories()
+
+    def test_preserves_an_existing_md_command(self):
+        self.write_executable(self.fake_bin / "md", "exit 0\n")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.bin_destination / "md").exists())
+        self.assertTrue((self.fake_bin / "md").exists())
+
+    def test_missing_explicit_candidate_never_builds_a_substitute(self):
+        marker = self.root / "unexpected-build"
+        self.write_executable(self.script.parent / "bundle-app.sh", f'touch "{marker}"\nexit 1\n')
+        environment = dict(os.environ, APP_SOURCE=str(self.root / "missing.app"), APP_DEST=str(self.destination))
+        result = subprocess.run(["/bin/bash", str(self.script)], env=environment, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(marker.exists())
+        self.assertEqual((self.destination / "generation").read_text(), "old")
 
     def test_failed_staged_signature_keeps_the_installed_app(self):
         result = self.install(FAKE_CODESIGN_STATUS="1")

@@ -17,7 +17,8 @@ human/account gates.
 
 `github-social-preview.png` is the repository link card. `Scripts/make-social-preview.swift`
 renders it from `Resources/AppIcon.png`, the same brand master that feeds the app
-icon and the README hero, so the three cannot drift apart.
+icon and the README hero. Regenerate the checked-in card after master changes
+to keep these assets aligned.
 
 ```bash
 swift Scripts/make-social-preview.swift

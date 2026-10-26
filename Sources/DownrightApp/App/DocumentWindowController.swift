@@ -2530,9 +2530,25 @@ final class DocumentWindowController: NSWindowController {
         initialRestoreViewportY = nil
     }
 
+    func prepareForExplicitNavigation() {
+        let needsInitialGeometry = pendingInitialRestoreOffset != nil || deferredInitialRestoreOffset != nil
+        cancelInitialReadingRestore()
+        guard needsInitialGeometry else { return }
+        // A link or history hop can arrive before the scheduled first display.
+        // Establish the new document's height before scrolling clamps against
+        // the old buffer's short frame. Large documents keep estimated height
+        // through resizeToFitContent's existing lazy-layout budget.
+        window?.layoutIfNeeded()
+        rootView.layoutSubtreeIfNeeded()
+        for pane in documentPanes {
+            pane.layoutSubtreeIfNeeded()
+            pane.textView.resizeToFitContent()
+        }
+    }
+
     func jump(to offset: Int, label: String, animated: Bool = true) {
         recordJump(to: offset, label: label)
-        cancelInitialReadingRestore()
+        prepareForExplicitNavigation()
         let source = containerTextView
         // `.visible`: a jump to a target that is already on screen (a task in the
         // panel, a heading in the outline, a footnote below) must not move the
@@ -2546,16 +2562,19 @@ final class DocumentWindowController: NSWindowController {
     }
 
     private func restoreHistoryEntry(_ entry: JumpHistory.Entry) -> Bool {
-        if let url = entry.url, markdownDocument.url.map({ !FileIdentity.sameFile($0, url) }) ?? true {
+        let changesDocument = entry.url.map { url in
+            markdownDocument.url.map { !FileIdentity.sameFile($0, url) } ?? true
+        } ?? false
+        if changesDocument, let url = entry.url {
             guard openInPlace(url, recordingHistory: false) else { return false }
         }
         markdownDocument.ensureParsedCurrent()
-        cancelInitialReadingRestore()
+        prepareForExplicitNavigation()
         let offset = entry.anchor.map { ScrollAnchoring.offset(for: $0, in: markdownDocument.parsed) }
             ?? entry.offset
         let source = containerTextView
         source.scroll(toOffset: offset, position: .top, animated: false)
-        synchronizePanes(from: source)
+        synchronizePanes(from: source, viewport: changesDocument)
         return true
     }
 
@@ -2639,7 +2658,11 @@ final class DocumentWindowController: NSWindowController {
         second.textView.setSourceSelectedRanges(source.sourceSelectedRanges)
         splitContainer = second
 
-        let split = ThemedSplitView(styleSheet: activeStyleSheet)
+        let split = ThemedSplitView(
+            styleSheet: activeStyleSheet,
+            minimumPaneWidth: RenderMetrics.minimumProseWidth + RenderMetrics.codeBleed
+                + RenderMetrics.gutterWidth + RenderMetrics.revealSlack
+        )
         split.translatesAutoresizingMaskIntoConstraints = false
 
         primaryContainer.removeFromSuperview()
