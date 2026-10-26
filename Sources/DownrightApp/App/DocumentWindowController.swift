@@ -593,6 +593,24 @@ final class DocumentWindowController: NSWindowController {
             "measureWidth \(primaryContainer.textView.styleSheet.measureWidth)",
         ]
         FileHandle.standardError.write(Data(("\n--- Downright layout ---\n" + lines.joined(separator: "\n") + "\n").utf8))
+        for (index, pane) in documentPanes.enumerated() {
+            let text = pane.textView
+            let viewport = text.textLayoutManager?.textViewportLayoutController
+            let detail = "pane \(index) viewport=\(String(describing: viewport?.viewportRange)) "
+                + "bounds=\(String(describing: viewport?.viewportBounds)) "
+                + "usage=\(String(describing: text.textLayoutManager?.usageBoundsForTextContainer)) "
+                + "origin=\(text.textContainerOrigin) visible=\(pane.scrollView.documentVisibleRect)\n"
+            FileHandle.standardError.write(Data(detail.utf8))
+            func describe(_ view: NSView, depth: Int) {
+                let layer = view.layer
+                let line = "textSurface \(index) depth=\(depth) class=\(type(of: view)) "
+                    + "frame=\(view.frame) bounds=\(view.bounds) hidden=\(view.isHidden) alpha=\(view.alphaValue) "
+                    + "layerOpacity=\(String(describing: layer?.opacity)) contents=\(layer?.contents != nil)\n"
+                FileHandle.standardError.write(Data(line.utf8))
+                if depth < 2 { for child in view.subviews { describe(child, depth: depth + 1) } }
+            }
+            describe(text, depth: 0)
+        }
 
         if let toolbar = window?.toolbar {
             for item in toolbar.items {
