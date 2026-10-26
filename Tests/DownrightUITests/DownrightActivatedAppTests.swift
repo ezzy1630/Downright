@@ -71,6 +71,19 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
     }
 
+    func testUnterminatedParagraphRendersWithoutChangingSource() throws {
+        let text = "An unterminated Markdown paragraph remains visible and keeps every source byte. A native text surface must render this document without needing a final newline or another paragraph to initialize its viewport."
+        let original = Data(text.utf8)
+        try original.write(to: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
     func testPointerLinkOpensInPlaceAndBackReturns() throws {
         let target = root.appendingPathComponent("sibling.md")
         try Data("# Sibling\n\nDestination text.\n".utf8).write(to: target)

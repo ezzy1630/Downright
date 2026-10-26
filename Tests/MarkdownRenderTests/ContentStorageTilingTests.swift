@@ -26,6 +26,33 @@ import Testing
 @MainActor
 struct ContentStorageTilingTests {
 
+    @Test("paragraph content and separator partition the element", arguments: ["\n", "\r\n", "\r", "\u{0085}", "\u{2029}"])
+    func paragraphMetadataPartitionsElement(separator: String) throws {
+        let text = "First" + separator + separator + "Second"
+        let (custom, storage) = Self.makeStorage(text)
+        custom.configure(paragraphIndex: ParagraphIndex(text: text as NSString),
+                         reflowRanges: [], displayMap: .identity)
+        let native = NSTextContentStorage()
+        native.textStorage = NSTextStorage(string: text)
+        for content in [custom as NSTextContentStorage, native] {
+            var paragraphs: [NSTextParagraph] = []
+            _ = content.enumerateTextElements(from: nil) { element in
+                if let paragraph = element as? NSTextParagraph { paragraphs.append(paragraph) }
+                return true
+            }
+            #expect(!paragraphs.isEmpty)
+            for paragraph in paragraphs {
+                let element = try #require(paragraph.elementRange)
+                let body = try #require(paragraph.paragraphContentRange)
+                let separator = try #require(paragraph.paragraphSeparatorRange)
+                #expect(content.offset(from: element.location, to: body.location) == 0)
+                #expect(content.offset(from: body.endLocation, to: separator.location) == 0)
+                #expect(content.offset(from: separator.endLocation, to: element.endLocation) == 0)
+            }
+        }
+        #expect(storage.string == text)
+    }
+
     // MARK: - Documents
 
     /// Hard-wrapped prose: several source lines per visual paragraph, a blank

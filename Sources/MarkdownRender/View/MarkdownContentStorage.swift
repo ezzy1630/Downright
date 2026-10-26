@@ -10,7 +10,13 @@ private final class MarkdownTextParagraph: NSTextParagraph {
         elementRange: NSTextRange,
         separatorRange: NSTextRange?
     ) {
-        self.contentRange = elementRange
+        // TextKit expects content and separator to partition the element;
+        // including the terminator in both gives it overlapping locations.
+        guard let contentRange = NSTextRange(
+            location: elementRange.location,
+            end: separatorRange?.location ?? elementRange.endLocation
+        ) else { preconditionFailure("Paragraph content must precede its separator") }
+        self.contentRange = contentRange
         self.separatorRange = separatorRange
         super.init(attributedString: attributedString)
         self.textContentManager = textContentManager

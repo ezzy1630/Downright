@@ -70,6 +70,8 @@ source-length word joiners against the current storage attributes through
 `DisplaySubstitution.resolvedReplacement(in:)`. Source-edit projection moves
 the descriptors along with the source ranges; it does not retain old styles
 or create replacement text for offscreen elements.
+Custom paragraph content and separator ranges partition the source element
+without overlap, including empty paragraphs and two-unit CRLF separators.
 
 Block markers live in the gutter. Inline markers reveal per span near the
 primary caret. IME composition suspends hiding in the composing paragraph.
