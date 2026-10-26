@@ -646,7 +646,17 @@ public final class MarkdownTextView: NSTextView {
         baseLayoutMap = source.baseLayoutMap
         displayMap = source.displayMap
         revealParagraph = source.revealParagraph
+        appliedSourceFocus = source.appliedSourceFocus
+        elision = source.elision
+        expandedElisionRanges = source.expandedElisionRanges
+        codeCollapseOverrides = source.codeCollapseOverrides
         updateGeneration = max(1, source.updateGeneration)
+        fragmentContext.paragraphIndex = paragraphIndex
+        fragmentContext.sourceFocusRange = sourceFocus.range
+        fragmentContext.caret = source.fragmentContext.caret
+        fragmentContext.elision = source.fragmentContext.elision
+        fragmentContext.cueElision = source.fragmentContext.cueElision
+        fragmentContext.collapseOverrides = codeCollapseOverrides
         fragmentContext.frontMatterFields = source.fragmentContext.frontMatterFields
         fragmentContext.documentHasH1 = source.fragmentContext.documentHasH1
         substitution.displayMap = baseDisplayMap
