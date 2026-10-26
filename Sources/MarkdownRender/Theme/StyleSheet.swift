@@ -42,7 +42,7 @@ public struct StyleSheet {
     /// measure cap is only meaningful relative to it.
     public let averageCharacterWidth: CGFloat
     /// Measure cap in points, derived from `measureCharacters` and the body
-    /// font (§11.1).  Clamped to 68–72 characters whatever the config says.
+    /// font (§11.1), honoring the supported explicit character measure.
     public let measureWidth: CGFloat
     /// Point size for math so it sits optically against body text (§11.3).
     public let mathPointSize: CGFloat

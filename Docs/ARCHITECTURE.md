@@ -30,6 +30,11 @@ The app owns windows, file access, and user actions. Quick Look uses the same
 core and render contracts as the app. The Spotlight targets share only the
 parser-backed metadata contract and never start an AppKit surface.
 
+Source-test hosts do not run `NSApplication.run()`. Document windows disable
+native transform animations in that host so they cannot strand dispatch workers;
+running applications keep the native animation policy. Activated-app acceptance
+remains a separate gate from source tests.
+
 ## Document pipeline
 
 ```text

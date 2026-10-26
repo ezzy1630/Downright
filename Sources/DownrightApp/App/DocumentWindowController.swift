@@ -326,6 +326,10 @@ final class DocumentWindowController: NSWindowController {
         )
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
+        // AppKit's window-transform animations cannot settle in a source host
+        // without NSApplication.run(); they can exhaust its dispatch workers.
+        // A running application retains the normal native animation policy.
+        if NSApp?.isRunning != true { window.animationBehavior = .none }
         window.tabbingMode = .preferred
         // Session restoration is owned by DocumentStateStore. AppKit window
         // archives can resurrect obsolete toolbar item views across releases.
