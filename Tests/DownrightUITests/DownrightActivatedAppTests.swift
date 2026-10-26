@@ -62,6 +62,9 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
         app.launchEnvironment["DOWNRIGHT_SUPPORT_DIRECTORY"] = support.path
         app.launchEnvironment["DOWNRIGHT_DEBUG_LAYOUT"] = "1"
+        // Preserve the native drawing caller when CoreGraphics rejects a
+        // numeric value; the retained xcresult includes the app's stderr.
+        app.launchEnvironment["CG_NUMERICS_SHOW_BACKTRACE"] = "1"
     }
 
     override func tearDown() {
