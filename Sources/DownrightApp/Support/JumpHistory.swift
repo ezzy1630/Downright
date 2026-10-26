@@ -10,6 +10,7 @@ final class JumpHistory {
         var url: URL?
         var offset: Int
         var label: String
+        var anchor: ScrollAnchor? = nil
     }
 
     private(set) var entries: [Entry] = []
@@ -27,7 +28,7 @@ final class JumpHistory {
         if let from, index < 0 || entries.isEmpty {
             entries = [from]
             index = 0
-        } else if let from, let current, abs(current.offset - from.offset) > 40 {
+        } else if let from, let current, (current.url != from.url || abs(current.offset - from.offset) > 40) {
             // The reader scrolled since the last recorded position; update the
             // current entry so "back" returns to where they actually were.
             entries[index] = from
@@ -44,16 +45,21 @@ final class JumpHistory {
         index = entries.count - 1
     }
 
-    func goBack() -> Entry? {
-        guard canGoBack else { return nil }
+    func goBack(accept: (Entry) -> Bool = { _ in true }) -> Entry? {
+        guard canGoBack, accept(entries[index - 1]) else { return nil }
         index -= 1
         return entries[index]
     }
 
-    func goForward() -> Entry? {
-        guard canGoForward else { return nil }
+    func goForward(accept: (Entry) -> Bool = { _ in true }) -> Entry? {
+        guard canGoForward, accept(entries[index + 1]) else { return nil }
         index += 1
         return entries[index]
+    }
+
+    func updateCurrent(_ entry: Entry) {
+        guard index >= 0, index < entries.count else { return }
+        entries[index] = entry
     }
 
     func clear() {

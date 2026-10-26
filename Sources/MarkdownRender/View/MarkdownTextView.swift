@@ -396,6 +396,11 @@ public final class MarkdownTextView: NSTextView {
     private var elision: ElisionPlan = .none
     private var expandedElisionRanges: [NSRange] = []
 
+    // Hidden runs make source→TextKit→source lossy. After a source edit,
+    // retain its exact caret while the native projection is unchanged. Normal
+    // navigation still resolves to visible text; a native gesture retires this
+    // edit intent in setSelectedRanges.
+    private var explicitSourceSelection: (source: [NSRange], textKit: [NSValue])?
     private var isApplyingSelection = false
     private var isPerformingSourceEdit = false
     /// Human-scale provenance for the source mutation most recently reported
@@ -527,7 +532,17 @@ public final class MarkdownTextView: NSTextView {
         self.init(frame: frame, storage: storage, styleSheet: MarkdownTextView.fallbackStyleSheet())
     }
 
-    public init(frame: NSRect, storage: NSTextStorage, styleSheet: StyleSheet) {
+    public init(
+        frame: NSRect, storage: NSTextStorage, styleSheet: StyleSheet,
+        sharingPresentationOf source: MarkdownTextView? = nil
+    ) {
+        if let source {
+            self.mode = source.mode
+            self.configuration = source.configuration
+            self.zoomLevel = source.zoomLevel
+            self.foldedHeadingSlugs = source.foldedHeadingSlugs
+            self.sourceFocus = source.sourceFocus
+        }
         self.styleSheet = styleSheet
         self.engine = DecorationEngine(styleSheet: styleSheet)
         self.fragmentContext = FragmentContext(styleSheet: styleSheet)
@@ -584,7 +599,8 @@ public final class MarkdownTextView: NSTextView {
         fragmentContext.mode = mode
         applyMeasure()
         applyModeChrome()
-        rebuildParagraphIndex()
+        if let source { adoptSharedPresentation(from: source) }
+        else { rebuildParagraphIndex() }
     }
 
     /// Downright never archives its text surface; it is always constructed
@@ -665,6 +681,7 @@ public final class MarkdownTextView: NSTextView {
         preservingSelection: Bool = true
     ) {
         let isInitialUpdate = updateGeneration == 0
+        let preservesEditCaret = preservingSelection && !isInitialUpdate && explicitSourceSelection != nil
         // Replacing the shared NSTextStorage while opening a new document can
         // make AppKit expand the old zero-length caret to the replacement
         // range. That is a storage-loading side effect, not a user selection;
@@ -674,7 +691,8 @@ public final class MarkdownTextView: NSTextView {
             ? [NSRange(location: 0, length: 0)]
             : sourceSelectedRanges
         let explicitViewportAnchor = localEditViewportAnchor
-        let anchor = explicitViewportAnchor ?? captureViewportAnchor()
+        let anchor = explicitViewportAnchor ?? (preservingSelection
+            ? captureViewportAnchor() : ViewportAnchor(offset: 0, gap: 0))
         localEditViewportAnchor = nil
         let lockedViewportY = nextDocumentUpdateViewportY
         nextDocumentUpdateViewportY = nil
@@ -756,7 +774,7 @@ public final class MarkdownTextView: NSTextView {
             let end = min(max(location, range.upperBound), document.length)
             return NSRange(location: location, length: end - location)
         }
-        setSourceSelectedRanges(boundedSelection)
+        setSourceSelectedRanges(boundedSelection, preservingEditCaret: preservesEditCaret)
         // A local edit can resolve TextKit's estimated layout above the
         // viewport even when it does not add a line. Keeping the clip's raw
         // y-coordinate then shows an earlier part of the document: the camera
@@ -2636,6 +2654,9 @@ public final class MarkdownTextView: NSTextView {
 
     /// Selection converted out of TextKit's hybrid space (see `DisplayMap`).
     public var sourceSelectedRanges: [NSRange] {
+        if let explicit = explicitSourceSelection, explicit.textKit == selectedRanges {
+            return explicit.source
+        }
         guard let storage = textStorage else { return [] }
         let fullSource = NSRange(location: 0, length: storage.length)
         let fullTextKit = displayMap.textKitRange(forSource: fullSource)
@@ -2660,14 +2681,20 @@ public final class MarkdownTextView: NSTextView {
     /// Primary caret, or `nil` when there is no caret at all (Read mode) or
     /// the selection is not empty.
     public var primarySourceCaret: Int? {
-        guard effectivePolicy.showsInsertionPoint else { return nil }
-        guard let first = selectedRanges.first?.rangeValue, first.length == 0 else { return nil }
-        return displayMap.sourceOffset(forTextKit: first.location)
+        guard effectivePolicy.showsInsertionPoint,
+              let first = sourceSelectedRanges.first, first.length == 0 else { return nil }
+        return first.location
     }
 
-    public func setSourceSelectedRanges(_ ranges: [NSRange]) {
-        let converted = ranges.map { NSValue(range: displayMap.textKitRange(forSource: $0)) }
-        guard !converted.isEmpty else { return }
+    public func setSourceSelectedRanges(_ ranges: [NSRange], preservingEditCaret: Bool = false) {
+        guard !ranges.isEmpty, let storage = textStorage else { return }
+        let bounded = ranges.map { range -> NSRange in
+            let location = min(max(0, range.location), storage.length)
+            return NSRange(location: location, length: min(max(0, range.length), storage.length - location))
+        }
+        let converted = bounded.map { NSValue(range: displayMap.textKitRange(forSource: $0)) }
+        explicitSourceSelection = preservingEditCaret ? (source: bounded, textKit: converted) : nil
+        guard converted != selectedRanges else { return }
         isApplyingSelection = true
         super.setSelectedRanges(converted, affinity: .downstream, stillSelecting: false)
         isApplyingSelection = false
@@ -2678,6 +2705,7 @@ public final class MarkdownTextView: NSTextView {
         affinity: NSSelectionAffinity,
         stillSelecting: Bool
     ) {
+        if !isApplyingSelection { explicitSourceSelection = nil }
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !isApplyingSelection, !isPerformingSourceEdit,
               !isTrackingMouseSelection, !stillSelecting else { return }
@@ -2782,6 +2810,7 @@ public final class MarkdownTextView: NSTextView {
         // the old one can change wrapping above the viewport. Preserve the
         // visible source line through that rebuild; a raw clip y-coordinate
         // points at different content once TextKit resolves the new geometry.
+        let preservesEditCaret = explicitSourceSelection != nil
         let sourceSelection = sourceSelectedRanges
         let viewportAnchor = requestedViewportAnchor ?? sourceSelection.first.flatMap { selection -> ViewportAnchor? in
             guard selection.length == 0 else { return nil }
@@ -2794,12 +2823,7 @@ public final class MarkdownTextView: NSTextView {
         restoreAnchorShift(previous: previousAnchor)
         applyCaretAnchorShift()
 
-        let restored = sourceSelection.map { NSValue(range: displayMap.textKitRange(forSource: $0)) }
-        if restored != selectedRanges {
-            isApplyingSelection = true
-            super.setSelectedRanges(restored, affinity: .downstream, stillSelecting: false)
-            isApplyingSelection = false
-        }
+        setSourceSelectedRanges(sourceSelection, preservingEditCaret: preservesEditCaret)
         restoreViewport(to: viewportAnchor)
         gutterRail?.needsDisplay = true
         markdownDelegate?.markdownTextViewDidChangeSelection(self)
@@ -2874,6 +2898,13 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: - Geometry
+
+    /// This surface is top-aligned and owns its height and scroll anchoring.
+    /// AppKit's getter resolves the document's used bounds, eagerly laying out
+    /// every fragment when a shared pane is attached to its scroll view.
+    public override var textContainerOrigin: NSPoint {
+        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+    }
 
     public func rect(forOffset offset: Int) -> NSRect? {
         let textKit = displayMap.textKitOffset(forSource: offset)
@@ -3374,8 +3405,8 @@ public final class MarkdownTextView: NSTextView {
     var columnWidth: CGFloat { styleSheet.measureWidth + RenderMetrics.codeBleed }
 
     private func applyMeasure() {
-        // §11.1: measure capped at 68–72 characters.  The single most common
-        // thing markdown viewers get wrong.
+        // The theme supplies the requested measure; the container constrains it
+        // to available viewport space without changing the stored preference.
         textContainer?.size = CGSize(width: columnWidth, height: CGFloat.greatestFiniteMagnitude)
         fragmentContext.contentWidth = columnWidth
         minSize = NSSize(width: columnWidth, height: 0)

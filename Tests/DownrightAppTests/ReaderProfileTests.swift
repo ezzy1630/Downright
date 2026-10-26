@@ -15,8 +15,8 @@ struct ReaderProfileTests {
 
     @Test
     func profileClampsReadingMeasure() {
-        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 10).measureCharacters == 68)
-        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 100).measureCharacters == 72)
+        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 10).measureCharacters == 60)
+        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 100).measureCharacters == 100)
     }
 
     @Test

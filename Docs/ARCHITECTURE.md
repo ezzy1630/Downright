@@ -61,6 +61,13 @@ text, or shortened replacement strings.
 
 Block markers live in the gutter. Inline markers reveal per span near the
 primary caret. IME composition suspends hiding in the composing paragraph.
+After a source edit, retain its exact source caret while its native projection
+is unchanged: hidden markers make a source-to-display round trip lossy. A new
+native selection retires that edit position and resolves against visible text.
+A split pane adopts the existing parsed presentation during construction, before
+any setter can decorate the shared storage. Each pane owns its layout caches;
+opening a split must preserve source attributes and avoid a full decoration pass.
+
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
 is a separate explicit command.
 
@@ -83,6 +90,14 @@ writes replace the inode. On an external write:
 5. If the buffer is clean, apply the new text.
 6. If the buffer is dirty, show Review, Keep Mine, and Take Theirs.
 
+Dirty state compares exact UTF-16 source with the last saved generation. Returning
+to that text by deletion or undo clears the edited state without writing the
+file; pending external conflicts remain independent and cannot be overwritten.
+
+Autosave is opt-in. Actual local source edits reset its idle deadline even when
+the buffer is already dirty. Discard suppresses implicit saves until a fresh
+source edit; parser and presentation updates cannot re-arm saving.
+
 Snapshots deduplicate by content hash. Retention applies the configured age,
 per-document, and global byte caps without rewriting unchanged indexes; a
 half-hour maintenance interval bounds long-running sessions. The newest
@@ -95,6 +110,12 @@ tests inject temporary support roots, and the repository gate also refuses to
 run them without an isolated Application Support directory.
 
 ## Workspace and path resolution
+
+Local document links resolve URL encoding and heading fragments separately from
+filesystem paths. The text surface routes native link activation through the app
+so Launch Services cannot independently open the same click. Back/Forward commit
+a history move only after the destination opens successfully and restore semantic
+reading anchors across files.
 
 The app can open one file or an optional folder workspace. Workspace mode scans
 the folder for sibling documents and shows them newest first. It does not build

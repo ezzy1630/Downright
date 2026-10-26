@@ -355,6 +355,7 @@ final class DocumentWindowController: NSWindowController {
         // The suppression belongs to the buffer the user declined to keep; a
         // different document opened in this window starts with a clean slate.
         implicitSaveSuppressed = false
+        setSplitView(false)
         try markdownDocument.open(url)
         clearStaleFullDocumentSelectionIfNeeded()
         let requestedMode = mode.normalizedForEditing
@@ -401,7 +402,7 @@ final class DocumentWindowController: NSWindowController {
         )
 
         scheduleDerivedUIRefresh(immediate: true)
-        if markdownDocument.state.splitViewEnabled { toggleSplitView() }
+        setSplitView(markdownDocument.state.splitViewEnabled)
         applyFocusMode(Preferences.shared.values.focusMode, animated: false)
 
         // Paint a deterministic first frame. Apply a saved deep offset only
@@ -872,6 +873,7 @@ final class DocumentWindowController: NSWindowController {
             busy ? self?.activityIndicator.begin() : self?.activityIndicator.end()
         }
         markdownDocument.onExternalEvent = { [weak self] event in self?.handleExternalEvent(event) }
+        markdownDocument.onSourceEdit = { [weak self] in self?.scheduleAutosave() }
         markdownDocument.onDirtyChanged = { [weak self] dirty in
             self?.window?.isDocumentEdited = dirty
             if dirty { self?.scheduleAutosave() }
@@ -1220,8 +1222,8 @@ final class DocumentWindowController: NSWindowController {
     /// and autosave is enabled.  Repeated edits reset the timer, so a rapid
     /// typing burst produces one save, not one per keystroke.
     private func scheduleAutosave() {
-        // scheduleAutosave runs exactly when the buffer turns dirty, i.e. on
-        // fresh work.  A previous Discard decision covered the buffer as it
+        // Only fresh source edits (or the first dirty transition) schedule a
+        // save. A previous Discard decision covered the buffer as it
         // existed then; new edits are new work and re-arm implicit saves.
         implicitSaveSuppressed = false
         guard Preferences.shared.values.autosaveEnabled,
@@ -2453,10 +2455,16 @@ final class DocumentWindowController: NSWindowController {
 
     func applyFindQuery(_ query: FindQuery) { runFind(query) }
 
-    func runFind(_ query: FindQuery, scrollToMatch: Bool = true, highlightAll: Bool = true) {
+    func runFind(
+        _ query: FindQuery, scrollToMatch: Bool = true, highlightAll: Bool = true,
+        preservingCurrentMatch: Bool = false
+    ) {
         findRefreshWorkItem?.cancel()
         let source = containerTextView
-        findSession.update(query: query, in: markdownDocument.text, caret: source.topVisibleOffset)
+        findSession.update(
+            query: query, in: markdownDocument.text, caret: source.topVisibleOffset,
+            preservingCurrentMatch: preservingCurrentMatch
+        )
         // A hit inside a folded or elided range forces that range visible; the
         // text view owns that rule (§14's four-way interaction).
         for pane in documentPanes {
@@ -2479,7 +2487,7 @@ final class DocumentWindowController: NSWindowController {
         // Only the current match is highlighted — a closed bar shows "here",
         // not the full sweep it cleared on dismiss.
         if findBar == nil, !findSession.query.isEmpty {
-            runFind(findSession.query, scrollToMatch: false, highlightAll: false)
+            runFind(findSession.query, scrollToMatch: false, highlightAll: false, preservingCurrentMatch: true)
         }
         guard let match = findSession.advance(forward: forward) else { return }
         let source = containerTextView
@@ -2492,15 +2500,35 @@ final class DocumentWindowController: NSWindowController {
 
     // MARK: - Navigation
 
+    func readingHistoryEntry(label: String) -> JumpHistory.Entry {
+        markdownDocument.ensureParsedCurrent()
+        let offset = containerTextView.topVisibleOffset
+        return JumpHistory.Entry(
+            url: markdownDocument.url, offset: offset, label: label,
+            anchor: ScrollAnchoring.anchor(for: offset, in: markdownDocument.parsed)
+        )
+    }
+
     func recordJump(to offset: Int, label: String) {
         jumpHistory.record(
-            from: JumpHistory.Entry(url: markdownDocument.url, offset: containerTextView.topVisibleOffset, label: "Reading position"),
-            to: JumpHistory.Entry(url: markdownDocument.url, offset: offset, label: label)
+            from: readingHistoryEntry(label: "Reading position"),
+            to: JumpHistory.Entry(
+                url: markdownDocument.url, offset: offset, label: label,
+                anchor: ScrollAnchoring.anchor(for: offset, in: markdownDocument.parsed)
+            )
         )
+    }
+
+    func cancelInitialReadingRestore() {
+        initialRestoreGeneration &+= 1
+        pendingInitialRestoreOffset = nil
+        deferredInitialRestoreOffset = nil
+        initialRestoreViewportY = nil
     }
 
     func jump(to offset: Int, label: String, animated: Bool = true) {
         recordJump(to: offset, label: label)
+        cancelInitialReadingRestore()
         let source = containerTextView
         // `.visible`: a jump to a target that is already on screen (a task in the
         // panel, a heading in the outline, a footnote below) must not move the
@@ -2513,21 +2541,35 @@ final class DocumentWindowController: NSWindowController {
         refreshBreadcrumb()
     }
 
-    func goBack() {
-        guard let entry = jumpHistory.goBack() else { return }
+    private func restoreHistoryEntry(_ entry: JumpHistory.Entry) -> Bool {
+        if let url = entry.url, markdownDocument.url.map({ !FileIdentity.sameFile($0, url) }) ?? true {
+            guard openInPlace(url, recordingHistory: false) else { return false }
+        }
+        markdownDocument.ensureParsedCurrent()
+        cancelInitialReadingRestore()
+        let offset = entry.anchor.map { ScrollAnchoring.offset(for: $0, in: markdownDocument.parsed) }
+            ?? entry.offset
         let source = containerTextView
-        source.scroll(toOffset: entry.offset, position: .center, animated: true)
+        source.scroll(toOffset: offset, position: .top, animated: false)
         synchronizePanes(from: source)
+        return true
+    }
+
+    func goBack() {
+        jumpHistory.updateCurrent(readingHistoryEntry(label: "Reading position"))
+        _ = jumpHistory.goBack(accept: restoreHistoryEntry)
     }
 
     func goForward() {
-        guard let entry = jumpHistory.goForward() else { return }
-        let source = containerTextView
-        source.scroll(toOffset: entry.offset, position: .center, animated: true)
-        synchronizePanes(from: source)
+        jumpHistory.updateCurrent(readingHistoryEntry(label: "Reading position"))
+        _ = jumpHistory.goForward(accept: restoreHistoryEntry)
     }
 
     // MARK: - Split view (§9.3)
+
+    func setSplitView(_ enabled: Bool) {
+        if (splitContainer != nil) != enabled { toggleSplitView() }
+    }
 
     func toggleSplitView() {
         if let split = splitViewContainer {
@@ -2580,18 +2622,16 @@ final class DocumentWindowController: NSWindowController {
         // Two panes over the same buffer — the second primaryContainer shares the
         // document's storage, so an edit in one appears in the other with no
         // synchronisation code at all (§3.1 paying off).
-        let second = MarkdownContainerView(storage: markdownDocument.storage)
-        second.textView.markdownDelegate = self
-        wireKeyEventHandler(second.textView)
-        second.styleSheet = activeStyleSheet
-        configureLocalAssetAccess(for: second.textView, documentURL: markdownDocument.url)
-        second.textView.configuration = renderConfiguration
         let source = containerTextView
         let sourceViewportOffset = source.topVisibleOffset
-        second.textView.mode = source.mode
-        second.textView.zoomLevel = source.zoomLevel
-        second.textView.foldedHeadingSlugs = source.foldedHeadingSlugs
-        second.textView.adoptSharedPresentation(from: source)
+        let second = MarkdownContainerView(
+            storage: markdownDocument.storage,
+            styleSheet: activeStyleSheet,
+            sharingPresentationOf: source
+        )
+        second.textView.markdownDelegate = self
+        wireKeyEventHandler(second.textView)
+        configureLocalAssetAccess(for: second.textView, documentURL: markdownDocument.url)
         second.textView.setSourceSelectedRanges(source.sourceSelectedRanges)
         splitContainer = second
 

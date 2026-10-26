@@ -47,7 +47,7 @@ fi
 if [ -z "$SPOTLIGHT_CONFIGURATION" ]; then
     SPOTLIGHT_CONFIGURATION="$(printf '%s' "$CONFIGURATION" | tr '[:upper:]' '[:lower:]')"
 fi
-HOST_BUNDLE_IDENTIFIER="com.ezzy.downright.acceptance"
+HOST_BUNDLE_IDENTIFIER="${DOWNRIGHT_HOST_BUNDLE_IDENTIFIER:-com.ezzy.downright.acceptance}"
 
 case "$APP_ACCEPTANCE_PRODUCTION" in
     0) ;;

@@ -13,7 +13,12 @@ extension DocumentWindowController {
     /// ⌘-click is what opens a new one).  Persists the current document's
     /// state first so its reading position survives the hop.
     @discardableResult
-    func openInPlace(_ url: URL) -> Bool {
+    func openInPlace(_ url: URL, fragment: String? = nil, recordingHistory: Bool = true) -> Bool {
+        if let current = markdownDocument.url, FileIdentity.sameFile(current, url) {
+            if let fragment { revealLinkedHeading(fragment) }
+            return true
+        }
+        let previousPosition = readingHistoryEntry(label: "Reading position")
         guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return false }
         let previousURL = markdownDocument.url
         resetTransientChrome()
@@ -21,6 +26,20 @@ extension DocumentWindowController {
         do {
             try open(url, mode: mode)
             resetWorkspaceState(for: url)
+            let targetOffset: Int
+            if let fragment, let offset = linkedHeadingOffset(fragment) {
+                cancelInitialReadingRestore()
+                containerTextView.scroll(toOffset: offset, position: .top, animated: false)
+                synchronizePanes(from: containerTextView)
+                targetOffset = offset
+            } else { targetOffset = markdownDocument.restoredOffset() }
+            if recordingHistory {
+                let offset = targetOffset
+                jumpHistory.record(from: previousPosition, to: JumpHistory.Entry(
+                    url: markdownDocument.url, offset: offset, label: url.lastPathComponent,
+                    anchor: ScrollAnchoring.anchor(for: offset, in: markdownDocument.parsed)
+                ))
+            }
             return true
         } catch {
             // The hop died mid-flight (the target vanished between the click
@@ -39,6 +58,23 @@ extension DocumentWindowController {
             NSSound.beep()
             return false
         }
+    }
+
+    private func linkedHeadingOffset(_ fragment: String) -> Int? {
+        markdownDocument.ensureParsedCurrent()
+        guard let heading = markdownDocument.parsed.headings.first(where: { $0.slug == fragment }) else {
+            presentOperationError("Heading not found", error: NSError(
+                domain: "Downright.Navigation", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "This document has no heading named “\(fragment)”."]
+            ))
+            return nil
+        }
+        return heading.range.location
+    }
+
+    func revealLinkedHeading(_ fragment: String) {
+        guard let offset = linkedHeadingOffset(fragment) else { return }
+        jump(to: offset, label: fragment, animated: false)
     }
 
     func updateBreadcrumbAndGutter() {

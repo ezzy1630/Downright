@@ -167,7 +167,7 @@ public struct StyleSheet {
         lineHeight = grid * 4
         let advance = StyleSheet.averageCharacterWidth(of: bodyFont)
         averageCharacterWidth = advance
-        measureWidth = advance * min(72, max(68, typography.measureCharacters))
+        measureWidth = advance * TypographyConfig.clampedMeasureCharacters(typography.measureCharacters)
         mathPointSize = StyleSheet.mathPointSize(body: bodyFont, typography: typography)
 
         // Colours

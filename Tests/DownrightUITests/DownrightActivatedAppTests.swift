@@ -76,6 +76,86 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
     }
 
+    func testPointerLinkOpensInPlaceAndBackReturns() throws {
+        let target = root.appendingPathComponent("sibling.md")
+        try Data("# Sibling\n\nDestination text.\n".utf8).write(to: target)
+        try Data("[Open sibling document](sibling.md)\n".utf8).write(to: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.firstMatch
+        let editor = window.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        add(XCTAttachment(screenshot: window.screenshot()))
+        // The fixture is one body-text line. Aim inside its first word after
+        // the 44pt reveal slack and 36pt top inset, using native pointer input.
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 60, dy: 49)).click()
+        let opened = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@", "sibling.md"), object: window
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 10), .completed,
+                       "A real link click must open the sibling in this window without a system error")
+        XCTAssertEqual(app.windows.count, 1)
+        app.typeKey("[", modifierFlags: [.command, .control])
+        let returned = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@", fixture.lastPathComponent), object: window
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed)
+        add(XCTAttachment(screenshot: window.screenshot()))
+    }
+
+    func testDeletingAccidentalSpaceClosesWithoutSavePrompt() throws {
+        try assertAccidentalSpaceClosesCleanly(inSourceMode: false)
+    }
+
+    func testDeletingAccidentalSpaceInSourceClosesWithoutSavePrompt() throws {
+        try assertAccidentalSpaceClosesCleanly(inSourceMode: true)
+    }
+
+    private func assertAccidentalSpaceClosesCleanly(inSourceMode: Bool) throws {
+        try Data("[Sibling document](sibling.md)\n".utf8).write(to: fixture)
+        let original = try Data(contentsOf: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let mode = app.radioButtons[inSourceMode ? "Source" : "Document"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 15))
+        mode.click()
+        let editor = app.windows.firstMatch.textViews[inSourceMode ? "Markdown source editor" : "Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeKey(.home, modifierFlags: .command)
+        editor.typeText(" ")
+        editor.typeKey(.delete, modifierFlags: [])
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.windows["Downright"].waitForExistence(timeout: 10),
+                      "Returning to the saved text must close without a Save/Discard prompt")
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
+    func testLastDocumentClosePreferences() throws {
+        for behavior in ["showStartWindow", "doNothing", "quit"] {
+            let preferences = "{\"hasAnsweredSetup\":true,\"restoreSession\":false,\"lastDocumentCloseBehavior\":\"\(behavior)\"}"
+            try Data(preferences.utf8).write(to: root.appendingPathComponent("support/preferences.json"))
+            app.launch()
+            app.activate()
+            XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+            app.typeKey("w", modifierFlags: .command)
+            switch behavior {
+            case "showStartWindow":
+                XCTAssertTrue(app.windows["Downright"].waitForExistence(timeout: 10))
+            case "doNothing":
+                let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: app.windows)
+                XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 10), .completed)
+                XCTAssertNotEqual(app.state, .notRunning)
+            default:
+                XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+            }
+            app.terminate()
+        }
+    }
+
     func testActivatedBundleRendersAndKeepsSourceEditingLive() throws {
         app.launch()
         app.activate()

@@ -27,7 +27,9 @@ and drag the density gutter.
 
 ## Layout
 
-- Keep a readable measure of about 68–72 characters.
+- Default to a readable measure of about 68–72 characters. Honor explicit
+  60–110 character measures from settings and reader profiles; constrain the
+  column to available space in narrow windows and split panes.
 - Use a single document column with generous side space.
 - Keep the toolbar unified and quiet. Show Source Focus chrome only while it
   is active.
@@ -83,6 +85,10 @@ action.
 
 - Prefer direct manipulation over modal steps.
 - Keep names and commands stable across menus, toolbar, and key settings.
+- Following a local document link records both files and their reading anchors
+  for Back/Forward. A failed or cancelled open leaves history at the current file.
+- Closing the last document follows the user’s Show start window, Quit, or
+  Do nothing preference. Show start window remains the default.
 - Give every action a pointer path and a keyboard path where it saves time.
 - Make missing files, external writes, and unsaved edits visible without alarm.
 - Keep destructive actions reversible where possible.

@@ -77,9 +77,12 @@ public final class MarkdownContainerView: NSView {
         self.init(storage: storage, styleSheet: MarkdownTextView.fallbackStyleSheet())
     }
 
-    public init(storage: NSTextStorage, styleSheet: StyleSheet) {
+    public init(
+        storage: NSTextStorage, styleSheet: StyleSheet,
+        sharingPresentationOf source: MarkdownTextView? = nil
+    ) {
         textView = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: styleSheet.measureWidth, height: 100),
-                                    storage: storage, styleSheet: styleSheet)
+                                    storage: storage, styleSheet: styleSheet, sharingPresentationOf: source)
         scrollView = NSScrollView(frame: .zero)
         gutter = GutterRailView(textView: textView)
         footnoteMargin = FootnoteMarginView(textView: textView)
@@ -198,19 +201,7 @@ public final class MarkdownContainerView: NSView {
         // Keep the same measure across Document and Source. Widening source to
         // 90ch recenters the column and slides the left gutter rail, which
         // reads as the leading chrome teleporting on every mode switch.
-        let renderedTarget = min(
-            72,
-            max(68, textView.styleSheet.theme.typography.measureCharacters)
-        )
-        let responsiveCharacters: CGFloat
-        if bounds.width < 900 {
-            responsiveCharacters = 66
-        } else if bounds.width > 1200 {
-            responsiveCharacters = 72
-        } else {
-            responsiveCharacters = renderedTarget
-        }
-        let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
+        let preferredMeasure = textView.styleSheet.measureWidth
         // Keep the column out from under the overlay thumb when the measure is
         // capped by a narrow window; a wide window's centring margin already
         // clears it (§7).
@@ -223,7 +214,7 @@ public final class MarkdownContainerView: NSView {
         let bleed = RenderMetrics.codeBleed
         let available = max(
             RenderMetrics.minimumProseWidth + bleed,
-            contentWidth - RenderMetrics.revealSlack - overlayThumbWidth
+            contentWidth - gutterWidth - RenderMetrics.revealSlack - overlayThumbWidth
         )
         let column = min(preferredMeasure + bleed, available)
         let measure = column - bleed

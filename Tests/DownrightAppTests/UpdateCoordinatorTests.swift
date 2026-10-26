@@ -709,9 +709,9 @@ struct UpdateBuildContractTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let manifest = try String(contentsOf: root.appendingPathComponent("Package.swift"), encoding: .utf8)
-        #expect(manifest.contains("exact: \"2.9.6\""), "Sparkle must be pinned exactly to 2.9.6")
+        #expect(manifest.contains("exact: \"2.10.0\""), "Sparkle must be pinned exactly to 2.10.0")
         let project = try String(contentsOf: root.appendingPathComponent("project.yml"), encoding: .utf8)
-        #expect(project.contains("exactVersion: 2.9.6"), "Xcode must pin Sparkle exactly to 2.9.6")
+        #expect(project.contains("exactVersion: 2.10.0"), "Xcode must pin Sparkle exactly to 2.10.0")
         // The DownrightApp target block is the `...name: "DownrightApp"...}`
         // region; assert Sparkle is wired into it.
         guard let marker = manifest.range(of: "\"DownrightApp\"") else {

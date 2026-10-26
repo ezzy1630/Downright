@@ -662,6 +662,16 @@ enum PreferencesForms {
                     get: { Preferences.shared.values.restoreSession },
                     set: { value in Preferences.shared.update { $0.restoreSession = value } }),
 
+            .choice("When the last document closes", help: nil,
+                    options: LastDocumentCloseBehavior.allCases.map(\.title),
+                    get: {
+                        .index(LastDocumentCloseBehavior.allCases.firstIndex(of: Preferences.shared.values.lastDocumentCloseBehavior) ?? 0)
+                    },
+                    set: { index in
+                        guard LastDocumentCloseBehavior.allCases.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.lastDocumentCloseBehavior = LastDocumentCloseBehavior.allCases[index] }
+                    }),
+
             .section("Working with agents"),
             .toggle("Watch files for external changes",
                     help: "Marks what changed in the document while you were reading it.",
@@ -888,8 +898,8 @@ enum PreferencesForms {
                      get: { Double(Preferences.shared.values.typography.lineHeightMultiple) },
                      set: { value in Preferences.shared.update { $0.typography.lineHeightMultiple = CGFloat(value) } }),
             .stepper("Measure (characters)",
-                     help: "How much text fits on a line before it wraps. Around 68 to 72 reads best; full-width text is the most common thing Markdown viewers get wrong.",
-                     range: 60...80, step: 1,
+                     help: "How much text fits on a line before it wraps. Around 68 to 72 is a comfortable default; choose a wider measure for a large display.",
+                     range: Double(TypographyConfig.measureRange.lowerBound)...Double(TypographyConfig.measureRange.upperBound), step: 1,
                      get: { Double(Preferences.shared.values.typography.measureCharacters) },
                      set: { value in Preferences.shared.update { $0.typography.measureCharacters = CGFloat(value) } }),
 

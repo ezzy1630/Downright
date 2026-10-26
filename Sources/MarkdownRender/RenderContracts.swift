@@ -407,6 +407,12 @@ public struct CodeTheme: Codable, Sendable, Equatable {
 }
 
 public struct TypographyConfig: Codable, Sendable, Equatable {
+    public static let measureRange: ClosedRange<CGFloat> = 60...110
+
+    public static func clampedMeasureCharacters(_ value: CGFloat) -> CGFloat {
+        value.isFinite ? min(measureRange.upperBound, max(measureRange.lowerBound, value)) : 70
+    }
+
     public enum BodyPreset: String, Codable, Sendable, CaseIterable {
         case reading   // New York — Apple's serif
         case working   // SF Pro Text
@@ -419,8 +425,8 @@ public struct TypographyConfig: Codable, Sendable, Equatable {
     /// 1.2 / 1.25 / 1.333 — one ratio drives every heading size (§11.1).
     public var scaleRatio: CGFloat
     public var lineHeightMultiple: CGFloat
-    /// Capped at 68–72 characters (§11.1).  The single most common thing
-    /// markdown viewers get wrong.
+    /// Default reading guidance is 68–72 characters; explicit preferences may
+    /// use a wider measure while narrow windows remain constrained by space.
     public var measureCharacters: CGFloat
     public var monoFamily: String
     /// Code size as a fraction of the body size.

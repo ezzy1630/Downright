@@ -444,9 +444,9 @@ jobs:
       - name: Fetch Sparkle signing tools (pinned version)
         run: |
           set -euo pipefail
-          SPARKLE_SHA256="52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192"
+          SPARKLE_SHA256="c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c"
           curl -fsSL -o /tmp/sparkle.tar.xz \
-            https://github.com/sparkle-project/Sparkle/releases/download/2.9.6/Sparkle-2.9.6.tar.xz
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz
           echo "$SPARKLE_SHA256  /tmp/sparkle.tar.xz" | shasum -a 256 -c -
           # Sparkle's archive has ./bin at its root; isolate extraction so the
           # tool paths remain stable and cannot collide with runner temp files.
@@ -501,7 +501,7 @@ jobs:
                 --link "https://github.com/${{ github.repository }}" \
                 --maximum-versions 1 \
                 /tmp/appcast-input
-          # Validation battery (Sparkle 2.9.6 ships no appcast_validate tool).
+          # Validation battery (Sparkle 2.10.0 ships no appcast_validate tool).
           # sign_update --verify needs the private seed (it derives the public
           # key); the public key alone is rejected.
           echo "Validating generated appcast XML"
