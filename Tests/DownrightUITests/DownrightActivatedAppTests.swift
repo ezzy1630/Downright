@@ -91,15 +91,15 @@ final class DownrightActivatedAppTests: XCTestCase {
         // the 44pt reveal slack and 36pt top inset, using native pointer input.
         editor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: 60, dy: 49)).click()
-        // Query the renamed window afresh. A predicate on an already resolved
-        // XCUIElement can keep its pre-navigation label snapshot.
-        let opened = app.windows.matching(NSPredicate(format: "label BEGINSWITH %@", "sibling.md")).firstMatch
+        // macOS windows expose their caption as title, independently of label.
+        // Resolve that title afresh after each document changes the caption.
+        let opened = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", "sibling.md")).firstMatch
         XCTAssertTrue(opened.waitForExistence(timeout: 10),
-                      "A real link click must open the sibling in this window without a system error")
+                      "A real link click must open the sibling in this window without a system error: \(app.windows.debugDescription)")
         XCTAssertEqual(app.windows.count, 1)
         app.typeKey("[", modifierFlags: [.command, .control])
-        let returned = app.windows.matching(NSPredicate(format: "label BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
-        XCTAssertTrue(returned.waitForExistence(timeout: 10))
+        let returned = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
+        XCTAssertTrue(returned.waitForExistence(timeout: 10), app.windows.debugDescription)
         add(XCTAttachment(screenshot: returned.screenshot()))
     }
 

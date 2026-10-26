@@ -83,17 +83,29 @@ struct NativePolishRegressionTests {
         #expect(controller.splitContainer != nil)
     }
 
-    @Test func splitDividerAndResizeKeepBothPanesReadable() {
-        let split = ThemedSplitView(styleSheet: .current, minimumPaneWidth: 256)
-        split.frame = NSRect(x: 0, y: 0, width: 1_000, height: 400)
+    @Test(arguments: [true, false])
+    func splitDividerAndResizeKeepBothPanesReadable(isVertical: Bool) {
+        let split = ThemedSplitView(styleSheet: .current, isVertical: isVertical, minimumPaneLength: 256)
+        split.frame = NSRect(x: 0, y: 0, width: isVertical ? 1_000 : 400, height: isVertical ? 400 : 1_000)
         split.addArrangedSubview(NSView())
         split.addArrangedSubview(NSView())
         split.setPosition(900, ofDividerAt: 0)
-        #expect(split.arrangedSubviews.allSatisfy { $0.frame.width >= 256 })
-        let oldSize = split.frame.size
-        split.frame.size.width = 520
-        split.splitView(split, resizeSubviewsWithOldSize: oldSize)
-        #expect(split.arrangedSubviews.allSatisfy { $0.frame.width >= 256 })
+        func expectReadablePanes() {
+            let first = split.arrangedSubviews[0].frame
+            let second = split.arrangedSubviews[1].frame
+            #expect((isVertical ? first.width : first.height) >= 256)
+            #expect((isVertical ? second.width : second.height) >= 256)
+            #expect(split.bounds.contains(first))
+            #expect(split.bounds.contains(second))
+            #expect(abs((isVertical ? second.minX - first.maxX : second.minY - first.maxY) - split.dividerThickness) < 0.01)
+            #expect(first.size == (isVertical
+                ? NSSize(width: first.width, height: split.bounds.height)
+                : NSSize(width: split.bounds.width, height: first.height)))
+        }
+        expectReadablePanes()
+        split.frame.size = NSSize(width: isVertical ? 520 : 400, height: isVertical ? 400 : 520)
+        split.layoutSubtreeIfNeeded()
+        expectReadablePanes()
     }
 
     @Test func autosaveWaitsUntilTypingHasBeenIdle() async throws {

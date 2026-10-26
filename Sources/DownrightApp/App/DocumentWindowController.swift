@@ -2660,7 +2660,7 @@ final class DocumentWindowController: NSWindowController {
 
         let split = ThemedSplitView(
             styleSheet: activeStyleSheet,
-            minimumPaneWidth: RenderMetrics.minimumProseWidth + RenderMetrics.codeBleed
+            minimumPaneLength: RenderMetrics.minimumProseWidth + RenderMetrics.codeBleed
                 + RenderMetrics.gutterWidth + RenderMetrics.revealSlack
         )
         split.translatesAutoresizingMaskIntoConstraints = false
