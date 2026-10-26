@@ -1573,14 +1573,7 @@ public final class MarkdownTextView: NSTextView {
               replacement.length < substitution.sourceRange.length,
               replacement.attribute(.attachment, at: 0, effectiveRange: nil) != nil else {
             guard substitution.isHidden else { return substitution }
-            let length = substitution.sourceRange.length
-            return DisplaySubstitution(
-                sourceRange: substitution.sourceRange,
-                displayLength: length,
-                replacement: layoutFiller(length: length, styledLike: substitution.sourceRange.location),
-                isHidden: true,
-                preservesSourceOffsets: true
-            )
+            return .sourceStyledHidden(substitution.sourceRange)
         }
         let fillerCount = substitution.sourceRange.length - replacement.length
         let layoutReplacement = NSMutableAttributedString(attributedString: replacement)
@@ -1823,10 +1816,9 @@ public final class MarkdownTextView: NSTextView {
         let oldDisplayObjects = previousLogicalMap.substitutions.filter {
             !$0.isHidden && !$0.isHardWrapReflow
         }
-        // Layout substitutions already carry their attributed zero-width or
-        // object replacements. Project those immutable payloads alongside the
-        // logical map instead of regenerating every marker replacement in a
-        // 50k-line document for each character typed.
+        // Project marker descriptors and immutable object payloads alongside
+        // the logical map. Lazy marker text reads its attributes at the shifted
+        // source location when TextKit next requests the paragraph.
         let oldLayoutSubstitutions = previousLayoutMap.substitutions
         let projection = SourceEditProjection(
             edit: edit,
@@ -1948,21 +1940,7 @@ public final class MarkdownTextView: NSTextView {
         _ lhs: [DisplaySubstitution],
         _ rhs: [DisplaySubstitution]
     ) -> Bool {
-        guard lhs.count == rhs.count else { return false }
-        return zip(lhs, rhs).allSatisfy { left, right in
-            let sameReplacement: Bool
-            switch (left.replacement, right.replacement) {
-            case (nil, nil): sameReplacement = true
-            case let (left?, right?): sameReplacement = left.isEqual(to: right)
-            default: sameReplacement = false
-            }
-            return left.sourceRange == right.sourceRange
-                && left.displayLength == right.displayLength
-                && left.isHidden == right.isHidden
-                && left.isHardWrapReflow == right.isHardWrapReflow
-                && left.preservesSourceOffsets == right.preservesSourceOffsets
-                && sameReplacement
-        }
+        lhs == rhs
     }
 
     /// Rebuilds the substitution set for the current caret.
@@ -2771,6 +2749,10 @@ public final class MarkdownTextView: NSTextView {
         allowTypewriterScrolling: Bool = true,
         preservingViewport requestedViewportAnchor: ViewportAnchor? = nil
     ) {
+        // AppKit repairs selection during source replacement, before the new
+        // display map exists. Measuring that synthetic EOF caret lays out the
+        // entire file and defeats the large-document viewport memory budget.
+        guard markdownDelegate?.markdownTextViewShouldHandleSelectionChange(self) != false else { return }
         // A real caret gesture supersedes the camera captured by an earlier
         // keystroke whose parse is still pending. The edit path passes its
         // projected anchor explicitly; arrows and pointer selections do not.
@@ -2874,6 +2856,13 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: - Geometry
+
+    /// This surface is top-aligned and owns its height/scroll anchoring. AppKit's
+    /// default getter resolves the document's used bounds, forcing every lazy
+    /// TextKit fragment into memory just to answer this inset-only question.
+    public override var textContainerOrigin: NSPoint {
+        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+    }
 
     public func rect(forOffset offset: Int) -> NSRect? {
         let textKit = displayMap.textKitOffset(forSource: offset)

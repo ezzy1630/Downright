@@ -54,11 +54,27 @@ enum FuzzyMatcher {
         }
 
         for i in 1..<n {
-            for j in i..<m where lowerHay[j] == lowerNeedle[i] {
+            // Non-consecutive transitions are affine in the previous
+            // position: score[k] - gapExtension*k + a constant for j.
+            // Retain that prefix maximum instead of rescanning every k for
+            // every matching j (O(n*m), rather than O(n*m²)). Keep the
+            // consecutive bonus separate so scoring and traceback stay exact.
+            var bestGapped = unreachable
+            for j in i..<m {
+                if j > i {
+                    let k = j - 2
+                    let previous = score[i - 1][k]
+                    if previous != unreachable {
+                        bestGapped = max(bestGapped, previous - gapExtension * k)
+                    }
+                }
+                guard lowerHay[j] == lowerNeedle[i] else { continue }
                 var best = unreachable
-                for k in (i - 1)..<j where score[i - 1][k] != unreachable {
-                    let candidate = score[i - 1][k] + transition(gap: j - k - 1)
-                    if candidate > best { best = candidate }
+                if score[i - 1][j - 1] != unreachable {
+                    best = score[i - 1][j - 1] + bonusConsecutive
+                }
+                if bestGapped != unreachable {
+                    best = max(best, bestGapped + gapStart + gapExtension * (j - 2))
                 }
                 guard best != unreachable else { continue }
                 score[i][j] = best + matchBase + bonuses[j] + caseBonus(needleChars[i], hayChars[j])

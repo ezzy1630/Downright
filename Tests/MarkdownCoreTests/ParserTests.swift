@@ -40,6 +40,34 @@ import Testing
         #expect(map.lineCount == 2)
         #expect(map.contentRange(ofLine: 1).length == 0)
     }
+
+    @Test func longUnicodeLinesMapEveryByteWithoutSplittingScalars() {
+        let lines = [
+            String(repeating: "ascii ", count: 40) + String(repeating: "é漢😀e\u{301}\t", count: 80),
+            String(repeating: "😀漢é", count: 100) + String(repeating: " tail", count: 50),
+            "short é😀",
+            "ASCII only",
+            "",
+        ]
+        let source = lines[0] + "\r\n" + lines[1] + "\r" + lines[2] + "\n" + lines[3] + "\n"
+        let map = SourceMap(source)
+        var lineStart = 0
+        for (index, line) in lines.enumerated() {
+            var expected = [lineStart]
+            var utf16 = lineStart
+            // A byte column inside a scalar rounds up to its end, matching
+            // cmark's boundary conversion while never bisecting a surrogate.
+            for scalar in line.unicodeScalars {
+                utf16 += scalar.utf16.count
+                expected.append(contentsOf: repeatElement(utf16, count: scalar.utf8.count))
+            }
+            for (byte, offset) in expected.enumerated() {
+                #expect(map.offset(line: index + 1, column: byte + 1) == offset)
+            }
+            #expect(map.offset(line: index + 1, column: expected.count + 100) == utf16)
+            lineStart = utf16 + (index == 0 ? 2 : 1)
+        }
+    }
 }
 
 @Suite struct ParserTests {

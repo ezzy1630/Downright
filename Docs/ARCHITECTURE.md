@@ -59,6 +59,13 @@ TextKit 2 stores the exact source. Marker hiding uses a source-to-display index
 map and custom layout fragments. It does not use zero-width fonts, transparent
 text, or shortened replacement strings.
 
+Document-wide layout maps retain range descriptors for hidden markers, rather
+than an attributed string per marker. A requested paragraph resolves its
+source-length word joiners against the current storage attributes through
+`DisplaySubstitution.resolvedReplacement(in:)`. Source-edit projection moves
+the descriptors along with the source ranges; it does not retain old styles
+or create replacement text for offscreen elements.
+
 Block markers live in the gutter. Inline markers reveal per span near the
 primary caret. IME composition suspends hiding in the composing paragraph.
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
