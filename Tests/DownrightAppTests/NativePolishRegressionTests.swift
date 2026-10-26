@@ -167,7 +167,7 @@ struct NativePolishRegressionTests {
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
     }
 
-    @Test func linkedHeadingRestoresBothDestinationSplitViewports() throws {
+    @Test func linkedHeadingRestoresBothDestinationSplitViewports() async throws {
         let first = try fixture("# First\n")
         let prefix = (1...60).map { "Paragraph \($0).\n\n" }.joined()
         let target = try fixture(prefix + "## Target\n\n" + prefix)
@@ -181,6 +181,11 @@ struct NativePolishRegressionTests {
         controller.toggleSplitView()
         #expect(controller.openInPlace(first))
         #expect(controller.openInPlace(target, fragment: "target"))
+        // Pane attachment queues a responsive-width resize. Let it finish:
+        // an immediate offset assertion misses its stale camera restoration.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
         let secondary = try #require(controller.splitContainer)
         let primaryOffset = controller.primaryContainer.textView.topVisibleOffset
         let secondaryOffset = secondary.textView.topVisibleOffset
@@ -189,6 +194,9 @@ struct NativePolishRegressionTests {
         controller.goBack()
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
         controller.goForward()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
         #expect(controller.markdownDocument.url == target.resolvingSymlinksInPath())
         #expect(controller.primaryContainer.textView.topVisibleOffset > prefix.utf16.count - 100)
         #expect(try #require(controller.splitContainer).textView.topVisibleOffset > prefix.utf16.count - 100)

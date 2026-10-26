@@ -702,6 +702,13 @@ public final class MarkdownTextView: NSTextView {
         viewportRepairGeneration &+= 1
     }
 
+    /// Capture before any peer decorates shared storage: its attribute changes
+    /// can invalidate this pane's geometry before `update` gets its turn.
+    public func prepareForSharedDocumentUpdate() {
+        guard localEditViewportAnchor == nil, nextDocumentUpdateViewportY == nil else { return }
+        localEditViewportAnchor = captureViewportAnchor()
+    }
+
     /// Re-decorates only what the AST diff says changed (§3.5).
     ///
     /// A document open deliberately clears the native selection before this
@@ -3243,6 +3250,12 @@ public final class MarkdownTextView: NSTextView {
             unfoldHeadingsContaining([NSRange(location: offset, length: 1)])
         }
         guard let rect = rect(forOffset: offset) else { return }
+        // Explicit navigation supersedes the camera captured before a queued
+        // responsive resize. Keep its height work, but never let it take the
+        // reader back to the pane's attachment position on the next turn.
+        pendingResizeAnchor = nil
+        pendingResizeViewportY = nil
+        viewportRepairGeneration &+= 1
         guard let scrollView = enclosingScrollView else { scrollToVisible(rect); return }
         let clip = scrollView.contentView
         let height = clip.bounds.height
@@ -3262,6 +3275,11 @@ public final class MarkdownTextView: NSTextView {
             y = rect.minY - height / 3
         }
         y = max(0, min(y, max(0, frame.height - height)))
+        if pendingResizeRequest != nil {
+            // Reflow can still move this line after the jump. Carry the new
+            // destination through that work instead of retaining raw pixels.
+            pendingResizeAnchor = ViewportAnchor(offset: offset, gap: y - rect.minY)
+        }
         let target = CGPoint(x: clip.bounds.origin.x, y: y)
         let distance = abs(y - clip.bounds.origin.y)
 

@@ -194,6 +194,16 @@ log. If the test phase remains running, a diagnostic helper captures its own
 descendant process tree and test/compiler stacks. This distinguishes compilation
 stalls from runtime waits without changing test deadlines, exit status, or budgets.
 
+Shared-pane parse commits capture each pane's reading anchor before either pane
+decorates their shared storage. Projected edit anchors and explicit pixel locks
+take precedence. Explicit navigation replaces any older pending resize camera
+while retaining the height repair.
+
 Activated-app acceptance writes a per-run `.xcresult` under its scratch directory.
 CI retains that result bundle so screenshots and native interaction evidence can
 be reviewed against the exact tested host.
+The native editor journeys inspect WindowServer screenshot pixels inside each
+prose viewport, excluding chrome and margin controls, and read AppKit's native
+scrollbar for link/history positions. Diagnostic `cacheDisplay` captures are
+kept out of that user-path acceptance; a PNG's existence or size does not prove
+that the document was visible.

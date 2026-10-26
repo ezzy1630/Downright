@@ -853,6 +853,9 @@ final class DocumentWindowController: NSWindowController {
         }
         markdownDocument.onReparse = { [weak self] parsed, dirty in
             guard let self else { return }
+            if self.splitContainer != nil {
+                for pane in self.documentPanes { pane.textView.prepareForSharedDocumentUpdate() }
+            }
             self.primaryContainer.textView.update(document: parsed, dirty: dirty)
             self.splitContainer?.textView.update(document: parsed, dirty: dirty)
             self.synchronizePanes(from: self.primaryContainer.textView)
