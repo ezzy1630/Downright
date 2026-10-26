@@ -456,6 +456,8 @@ public final class MarkdownTextView: NSTextView {
     /// Cancels late AppKit caret-camera repairs when a newer parse commit or
     /// deliberate user navigation supersedes them.
     private var viewportRepairGeneration: UInt = 0
+    /// Chrome repairs may survive edits, but never a different source buffer.
+    private var documentPresentationGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
     private var pendingResizeViewportY: CGFloat?
     /// One-shot camera lock for semantic controls such as checkboxes. Their
@@ -681,6 +683,25 @@ public final class MarkdownTextView: NSTextView {
         })
     }
 
+    private func discardPreviousDocumentCameraRepairs() {
+        documentPresentationGeneration &+= 1
+        interruptAnimatedScroll()
+        resizeGeneration &+= 1
+        resizeWorkItem?.cancel()
+        resizeWorkItem = nil
+        pendingResizeRequest = nil
+        pendingResizeAnchor = nil
+        pendingResizeViewportY = nil
+        resizeNeedsRepair = false
+        pendingShrinkRepairWorkItem?.cancel()
+        pendingShrinkRepairWorkItem = nil
+        pendingShrinkRepair = false
+        localEditViewportAnchor = nil
+        nextDocumentUpdateViewportY = nil
+        shouldFollowCaretAfterLocalEdit = false
+        viewportRepairGeneration &+= 1
+    }
+
     /// Re-decorates only what the AST diff says changed (§3.5).
     ///
     /// A document open deliberately clears the native selection before this
@@ -692,6 +713,7 @@ public final class MarkdownTextView: NSTextView {
         dirty: DirtySet,
         preservingSelection: Bool = true
     ) {
+        if !preservingSelection { discardPreviousDocumentCameraRepairs() }
         let isInitialUpdate = updateGeneration == 0
         let preservesEditCaret = preservingSelection && !isInitialUpdate && explicitSourceSelection != nil
         // Replacing the shared NSTextStorage while opening a new document can
@@ -774,7 +796,8 @@ public final class MarkdownTextView: NSTextView {
         requestContentResize(
             resizeRequest,
             anchor: resizeRequest == .immediate || followsCaret ? nil : resizeAnchor,
-            viewportY: resizeViewportY
+            viewportY: resizeViewportY,
+            preservingReadingPosition: preservingSelection
         )
 
         // Async parses replace only the tree and decorations. Keep the same
@@ -794,7 +817,9 @@ public final class MarkdownTextView: NSTextView {
         // source anchor and its exact screen-space gap through both this
         // commit and its deferred height repair. Typewriter scrolling owns the
         // camera when enabled, so it remains the one local-edit exception.
-        if let explicitViewportAnchor {
+        if !preservingSelection {
+            restoreViewport(y: 0)
+        } else if let explicitViewportAnchor {
             restoreViewport(to: explicitViewportAnchor)
         } else if let lockedViewportY {
             restoreViewport(y: lockedViewportY)
@@ -919,6 +944,7 @@ public final class MarkdownTextView: NSTextView {
     /// changes; a source anchor plus its screen-space gap survives that work,
     /// while preserving only the clip view's raw y-coordinate does not.
     public func makeViewportRepair() -> () -> Void {
+        let generation = documentPresentationGeneration
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let viewportY = enclosingScrollView?.contentView.bounds.origin.y ?? 0
         let selectionOffset = sourceSelectedRange.location
@@ -930,15 +956,16 @@ public final class MarkdownTextView: NSTextView {
             anchor = captureViewportAnchor()
         }
         return { [weak self] in
-            guard let self else { return }
+            guard let self, self.documentPresentationGeneration == generation else { return }
             // Transient chrome does not change source geometry. Re-anchor if
             // TextKit relaid out first, then restore the exact clip position
             // last so the repair cannot leave the reader at a new y.
             self.restoreViewport(to: anchor)
             self.restoreViewport(y: viewportY)
             DispatchQueue.main.async { [weak self] in
-                self?.restoreViewport(to: anchor)
-                self?.restoreViewport(y: viewportY)
+                guard let self, self.documentPresentationGeneration == generation else { return }
+                self.restoreViewport(to: anchor)
+                self.restoreViewport(y: viewportY)
             }
         }
     }
@@ -947,9 +974,10 @@ public final class MarkdownTextView: NSTextView {
     /// move the insertion caret, so selection-based repair can anchor an
     /// unrelated off-screen line. Bind the repair to the control's heading.
     public func makeViewportRepair(at sourceOffset: Int) -> () -> Void {
+        let generation = documentPresentationGeneration
         let anchor = captureViewportAnchor(at: sourceOffset)
         return { [weak self] in
-            guard let self else { return }
+            guard let self, self.documentPresentationGeneration == generation else { return }
             // A heading level changes font metrics. The new target can lie
             // outside the raw-y viewport while stale estimated fragments still
             // describe it, so viewport-only layout resolves the wrong
@@ -957,8 +985,9 @@ public final class MarkdownTextView: NSTextView {
             self.resizeToFitContent()
             self.restoreViewport(to: anchor)
             DispatchQueue.main.async { [weak self] in
-                self?.resizeToFitContent()
-                self?.restoreViewport(to: anchor)
+                guard let self, self.documentPresentationGeneration == generation else { return }
+                self.resizeToFitContent()
+                self.restoreViewport(to: anchor)
             }
         }
     }
@@ -1140,7 +1169,10 @@ public final class MarkdownTextView: NSTextView {
         return paragraphIndex.starts.count > Self.eagerLayoutParagraphLimit
     }
 
-    private func resizeToFitContent(layoutScope: ContentLayoutScope) {
+    private func resizeToFitContent(
+        layoutScope: ContentLayoutScope,
+        preservingReadingPosition: Bool = true
+    ) {
         guard let layoutManager = textLayoutManager else { return }
         if case .viewport = layoutScope {
             repairContentHeightFromViewport(using: layoutManager)
@@ -1154,12 +1186,12 @@ public final class MarkdownTextView: NSTextView {
                     + textContainerInset.height * 2 + viewportHeight * 0.40
             )
             guard abs(frame.height - estimated) > 0.5 else { return }
-            if estimated < frame.height, viewportIsPinnedToBottom, !applyingPendingShrinkRepair {
+            if preservingReadingPosition, estimated < frame.height, viewportIsPinnedToBottom, !applyingPendingShrinkRepair {
                 deferShrinkRepair()
                 return
             }
             setFrameSize(NSSize(width: frame.width, height: estimated),
-                         preservingReadingPosition: estimated < frame.height)
+                         preservingReadingPosition: preservingReadingPosition && estimated < frame.height)
             return
         }
         layoutManager.ensureLayout(for: layoutManager.documentRange)
@@ -1171,11 +1203,11 @@ public final class MarkdownTextView: NSTextView {
         // Never shrink the document under the reader's hands without an anchor.
         // The repair path below deliberately bypasses this guard only after it
         // has captured the source position that must survive the clamp.
-        if height < frame.height, viewportIsPinnedToBottom, !applyingPendingShrinkRepair {
+        if preservingReadingPosition, height < frame.height, viewportIsPinnedToBottom, !applyingPendingShrinkRepair {
             deferShrinkRepair()
             return
         }
-        setFrameSize(NSSize(width: frame.width, height: height), preservingReadingPosition: height < frame.height)
+        setFrameSize(NSSize(width: frame.width, height: height), preservingReadingPosition: preservingReadingPosition && height < frame.height)
     }
 
     private func deferShrinkRepair() {
@@ -1279,7 +1311,8 @@ public final class MarkdownTextView: NSTextView {
     private func requestContentResize(
         _ request: ContentResizeRequest,
         anchor: ViewportAnchor? = nil,
-        viewportY: CGFloat? = nil
+        viewportY: CGFloat? = nil,
+        preservingReadingPosition: Bool = true
     ) {
         if let anchor { pendingResizeAnchor = anchor }
         if let viewportY { pendingResizeViewportY = viewportY }
@@ -1306,7 +1339,10 @@ public final class MarkdownTextView: NSTextView {
             let viewportY = pendingResizeViewportY
             pendingResizeViewportY = nil
             resizeNeedsRepair = false
-            resizeToFitContent()
+            // A replacement's camera belongs to the previous buffer. Capturing
+            // it while shrinking the new one can send TextKit into an endless
+            // bounds estimate below the new document on macOS 26.
+            resizeToFitContent(layoutScope: .document, preservingReadingPosition: preservingReadingPosition)
             // An immediate request can already be in flight when a mode or
             // chrome transition captures a source anchor. Do not throw that
             // anchor away merely because the older request won the merge;
@@ -1332,7 +1368,8 @@ public final class MarkdownTextView: NSTextView {
             self.pendingResizeViewportY = nil
             self.resizeNeedsRepair = pending == .semantic
             self.resizeToFitContent(
-                layoutScope: pending == .semantic ? .viewport : .document)
+                layoutScope: pending == .semantic ? .viewport : .document,
+                preservingReadingPosition: preservingReadingPosition)
             if let anchor {
                 self.restoreViewport(to: anchor)
             } else if let viewportY {

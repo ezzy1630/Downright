@@ -24,6 +24,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 - Raw Markdown bytes on disk are authoritative. Rendering, hidden syntax, reflow, attachments, Quick Look, and presentation state must not rewrite the document.
 - Source UTF-16 positions are canonical. Route source/display conversions through `DisplayMap`; never reuse a TextKit/display offset as a source offset.
 - Preserve selection, undo, revision convergence, and a semantic source/reading anchor for operations expected to preserve position. Explicit navigation may move to its target; verify both the target and post-navigation anchor.
+- A document replacement discards the previous buffer’s queued camera repairs before resizing; ordinary edits and mode changes preserve their reading anchor.
 - Split panes adopt the current parsed presentation before any operation that can decorate their shared storage. Local document navigation commits history only after a successful open and restores the recorded file and semantic reading anchor.
 - Keep the one-TextKit-2-surface architecture unless the task explicitly changes that contract. Incremental typing must not cause a whole-document rebuild; length-changing edits must invalidate all shifted ranges and fragments.
 - Keep hidden-marker layout text lazy: document-wide maps retain source ranges, and requested text elements materialize styled fillers with source-length UTF-16 mapping.

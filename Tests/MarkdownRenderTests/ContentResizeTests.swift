@@ -430,6 +430,69 @@ struct ContentResizeTests {
         #expect(abs(container.textView.frame.height - trueHeight) < 1)
     }
 
+    @Test("document replacement discards the previous camera and queued resize repairs", arguments: [1, 2_500])
+    func documentReplacementResetsQueuedCameraRepairs(replacementParagraphCount: Int) async {
+        let originalParagraphCount = replacementParagraphCount == 1 ? 100 : 5_000
+        let text = (0..<originalParagraphCount).map { "Paragraph \($0) has enough text to keep the document tall." }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        let clip = container.scrollView.contentView
+        let oldHeight = view.frame.height
+        clip.scroll(to: NSPoint(x: 0, y: view.frame.height - clip.bounds.height))
+        container.scrollView.reflectScrolledClipView(clip)
+        #expect(clip.bounds.minY > 400)
+        view.mode = .source
+        view.preserveViewportOnNextDocumentUpdate()
+        #expect(view.pendingResizeRequestForTesting != nil)
+
+        let replacement = (0..<replacementParagraphCount).map { "New paragraph \($0)." }.joined(separator: "\n\n")
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: replacement)
+        view.update(document: MarkdownParser.parse(replacement), dirty: .wholesale, preservingSelection: false)
+        view.prepareForDisplay()
+        #expect(view.frame.height < oldHeight - clip.bounds.height)
+        #expect(view.cachedLayoutElementCountForTesting > 0)
+        #expect(view.cachedLayoutElementCountForTesting < 1_000)
+        #expect(abs(clip.bounds.minY) < 0.5)
+        #expect(view.pendingResizeRequestForTesting == nil)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(abs(clip.bounds.minY) < 0.5)
+        #expect(storage.string == replacement)
+    }
+
+    @Test("chrome repairs cannot restore a previous document's camera", arguments: [false, true], [false, true])
+    func retainedChromeRepairDoesNotCrossDocuments(targeted: Bool, invokedBeforeReplacement: Bool) async {
+        let text = (0..<100).map { "Original paragraph \($0)." }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 700))
+        container.scrollView.reflectScrolledClipView(clip)
+        let repair = targeted ? view.makeViewportRepair(at: view.topVisibleOffset) : view.makeViewportRepair()
+        if invokedBeforeReplacement { repair() }
+
+        let replacement = text.replacingOccurrences(of: "Original", with: "Replacement")
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: replacement)
+        view.update(document: MarkdownParser.parse(replacement), dirty: .wholesale, preservingSelection: false)
+        view.scroll(toOffset: 0, position: .top, animated: false)
+        #expect(abs(clip.bounds.minY) < 0.5)
+        if !invokedBeforeReplacement { repair() }
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(abs(clip.bounds.minY) < 0.5)
+    }
+
     @Test("mode switches do not force layout in the property setter")
     func modeSwitchUsesDeferredViewportPath() {
         let source = "# Heading\n\nText"

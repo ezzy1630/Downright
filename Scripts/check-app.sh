@@ -178,9 +178,14 @@ fi
     echo "check-app: xctestrun manifest has no exact UI target app path: $XCTESTRUN" >&2
     exit 1
 }
+RESULT_ROOT="$ROOT/$APP_ACCEPTANCE_SCRATCH/TestResults"
+mkdir -p "$RESULT_ROOT"
+RESULT_BUNDLE="$RESULT_ROOT/$(date -u +%Y%m%dT%H%M%S)-$$.xcresult"
+echo "    result bundle: $RESULT_BUNDLE"
 DOWNRIGHT_UPDATER_SMOKE="$DOWNRIGHT_UPDATER_SMOKE" \
 xcodebuild \
     test-without-building \
+    -resultBundlePath "$RESULT_BUNDLE" \
     -xctestrun "$XCTESTRUN" \
     -destination "$DESTINATION" \
     -only-testing:DownrightUITests/DownrightActivatedAppTests \

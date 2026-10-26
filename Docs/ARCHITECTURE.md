@@ -79,6 +79,9 @@ native selection retires that edit position and resolves against visible text.
 A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
+Replacing a document discards the previous buffer's queued viewport/resize repairs
+before sizing the new presentation. Its shrink must not capture a reading anchor
+from the old camera; ordinary edits and mode changes continue preserving anchors.
 
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
 is a separate explicit command.
@@ -190,3 +193,7 @@ CI streams source-test progress while retaining the complete scratch-specific
 log. If the test phase remains running, a diagnostic helper captures its own
 descendant process tree and test/compiler stacks. This distinguishes compilation
 stalls from runtime waits without changing test deadlines, exit status, or budgets.
+
+Activated-app acceptance writes a per-run `.xcresult` under its scratch directory.
+CI retains that result bundle so screenshots and native interaction evidence can
+be reviewed against the exact tested host.

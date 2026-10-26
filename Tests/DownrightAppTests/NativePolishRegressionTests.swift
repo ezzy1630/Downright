@@ -89,6 +89,8 @@ struct NativePolishRegressionTests {
         split.frame = NSRect(x: 0, y: 0, width: isVertical ? 1_000 : 400, height: isVertical ? 400 : 1_000)
         split.addArrangedSubview(NSView())
         split.addArrangedSubview(NSView())
+        // Detached split views may defer initial pane layout until display.
+        split.adjustSubviews()
         split.setPosition(900, ofDividerAt: 0)
         func expectReadablePanes() {
             let first = split.arrangedSubviews[0].frame

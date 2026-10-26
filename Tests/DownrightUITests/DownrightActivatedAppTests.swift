@@ -103,6 +103,32 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(XCTAttachment(screenshot: returned.screenshot()))
     }
 
+    func testEncodedHeadingLinkSupportsDeepBackAndForward() throws {
+        let target = root.appendingPathComponent("my notes.md")
+        let paragraphs = (1...100).map { "Paragraph \($0) keeps the destination tall." }.joined(separator: "\n\n")
+        try Data(("# Sibling\n\n" + paragraphs + "\n\n## Target\n\nDestination.\n\n" + paragraphs).utf8).write(to: target)
+        try Data("[Open encoded heading](my%20notes.md#target)\n".utf8).write(to: fixture)
+        app.launch()
+        app.activate()
+        let editor = app.windows.firstMatch.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 60, dy: 49)).click()
+        let destination = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", target.lastPathComponent)).firstMatch
+        XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
+        let destinationCapture = XCTAttachment(screenshot: destination.screenshot())
+        destinationCapture.lifetime = .keepAlways
+        add(destinationCapture)
+        app.typeKey("[", modifierFlags: [.command, .control])
+        let original = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 10), app.windows.debugDescription)
+        app.typeKey("]", modifierFlags: [.command, .control])
+        XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
+        app.typeKey("[", modifierFlags: [.command, .control])
+        XCTAssertTrue(original.waitForExistence(timeout: 10), app.windows.debugDescription)
+        XCTAssertEqual(app.windows.count, 1)
+    }
+
     func testDeletingAccidentalSpaceClosesWithoutSavePrompt() throws {
         try assertAccidentalSpaceClosesCleanly(inSourceMode: false)
     }
