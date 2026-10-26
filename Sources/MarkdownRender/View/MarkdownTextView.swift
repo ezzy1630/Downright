@@ -1356,8 +1356,10 @@ public final class MarkdownTextView: NSTextView {
             // doing so restores the raw clip y (or zero) after the relayout
             // and is the intermittent Document↔Source jump to the top.
             if let anchor {
+                interruptAnimatedScroll()
                 restoreViewport(to: anchor)
             } else if let viewportY {
+                interruptAnimatedScroll()
                 restoreViewport(y: viewportY)
             }
             return
@@ -1378,8 +1380,10 @@ public final class MarkdownTextView: NSTextView {
                 layoutScope: pending == .semantic ? .viewport : .document,
                 preservingReadingPosition: preservingReadingPosition)
             if let anchor {
+                self.interruptAnimatedScroll()
                 self.restoreViewport(to: anchor)
             } else if let viewportY {
+                self.interruptAnimatedScroll()
                 self.restoreViewport(y: viewportY)
             }
         }
@@ -3103,6 +3107,16 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    func startAnimatedScroll(to y: CGFloat, in clip: NSClipView) {
+        let distance = abs(y - clip.bounds.origin.y)
+        if !scrollSpringIsActive { scrollSpring.snap(to: clip.bounds.origin.y) }
+        scrollSpring.retune(perceptualDuration: Motion.scrollDuration(for: distance))
+        scrollSpring.target(y)
+        scrollSpringClip = clip
+        scrollSpringIsActive = true
+        armMotionDriver()
+    }
+
     /// Whether this view is somewhere a display link will actually fire.
     /// Having a window is not enough — an unordered or offscreen window has no
     /// screen driving it, so a spring armed there ticks exactly never.
@@ -3250,12 +3264,6 @@ public final class MarkdownTextView: NSTextView {
             unfoldHeadingsContaining([NSRange(location: offset, length: 1)])
         }
         guard let rect = rect(forOffset: offset) else { return }
-        // Explicit navigation supersedes the camera captured before a queued
-        // responsive resize. Keep its height work, but never let it take the
-        // reader back to the pane's attachment position on the next turn.
-        pendingResizeAnchor = nil
-        pendingResizeViewportY = nil
-        viewportRepairGeneration &+= 1
         guard let scrollView = enclosingScrollView else { scrollToVisible(rect); return }
         let clip = scrollView.contentView
         let height = clip.bounds.height
@@ -3274,6 +3282,11 @@ public final class MarkdownTextView: NSTextView {
             }
             y = rect.minY - height / 3
         }
+        // Explicit navigation supersedes the camera captured before a queued
+        // responsive resize. A visible no-op above retains the pending repair.
+        pendingResizeAnchor = nil
+        pendingResizeViewportY = nil
+        viewportRepairGeneration &+= 1
         y = max(0, min(y, max(0, frame.height - height)))
         if pendingResizeRequest != nil {
             // Reflow can still move this line after the jump. Carry the new
@@ -3292,14 +3305,7 @@ public final class MarkdownTextView: NSTextView {
             // A trip already in the air keeps its position *and its speed*:
             // this is a change of destination, not a new journey.  Only a
             // standing start re-bases on where the page happens to be.
-            if !scrollSpringIsActive {
-                scrollSpring.snap(to: clip.bounds.origin.y)
-            }
-            scrollSpring.retune(perceptualDuration: Motion.scrollDuration(for: distance))
-            scrollSpring.target(y)
-            scrollSpringClip = clip
-            scrollSpringIsActive = true
-            armMotionDriver()
+            startAnimatedScroll(to: y, in: clip)
         } else {
             interruptAnimatedScroll()
             // Use the clip view's scrolling entry point instead of mutating

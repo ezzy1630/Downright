@@ -384,7 +384,10 @@ final class DownrightActivatedAppTests: XCTestCase {
             for y in stride(from: 0, to: height, by: 2) {
                 for x in stride(from: 1, to: width, by: 2) {
                     let index = (y * width + x) * 4
-                    let contrast = (0..<3).map { abs(Int(pixels[index + $0]) - Int(pixels[index - 4 + $0])) }.max() ?? 0
+                    let red = abs(Int(pixels[index]) - Int(pixels[index - 4]))
+                    let green = abs(Int(pixels[index + 1]) - Int(pixels[index - 3]))
+                    let blue = abs(Int(pixels[index + 2]) - Int(pixels[index - 2]))
+                    let contrast = max(red, max(green, blue))
                     if contrast > 40 { edgeCount += 1 }
                 }
             }
@@ -392,7 +395,7 @@ final class DownrightActivatedAppTests: XCTestCase {
             // insertion caret or a single gutter badge cannot satisfy this.
             return edgeCount > 150
         }, object: nil)
-        let result = XCTWaiter.wait(for: [expected], timeout: 10)
+        let result: XCTWaiter.Result = XCTWaiter.wait(for: [expected], timeout: 10)
         if let lastScreenshot {
             let attachment = XCTAttachment(screenshot: lastScreenshot)
             attachment.lifetime = .keepAlways

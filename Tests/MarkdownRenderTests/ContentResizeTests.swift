@@ -493,6 +493,50 @@ struct ContentResizeTests {
         #expect(abs(clip.bounds.minY) < 0.5)
     }
 
+    @Test("already-visible navigation keeps the queued camera repair")
+    func visibleNavigationPreservesQueuedRepair() async throws {
+        let text = (0..<100).map { "Paragraph \($0) keeps the document tall." }.joined(separator: "\n\n")
+        let container = MarkdownContainerView(storage: NSTextStorage(string: text))
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 900))
+        container.scrollView.reflectScrolledClipView(clip)
+        let anchor = view.captureViewportAnchor()
+        view.mode = .source
+        #expect(view.pendingResizeRequestForTesting == .viewport)
+        view.scroll(toOffset: anchor.offset, position: .visible, animated: false)
+        // AppKit can make a late caret correction before the queued repair.
+        clip.scroll(to: .zero)
+        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        let rect = try #require(view.rect(forOffset: anchor.offset))
+        #expect(abs(clip.bounds.minY - rect.minY - anchor.gap) < 1)
+    }
+
+    @Test("queued reflow repair retires an animation's stale pixel target")
+    func reflowRepairRetiresScrollSpring() async {
+        let text = (0..<100).map { "Paragraph \($0) keeps the document tall." }.joined(separator: "\n\n")
+        let container = MarkdownContainerView(storage: NSTextStorage(string: text))
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        let clip = container.scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: 900))
+        container.scrollView.reflectScrolledClipView(clip)
+        // Drive the production spring directly: this source test has no
+        // on-screen window or display link and must not create one.
+        view.startAnimatedScroll(to: 1_800, in: clip)
+        view.mode = .source
+        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        let repairedY = clip.bounds.minY
+        _ = view.documentMotionTick(dt: 1)
+        view.documentMotionApply()
+        #expect(abs(clip.bounds.minY - repairedY) < 1)
+    }
+
     @Test("mode switches do not force layout in the property setter")
     func modeSwitchUsesDeferredViewportPath() {
         let source = "# Heading\n\nText"

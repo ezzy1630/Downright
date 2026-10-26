@@ -196,8 +196,10 @@ stalls from runtime waits without changing test deadlines, exit status, or budge
 
 Shared-pane parse commits capture each pane's reading anchor before either pane
 decorates their shared storage. Projected edit anchors and explicit pixel locks
-take precedence. Explicit navigation replaces any older pending resize camera
-while retaining the height repair.
+take precedence. Navigation that moves the viewport replaces any older pending
+resize camera while retaining the height repair; already-visible no-ops leave
+queued repairs intact. Applying a resize camera retires an animated scroll's
+obsolete pixel target before restoring the source anchor.
 
 Activated-app acceptance writes a per-run `.xcresult` under its scratch directory.
 CI retains that result bundle so screenshots and native interaction evidence can
