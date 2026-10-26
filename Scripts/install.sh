@@ -35,6 +35,7 @@ fi
 echo "==> Installing to $APP_DEST"
 DEST_PARENT="$(dirname "$APP_DEST")"
 STAGE_ROOT="$(mktemp -d "$DEST_PARENT/.downright-install.XXXXXX")"
+STAGED_APP="$STAGE_ROOT/Downright.app"
 # The backup of the outgoing app deliberately lives OUTSIDE the staging tree
 # the exit trap deletes. Between "old app moved aside" and "new app in
 # place", the backup is the only copy of the user's installed Downright; an
@@ -46,6 +47,9 @@ SWAPPED_IN=0
 
 finish() {
     local status=$?
+    # Some shell expansion failures enter EXIT with status zero. Installation
+    # is successful only after the verified candidate was actually swapped in.
+    if [ "$status" -eq 0 ] && [ "$SWAPPED_IN" != "1" ]; then status=1; fi
     trap - EXIT INT TERM
     rm -rf "$STAGE_ROOT"
     if [ "$SWAPPED_IN" != "1" ] && [ -d "$BACKUP_APP" ]; then

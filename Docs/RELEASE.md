@@ -159,6 +159,13 @@ published DMG checksum and mounted app signature, register the Finder
 integrations, and leave Sparkle updates enabled. The npm launcher requires
 Node.js 18 or newer; the curl installer has no Node.js dependency.
 
+For acceptance of an exact local artifact, use
+`APP_SOURCE=/path/to/Downright.app Scripts/install.sh`. The installer verifies
+the candidate, stages it on the destination filesystem, and keeps the previous
+app as a rollback copy until the swap succeeds. Staged-signature or swap failures
+must report failure and preserve the installed app. A running installed app must
+be closed before replacement.
+
 Each successful invocation downloads `Downright.dmg`, so GitHub records it in
 the rolling DMG asset count. The installer itself is not a separate unique-user
 metric; GitHub counts asset requests, not completed installs or people.
