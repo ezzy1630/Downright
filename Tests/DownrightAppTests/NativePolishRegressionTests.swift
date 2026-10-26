@@ -93,14 +93,12 @@ struct NativePolishRegressionTests {
         func expectReadablePanes() {
             let first = split.arrangedSubviews[0].frame
             let second = split.arrangedSubviews[1].frame
-            #expect((isVertical ? first.width : first.height) >= 256)
-            #expect((isVertical ? second.width : second.height) >= 256)
-            #expect(split.bounds.contains(first))
-            #expect(split.bounds.contains(second))
+            for pane in [first, second] {
+                #expect((isVertical ? pane.width : pane.height) >= 256)
+                #expect(split.bounds.contains(pane))
+                #expect((isVertical ? pane.height : pane.width) == (isVertical ? split.bounds.height : split.bounds.width))
+            }
             #expect(abs((isVertical ? second.minX - first.maxX : second.minY - first.maxY) - split.dividerThickness) < 0.01)
-            #expect(first.size == (isVertical
-                ? NSSize(width: first.width, height: split.bounds.height)
-                : NSSize(width: split.bounds.width, height: first.height)))
         }
         expectReadablePanes()
         split.frame.size = NSSize(width: isVertical ? 520 : 400, height: isVertical ? 400 : 520)
