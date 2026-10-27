@@ -1,0 +1,18 @@
+{
+  "record_type": "pre-release verification snapshot",
+  "measured_commit": "8c0b6f340d95fd0110946a17e3bf44779813e551",
+  "source_state": "clean",
+  "hardware": "Apple M4 (Mac16,12)",
+  "macos": "27.0",
+  "timing_comparison": "PASS all ten fixed cases; worst p95 across three isolated release runs",
+  "source_gate": {
+    "swift_tests": 1461,
+    "script_tests": 52,
+    "known_issue_sites": 2,
+    "result": "PASS"
+  },
+  "packaged_bundle": "PASS universal structural verification; see packaged-identity.json",
+  "memory_certification": "INCOMPLETE; owner approved landing despite this gap",
+  "visual_acceptance": "unavailable; owner approved skipping",
+  "native_memory_observation": "../native-open-only.json; earlier host snapshot, open-only"
+}

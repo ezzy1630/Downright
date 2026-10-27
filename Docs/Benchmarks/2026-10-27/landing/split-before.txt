@@ -1,0 +1,35 @@
+Building for debugging...
+[Computing dependencies]
+[Provisioning 25 / 40]
+[Using on-disk description]
+[1 / 4] CMarkAllocator
+[1 / 4] Downright-product
+[1 / 6] ElkSwift
+[1 / 3] DownrightQLTests-product
+[2 / 6] MarkdownRenderTests-product
+[4 / 8] MarkdownRenderTests-product
+[10 / 12] MarkdownRenderTests-product
+[12 / 12] MarkdownRenderTests-product
+Build complete! (9.83 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Source-preserving inline images" started.
+◇ Test splitInheritsDocumentScopedImagePermission() started.
+✘ Test splitInheritsDocumentScopedImagePermission() recorded an issue at InlineImageDisplayTests.swift:32:9: Expectation failed: split.remoteImageLoader === loader
+↳ split.remoteImageLoader === loader → false
+↳   split.remoteImageLoader → nil
+↳   loader → MarkdownRenderTests.InlineImageDisplayTests.Images
+↳     image → <NSImage 0x7880d96ee0 Size={200, 40} RepProvider=<NSImageArrayRepProvider: 0x78812185e0, reps:(
+          "NSCustomImageRep 0x7881274e10 Size={200, 40} ColorSpace=Generic RGB colorspace BPS=0 Pixels=0x0 Alpha=NO AppearanceName=(null)"
+      )>>
+↳     requests → 0
+✘ Test splitInheritsDocumentScopedImagePermission() recorded an issue at InlineImageDisplayTests.swift:34:9: Expectation failed: split.localAssetAuthorizer?(url) == true
+↳ split.localAssetAuthorizer?(url) == true → false
+↳   split.localAssetAuthorizer?(url) → nil
+↳     some → true
+✘ Test splitInheritsDocumentScopedImagePermission() failed after 0.069 seconds with 2 issues.
+✘ Suite "Source-preserving inline images" failed after 0.069 seconds with 2 issues.
+✘ Test run with 1 test in 1 suite failed after 0.069 seconds with 2 issues.
+Note: Some test targets reported failures:
+  - MarkdownRenderTests (Swift Testing)

@@ -310,10 +310,10 @@ candidate runs against a fresh same-machine baseline:
 
 | Pipeline stage | Before p95 | After p95 | Faster |
 |---|---:|---:|---:|
-| Full parse | 30.876 ms | 19.190 ms | 37.8% |
-| Typing / paragraph map | 0.159 ms | 0.089 ms | 44.0% |
-| Semantic convergence | 28.521 ms | 18.949 ms | 33.6% |
-| Whole-document decoration | 162.957 ms | 67.489 ms | 58.6% |
+| Full parse | 30.876 ms | 19.636 ms | 36.4% |
+| Typing / paragraph map | 0.159 ms | 0.090 ms | 43.4% |
+| Semantic convergence | 28.521 ms | 19.792 ms | 30.6% |
+| Whole-document decoration | 162.957 ms | 69.677 ms | 57.2% |
 
 All ten pipeline cases improved by at least 25%.
 [Complete results and raw evidence](Docs/PERFORMANCE.md#release-pipeline-comparison-2026-10-27)

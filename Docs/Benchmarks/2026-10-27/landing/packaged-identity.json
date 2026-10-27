@@ -1,0 +1,9 @@
+{
+  "version": "1.0.18",
+  "build": "351",
+  "identifier": "com.ezzy.downright.land20261027",
+  "host_sha256": "071363ca01e3e466f90d5a3118a73fb518a041d343b8d561d0c49cfaf325ab04",
+  "commit": "8c0b6f340d95fd0110946a17e3bf44779813e551",
+  "source_state": "",
+  "host_architectures": "x86_64 arm64"
+}

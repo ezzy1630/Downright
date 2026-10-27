@@ -25,7 +25,7 @@ every release; Sparkle orders updates by it.
 ### Changed
 
 - Faster parsing, diffing, syntax highlighting, and decoration. Ten unchanged
-  pipeline benchmarks improved 33–73% against a fresh Apple M4 release baseline.
+  pipeline benchmarks improved 30–72% against a fresh Apple M4 release baseline.
   [Measurements and limits](https://github.com/ezzy1630/Downright/blob/main/Docs/PERFORMANCE.md#release-pipeline-comparison-2026-10-27)
   include raw runs and distinguish source-edit timing from visible rendering.
 - Lower large-document allocation and layout costs, including compact parsed

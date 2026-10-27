@@ -52,23 +52,24 @@ applies dirty decoration.
 All ten unchanged pipeline cases exceed the requested 25% improvement. These
 are Apple M4 / macOS 27.0 release measurements against a fresh same-machine
 baseline at `ce2cad6deb287fa34d3561615c6655e3eb29a17e`. The candidate is the
-pre-integration performance snapshot identified in [the evidence manifest](Benchmarks/2026-10-27/snapshot.json).
+clean integration snapshot at `8c0b6f340d95fd0110946a17e3bf44779813e551`,
+identified in [the evidence manifest](Benchmarks/2026-10-27/landing/snapshot.json).
 Each candidate value below is the worst p95 from three isolated runs, with the
 original sample counts. The comparison checks conservative bounds for the
 benchmark's 0.001 ms rounding.
 
 | Measurement | Baseline p95 | Candidate p95 | Faster |
 |---|---:|---:|---:|
-| cmark conversion | 13.947 ms | 8.707 ms | 37.6% |
-| Full parse | 30.876 ms | 19.190 ms | 37.8% |
-| AST diff | 0.031 ms | 0.017 ms | 45.2% |
-| Text diff | 1.617 ms | 0.436 ms | 73.0% |
-| Incremental decoration | 0.117 ms | 0.061 ms | 47.9% |
-| Wholesale decoration | 162.957 ms | 67.489 ms | 58.6% |
-| Typing/storage | 0.159 ms | 0.089 ms | 44.0% |
-| Semantic convergence | 28.521 ms | 18.949 ms | 33.6% |
-| Parse 100 KB | 23.512 ms | 15.696 ms | 33.2% |
-| Syntax highlighting | 0.115 ms | 0.060 ms | 47.8% |
+| cmark conversion | 13.947 ms | 9.007 ms | 35.4% |
+| Full parse | 30.876 ms | 19.636 ms | 36.4% |
+| AST diff | 0.031 ms | 0.018 ms | 41.9% |
+| Text diff | 1.617 ms | 0.454 ms | 71.9% |
+| Incremental decoration | 0.117 ms | 0.063 ms | 46.2% |
+| Wholesale decoration | 162.957 ms | 69.677 ms | 57.2% |
+| Typing/storage | 0.159 ms | 0.090 ms | 43.4% |
+| Semantic convergence | 28.521 ms | 19.792 ms | 30.6% |
+| Parse 100 KB | 23.512 ms | 16.367 ms | 30.4% |
+| Syntax highlighting | 0.115 ms | 0.059 ms | 48.7% |
 
 The pipeline corpus remains 120,825 characters / 4,885 lines, and the cold-parse
 corpus is exactly 100,000 characters. The historical 100 KB row below used an
@@ -76,13 +77,13 @@ older corpus; it is not the baseline for these percentages. These measurements
 cover parsing, diffing, storage and decoration; they do not establish first-pixel
 time, visible scroll frames, or complete native transition latency.
 
-[Raw runs and machine/artifact identity](Benchmarks/2026-10-27/snapshot.json) ·
-[Machine-readable comparison](Benchmarks/2026-10-27/timings.json) ·
-[Source gate](Benchmarks/2026-10-27/source-gate.txt)
+[Raw runs and machine/artifact identity](Benchmarks/2026-10-27/landing/snapshot.json) ·
+[Machine-readable comparison](Benchmarks/2026-10-27/landing/timings.json) ·
+[Source gate](Benchmarks/2026-10-27/landing/final-clean-source-gate.txt)
 
 ### Native memory certification is incomplete
 
-The latest isolated native release host opened the unchanged 1,032,709-byte
+The latest measured isolated native release host opened the unchanged 1,032,709-byte
 stress document with a **126.2 MB lifetime peak**. That is an open-only
 observation, not an interactive-session certificate. The latest executable and
 source digest are recorded in [the native observation](Benchmarks/2026-10-27/native-open-only.json).
@@ -98,9 +99,10 @@ The packaged app, CLI, Spotlight importer and both Finder extensions passed
 
 The 150 MB session target remains uncertified. The owner approved landing with
 that evidence gap and unavailable visual testing on 2026-10-27; this approval
-does not turn the open-only observation into a session result. The pre-integration
-source gate passed 1,459 Swift tests and 42 script checks, with the two existing
-headless known-issue sites. Finder
+does not turn the open-only observation into a session result. The final integration
+source gate passed 1,461 Swift tests and 52 script checks, with the two existing
+headless known-issue sites. The open-only observation predates the final image
+permission fixes; it is not a measurement of the signed release. Finder
 Spacebar preview, thumbnail registration, native frame delivery and production
 updater behavior remain separate acceptance surfaces.
 

@@ -1,0 +1,61 @@
+Building for debugging...
+[Computing dependencies]
+[Provisioning 12 / 40]
+[Using on-disk description]
+[1 / 5] Markdown
+[2 / 6] MarkdownRender
+[3 / 7] MarkdownRender
+[6 / 11] ElkSwift
+[7 / 12] MarkdownRender
+[9 / 13] MarkdownRender
+[9 / 15] Downright-product
+[10 / 15] Downright-product
+[11 / 15] Downright-product
+[13 / 14] DownrightAppTests-product
+[15 / 15] DownrightAppTests-product
+[16 / 17] DownrightQLTests-product
+[18 / 18] DownrightQLTests-product
+[19 / 20] MarkdownRenderTests-product
+[21 / 21] MarkdownRenderTests-product
+[23 / 24] MarkdownRender-product
+[23 / 24] drbench-product
+[24 / 24] drbench-product
+Build complete! (23.61 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite NativePolishRenderTests started.
+◇ Suite "Source-preserving inline images" started.
+◇ Test dropCaretRemainsVisibleAboveOpaqueTextBackground() started.
+◇ Test splitInheritsDocumentScopedImagePermission() started.
+✔ Test dropCaretRemainsVisibleAboveOpaqueTextBackground() passed after 0.139 seconds.
+◇ Test sharedPanePreservesFragmentPresentationState() started.
+✔ Test splitInheritsDocumentScopedImagePermission() passed after 0.140 seconds.
+◇ Test changingDocumentRevokesImagesBeforeShorterPresentationArrives() started.
+✔ Test sharedPanePreservesFragmentPresentationState() passed after 0.005 seconds.
+◇ Test sharedPaneExpandsFoldedCueWithoutLeavingHiddenAttributes() started.
+✔ Test changingDocumentRevokesImagesBeforeShorterPresentationArrives() passed after 0.008 seconds.
+◇ Test linkedBadgeUsesAuthorDimensionsAndKeepsItsLink() started.
+✔ Test sharedPaneExpandsFoldedCueWithoutLeavingHiddenAttributes() passed after 0.006 seconds.
+◇ Test sharedPaneOwnsAccessibleRenderedObjects() started.
+✔ Test linkedBadgeUsesAuthorDimensionsAndKeepsItsLink() passed after 0.003 seconds.
+◇ Test dimensionsDoNotComeFromAltTextOrCSS() started.
+✔ Test sharedPaneOwnsAccessibleRenderedObjects() passed after 0.028 seconds.
+✔ Test dimensionsDoNotComeFromAltTextOrCSS() passed after 0.027 seconds.
+◇ Test narrowPaneFitsCodeWithoutChangingFocusModeVisibility() started.
+◇ Test remoteImagesRequireAHostLoader() started.
+✔ Test narrowPaneFitsCodeWithoutChangingFocusModeVisibility() passed after 0.007 seconds.
+◇ Test attachingSharedPaneKeepsDocumentLayoutLazy() started.
+✔ Test remoteImagesRequireAHostLoader() passed after 0.007 seconds.
+◇ Test imageLayoutPreservesUTF16OffsetsAndExactSource() started.
+✔ Test attachingSharedPaneKeepsDocumentLayoutLazy() passed after 0.644 seconds.
+◇ Test largeDocumentOriginMatchesNativeGeometry() started.
+✔ Test imageLayoutPreservesUTF16OffsetsAndExactSource() passed after 0.649 seconds.
+◇ Test quickLookIgnoresMalformedMeasuresAndRetainsFullWidth() started.
+✔ Test largeDocumentOriginMatchesNativeGeometry() passed after 0.204 seconds.
+✔ Suite NativePolishRenderTests passed after 1.037 seconds.
+✔ Test quickLookIgnoresMalformedMeasuresAndRetainsFullWidth() passed after 0.199 seconds.
+◇ Test finiteAndFullWidthMeasuresRemainDistinct() started.
+✔ Test finiteAndFullWidthMeasuresRemainDistinct() passed after 0.001 seconds.
+✔ Suite "Source-preserving inline images" passed after 1.037 seconds.
+✔ Test run with 15 tests in 2 suites passed after 1.037 seconds.
