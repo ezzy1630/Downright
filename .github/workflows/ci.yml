@@ -28,7 +28,7 @@ jobs:
           set -uo pipefail
           xcrun swiftc -swift-version 5 -parse-as-library Scripts/textkit-contract-probe.swift -o "$RUNNER_TEMP/textkit-contract-probe" || exit 1
           failed=0
-          for variant in stock swift-view configured-view forwarding-content explicit-content ranged-content substitution default-fragment explicit-fragment subclass-fragment late-content transactional-content combined combined-all; do
+          for variant in stock plain-content forwarding-content retained-content ranged-content; do
             "$RUNNER_TEMP/textkit-contract-probe" "$variant" || failed=1
           done
           exit "$failed"

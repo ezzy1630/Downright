@@ -3,12 +3,25 @@
 import AppKit
 
 final class PlainTextView: NSTextView {}
+final class PlainContentStorage: NSTextContentStorage {}
 
 final class ForwardingContentStorage: NSTextContentStorage {
+    var retainsElements = false
+    private var held: [NSTextElement] = []
+    private var calls = 0
     override func enumerateTextElements(from location: NSTextLocation?,
                                        options: NSTextContentManager.EnumerationOptions = [],
                                        using block: (NSTextElement) -> Bool) -> NSTextLocation? {
-        super.enumerateTextElements(from: location, options: options, using: block)
+        calls += 1
+        let call = calls
+        let result = super.enumerateTextElements(from: location, options: options) { element in
+            if retainsElements { held.append(element) }
+            let more = block(element)
+            if call < 20 { print("ENUM call=\(call) options=\(options.rawValue) from=\(String(describing: location)) element=\(String(describing: element.elementRange)) continue=\(more)") }
+            return more
+        }
+        if call < 20 { print("ENUM end call=\(call) result=\(String(describing: result))") }
+        return result
     }
 }
 
@@ -104,6 +117,8 @@ enum ProbeVariant: String {
     case stock
     case swiftView = "swift-view"
     case configuredView = "configured-view"
+    case plainContent = "plain-content"
+    case retainedContent = "retained-content"
     case forwardingContent = "forwarding-content"
     case explicitContent = "explicit-content"
     case rangedContent = "ranged-content"
@@ -130,7 +145,12 @@ struct TextKitContractProbe {
         let text = String(repeating: "Native text rendering has predictable paragraph locations.\n\n", count: 15)
         let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.black])
         let content: NSTextContentStorage
-        if variant == .forwardingContent { content = ForwardingContentStorage() }
+        if variant == .plainContent { content = PlainContentStorage() }
+        else if variant == .forwardingContent || variant == .retainedContent {
+            let forwarding = ForwardingContentStorage()
+            forwarding.retainsElements = variant == .retainedContent
+            content = forwarding
+        }
         else if [.explicitContent, .rangedContent, .lateContent, .transactionalContent, .combined, .combinedAll].contains(variant) {
             let explicit = ExplicitContentStorage()
             explicit.usesRangedParagraph = variant != .explicitContent
