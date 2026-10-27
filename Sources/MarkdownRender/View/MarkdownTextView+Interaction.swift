@@ -439,13 +439,7 @@ extension MarkdownTextView {
                 )
             }
         }
-        let pointerLink = attribute(.drLink, at: point)
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
-            NSLog("INPUT mouseDown point=%@ bounds=%@ frame=%@ origin=%@ source=%d link=%@ selected=%@ modifiers=%lu clicks=%ld", NSStringFromPoint(point), NSStringFromRect(bounds), NSStringFromRect(frame), NSStringFromPoint(textContainerOrigin), sourceOffset(at: point), String(describing: pointerLink), NSStringFromRange(sourceSelectedRange), modifiers.rawValue, event.clickCount)
-        }
-        #endif
-        if let hit = pointerLink, let destination = hit.value as? String,
+        if let hit = attribute(.drLink, at: point), let destination = hit.value as? String,
            clickActivates(hit.range, modifiers: modifiers, clickCount: event.clickCount) {
             activateAfterTracking = { [weak self] in
                 guard let self else { return }
@@ -524,11 +518,6 @@ extension MarkdownTextView {
             }
         }
         handleSelectionChanged(allowTypewriterScrolling: false)
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
-            NSLog("INPUT mouseDown completed selected=%@ activation=%@", NSStringFromRange(sourceSelectedRange), activateAfterTracking == nil ? "none" : "present")
-        }
-        #endif
         if sourceSelectedRange.length == 0 {
             activateAfterTracking?()
         }

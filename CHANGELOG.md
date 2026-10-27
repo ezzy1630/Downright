@@ -39,6 +39,8 @@ every release; Sparkle orders updates by it.
 - List ornaments retain their marker and interaction metadata after editing
   continuation paragraphs and undoing the edit, including nested callouts.
 - Source presentation keeps the text view wide enough for its text container.
+- Clicking rendered links works with hidden Markdown syntax, including links
+  on the first line and in later paragraphs.
 - Split panes retain the current document’s remote-image permission. Opening a
   different file revokes permission without rebuilding stale image ranges.
 

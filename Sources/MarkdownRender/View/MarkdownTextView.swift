@@ -353,11 +353,6 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         animationOverlays[key]?.removeFromSuperview()
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
-            NSLog("INPUT creating playback key=%d rect=%@ old=%@", key, NSStringFromRect(rect), String(describing: animationOverlays[key]))
-        }
-        #endif
         let view = AnimatedImagePlaybackView(image: image, animation: animation, background: background)
         view.frame = rect
         view.layer?.cornerRadius = cornerRadius
@@ -374,14 +369,7 @@ public final class MarkdownTextView: NSTextView {
         // NSTextView's native hit testing owns the text surface. Route only
         // our explicit playback controls before deferring to that machinery.
         for case let image as AnimatedImagePlaybackView in subviews.reversed() {
-            if let button = image.hitTest(local) {
-                #if DEBUG
-                if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
-                    NSLog("INPUT playback hit point=%@ local=%@ imageFrame=%@ imageBounds=%@ buttonFrame=%@", NSStringFromPoint(point), NSStringFromPoint(local), NSStringFromRect(image.frame), NSStringFromRect(image.bounds), NSStringFromRect(button.frame))
-                }
-                #endif
-                return button
-            }
+            if let button = image.hitTest(local) { return button }
         }
         return super.hitTest(point)
     }
@@ -2939,16 +2927,41 @@ public final class MarkdownTextView: NSTextView {
             return false
         }
         let fragmentFrame = fragment.layoutFragmentFrame
+        // Line character ranges address their paragraph, while DisplayMap
+        // returns document positions. Compare both ranges in paragraph space.
+        let fragmentStart = contentStorage.offset(
+            from: contentStorage.documentRange.location, to: fragment.rangeInElement.location)
+        let localStart = max(0, textKitRange.location - fragmentStart)
+        let localEnd = max(localStart, textKitRange.upperBound - fragmentStart)
+        let localRange = NSRange(location: localStart, length: localEnd - localStart)
         for line in fragment.textLineFragments {
-            let intersection = NSIntersectionRange(line.characterRange, textKitRange)
+            let intersection = NSIntersectionRange(line.characterRange, localRange)
             guard intersection.length > 0 else { continue }
             let lineBounds = line.typographicBounds
             let lineOrigin = CGPoint(
                 x: fragmentFrame.minX + lineBounds.minX,
                 y: fragmentFrame.minY + lineBounds.minY
             )
-            let startIndex = intersection.location - line.characterRange.location
-            let endIndex = intersection.upperBound - line.characterRange.location
+            let text = line.attributedString.string as NSString
+            // A word-joiner placeholder has no glyph: AppKit can report its
+            // caret at x=0 instead of the adjacent visible glyph edge. Move
+            // each endpoint through only these zero-width placeholders.
+            func visibleBoundary(_ offset: Int) -> Int {
+                var index = offset
+                let end = min(line.characterRange.upperBound, text.length)
+                while index < end, text.character(at: index) == 0x2060 {
+                    let textKitOffset = fragmentStart + index
+                    let source = displayMap.sourceOffset(forTextKit: textKitOffset)
+                    let next = displayMap.textKitOffset(forSource: source) - fragmentStart
+                    // Jump the marker descriptor rather than walking a long
+                    // hidden URL on every pointer move. Literal joiners still
+                    // advance when the display map has no substitution.
+                    index = max(index + 1, min(end, next))
+                }
+                return index - line.characterRange.location
+            }
+            let startIndex = visibleBoundary(intersection.location)
+            let endIndex = visibleBoundary(intersection.upperBound)
             let startPoint = line.locationForCharacter(at: startIndex)
             let endPoint = line.locationForCharacter(at: endIndex)
             let minX = lineOrigin.x + min(startPoint.x, endPoint.x)

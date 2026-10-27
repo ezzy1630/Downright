@@ -84,6 +84,11 @@ final class DownrightActivatedAppTests: XCTestCase {
         try png.write(to: root.appendingPathComponent("badge.png"))
         let gif = NSMutableData()
         let destination = try XCTUnwrap(CGImageDestinationCreateWithData(gif, UTType.gif.identifier as CFString, 2, nil))
+        // Pause must remain observable while XCTest snapshots the control;
+        // ImageIO otherwise writes this short fixture as a one-shot animation.
+        CGImageDestinationSetProperties(destination, [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
+        ] as CFDictionary)
         for _ in 0..<2 {
             CGImageDestinationAddImage(destination, bitmap, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1]] as CFDictionary)
         }
