@@ -132,8 +132,10 @@ public final class MarkdownTextView: NSTextView {
             }
             DispatchQueue.main.async(execute: repair)
             DispatchQueue.main.async { [weak self] in
-                self?.layoutSubtreeIfNeeded()
-                self?.prepareForDisplay()
+                guard let self,
+                      self.viewportRepairGeneration == repairGeneration else { return }
+                self.layoutSubtreeIfNeeded()
+                self.prepareForDisplay()
                 repair()
             }
             markdownDelegate?.markdownTextView(self, didChangeSourceFocus: sourceFocus)
@@ -1007,8 +1009,10 @@ public final class MarkdownTextView: NSTextView {
             }
             DispatchQueue.main.async(execute: repair)
             DispatchQueue.main.async { [weak self] in
-                self?.layoutSubtreeIfNeeded()
-                self?.prepareForDisplay()
+                guard let self,
+                      self.viewportRepairGeneration == viewportGeneration else { return }
+                self.layoutSubtreeIfNeeded()
+                self.prepareForDisplay()
                 repair()
             }
         }
@@ -1201,6 +1205,25 @@ public final class MarkdownTextView: NSTextView {
 
     func captureViewportAnchor() -> ViewportAnchor {
         captureViewportAnchor(at: topVisibleOffset)
+    }
+
+    /// Snapshot the visible glyph geometry before metadata queries resolve
+    /// estimated positions. This must not itself request more layout.
+    private func laidOutViewportAnchor() -> ViewportAnchor? {
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        let origin = textContainerOrigin
+        let sampleY = max(0, visible.minY - origin.y) + 1
+        guard let fragment = markdownLayoutManager.textLayoutFragment(for: NSPoint(x: 1, y: sampleY)),
+              fragment.state == .layoutAvailable,
+              let line = fragment.textLineFragments.first(where: {
+                  fragment.layoutFragmentFrame.minY + $0.typographicBounds.maxY > sampleY
+              }) else { return nil }
+        let start = markdownLayoutManager.offset(
+            from: markdownLayoutManager.documentRange.location,
+            to: fragment.rangeInElement.location)
+        return ViewportAnchor(
+            offset: displayMap.sourceOffset(forTextKit: start + line.characterRange.location),
+            gap: visible.minY - origin.y - fragment.layoutFragmentFrame.minY - line.typographicBounds.minY)
     }
 
     func captureViewportAnchor(at offset: Int) -> ViewportAnchor {
@@ -1949,6 +1972,9 @@ public final class MarkdownTextView: NSTextView {
     }
 
     func beginSourceEdit() {
+        // A queued repair still addresses the previous source revision. It
+        // must retire before this mutation can shift the anchor's offset.
+        viewportRepairGeneration &+= 1
         isPerformingSourceEdit = true
         // The map is about to describe a string that no longer exists.  Drop it
         // rather than let the substitution delegate act on it mid-edit.
@@ -2776,7 +2802,10 @@ public final class MarkdownTextView: NSTextView {
         // A real caret gesture supersedes the camera captured by an earlier
         // keystroke whose parse is still pending. The edit path passes its
         // projected anchor explicitly; arrows and pointer selections do not.
-        if requestedViewportAnchor == nil { localEditViewportAnchor = nil }
+        if requestedViewportAnchor == nil {
+            viewportRepairGeneration &+= 1
+            localEditViewportAnchor = nil
+        }
         // A caret/selection gesture is newer than any queued layout pass. The
         // pass may still repair height, but it must not restore an old viewport.
         pendingResizeAnchor = nil
@@ -2799,6 +2828,12 @@ public final class MarkdownTextView: NSTextView {
 
         setSourceSelectedRanges(sourceSelection, preservingEditCaret: preservesEditCaret)
         restoreViewport(to: viewportAnchor)
+        // A height repair may still be queued from the previous parse. Carry
+        // this newer camera through it, in the current source coordinates.
+        if pendingResizeRequest != nil {
+            pendingResizeAnchor = viewportAnchor
+            pendingResizeViewportY = nil
+        }
         gutterRail?.needsDisplay = true
         markdownDelegate?.markdownTextViewDidChangeSelection(self)
         if allowTypewriterScrolling, !isTrackingMouseSelection,
@@ -3575,8 +3610,11 @@ public final class MarkdownTextView: NSTextView {
                     self.scrollCoalesceWorkItem = DispatchWorkItem { [weak self] in
                         guard let self, self.scrollCoalesceGeneration == generation else { return }
                         self.scrollCoalesceWorkItem = nil
+                        let anchor = self.laidOutViewportAnchor()
                         self.markdownDelegate?.markdownTextViewDidScroll(self)
                         self.handleScroll()
+                        self.synchronizeVisibleLayout()
+                        if let anchor { self.restoreViewport(to: anchor) }
                     }
                     // Cancel the previous work item first so only the latest
                     // survives.  Posting async from the main queue means the

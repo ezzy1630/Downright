@@ -459,6 +459,63 @@ struct EditingKeyReproTests {
         #expect(view.sourceSelectedRange == NSRange(location: gamma.location, length: 0))
     }
 
+    @Test("word deletion keeps a wrapped caret line on screen", arguments: [50, 1_600])
+    func wordDeletionKeepsWrappedCaretLineFixed(sectionCount: Int) async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EditingKeyReproWordCamera-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = (0..<sectionCount).map {
+            "## Section \($0)\n\nParagraph \($0) "
+                + String(repeating: "Some **formatted** words wrap onto another line. ", count: 12)
+                + "delete these words here."
+        }.joined(separator: "\n\n")
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.window?.setContentSize(NSSize(width: 900, height: 640))
+        controller.window?.layoutIfNeeded()
+        let view = controller.primaryContainer.textView
+        controller.window?.makeFirstResponder(view)
+        let paragraph = (text as NSString).range(of: "Paragraph \(sectionCount / 2) ")
+        let target = (text as NSString).range(
+            of: "delete these words here.", options: [],
+            range: NSRange(location: paragraph.location, length: (text as NSString).length - paragraph.location))
+        var caret = target.upperBound - 1
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+        view.resizeToFitContent()
+        view.scroll(toOffset: caret, position: .center, animated: false)
+        view.prepareForDisplay()
+        try await Task.sleep(for: .milliseconds(150))
+        let clip = controller.primaryContainer.scrollView.contentView
+        // Deep lazy layout can refine its estimate after the first reveal.
+        // Establish a visible editing caret before measuring deletion.
+        for _ in 0..<4 {
+            view.scroll(toOffset: caret, position: .center, animated: false)
+            view.prepareForDisplay()
+        }
+        let screenY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.minY
+        #expect(screenY >= 0 && screenY < clip.bounds.height)
+
+        for _ in 0..<3 {
+            pressOptionDelete(into: view)
+            caret = view.sourceSelectedRange.location
+            let immediateY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.minY
+            #expect(abs(immediateY - screenY) < 1, "word deletion moved the caret line immediately")
+            let deadline = ContinuousClock().now + .seconds(3)
+            while ContinuousClock().now < deadline,
+                  view.parsedDocument.text != controller.markdownDocument.text
+                    || view.pendingResizeRequestForTesting != nil {
+                controller.markdownDocument.flushScheduledReparse()
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let converged = view.parsedDocument.text == controller.markdownDocument.text
+            #expect(converged, "the edit never reached its parsed presentation")
+            let settledY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.minY
+            #expect(abs(settledY - screenY) < 1, "word deletion moved the caret line after parsing")
+        }
+        #expect(controller.markdownDocument.text != text)
+    }
+
     @Test("native word movement stays in source coordinates")
     func nativeWordMovementPreservesSourceCaret() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())

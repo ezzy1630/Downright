@@ -12,6 +12,15 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.19]
+
+### Fixed
+
+- Editing and deleting words in document mode preserve the visible reading
+  position, including in large documents. Queued layout repairs no longer
+  restore stale positions after a newer edit or selection.
+- Scrolling keeps visible text aligned with caret placement and word deletion.
+
 ## [1.0.18]
 
 ### Added

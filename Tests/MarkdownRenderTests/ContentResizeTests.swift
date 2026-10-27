@@ -380,6 +380,39 @@ struct ContentResizeTests {
         #expect(abs(after - before) < 0.5, "the deferred caret repair moved the page")
     }
 
+    @Test("a newer deletion supersedes a queued parse camera repair")
+    func deletionSupersedesQueuedCameraRepair() async throws {
+        let text = (0..<80).map {
+            "## Section \($0)\n\nParagraph \($0) with **formatted** words."
+        }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        container.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        let target = (text as NSString).range(of: "Paragraph 40").location
+        view.scroll(toOffset: target, position: .top, animated: false)
+        #expect(view.performSourceEdit(range: NSRange(location: target + 12, length: 0), replacement: "x"))
+        view.update(
+            document: MarkdownParser.parse(storage.string),
+            dirty: DirtySet(ranges: [NSRange(location: target, length: 20)], isWholesale: false))
+
+        // A second key can arrive before the first commit's deferred repairs.
+        // Delete a selection ending at the top visible paragraph while the
+        // next parse is still pending.
+        let anchor = view.captureViewportAnchor()
+        let deletion = NSRange(location: anchor.offset - 80, length: 80)
+        #expect(view.performSourceEdit(range: deletion, replacement: ""))
+        let currentOffset = anchor.offset - 80
+        let clip = container.scrollView.contentView
+        let screenY = try #require(view.rect(forOffset: currentOffset)).minY - clip.bounds.minY
+        try await Task.sleep(for: .milliseconds(150))
+        let settledY = try #require(view.rect(forOffset: currentOffset)).minY - clip.bounds.minY
+        #expect(abs(settledY - screenY) < 0.5, "an older parse repair overrode the newer edit's camera")
+    }
+
     @Test("undo camera repair survives AppKit's deferred caret scroll")
     func undoCameraRepairRunsAfterTheCommand() async {
         let text = (0..<80).map { "## Section \($0)\n\nParagraph \($0)" }.joined(separator: "\n\n")
