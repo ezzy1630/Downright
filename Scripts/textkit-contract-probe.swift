@@ -138,8 +138,38 @@ final class ElementDelegate: NSObject, NSTextContentStorageDelegate {
     }
 }
 
+final class SwiftVendingContentStorage: DRVendingContentStorage {
+    private var elements: [NSTextElement] = []
+    override func probeElements(from location: NSTextLocation?, options: NSTextContentManager.EnumerationOptions) -> NSEnumerator? {
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        let start = documentRange.location
+        if elements.isEmpty {
+            let text = storage.string as NSString
+            var cursor = 0
+            while cursor < text.length {
+                let range = text.paragraphRange(for: NSRange(location: cursor, length: 0))
+                let first = self.location(start, offsetBy: range.location)!
+                let last = self.location(start, offsetBy: NSMaxRange(range))!
+                let separator = self.location(start, offsetBy: NSMaxRange(range) - 1)!
+                elements.append(RangedParagraph(text: storage.attributedSubstring(from: range), manager: self,
+                    element: NSTextRange(location: first, end: last)!, separator: NSTextRange(location: separator, end: last)!))
+                cursor = NSMaxRange(range)
+            }
+        }
+        let reverse = options.contains(.reverse)
+        let offset = location.map { self.offset(from: start, to: $0) } ?? (reverse ? storage.length : 0)
+        let ordered = reverse ? Array(elements.reversed()) : elements
+        return (ordered.filter { element in
+            let range = element.elementRange!
+            return reverse ? self.offset(from: start, to: range.location) < offset : self.offset(from: start, to: range.endLocation) > offset
+        } as NSArray).objectEnumerator()
+    }
+}
+
 enum ProbeVariant: String {
     case stock
+    case objcWrapped = "objc-wrapped"
+    case swiftVended = "swift-vended"
     case objcForward = "objc-forward"
     case rangeDelegate = "range-delegate"
     case groupDelegate = "group-delegate"
@@ -173,7 +203,9 @@ struct TextKitContractProbe {
         let text = String(repeating: "Native text rendering has predictable paragraph locations.\n\n", count: 15)
         let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.black])
         let content: NSTextContentStorage
-        if variant == .objcForward {
+        if variant == .swiftVended { content = SwiftVendingContentStorage() }
+        else if variant == .objcWrapped { content = DRWrappedContentStorage() }
+        else if variant == .objcForward {
             let type = NSClassFromString("DRForwardingContentStorage") as! NSTextContentStorage.Type
             content = type.init()
         }

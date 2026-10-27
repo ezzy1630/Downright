@@ -27,9 +27,9 @@ jobs:
         run: |
           set -uo pipefail
           xcrun clang -fobjc-arc -c Scripts/textkit-objc-probe.m -o "$RUNNER_TEMP/textkit-objc-probe.o" || exit 1
-          xcrun swiftc -swift-version 5 -parse-as-library Scripts/textkit-contract-probe.swift "$RUNNER_TEMP/textkit-objc-probe.o" -o "$RUNNER_TEMP/textkit-contract-probe" || exit 1
+          xcrun swiftc -swift-version 5 -parse-as-library -import-objc-header Scripts/textkit-objc-probe.h Scripts/textkit-contract-probe.swift "$RUNNER_TEMP/textkit-objc-probe.o" -o "$RUNNER_TEMP/textkit-contract-probe" || exit 1
           failed=0
-          for variant in stock plain-content objc-forward forwarding-content; do
+          for variant in stock objc-forward objc-wrapped swift-vended; do
             "$RUNNER_TEMP/textkit-contract-probe" "$variant" || failed=1
           done
           exit "$failed"
