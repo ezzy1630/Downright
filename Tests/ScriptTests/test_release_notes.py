@@ -74,6 +74,13 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("Only the new fix", result.stdout)
         self.assertNotIn("Fixture maintenance change", result.stdout)
 
+    def test_empty_history_is_rejected_instead_of_publishing_a_header(self):
+        subprocess.run(["git", "tag", "auto-current"], cwd=self.root, check=True)
+        result = self.generate("## [Unreleased]\nFuture.\n", previous_tag="auto-current")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no commits", result.stderr)
+        self.assertNotIn("# Downright", result.stdout)
+
     def test_history_failure_is_not_published_as_successful_notes(self):
         result = self.generate("## [Unreleased]\nFuture.\n", previous_tag="missing-tag")
         self.assertNotEqual(result.returncode, 0)
@@ -85,6 +92,12 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("empty", result.stderr)
         self.assertNotIn("Fixture maintenance change", result.stdout)
+
+    def test_comment_only_version_is_rejected_as_empty(self):
+        result = self.generate("## [1.0.17]\n<!-- TODO: write notes\nbefore release -->\n\n<!-- placeholder -->\n## [1.0.0]\nOld.\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty", result.stderr)
+        self.assertNotIn("# Downright", result.stdout)
 
     def test_duplicate_versions_are_rejected(self):
         result = self.generate("## [1.0.17]\nFirst.\n## [1.0.17]\nSecond.\n")

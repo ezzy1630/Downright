@@ -33,8 +33,10 @@ def version_notes(changelog, version):
         sections.append("".join(current).strip())
     if len(sections) > 1:
         raise ValueError(f"duplicate changelog sections for {version}")
-    if sections and not sections[0]:
-        raise ValueError(f"empty changelog section for {version}")
+    if sections:
+        visible = re.sub(r"<!--.*?(?:-->|$)", "", sections[0], flags=re.S).strip()
+        if not visible:
+            raise ValueError(f"empty changelog section for {version}")
     return sections[0] if sections else None
 
 
@@ -58,6 +60,8 @@ def main():
             command = ["git", "log", "--oneline", "--no-merges"]
             command += ["--end-of-options", args.previous_tag + "..HEAD"] if args.previous_tag else ["-30", "HEAD"]
             commits = subprocess.run(command + ["--"], check=True, capture_output=True, text=True).stdout
+            if not commits.strip():
+                raise ValueError("no commits since the previous release")
             notes = "## What's new\n\n" + "\n".join("- " + line for line in commits.splitlines())
         print(f"# Downright {args.version} (build {args.build})\n\n{notes}\n")
         print(f"_Full history: https://github.com/{args.repository}/releases_")
