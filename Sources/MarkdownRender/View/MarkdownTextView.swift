@@ -353,6 +353,11 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         animationOverlays[key]?.removeFromSuperview()
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
+            NSLog("INPUT creating playback key=%d rect=%@ old=%@", key, NSStringFromRect(rect), String(describing: animationOverlays[key]))
+        }
+        #endif
         let view = AnimatedImagePlaybackView(image: image, animation: animation, background: background)
         view.frame = rect
         view.layer?.cornerRadius = cornerRadius
@@ -369,7 +374,14 @@ public final class MarkdownTextView: NSTextView {
         // NSTextView's native hit testing owns the text surface. Route only
         // our explicit playback controls before deferring to that machinery.
         for case let image as AnimatedImagePlaybackView in subviews.reversed() {
-            if let button = image.hitTest(local) { return button }
+            if let button = image.hitTest(local) {
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
+                    NSLog("INPUT playback hit point=%@ local=%@ imageFrame=%@ imageBounds=%@ buttonFrame=%@", NSStringFromPoint(point), NSStringFromPoint(local), NSStringFromRect(image.frame), NSStringFromRect(image.bounds), NSStringFromRect(button.frame))
+                }
+                #endif
+                return button
+            }
         }
         return super.hitTest(point)
     }

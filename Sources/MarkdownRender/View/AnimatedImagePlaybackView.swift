@@ -57,6 +57,11 @@ final class AnimatedImagePlaybackView: NSView {
         return playButton.frame.contains(local) ? playButton : nil
     }
     @objc func togglePlayback() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYOUT"] == "1" {
+            NSLog("INPUT togglePlayback view=%@ old=%@ active=%@ visible=%@ frame=%@ bounds=%@ loops=%d frames=%d", String(describing: self), wantsPlayback ? "playing" : "paused", NSApp.isActive ? "yes" : "no", window?.occlusionState.contains(.visible) == true ? "yes" : "no", NSStringFromRect(frame), NSStringFromRect(bounds), animation.loopCount, animation.frameCount)
+        }
+        #endif
         wantsPlayback.toggle()
         generation &+= 1
         updateButton()
