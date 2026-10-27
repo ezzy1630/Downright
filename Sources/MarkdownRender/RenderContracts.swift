@@ -161,8 +161,6 @@ extension NSAttributedString.Key {
     public static let drMarker = NSAttributedString.Key("drMarker")
     /// `FragmentPayload` for ranges that render as an object.
     public static let drFragment = NSAttributedString.Key("drFragment")
-    /// `BlockIdentity` of the owning block.
-    public static let drBlock = NSAttributedString.Key("drBlock")
     /// Heading level, for the gutter and the breadcrumb.
     public static let drHeading = NSAttributedString.Key("drHeading")
     /// `String` link destination — ours, not `.link`, so we control activation.

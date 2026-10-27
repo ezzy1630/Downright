@@ -93,7 +93,7 @@ final class PaneDrag {
         pane.scrollView.wantsLayer = true
         guard let paneLayer = pane.layer,
               let scrollLayer = pane.scrollView.layer,
-              let image = PaneDrag.still(of: pane.scrollView, scale: PaneDrag.stillScale)
+              let image = PresentationStill.capture(of: pane.scrollView, scale: PaneDrag.stillScale)
         else { return nil }
 
         self.pane = pane
@@ -134,10 +134,15 @@ final class PaneDrag {
         CATransaction.commit()
     }
 
+}
+
+/// Bounded layer capture shared by rail and swipe transitions.
+@MainActor
+enum PresentationStill {
     /// `NSGraphicsContext` rather than a bare `CGContext`: AppKit owns the
     /// flipped-geometry convention these layers were built under, and going
     /// through it is what keeps the still the right way up.
-    private static func still(of view: NSView, scale: CGFloat) -> CGImage? {
+    static func capture(of view: NSView, scale: CGFloat) -> CGImage? {
         guard let layer = view.layer else { return nil }
         let pixelsWide = Int((view.bounds.width * scale).rounded())
         let pixelsHigh = Int((view.bounds.height * scale).rounded())
@@ -153,7 +158,12 @@ final class PaneDrag {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         NSGraphicsContext.current = context
-        context.cgContext.scaleBy(x: scale, y: scale)
+        if view.isFlipped {
+            context.cgContext.translateBy(x: 0, y: CGFloat(pixelsHigh))
+            context.cgContext.scaleBy(x: scale, y: -scale)
+        } else {
+            context.cgContext.scaleBy(x: scale, y: scale)
+        }
         layer.render(in: context.cgContext)
         return representation.cgImage
     }

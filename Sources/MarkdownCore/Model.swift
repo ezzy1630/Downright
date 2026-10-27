@@ -175,8 +175,24 @@ public final class MDBlock: @unchecked Sendable {
     /// Leading block marker — `"## "`, `"> "`, `"- [ ] "`.  Rendered in the
     /// gutter rather than inline (§6.1a), never at the start of the text.
     public var markerRange: NSRange?
+    /// Rare block data is boxed together so ordinary prose and tasks do not
+    /// reserve space for HTML annotations and a closing fence on every node.
+    private final class ExtendedData: Sendable {
+        let trailingMarkerRange: NSRange?
+        let safeHTML: SafeHTMLDocument?
+
+        init(trailingMarkerRange: NSRange?, safeHTML: SafeHTMLDocument?) {
+            self.trailingMarkerRange = trailingMarkerRange
+            self.safeHTML = safeHTML
+        }
+    }
+    private var extendedData: ExtendedData?
+
     /// Trailing marker, e.g. the closing fence of a code block.
-    public var trailingMarkerRange: NSRange?
+    public var trailingMarkerRange: NSRange? {
+        get { extendedData?.trailingMarkerRange }
+        set { setExtendedData(trailingMarkerRange: newValue, safeHTML: safeHTML) }
+    }
     public var children: [MDBlock]
     /// Populated only for leaf text blocks.
     public var inlines: [InlineSpan]
@@ -192,7 +208,15 @@ public final class MDBlock: @unchecked Sendable {
     /// Safe README-style HTML annotations for this block, when the source is
     /// entirely within the conservative presentational subset. Unsafe or
     /// unknown HTML stays `nil` and is rendered literally.
-    public var safeHTML: SafeHTMLDocument?
+    public var safeHTML: SafeHTMLDocument? {
+        get { extendedData?.safeHTML }
+        set { setExtendedData(trailingMarkerRange: trailingMarkerRange, safeHTML: newValue) }
+    }
+
+    private func setExtendedData(trailingMarkerRange: NSRange?, safeHTML: SafeHTMLDocument?) {
+        extendedData = trailingMarkerRange == nil && safeHTML == nil
+            ? nil : ExtendedData(trailingMarkerRange: trailingMarkerRange, safeHTML: safeHTML)
+    }
 
     public init(
         content: BlockContent,
@@ -212,14 +236,14 @@ public final class MDBlock: @unchecked Sendable {
         self.range = range
         self.contentRange = contentRange
         self.markerRange = markerRange
-        self.trailingMarkerRange = trailingMarkerRange
+        self.extendedData = trailingMarkerRange == nil && safeHTML == nil
+            ? nil : ExtendedData(trailingMarkerRange: trailingMarkerRange, safeHTML: safeHTML)
         self.children = children
         self.inlines = inlines
         self.depth = depth
         self.quoteDepth = quoteDepth
         self.subtreeHash = subtreeHash
         self.identity = identity
-        self.safeHTML = safeHTML
     }
 }
 
@@ -336,14 +360,66 @@ public indirect enum InlineKind: Sendable {
 }
 
 public struct InlineSpan: Sendable {
+    /// Most spans are plain text: their content is their source range and
+    /// both markers are absent. Immutable exceptional data keeps those spans
+    /// compact while preserving value semantics when a copied span is edited.
+    private final class Details: Sendable {
+        let contentRange: NSRange
+        let leadingMarkerRange: NSRange?
+        let trailingMarkerRange: NSRange?
+
+        init(contentRange: NSRange, leadingMarkerRange: NSRange?, trailingMarkerRange: NSRange?) {
+            self.contentRange = contentRange
+            self.leadingMarkerRange = leadingMarkerRange
+            self.trailingMarkerRange = trailingMarkerRange
+        }
+    }
+
     public var kind: InlineKind
-    /// Whole span, markers included.
-    public var range: NSRange
-    /// Inner content, markers excluded.
-    public var contentRange: NSRange
-    public var leadingMarkerRange: NSRange?
-    public var trailingMarkerRange: NSRange?
+    private var storedRange: NSRange
+    private var details: Details?
     public var children: [InlineSpan]
+
+    /// Whole span, markers included. Changing it does not move the independently
+    /// addressable content or markers; source-edit callers move those explicitly.
+    public var range: NSRange {
+        get { storedRange }
+        set {
+            guard storedRange != newValue else { return }
+            let content = contentRange
+            let leading = leadingMarkerRange
+            let trailing = trailingMarkerRange
+            storedRange = newValue
+            setDetails(contentRange: content, leadingMarkerRange: leading, trailingMarkerRange: trailing)
+        }
+    }
+
+    /// Inner content, markers excluded.
+    public var contentRange: NSRange {
+        get { details?.contentRange ?? storedRange }
+        set { setDetails(contentRange: newValue, leadingMarkerRange: leadingMarkerRange, trailingMarkerRange: trailingMarkerRange) }
+    }
+
+    public var leadingMarkerRange: NSRange? {
+        get { details?.leadingMarkerRange }
+        set { setDetails(contentRange: contentRange, leadingMarkerRange: newValue, trailingMarkerRange: trailingMarkerRange) }
+    }
+
+    public var trailingMarkerRange: NSRange? {
+        get { details?.trailingMarkerRange }
+        set { setDetails(contentRange: contentRange, leadingMarkerRange: leadingMarkerRange, trailingMarkerRange: newValue) }
+    }
+
+    private mutating func setDetails(contentRange: NSRange, leadingMarkerRange: NSRange?, trailingMarkerRange: NSRange?) {
+        if contentRange == storedRange, leadingMarkerRange == nil, trailingMarkerRange == nil {
+            details = nil
+        } else if details?.contentRange != contentRange
+                    || details?.leadingMarkerRange != leadingMarkerRange
+                    || details?.trailingMarkerRange != trailingMarkerRange {
+            details = Details(contentRange: contentRange, leadingMarkerRange: leadingMarkerRange,
+                              trailingMarkerRange: trailingMarkerRange)
+        }
+    }
 
     public init(
         kind: InlineKind,
@@ -354,11 +430,11 @@ public struct InlineSpan: Sendable {
         children: [InlineSpan] = []
     ) {
         self.kind = kind
-        self.range = range
-        self.contentRange = contentRange
-        self.leadingMarkerRange = leadingMarkerRange
-        self.trailingMarkerRange = trailingMarkerRange
+        self.storedRange = range
         self.children = children
+        self.details = nil
+        setDetails(contentRange: contentRange, leadingMarkerRange: leadingMarkerRange,
+                   trailingMarkerRange: trailingMarkerRange)
     }
 
     public var markerRanges: [NSRange] {

@@ -11,6 +11,7 @@ struct GenericLexer {
     private let spec: LanguageSpec
     private let units: [Unit]
     private let count: Int
+    private let specialStarts: [Bool]
     private var i = 0
     private var builder: RunBuilder
 
@@ -18,6 +19,24 @@ struct GenericLexer {
         self.spec = spec
         self.units = units
         self.count = units.count
+        var starts = [Bool](repeating: false, count: 128)
+        for marker in spec.lineComments + spec.blockComments.map(\.open) + spec.strings.map(\.open) {
+            if let first = marker.first, first < 128 { starts[Int(first)] = true }
+        }
+        for unit in spec.attributeSigils + spec.variableSigils + spec.identifierExtraStarts where unit < 128 {
+            starts[Int(unit)] = true
+        }
+        for style in spec.rawStrings {
+            switch style {
+            case .swiftHash: starts[0x23] = true
+            case .rustHash: starts[0x72] = true; starts[0x62] = true
+            case .cppDelimited: starts[0x52] = true
+            }
+        }
+        if spec.hasSymbols { starts[0x3A] = true }
+        if spec.hasLifetimes { starts[0x27] = true }
+        if spec.bracketSectionHeaders { starts[0x5B] = true }
+        self.specialStarts = starts
         self.builder = RunBuilder(reservingFor: units.count)
     }
 
@@ -32,6 +51,26 @@ struct GenericLexer {
             if isSpaceUnit(c) { i += 1; continue }
             let start = i
 
+            // Skip recognizers whose opening characters cannot match. The
+            // table comes from this language's delimiters, so raw strings,
+            // sigils, and section headers retain their ordered precedence.
+            if !member(c, specialStarts) {
+                if isNumberStart() { scanNumber(); builder.emit(.number, start..<i); continue }
+                if isLetterUnit(c) || c == 0x5F || c >= 0x80 {
+                    scanIdentifierToken(start: start)
+                    continue
+                }
+                if isOperatorUnit(c) {
+                    while i < count, isOperatorUnit(units[i]) { i += 1 }
+                    builder.emit(.operator, start..<i)
+                    continue
+                }
+                if isPunctuationUnit(c) {
+                    i += 1
+                    builder.emit(.punctuation, start..<i)
+                    continue
+                }
+            }
             if scanTrivia() { builder.emit(.comment, start..<i); continue }
             if scanRawString() { builder.emit(.string, start..<i); continue }
             if scanSigil(start: start) { continue }

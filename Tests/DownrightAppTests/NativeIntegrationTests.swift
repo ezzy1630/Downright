@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownCore
 import Testing
 @testable import DownrightApp
 
@@ -35,5 +36,9 @@ struct NativeIntegrationTests {
         #expect(metadata.title == "Guide")
         #expect(metadata.keywords == ["agents", "markdown"])
         #expect(metadata.attributes[SpotlightMetadataKey.kind] as? String == "Markdown document")
+        let reused = SpotlightMetadataImporter.metadata(for: MarkdownParser.parse(text), url: url)
+        #expect(reused.title == "Guide")
+        #expect(reused.keywords == ["agents", "markdown"])
+        #expect(reused.textContent == text)
     }
 }

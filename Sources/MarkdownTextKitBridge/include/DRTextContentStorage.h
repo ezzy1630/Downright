@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import "DRParagraphIndex.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

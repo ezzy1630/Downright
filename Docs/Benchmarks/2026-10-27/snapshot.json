@@ -1,0 +1,33 @@
+{
+  "recorded_at": "2026-10-27T12:06:02.257183+00:00",
+  "baseline_commit": "ce2cad6deb287fa34d3561615c6655e3eb29a17e",
+  "candidate_base_commit": "ce2cad6deb287fa34d3561615c6655e3eb29a17e",
+  "candidate_branch": "perf/pipeline-memory",
+  "candidate_state": "uncommitted",
+  "build_inputs_sha256": "13a9a40efd23fb84dff326bf6bc7f3173e2e3d357ac38f8304d4a4daea657512",
+  "native_executable_sha256": "800bd07bdbdbaf700002d63ac3e93d96a68dd42e0b8690f49184f4d9713892b6",
+  "hardware": "Apple M4 (Mac16,12)",
+  "macos": "27.0",
+  "timing_comparison": "PASS: all ten fixed cases, worst p95 across three isolated runs",
+  "memory_certification": "INCOMPLETE: latest interactive repeats blocked by cgWindowNotFound",
+  "native_open_peak_mb": 126.190816,
+  "source_gate": {
+    "swift_tests": 1459,
+    "script_tests": 42,
+    "known_issue_sites": 2,
+    "result": "PASS"
+  },
+  "packaged_bundle": "PASS structural verification; activated UI automation failed to initialize",
+  "landed": false,
+  "native_host": {
+    "bundle_identifier": "com.ezzy.downright.perf20261027",
+    "version": "1.0.18",
+    "build": "10",
+    "role": "isolated host-only release app; installed app unchanged"
+  },
+  "packaged_bundle_identity": {
+    "version": "1.0.18",
+    "build": "9310.16.18",
+    "role": "isolated ad-hoc Xcode Release acceptance bundle"
+  }
+}

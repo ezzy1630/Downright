@@ -907,32 +907,38 @@ public final class MarkdownTextView: NSTextView {
         // Text changed, so any table geometry cached for a previous revision
         // is stale even when the table's start offset is unchanged (§11.3).
         fragmentContext.invalidateDerivedLayout()
-        rebuildParagraphIndex()
-
         guard let storage = textStorage else { return }
-        engine.decorate(storage, document: document, dirty: dirty)
-        applySourcePresentation(scopes: isWholesaleUpdate ? nil : dirtyScopes)
-        if configuration.showInvisibles || invisiblesApplied {
-            applyInvisibles(scopes: isWholesaleUpdate ? nil : dirtyScopes)
-        }
-        rebuildBaseDisplayMap(document: document)
-        refreshElision(rebuildingMap: false)
-        // The mirror is repaired over what decoration *rewrote*, not over what
-        // the diff reported: decoration grows each dirty range to whole blocks,
-        // and a narrower repair leaves the rest of those blocks claiming nothing
-        // is hidden in them.  This is the path an external write takes, so it is
-        // the one where it mattered most.
-        let decoratedScopes = isWholesaleUpdate
-            ? []
-            : engine.decoratedBounds(for: dirty, in: document, length: storage.length)
-        rebuildDisplayMap(
-            fullRefresh: isWholesaleUpdate,
-            additionalScopes: decoratedScopes
-        )
-        applyOverlays(scopes: isWholesaleUpdate ? nil : decoratedScopes)
-        applyPathExistence(scopes: isWholesaleUpdate ? nil : decoratedScopes)
-        if isWholesaleUpdate {
-            invalidateAllFragments()
+        // Commit attributes and source/display ranges as one TextKit update.
+        // Synchronizing between those steps exposes the previous presentation.
+        contentStorage.performEditingTransaction {
+            rebuildParagraphIndex()
+
+            engine.decorate(storage, document: document, dirty: dirty)
+            applySourcePresentation(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+            if configuration.showInvisibles || invisiblesApplied {
+                applyInvisibles(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+            }
+            autoreleasepool { rebuildBaseDisplayMap(document: document) }
+            autoreleasepool { refreshElision(rebuildingMap: false) }
+            // The mirror is repaired over what decoration *rewrote*, not over what
+            // the diff reported: decoration grows each dirty range to whole blocks,
+            // and a narrower repair leaves the rest of those blocks claiming nothing
+            // is hidden in them.  This is the path an external write takes, so it is
+            // the one where it mattered most.
+            let decoratedScopes = isWholesaleUpdate
+                ? []
+                : engine.decoratedBounds(for: dirty, in: document, length: storage.length)
+            autoreleasepool {
+                rebuildDisplayMap(
+                    fullRefresh: isWholesaleUpdate,
+                    additionalScopes: decoratedScopes
+                )
+            }
+            applyOverlays(scopes: isWholesaleUpdate ? nil : decoratedScopes)
+            applyPathExistence(scopes: isWholesaleUpdate ? nil : decoratedScopes)
+            if isWholesaleUpdate {
+                invalidateAllFragments()
+            }
         }
         gutterRail?.reload()
         refreshFragmentAccessibility()
@@ -1255,13 +1261,21 @@ public final class MarkdownTextView: NSTextView {
     /// deep restored offset lazily; the first keyboard scroll would otherwise
     /// be the thing that makes them appear.
     public func prepareForDisplay() {
-        synchronizeVisibleLayout()
+        // AppKit can mount/shrink the native document view before the host
+        // establishes its column. Container width is authoritative: a narrower
+        // backing view clips valid glyphs even though TextKit laid them out.
+        let width = frameWidthContainingText
+        if width > frame.width + 0.5 {
+            setFrameSize(NSSize(width: width, height: frame.height))
+        }
+        autoreleasepool { synchronizeVisibleLayout() }
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         // `displayIfNeeded()` may leave a freshly scrolled TextKit 2 surface
         // pending when the view has not painted once at that offset yet.
         // Force this small visible rect so programmatic restores behave like
         // the first native scroll gesture.
-        display(visible)
+        autoreleasepool { display(visible) }
+
     }
 
     /// Makes TextKit's active fragment set agree with the clip view.
@@ -1286,6 +1300,10 @@ public final class MarkdownTextView: NSTextView {
         layoutManager.textViewportLayoutController.layoutViewport()
         setNeedsDisplay(visible)
         gutterRail?.needsDisplay = true
+    }
+
+    private var frameWidthContainingText: CGFloat {
+        max(frame.width, (textContainer?.size.width ?? 0) + 2 * textContainerInset.width)
     }
 
     private enum ContentLayoutScope {
@@ -1321,9 +1339,13 @@ public final class MarkdownTextView: NSTextView {
     /// byte threshold stays user-visible in Settings; the fragment ceiling is
     /// an implementation bound and deliberately is not.
     private var exceedsEagerLayoutBudget: Bool {
-        if let storage = textStorage,
-           storage.length > configuration.largeFileThresholdMegabytes * 1024 * 1024 {
-            return true
+        if let storage = textStorage {
+            // During replacement the paragraph index still describes the old
+            // buffer. Native selection/geometry callbacks can arrive before
+            // update installs the new map, so never use that stale count to
+            // authorize a document-wide layout.
+            if storage.length != paragraphIndex.length { return true }
+            if storage.length > configuration.largeFileThresholdMegabytes * 1024 * 1024 { return true }
         }
         return paragraphIndex.starts.count > Self.eagerLayoutParagraphLimit
     }
@@ -1349,7 +1371,7 @@ public final class MarkdownTextView: NSTextView {
                 deferShrinkRepair()
                 return
             }
-            setFrameSize(NSSize(width: frame.width, height: estimated),
+            setFrameSize(NSSize(width: frameWidthContainingText, height: estimated),
                          preservingReadingPosition: preservingReadingPosition && estimated < frame.height)
             return
         }
@@ -1366,7 +1388,7 @@ public final class MarkdownTextView: NSTextView {
             deferShrinkRepair()
             return
         }
-        setFrameSize(NSSize(width: frame.width, height: height), preservingReadingPosition: preservingReadingPosition && height < frame.height)
+        setFrameSize(NSSize(width: frameWidthContainingText, height: height), preservingReadingPosition: preservingReadingPosition && height < frame.height)
     }
 
     private func deferShrinkRepair() {
@@ -1461,7 +1483,7 @@ public final class MarkdownTextView: NSTextView {
         // dropping the whole page under the user's hands on every keystroke.
         let height = max(frame.height, estimated, used, viewportHeight)
         guard height - frame.height > 0.5 else { return }
-        setFrameSize(NSSize(width: frame.width, height: height))
+        setFrameSize(NSSize(width: frameWidthContainingText, height: height))
     }
 
     /// Schedules a height pass. Structural updates run now. Semantic parse
@@ -1554,18 +1576,20 @@ public final class MarkdownTextView: NSTextView {
         // so it has to describe the text that is in the buffer right now.  A
         // configuration change can arrive before the first `update(document:)`
         // — the buffer already holds the file, the index is still empty.
-        rebuildParagraphIndex()
-        engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
-        applySourcePresentation()
-        applyInvisibles()
-        rebuildBaseDisplayMap(document: parsedDocument)
-        refreshElision(rebuildingMap: false)
-        rebuildDisplayMap(fullRefresh: true)
-        applyOverlays()
-        applyPathExistence()
-        invalidateAllFragments()
-        gutterRail?.reload()
-        refreshFragmentAccessibility()
+        contentStorage.performEditingTransaction {
+            rebuildParagraphIndex()
+            engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
+            autoreleasepool { applySourcePresentation() }
+            applyInvisibles()
+            autoreleasepool { rebuildBaseDisplayMap(document: parsedDocument) }
+            autoreleasepool { refreshElision(rebuildingMap: false) }
+            autoreleasepool { rebuildDisplayMap(fullRefresh: true) }
+            applyOverlays()
+            applyPathExistence()
+            invalidateAllFragments()
+            gutterRail?.reload()
+            refreshFragmentAccessibility()
+        }
     }
 
     /// Theme colour / accent swaps that do not change typography.
@@ -1644,15 +1668,14 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// Source Focus changes typography and local material, never characters.
-    /// Decoration runs first so Markdown token colours remain intact; this
-    /// pass owns only font, line geometry, and the source-focus marker used by
-    /// background/chrome drawing.
+    /// Decoration seeds whole-document Source typography. This pass preserves
+    /// semantic colours while applying typography and edge spacing to a scoped
+    /// source lens.
     private func applySourcePresentation(scopes: [NSRange]? = nil) {
         guard let storage = textStorage, storage.length > 0 else { return }
         let whole = NSRange(location: 0, length: storage.length)
 
         let target: NSRange
-        let scoped: Bool
         switch sourceFocus {
         case .none:
             guard appliedSourceFocus != .none else { return }
@@ -1665,14 +1688,15 @@ public final class MarkdownTextView: NSTextView {
             appliedSourceFocus = .none
             return
         case .document:
-            target = whole
-            scoped = false
+            // The Source policy seeds final typography during decoration,
+            // including incremental commits over expanded block bounds.
+            appliedSourceFocus = .document
+            return
         case .scoped(let range):
             let lower = max(0, min(range.location, storage.length))
             let upper = max(lower, min(range.upperBound, storage.length))
             guard upper > lower else { return }
             target = NSRange(location: lower, length: upper - lower)
-            scoped = true
         }
 
         let focusChanged = appliedSourceFocus != sourceFocus
@@ -1716,47 +1740,15 @@ public final class MarkdownTextView: NSTextView {
         // those objects were identical. The spacing pair is the only thing
         // that varies, and only at the two ends of a scoped region, so cache
         // on exactly that.
-        let lineHeight = styleSheet.lineHeight
-        let characterWidth = styleSheet.averageCharacterWidth
-        let tabStops: [NSTextTab] = stride(from: 4, through: 80, by: 4).map {
-            NSTextTab(textAlignment: .left,
-                      location: CGFloat($0) * characterWidth,
-                      options: [:])
-        }
         var styleCache: [SourceParagraphSpacing: NSParagraphStyle] = [:]
         func paragraphStyle(_ spacing: SourceParagraphSpacing) -> NSParagraphStyle {
             if let cached = styleCache[spacing] { return cached }
-            let style = NSMutableParagraphStyle()
-            style.minimumLineHeight = lineHeight
-            style.maximumLineHeight = lineHeight
-            style.lineBreakMode = .byWordWrapping
+            let style = SourceTypography.paragraphStyle(for: styleSheet).mutableCopy() as! NSMutableParagraphStyle
             style.paragraphSpacingBefore = spacing.before
             style.paragraphSpacing = spacing.after
-            style.tabStops = tabStops
-            style.defaultTabInterval = characterWidth * 4
             let immutable = style.copy() as! NSParagraphStyle
             styleCache[spacing] = immutable
             return immutable
-        }
-
-        // Whole-document Source asks for the same style on every paragraph, so
-        // the font, the ligature setting, the focus mark and that one style can
-        // all go on in a single pass.  Separately, the two used to be a
-        // whole-document `addAttributes` followed by one `addAttribute` per
-        // paragraph — several thousand of them on a large file, each one
-        // re-walking the storage's attribute runs.  Merged, the storage's runs
-        // are rewritten once.
-        //
-        // Only the unscoped pass qualifies: a scoped region's first and last
-        // paragraphs carry the region's own air, so those two genuinely differ
-        // from the rest and the walk below is what finds them.
-        if !scoped {
-            attributes[.paragraphStyle] = paragraphStyle(
-                SourceParagraphSpacing(before: 0, after: 0))
-            for paragraphsRange in paragraphs {
-                storage.addAttributes(attributes, range: paragraphsRange)
-            }
-            return
         }
 
         for range in applicationRanges {
@@ -1770,8 +1762,8 @@ public final class MarkdownTextView: NSTextView {
                     .intersection(target) ?? NSRange(location: cursor, length: 0)
                 guard paragraph.length > 0 else { break }
                 let spacing = SourceParagraphSpacing(
-                    before: scoped && cursor == target.location ? 28 : 0,
-                    after: scoped && paragraph.upperBound >= target.upperBound ? 8 : 0
+                    before: cursor == target.location ? 28 : 0,
+                    after: paragraph.upperBound >= target.upperBound ? 8 : 0
                 )
                 storage.addAttribute(
                     .paragraphStyle, value: paragraphStyle(spacing), range: paragraph
@@ -1839,7 +1831,8 @@ public final class MarkdownTextView: NSTextView {
         // Project marker descriptors and immutable object payloads alongside
         // the logical map. Lazy marker text reads its attributes at the shifted
         // source location when TextKit next requests the paragraph.
-        let oldLayoutSubstitutions = previousLayoutMap.substitutions
+        let oldLayoutSubstitutions = previousLayoutMap.stylesHiddenMarkersFromSource
+            ? [] : previousLayoutMap.substitutions
         let projection = SourceEditProjection(
             edit: edit,
             insertedLength: insertedLength,
@@ -1899,11 +1892,15 @@ public final class MarkdownTextView: NSTextView {
             substitutions: projectedLogicalSubstitutions,
             hiddenRanges: projectedHidden
         )
-        baseLayoutMap = previousLayoutMap.projectingStableTopology(
-            paragraphs: paragraphIndex,
-            substitutions: projectedLayoutSubstitutions,
-            hiddenRanges: projectedHidden
-        )
+        if previousLayoutMap.stylesHiddenMarkersFromSource {
+            baseLayoutMap = baseDisplayMap.stylingHiddenMarkersFromSource()
+        } else {
+            baseLayoutMap = previousLayoutMap.projectingStableTopology(
+                paragraphs: paragraphIndex,
+                substitutions: projectedLayoutSubstitutions,
+                hiddenRanges: projectedHidden
+            )
+        }
         displayMap = baseLayoutMap
         // Physical fallback still collapses markers; layout map keeps TextKit
         // selection arithmetic aligned with content storage.
@@ -1956,13 +1953,6 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - Hidden ranges and the display map
 
-    private func sameSubstitutions(
-        _ lhs: [DisplaySubstitution],
-        _ rhs: [DisplaySubstitution]
-    ) -> Bool {
-        lhs == rhs
-    }
-
     /// Rebuilds the substitution set for the current caret.
     ///
     /// Squarely on the keystroke path (§12), so two things it does *not* do:
@@ -1974,7 +1964,7 @@ public final class MarkdownTextView: NSTextView {
         fullRefresh: Bool = false,
         additionalScopes: [NSRange] = []
     ) {
-        let previousSubstitutions = displayMap.substitutions
+        let previousMap = displayMap
         let caret = suppressesCaretReveal ? nil : primarySourceCaret
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
@@ -2100,7 +2090,7 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         if !isFullRefresh, additionalScopes.isEmpty,
-           sameSubstitutions(displayMap.substitutions, previousSubstitutions) {
+           displayMap.hasSameSubstitutions(as: previousMap) {
             // Moving through plain prose changes the caret paragraph but not
             // its presentation. Reconfiguring and invalidating those elements
             // anyway makes TextKit replace settled geometry with estimates;
@@ -2873,6 +2863,19 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: - Geometry
+
+    /// Native origin calculation asks for the used bounds through EOF. This
+    /// surface is top-aligned; above the eager-layout budget its origin is
+    /// exactly its inset, independent of offscreen glyphs. Keep native origin
+    /// calculation for small documents and native drawing in both cases.
+    public override var textContainerOrigin: NSPoint {
+        if exceedsEagerLayoutBudget {
+            return NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+        }
+        return super.textContainerOrigin
+    }
+
+    var nativeTextContainerOriginForTesting: NSPoint { super.textContainerOrigin }
 
     public func rect(forOffset offset: Int) -> NSRect? {
         let textKit = displayMap.textKitOffset(forSource: offset)

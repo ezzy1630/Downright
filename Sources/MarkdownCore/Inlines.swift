@@ -48,36 +48,33 @@ struct InlineBuilder {
 
     private mutating func span(for markup: Markup) -> InlineSpan? {
         guard let range = map.range(markup.range, lineOffset: lineOffset) else { return nil }
-        var children = markup.children.compactMap { span(for: $0) }
-        fillBreaks(&children, bounds: range)
-        let content = contentRange(of: range, children: children)
-
-        switch markup {
-        case is Markdown.Text:
+        // Leaves cannot contribute child markers or reconstructed breaks.
+        // Avoid constructing a child iterator for every text/code token.
+        if markup is Markdown.Text {
             return InlineSpan(kind: .text, range: range, contentRange: range)
-
-        case is Markdown.SoftBreak:
-            return InlineSpan(kind: .softBreak, range: range, contentRange: range)
-
-        case is Markdown.LineBreak:
-            return InlineSpan(kind: .lineBreak, range: range, contentRange: range)
-
-        case is Markdown.InlineHTML:
+        }
+        if markup is Markdown.InlineHTML {
             return InlineSpan(kind: .inlineHTML, range: range, contentRange: range)
-
-        case is Markdown.InlineCode:
+        }
+        if markup is Markdown.InlineCode {
             let ticks = backtickRun(at: range)
-            let inner = NSRange(
-                location: range.location + ticks,
-                length: max(0, range.length - 2 * ticks)
-            )
+            let inner = NSRange(location: range.location + ticks, length: max(0, range.length - 2 * ticks))
             return InlineSpan(
                 kind: .inlineCode, range: range, contentRange: inner,
                 leadingMarkerRange: ticks > 0 ? NSRange(location: range.location, length: ticks) : nil,
                 trailingMarkerRange: ticks > 0 ? NSRange(location: inner.upperBound, length: ticks) : nil,
                 children: codeSpanChildren(inner)
             )
+        }
+        var children = markup.children.compactMap { span(for: $0) }
+        fillBreaks(&children, bounds: range)
+        let content = contentRange(of: range, children: children)
 
+        switch markup {
+        case is Markdown.SoftBreak:
+            return InlineSpan(kind: .softBreak, range: range, contentRange: range)
+        case is Markdown.LineBreak:
+            return InlineSpan(kind: .lineBreak, range: range, contentRange: range)
         case is Markdown.Emphasis:
             return wrapped(.emphasis, range: range, content: content, children: children)
 

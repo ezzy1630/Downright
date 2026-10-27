@@ -20,6 +20,12 @@ import Markdown
 
 public enum MarkdownParser {
     public static func parse(_ text: String, options: ParseOptions = .default) -> ParsedDocument {
+        // Parsing also runs on long-lived worker threads. Drain bridged
+        // Foundation temporaries before the returned tree reaches decoration.
+        autoreleasepool { parseDocument(text, options: options) }
+    }
+
+    private static func parseDocument(_ text: String, options: ParseOptions) -> ParsedDocument {
         let map = SourceMap(text)
         guard map.length > 0 else { return .empty }
         let runExtensions = map.length <= options.extensionPassLimit
@@ -29,7 +35,6 @@ public enum MarkdownParser {
         let lineOffset = frontMatter == nil ? 0 : map.line(containing: bodyStart)
         let body = bodyStart == 0 ? text : map.text.substring(from: bodyStart)
 
-        let document = Document(parsing: body, options: [.disableSmartOpts])
         let scan = SourceScanner(map: map)
 
         var builder = BlockBuilder(
@@ -40,7 +45,17 @@ public enum MarkdownParser {
             footnoteIdentifiers: Set(scan.footnoteDefinitions.map(\.identifier))
         )
 
-        var children = document.children.compactMap { builder.block(for: $0, depth: 1, quoteDepth: 0) }
+        // Consume each intermediate Swift subtree before converting the next.
+        // cmark still resolves the complete CommonMark document, including
+        // references; only the duplicate Swift AST has a bounded lifetime.
+        var children: [MDBlock] = []
+        Document.forEachParsedBlock(in: body, options: [.disableSmartOpts]) { child in
+            autoreleasepool {
+                if let block = builder.block(for: child, depth: 1, quoteDepth: 0) {
+                    children.append(block)
+                }
+            }
+        }
         if let frontMatter {
             children.insert(builder.frontMatterBlock(frontMatter), at: 0)
         }

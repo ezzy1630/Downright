@@ -6,6 +6,19 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct PanelAccessibilityTests {
+    @Test @MainActor func largeTaskSectionMapOnlyAllocatesVisibleLayers() {
+        let view = TaskSectionBarView(styleSheet: .current)
+        view.frame = NSRect(x: 0, y: 0, width: 300, height: 12)
+        view.segments = (0..<8_149).map { index in
+            TaskWorklist.Segment(sectionIndex: index, title: "Section \(index)",
+                                 taskCount: 2, doneCount: 1, weight: 1.0 / 8_149, completion: 0.5)
+        }
+        view.layoutSubtreeIfNeeded()
+        #expect((view.layer?.sublayers?.count ?? 0) < 400)
+        #expect(view.segments.count == 8_149)
+        #expect(view.accessibilityValue() as? String == "8149 of 16298 tasks done")
+        #expect(view.accessibilityCustomActions()?.count == 8_149)
+    }
     private final class TaskDelegateSpy: TaskPanelDelegate {
         var additions: [(text: String, headingIndex: Int?)] = []
 

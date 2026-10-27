@@ -34,7 +34,22 @@ public enum ASTDiff {
     private static func reconcile(
         old: [MDBlock], new: [MDBlock], into ranges: inout [NSRange], oldText: NSString, newText: NSString
     ) -> Bool {
-        guard let script = Myers.diff(old.map(\.subtreeHash), new.map(\.subtreeHash)) else {
+        // Unchanged siblings need no script entries. A local edit usually
+        // leaves thousands of equal nodes on either side of its one block.
+        var first = 0
+        while first < old.count, first < new.count,
+              old[first].subtreeHash == new[first].subtreeHash { first += 1 }
+        var oldEnd = old.count, newEnd = new.count
+        while oldEnd > first, newEnd > first,
+              old[oldEnd - 1].subtreeHash == new[newEnd - 1].subtreeHash {
+            oldEnd -= 1
+            newEnd -= 1
+        }
+        guard first < oldEnd || first < newEnd else { return true }
+        guard let script = Myers.diff(
+            old[first..<oldEnd].map(\.subtreeHash),
+            new[first..<newEnd].map(\.subtreeHash)
+        ) else {
             return false
         }
 
@@ -53,9 +68,9 @@ public enum ASTDiff {
             case .equal:
                 flush()
             case .delete(let index):
-                oldRun.append(old[index])
+                oldRun.append(old[first + index])
             case .insert(let index):
-                newRun.append(new[index])
+                newRun.append(new[first + index])
             }
         }
         flush()

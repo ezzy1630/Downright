@@ -78,26 +78,8 @@ public final class DecorationEngine {
 
     // MARK: Source-mode typography (§3.2)
 
-    /// Set for the duration of one `decorate` call whose `.font`, `.ligature`
-    /// and `.paragraphStyle` output is guaranteed to be thrown away before
-    /// anything can read it.
-    ///
-    /// Switching the one text surface into Source is a wholesale pass under the
-    /// Source policy followed — in the same turn, before any layout — by the
-    /// view's whole-document source presentation, which rewrites the font and
-    /// one uniform paragraph style over *every* character.  So the heading
-    /// faces, the list indents, the code row hangs and the per-paragraph styles
-    /// this file computes on that path exist for microseconds and are then
-    /// overwritten.  They are not free to compute: each one is a paragraph walk
-    /// and an attribute run split that the source pass then has to walk back
-    /// over, which is why the switch cost grew with the document rather than
-    /// with what changed.
-    ///
-    /// Everything that is *not* typography still has to be produced here —
-    /// foreground colours, marker highlighting, code syntax runs, links,
-    /// fragments, block identity — because nothing downstream re-establishes
-    /// any of it.  `apply` enforces that split in one place rather than trusting
-    /// each call site to remember it.
+    /// Source starts with its final uniform typography. Semantic decoration
+    /// adds colours and actions without splitting those font/paragraph runs.
     private var discardsTypography = false
 
     /// The policy shape Source mode uses: markers styled in place rather than
@@ -124,6 +106,14 @@ public final class DecorationEngine {
         var attributes: [NSAttributedString.Key: Any]
     }
 
+    /// Cache-eligible leaves have one base paragraph style. Hard-wrap and
+    /// heading-position adjustments are reapplied against the live document.
+    private struct AttributeProgram {
+        let length: Int
+        let paragraphStyle: NSParagraphStyle?
+        let operations: [AttributeOp]
+    }
+
     private struct ProgramKey: Hashable {
         var hash: UInt64
         var kind: Int
@@ -146,7 +136,7 @@ public final class DecorationEngine {
         var plainTypography: Bool
     }
 
-    private var programCache: [ProgramKey: [AttributeOp]] = [:]
+    private var programCache: [ProgramKey: AttributeProgram] = [:]
     /// Keys seen exactly once.  Recording a program costs a scratch pass, so a
     /// block is only worth caching the *second* time it appears — in a
     /// document of all-unique paragraphs the recorder would otherwise double
@@ -196,6 +186,10 @@ public final class DecorationEngine {
         let targets: [NSRange]
         if dirty.isWholesale {
             targets = [full]
+            // Only repetition within a presentation justifies recording a
+            // program. Seeing every unique paragraph on a second wholesale
+            // pass otherwise adds a scratch decoration for each of them.
+            programSeen.removeAll(keepingCapacity: true)
         } else if dirty.ranges.isEmpty {
             return DecorationResult()
         } else {
@@ -205,16 +199,14 @@ public final class DecorationEngine {
         }
         guard !targets.isEmpty else { return DecorationResult() }
 
-        // Only a *wholesale* Source pass earns the shortcut.  An incremental
-        // commit in Source mode re-decorates whole blocks while the source
-        // presentation is re-applied over the narrower ranges the diff
-        // reported, so typography dropped here would not be put back over the
-        // rest of those blocks.
-        discardsTypography = dirty.isWholesale && policyIsSourceShaped
+        discardsTypography = policyIsSourceShaped
         defer { discardsTypography = false }
 
         var state = DecorateState(document: document, storage: storage)
         state.documentBase = documentBaseAttributes()
+        if policyIsSourceShaped {
+            state.documentBase.merge(SourceTypography.attributes(for: styleSheet)) { _, source in source }
+        }
 
         storage.beginEditing()
         for target in targets {
@@ -408,12 +400,27 @@ public final class DecorationEngine {
     /// — and only its block.
     private func blockBounds(of range: NSRange, in document: ParsedDocument) -> NSRange {
         var bounds = range
-        document.root.walkPruning { block in
-            guard block.range.location < range.upperBound, range.location < block.range.upperBound else {
-                return false
+        func include(_ block: MDBlock, inListItem: Bool = false) {
+            let ownsListPrefix: Bool
+            if case .listItem = block.content { ownsListPrefix = true }
+            else { ownsListPrefix = inListItem }
+            if block.children.isEmpty {
+                bounds = bounds.union(block.range)
+                if ownsListPrefix {
+                    // A local edit clears metadata from the whole physical
+                    // paragraph. Reinstall its list carrier even when the
+                    // dirty leaf begins after the source marker.
+                    let lineStart = document.lineStarts[document.line(at: block.range.location) - 1]
+                    bounds = bounds.union(NSRange(location: lineStart, length: block.range.upperBound - lineStart))
+                }
+            } else {
+                for index in Self.intersectingChildIndices(block.children, target: range) {
+                    include(block.children[index], inListItem: ownsListPrefix)
+                }
             }
-            if block.children.isEmpty { bounds = bounds.union(block.range) }
-            return true
+        }
+        for index in Self.intersectingChildIndices(document.root.children, target: range) {
+            include(document.root.children[index])
         }
         return bounds
     }
@@ -586,7 +593,6 @@ public final class DecorationEngine {
                 applyBlockMarker(block, context: context, state: &state)
                 applyInlinesIfLeaf(block, context: context, state: &state)
             }
-            apply([.drBlock: block.identity], to: block.range, state: &state)
             emitInlineImageFragmentIfSolitary(block, state: &state)
             for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
                 walk(block.children[childIndex], context: context, state: &state)
@@ -634,6 +640,7 @@ public final class DecorationEngine {
             var surviving = attributes
             surviving.removeValue(forKey: .font)
             surviving.removeValue(forKey: .paragraphStyle)
+            surviving.removeValue(forKey: .ligature)
             guard !surviving.isEmpty else { return }
             state.storage.addAttributes(surviving, range: clipped)
             state.attributeRanges += 1
@@ -671,7 +678,6 @@ public final class DecorationEngine {
         } else {
             apply(attributes, to: block.range, state: &state)
         }
-        apply([.drBlock: block.identity], to: block.range, state: &state)
 
         applyFirstHeadingSpacing(block, attributes: attributes, state: &state)
         applyHardWrapContinuationSpacing(block, attributes: attributes, state: &state)
@@ -1189,9 +1195,24 @@ public final class DecorationEngine {
         state: inout DecorateState
     ) -> FragmentPayload? {
         guard block.range.length > 0 else { return nil }
+        // Source keeps code payloads for Copy Code, but list ornaments have
+        // no source-mode reader. Their unique ranges otherwise split every
+        // task's attribute dictionaries during a wholesale Source pass.
+        if kind == .listOrnament && !policy.rendersFragments { return nil }
         let payload = FragmentPayload(kind: kind, sourceRange: block.range,
                                       blockIdentity: block.identity, detail: detail)
-        apply([.drFragment: payload], to: block.range, state: &state)
+        if kind == .listOrnament {
+            // The provider reads paragraph prefixes. Extending this unique
+            // payload across every label prevents Foundation from sharing
+            // otherwise identical attribute dictionaries across a long list.
+            // Continuation prefixes retain the enclosing item's payload.
+            for paragraph in physicalParagraphs(of: block, in: state) {
+                let start = max(paragraph.location, block.range.location)
+                apply([.drFragment: payload], to: NSRange(location: start, length: 1), state: &state)
+            }
+        } else {
+            apply([.drFragment: payload], to: block.range, state: &state)
+        }
         state.fragmentCount += 1
         return payload
     }
@@ -1210,7 +1231,7 @@ public final class DecorationEngine {
 
     // MARK: - Program cache
 
-    private func cachedProgram(for block: MDBlock, context: BlockContext) -> [AttributeOp]? {
+    private func cachedProgram(for block: MDBlock, context: BlockContext) -> AttributeProgram? {
         guard block.safeHTML == nil else { return nil }
         guard block.subtreeHash != 0, block.children.isEmpty, block.content.isLeafText else { return nil }
         // Inline math carries its LaTeX as a payload read out of the document,
@@ -1234,7 +1255,7 @@ public final class DecorationEngine {
     /// Runs the same code paths as the live decorator against a scratch state,
     /// capturing the operations instead of applying them.  One implementation,
     /// so a cached block and a freshly decorated one cannot diverge.
-    private func recordProgram(for block: MDBlock, context: BlockContext) -> [AttributeOp] {
+    private func recordProgram(for block: MDBlock, context: BlockContext) -> AttributeProgram {
         let recorder = NSTextStorage(string: String(repeating: " ", count: block.range.length))
         let shifted = MDBlock(
             content: block.content,
@@ -1255,11 +1276,14 @@ public final class DecorationEngine {
         applyInlinesIfLeaf(shifted, context: context, state: &scratch)
         recorder.endEditing()
 
+        let paragraphStyle = recorder.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         var ops: [AttributeOp] = []
         recorder.enumerateAttributes(in: NSRange(location: 0, length: recorder.length)) { attrs, range, _ in
-            ops.append(AttributeOp(range: range, attributes: attrs))
+            var attributes = attrs
+            attributes.removeValue(forKey: .paragraphStyle)
+            if !attributes.isEmpty { ops.append(AttributeOp(range: range, attributes: attributes)) }
         }
-        return ops
+        return AttributeProgram(length: block.range.length, paragraphStyle: paragraphStyle, operations: ops)
     }
 
     private static func containsInlineMath(_ spans: [InlineSpan]) -> Bool {
@@ -1270,24 +1294,19 @@ public final class DecorationEngine {
         return false
     }
 
-    private func applyProgram(_ program: [AttributeOp], at origin: Int, state: inout DecorateState) {
-        let text = state.storage.string as NSString
-        for op in program {
-            let range = shift(op.range, by: origin)
-            guard let style = op.attributes[.paragraphStyle], range.upperBound <= text.length else {
-                apply(op.attributes, to: range, state: &state)
-                continue
+    private func applyProgram(_ program: AttributeProgram, at origin: Int, state: inout DecorateState) {
+        if let style = program.paragraphStyle {
+            let text = state.storage.string as NSString
+            let range = NSRange(location: origin, length: program.length)
+            if range.upperBound <= text.length {
+                // The live path styles the whole physical paragraph, including
+                // a list prefix before the leaf. Apply this once, rather than
+                // repeating the same paragraph mutation for each inline run.
+                apply([.paragraphStyle: style], to: text.paragraphRange(for: range), state: &state)
             }
-            var rest = op.attributes
-            rest.removeValue(forKey: .paragraphStyle)
-            if !rest.isEmpty { apply(rest, to: range, state: &state) }
-            // A program is recorded over the bare block, but the live path
-            // (`applyOwnParagraphStyle`) styles each whole paragraph the block
-            // starts in, from its first character.  For a list item's text that
-            // character is the marker before the block; replaying over the
-            // block alone let paragraph fixup take the marker's style instead,
-            // so a list lost its item spacing on every re-decoration.
-            apply([.paragraphStyle: style], to: text.paragraphRange(for: range), state: &state)
+        }
+        for op in program.operations {
+            apply(op.attributes, to: shift(op.range, by: origin), state: &state)
         }
     }
 

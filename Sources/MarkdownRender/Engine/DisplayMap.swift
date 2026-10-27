@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownTextKitBridge
 
 // The single highest-risk piece of arithmetic in the app (§6.1).
 //
@@ -51,72 +52,23 @@ public struct ParagraphIndex: Sendable, Equatable {
 
     public static let empty = ParagraphIndex(starts: [0], length: 0)
 
-    /// Single pass over the UTF-16 buffer.
-    ///
-    /// Rebuilt on every text change and never on a caret move, so it sits on
-    /// the keystroke path (§12).  That is why it takes the contiguous-buffer
-    /// fast path when `CFString` can hand one over, and falls back to chunked
-    /// copies through raw pointers rather than bounds-checked subscripting.
+    /// The bridge scans CF's native buffer and writes compact source offsets.
+    /// Most documents fit the estimate in one pass; dense newline input gets
+    /// one exact-sized retry, without retaining a character-sized index array.
     public init(text: NSString) {
-        let n = text.length
-        var starts: [Int] = [0]
-        starts.reserveCapacity(n / 24 + 8)
-        var pendingCR = false
-
-        if n > 0, let contiguous = CFStringGetCharactersPtr(text as CFString) {
-            ParagraphIndex.scan(UnsafeBufferPointer(start: contiguous, count: n),
-                                base: 0, starts: &starts, pendingCR: &pendingCR)
-        } else if n > 0 {
-            let chunkSize = 8192
-            var buffer = [unichar](repeating: 0, count: chunkSize)
-            var base = 0
-            while base < n {
-                let count = Swift.min(chunkSize, n - base)
-                buffer.withUnsafeMutableBufferPointer { raw in
-                    guard let pointer = raw.baseAddress else { return }
-                    text.getCharacters(pointer, range: NSRange(location: base, length: count))
-                    ParagraphIndex.scan(UnsafeBufferPointer(start: pointer, count: count),
-                                        base: base, starts: &starts, pendingCR: &pendingCR)
-                }
-                base += count
+        let length = text.length
+        let capacity = length / 24 + 8
+        var required = 0
+        var starts = [Int](unsafeUninitializedCapacity: capacity) { buffer, initialized in
+            required = DRParagraphStarts(text as CFString, buffer.baseAddress, capacity)
+            initialized = Swift.min(required, capacity)
+        }
+        if required > capacity {
+            starts = [Int](unsafeUninitializedCapacity: required) { buffer, initialized in
+                initialized = DRParagraphStarts(text as CFString, buffer.baseAddress, required)
             }
         }
-        if pendingCR { starts.append(n) }
-        // A terminator at the very end leaves an empty final paragraph, which
-        // is real to TextKit, so it is kept.
-        self.init(starts: starts, length: n)
-    }
-
-    private static func scan(
-        _ buffer: UnsafeBufferPointer<unichar>,
-        base: Int,
-        starts: inout [Int],
-        pendingCR: inout Bool
-    ) {
-        guard let pointer = buffer.baseAddress else { return }
-        var i = 0
-        let count = buffer.count
-        while i < count {
-            let c = pointer[i]
-            // The overwhelmingly common character is none of the terminators;
-            // one comparison rejects the whole ASCII printable range.
-            if c > 0x0D || c < 0x0A {
-                if pendingCR { pendingCR = false; starts.append(base + i) }
-                if c == 0x0085 || c == 0x2028 || c == 0x2029 { starts.append(base + i + 1) }
-                i += 1
-                continue
-            }
-            if pendingCR {
-                pendingCR = false
-                // `\r\n` is one terminator: the paragraph starts after the
-                // `\n`, not between the two.
-                if c == 0x0A { starts.append(base + i + 1); i += 1; continue }
-                starts.append(base + i)
-            }
-            if c == 0x0D { pendingCR = true }
-            else if c == 0x0A { starts.append(base + i + 1) }
-            i += 1
-        }
+        self.init(starts: starts, length: length)
     }
 
     /// Index of the paragraph containing `offset`, clamped into range.
@@ -460,6 +412,9 @@ public struct DisplayMap {
     /// Ascending, non-overlapping, never crossing a paragraph boundary and
     /// never covering a paragraph terminator.
     private let base: [DisplaySubstitution]
+    /// Layout can share logical marker ranges and style each requested entry.
+    /// It does not need a second document-wide array of hidden descriptors.
+    let stylesHiddenMarkersFromSource: Bool
     /// Index into `base` of the first entry in each paragraph, so a conversion
     /// only ever touches its own paragraph's entries.
     private let firstInParagraph: [Int]
@@ -485,37 +440,58 @@ public struct DisplayMap {
     /// document with thousands of markers is a cost worth not paying.
     public init(paragraphs: ParagraphIndex, substitutions: [DisplaySubstitution]) {
         self.paragraphs = paragraphs
+        self.stylesHiddenMarkersFromSource = false
+        // Source presentation has no substitutions. Its identity map needs
+        // neither a per-paragraph lookup array nor a pass over every line.
+        if substitutions.isEmpty {
+            self.base = []
+            self.normalizedBaseHiddenRanges = []
+            self.firstInParagraph = []
+            self.overrideParagraph = nil
+            self.overrideEntries = []
+            return
+        }
 
         let ordered = DisplayMap.ordered(substitutions)
-        var kept: [DisplaySubstitution] = []
-        kept.reserveCapacity(ordered.count)
+        // Valid ordered maps can retain the caller's immutable array. Allocate
+        // a compacted copy only when an entry actually needs rejecting.
+        var filtered: [DisplaySubstitution]?
+        var acceptedCount = 0
+        func reject(at index: Int) {
+            if filtered == nil { filtered = Array(ordered[..<index]) }
+        }
         var first = [Int](repeating: 0, count: paragraphs.starts.count + 1)
         var seen = [Bool](repeating: false, count: paragraphs.starts.count + 1)
         var paragraph = 0
         var lastEnd = 0
 
-        for sub in ordered {
+        for (index, sub) in ordered.enumerated() {
             let range = sub.sourceRange
             guard range.length > 0,
                   range.location >= lastEnd,
                   range.upperBound <= paragraphs.length,
                   sub.displayLength >= 0,
-                  sub.hasValidReplacementLength else { continue }
+                  sub.hasValidReplacementLength else {
+                reject(at: index)
+                continue
+            }
             while paragraph + 1 < paragraphs.starts.count, paragraphs.starts[paragraph + 1] <= range.location {
                 paragraph += 1
             }
-            // A substitution crossing a paragraph terminator would leave the
-            // element's range and its content permanently out of step — the one
-            // failure mode that silently corrupts every later conversion — so
-            // it is refused rather than clipped.
-            guard range.upperBound <= paragraphs.end(ofParagraphAt: paragraph) else { continue }
+            // Reject a substitution that would cross a paragraph separator.
+            guard range.upperBound <= paragraphs.end(ofParagraphAt: paragraph) else {
+                reject(at: index)
+                continue
+            }
             if !seen[paragraph] {
                 seen[paragraph] = true
-                first[paragraph] = kept.count
+                first[paragraph] = acceptedCount
             }
-            kept.append(sub)
+            filtered?.append(sub)
+            acceptedCount += 1
             lastEnd = range.upperBound
         }
+        let kept = filtered ?? ordered
         self.base = kept
         self.normalizedBaseHiddenRanges = kept.compactMap { sub in
             sub.isHidden ? sub.sourceRange : nil
@@ -539,14 +515,39 @@ public struct DisplayMap {
         firstInParagraph: [Int],
         overrideParagraph: Int?,
         overrideEntries: [DisplaySubstitution],
-        normalizedBaseHiddenRanges: [NSRange]
+        normalizedBaseHiddenRanges: [NSRange],
+        stylesHiddenMarkersFromSource: Bool = false
     ) {
+        self.stylesHiddenMarkersFromSource = stylesHiddenMarkersFromSource
         self.paragraphs = paragraphs
         self.base = base
         self.firstInParagraph = firstInParagraph
         self.overrideParagraph = overrideParagraph
         self.overrideEntries = overrideEntries
         self.normalizedBaseHiddenRanges = normalizedBaseHiddenRanges
+    }
+
+    /// A source-length layout view over this map's immutable range storage.
+    func stylingHiddenMarkersFromSource() -> DisplayMap {
+        DisplayMap(
+            paragraphs: paragraphs, base: base, firstInParagraph: firstInParagraph,
+            overrideParagraph: overrideParagraph, overrideEntries: overrideEntries,
+            normalizedBaseHiddenRanges: normalizedBaseHiddenRanges,
+            stylesHiddenMarkersFromSource: true
+        )
+    }
+
+    func hasSameSubstitutions(as other: DisplayMap) -> Bool {
+        if stylesHiddenMarkersFromSource == other.stylesHiddenMarkersFromSource,
+           base == other.base {
+            // Bases are shared across a caret move. Only the overridden
+            // paragraphs can differ; comparing global arrays would allocate a
+            // complete layout map just to decide whether to invalidate it.
+            return [overrideParagraph, other.overrideParagraph].compactMap { $0 }.allSatisfy { p in
+                entries(inParagraphAt: p).elementsEqual(other.entries(inParagraphAt: p))
+            }
+        }
+        return substitutions == other.substitutions
     }
 
     /// Projects an ordinary character edit without rebuilding the paragraph
@@ -594,7 +595,8 @@ public struct DisplayMap {
         }
         return DisplayMap(paragraphs: paragraphs, base: base, firstInParagraph: firstInParagraph,
                           overrideParagraph: p, overrideEntries: entries,
-                          normalizedBaseHiddenRanges: normalizedBaseHiddenRanges)
+                          normalizedBaseHiddenRanges: normalizedBaseHiddenRanges,
+                          stylesHiddenMarkersFromSource: stylesHiddenMarkersFromSource)
     }
 
     /// A paragraph-local reveal.  The base map already partitions its entries
@@ -668,7 +670,11 @@ public struct DisplayMap {
     /// Every substitution in document order.  Rebuilt on demand; nothing on
     /// the keystroke path reads it.
     public var substitutions: [DisplaySubstitution] {
-        guard overrideParagraph != nil else { return base }
+        if overrideParagraph == nil {
+            return stylesHiddenMarkersFromSource
+                ? base.map { $0.isHidden ? .sourceStyledHidden($0.sourceRange) : $0 }
+                : base
+        }
         var out: [DisplaySubstitution] = []
         out.reserveCapacity(base.count)
         for p in paragraphs.starts.indices { out.append(contentsOf: entries(inParagraphAt: p)) }
@@ -711,13 +717,23 @@ public struct DisplayMap {
 
     /// The entries in force for a paragraph: its override if it has one, its
     /// slice of the base otherwise.
-    private func entries(inParagraphAt p: Int) -> ArraySlice<DisplaySubstitution> {
-        if p == overrideParagraph { return overrideEntries[...] }
-        let start = firstInParagraph[p]
-        let end = paragraphs.end(ofParagraphAt: p)
-        var i = start
-        while i < base.count, base[i].sourceRange.location < end { i += 1 }
-        return base[start..<i]
+    private func entries(inParagraphAt p: Int) -> LazyMapCollection<ArraySlice<DisplaySubstitution>, DisplaySubstitution> {
+        let entries: ArraySlice<DisplaySubstitution>
+        if p == overrideParagraph {
+            entries = overrideEntries[...]
+        } else if base.isEmpty {
+            entries = base[...]
+        } else {
+            let start = firstInParagraph[p]
+            let end = paragraphs.end(ofParagraphAt: p)
+            var i = start
+            while i < base.count, base[i].sourceRange.location < end { i += 1 }
+            entries = base[start..<i]
+        }
+        let sourceStyled = stylesHiddenMarkersFromSource
+        return entries.lazy.map {
+            sourceStyled && $0.isHidden ? .sourceStyledHidden($0.sourceRange) : $0
+        }
     }
 
     // MARK: Source → TextKit
@@ -726,6 +742,7 @@ public struct DisplayMap {
     /// onto the TextKit offset of that substitution's start.
     public func textKitOffset(forSource source: Int) -> Int {
         let s = clampSource(source)
+        if base.isEmpty, overrideParagraph == nil { return s }
         let p = paragraphs.index(containing: s)
         var cursor = paragraphs.starts[p]
         var display = 0

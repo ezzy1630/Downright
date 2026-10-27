@@ -15,9 +15,10 @@ public typealias SpotlightMetadataImporter = DownrightSpotlightMetadata.Spotligh
 /// document immediate results before the system index catches up.
 @available(macOS 14.0, *)
 public enum SpotlightIndexer {
-    public static func indexOpenedDocument(at url: URL) {
+    public static func indexOpenedDocument(at url: URL, metadata: SpotlightMetadata? = nil) {
+        guard SpotlightMetadataImporter.accepts(url) else { return }
         DispatchQueue.global(qos: .utility).async {
-            guard let metadata = try? SpotlightMetadataImporter.metadata(at: url),
+            guard let metadata = metadata ?? (try? SpotlightMetadataImporter.metadata(at: url)),
                   let contentType = UTType(metadata.contentType)
             else { return }
 

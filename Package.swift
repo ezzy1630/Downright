@@ -70,12 +70,9 @@ let package = Package(
         .executable(name: "drbench", targets: ["drbench"]),
     ],
     dependencies: [
-        // Keep dependency resolution reproducible. Update this revision
-        // deliberately alongside Package.resolved after compatibility checks.
-        .package(
-            url: "https://github.com/apple/swift-markdown.git",
-            revision: "27b7fc1a19068bcea3d2072db0ce86360d1400ed"
-        ),
+        // Pinned upstream sources with a measured cmark conversion patch.
+        // Vendor/swift-markdown/PATCHES.md records provenance and verification.
+        .package(path: "Vendor/swift-markdown"),
         // SwiftMath is vendored, not fetched: its generated `Bundle.module`
         // accessor resolves only on the machine that compiled it and calls
         // `fatalError` everywhere else, so a shipped bundle needs a three-line

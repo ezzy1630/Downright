@@ -348,7 +348,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         adopt(controller)
-        SpotlightIndexer.indexOpenedDocument(at: url)
+        let parsed = controller.markdownDocument.parsed
+        // Keep the importer's bounded large-file path. Ordinary documents can
+        // index the same immutable snapshot the editor just opened.
+        let openedURL = controller.markdownDocument.url ?? url
+        let byteCount = try? openedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        let canReuse = SpotlightMetadataImporter.accepts(url)
+            && byteCount.map { $0 <= 2 * 1024 * 1024 } == true
+        let metadata = canReuse ? SpotlightMetadataImporter.metadata(for: parsed, url: url) : nil
+        SpotlightIndexer.indexOpenedDocument(at: url, metadata: metadata)
         dismissStartWindow()
         controller.showWindow(nil)
         if let tabHost, let window = controller.window, tabHost !== window {

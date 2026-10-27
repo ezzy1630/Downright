@@ -55,7 +55,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         }
 
         guard let storage = context.storage, source.location < storage.length,
-              let payload = codePayload(in: storage, paragraph: source)
+              let payload = Self.payload(in: storage, paragraph: source)
         else { return plain() }
 
         // Source mode never renders objects — that is the whole point of it.
@@ -142,7 +142,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         // nested block — the parser leaves the leading spaces out of the
         // block's range (e.g. 79 vs the line start 77) — so the `.drMarker`
         // sits after the whitespace run, never at the paragraph's start.
-        let isFence = paragraphContainsFenceMarker(in: storage, paragraph: source)
+        let isFence = Self.paragraphContainsFenceMarker(in: storage, paragraph: source)
         let role: CodeBlockFragment.Role
         if isFence, source.location <= block.location { role = .openChrome }
         else if isFence, source.upperBound >= block.upperBound { role = .closeChrome }
@@ -182,7 +182,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     /// starts inside this paragraph.  A continuation paragraph (an item's
     /// second paragraph, a fence body) has no block starting on it, keeps the
     /// enclosing payload, and still renders as continuation.
-    private func codePayload(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
+    static func payload(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
         let start = storage.attribute(.drFragment, at: source.location, effectiveRange: nil) as? FragmentPayload
         // Code keeps first refusal.  Its probe is deliberately more generous
         // than the container prefix below — a fence may sit behind list and
@@ -200,7 +200,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     /// marker or an ordered-list digit.  Those belong to the item whose payload
     /// is being resolved, and skipping them would walk past the very block this
     /// is meant to find and into whatever nests inside it.
-    private func innermostPayloadAfterIndent(
+    private static func innermostPayloadAfterIndent(
         in storage: NSTextStorage, paragraph source: NSRange
     ) -> FragmentPayload? {
         let probe = containerPrefixEnd(in: storage, paragraph: source)
@@ -216,7 +216,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     }
 
     /// End of the leading *container* prefix: indentation and `>` markers.
-    private func containerPrefixEnd(in storage: NSTextStorage, paragraph source: NSRange) -> Int {
+    private static func containerPrefixEnd(in storage: NSTextStorage, paragraph source: NSRange) -> Int {
         let end = min(source.upperBound, source.location + 256)
         let text = storage.string as NSString
         var probe = source.location
@@ -229,7 +229,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return probe
     }
 
-    private func codePayloadAfterWhitespace(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
+    private static func codePayloadAfterWhitespace(in storage: NSTextStorage, paragraph source: NSRange) -> FragmentPayload? {
         let probe = firstNonWhitespaceOffset(in: storage, paragraph: source)
         guard probe > source.location, probe < source.upperBound,
               let payload = storage.attribute(.drFragment, at: probe, effectiveRange: nil) as? FragmentPayload,
@@ -238,7 +238,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return payload
     }
 
-    private func isCode(_ kind: FragmentKind) -> Bool {
+    private static func isCode(_ kind: FragmentKind) -> Bool {
         switch kind {
         case .codeBlock, .collapsedCodeBlock: return true
         default: return false
@@ -249,7 +249,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     /// past the leading whitespace a nested fence inherits from its source
     /// line.  Only fences are marker-attributed inside a code block, so a hit
     /// anywhere on the line means "this line is chrome".
-    private func paragraphContainsFenceMarker(in storage: NSTextStorage, paragraph source: NSRange) -> Bool {
+    private static func paragraphContainsFenceMarker(in storage: NSTextStorage, paragraph source: NSRange) -> Bool {
         let probe = firstNonWhitespaceOffset(in: storage, paragraph: source)
         guard probe < source.upperBound else { return false }
         return storage.attribute(.drMarker, at: probe, effectiveRange: nil) != nil
@@ -262,7 +262,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     /// Over-skipping is harmless — the callers only accept a *code* payload or
     /// fence marker, and those exist solely at genuine block starts — so the
     /// skip set is deliberately generous.
-    private func firstNonWhitespaceOffset(in storage: NSTextStorage, paragraph source: NSRange) -> Int {
+    private static func firstNonWhitespaceOffset(in storage: NSTextStorage, paragraph source: NSRange) -> Int {
         let end = min(source.upperBound, source.location + 256)
         let text = storage.string as NSString
         var probe = source.location

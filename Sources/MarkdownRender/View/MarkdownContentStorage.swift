@@ -164,7 +164,10 @@ final class MarkdownContentStorage: DRTextContentStorage {
 
     private func element(at index: Int, storage: NSTextStorage) -> NSTextParagraph {
         if let cached = elementCache[index] { return cached }
+        return autoreleasepool { makeElement(at: index, storage: storage) }
+    }
 
+    private func makeElement(at index: Int, storage: NSTextStorage) -> NSTextParagraph {
         let sourceRange = sourceRanges[index]
         let anchored = Self.anchoringLeadingStyle(
             displayMap.displayString(forSourceRange: sourceRange, in: storage)

@@ -78,6 +78,33 @@ struct SmartPasteIntegrationTests {
         #expect(pasteboard.data(forType: .rtf) != nil)
     }
 
+    @Test("Source typography stays uniform across incremental parse commits")
+    func sourceTypographySurvivesIncrementalCommit() throws {
+        let text = "# Heading **bold**\n\nA paragraph with `code`.\n"
+        let storage = NSTextStorage(string: text)
+        let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage)
+        view.mode = .source
+        let first = MarkdownParser.parse(text)
+        view.update(document: first, dirty: .wholesale)
+        let insertion = (text as NSString).range(of: "Heading").upperBound
+        storage.replaceCharacters(in: NSRange(location: insertion, length: 0), with: " changed")
+        let fresh = MarkdownParser.parse(storage.string)
+        view.update(document: fresh, dirty: ASTDiff.dirtySet(old: first, new: fresh))
+        let font = view.styleSheet.monoFont()
+        let whole = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.font, in: whole) { value, _, _ in
+            #expect((value as? NSFont)?.fontName == font.fontName)
+            #expect((value as? NSFont)?.pointSize == font.pointSize)
+        }
+        storage.enumerateAttribute(.paragraphStyle, in: whole) { value, _, _ in
+            let style = value as? NSParagraphStyle
+            #expect(style?.minimumLineHeight == view.styleSheet.lineHeight)
+            #expect(style?.paragraphSpacingBefore == 0)
+            #expect(style?.paragraphSpacing == 0)
+        }
+        #expect(storage.string == text.replacingOccurrences(of: "Heading", with: "Heading changed"))
+    }
+
     @Test("scoped and full Source Focus are explicit and reversible")
     func sourceFocusLifecycle() {
         let source = "First **line**.\nSecond line.\n"

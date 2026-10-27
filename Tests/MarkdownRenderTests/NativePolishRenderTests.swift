@@ -132,4 +132,15 @@ struct NativePolishRenderTests {
         #expect(attachedElementCounts.allSatisfy { $0 > 0 })
         #expect(attachedElementCounts[0] == attachedElementCounts[1])
     }
+    @Test func largeDocumentOriginMatchesNativeGeometry() {
+        let text = String(repeating: "שלום café **bold**\n\n", count: 2_100)
+        let storage = NSTextStorage(string: text)
+        let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage)
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        for inset in [NSSize(width: 44, height: 36), NSSize(width: 20, height: 10)] {
+            view.textContainerInset = inset
+            #expect(view.textContainerOrigin == view.nativeTextContainerOriginForTesting)
+        }
+    }
+
 }

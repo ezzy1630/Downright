@@ -17,12 +17,11 @@ public enum TextDiff {
         if old == new { return [] }
         let oldNS = old as NSString
         let newNS = new as NSString
-        let oldLines = lines(of: oldNS)
-        let newLines = lines(of: newNS)
+        let (oldLines, oldHashes) = indexedLines(of: oldNS)
+        let (newLines, newHashes) = indexedLines(of: newNS)
 
         guard let script = Myers.diff(
-            oldLines.map { FNV.hash(oldNS, range: $0) },
-            newLines.map { FNV.hash(newNS, range: $0) }
+            oldHashes, newHashes
         ) else {
             // Beyond the distance cap the documents have nothing in common;
             // one whole-document hunk is both true and instant.
@@ -114,6 +113,42 @@ public enum TextDiff {
     }
 
     // MARK: Line and word tokenisation
+
+    /// Read the source once for both line boundaries and hashes. Calling
+    /// NSString per character, then copying each line again to hash it,
+    /// dominated small external rewrites of otherwise unchanged documents.
+    private static func indexedLines(of text: NSString) -> ([NSRange], [UInt64]) {
+        let count = text.length
+        return withUnsafeTemporaryAllocation(of: unichar.self, capacity: count) { units in
+            guard let base = units.baseAddress, count > 0 else { return ([], []) }
+            text.getCharacters(base, range: NSRange(location: 0, length: count))
+            var lines: [NSRange] = []
+            var hashes: [UInt64] = []
+            var start = 0
+            var index = 0
+            var hash = FNV.offsetBasis
+            while index < count {
+                let unit = base[index]
+                hash = FNV.combine(hash, utf16: base + index, count: 1)
+                index += 1
+                if unit == 0x0D, index < count, base[index] == 0x0A {
+                    hash = FNV.combine(hash, utf16: base + index, count: 1)
+                    index += 1
+                } else if unit != 0x0D, unit != 0x0A {
+                    continue
+                }
+                lines.append(NSRange(location: start, length: index - start))
+                hashes.append(hash)
+                start = index
+                hash = FNV.offsetBasis
+            }
+            if start < count {
+                lines.append(NSRange(location: start, length: count - start))
+                hashes.append(hash)
+            }
+            return (lines, hashes)
+        }
+    }
 
     /// Lines including their terminators, so a hunk's range covers whole lines
     /// and re-decoration never lands mid-line.

@@ -16,7 +16,7 @@ pipeline. Do not replace a failed measurement with a claim.
 | Document↔Source swipe, per tracking frame | <1 ms | `PresentationSwipeBudgetTests` | Below target |
 | Quick Look preview | <400 ms | Preview extension render | p95 below target · *no automated measurement yet — manual* |
 | Quick Look peak memory | <60 MB | Resident memory polling | Never exceeds target |
-| 1 MB document memory | <150 MB | App open and idle measurement | Peak below target · *manual release gate* |
+| 1 MB document memory | <150 MB | Fresh native session; kernel lifetime physical-footprint counter | Peak below 150,000,000 bytes · *manual release gate* |
 | Quick Look safety fallback | 60 MB | Memory guard | Plain text fallback above guard |
 | Large Quick Look file | 2 MB | Preview policy | Initial blocks plus Open in App |
 
@@ -46,6 +46,61 @@ the live text view with the mode change already applied behind the still.
 The 8 ms keystroke target is the P0 architecture gate. Semantic parsing runs
 outside this synchronous path. Its result is revision checked before the app
 applies dirty decoration.
+
+## Release pipeline comparison (2026-10-27)
+
+All ten unchanged pipeline cases exceed the requested 25% improvement. These
+are Apple M4 / macOS 27.0 release measurements against a fresh same-machine
+baseline at `ce2cad6deb287fa34d3561615c6655e3eb29a17e`. The candidate is the
+uncommitted performance snapshot identified in [the evidence manifest](Benchmarks/2026-10-27/snapshot.json).
+Each candidate value below is the worst p95 from three isolated runs, with the
+original sample counts. The comparison checks conservative bounds for the
+benchmark's 0.001 ms rounding.
+
+| Measurement | Baseline p95 | Candidate p95 | Faster |
+|---|---:|---:|---:|
+| cmark conversion | 13.947 ms | 8.707 ms | 37.6% |
+| Full parse | 30.876 ms | 19.190 ms | 37.8% |
+| AST diff | 0.031 ms | 0.017 ms | 45.2% |
+| Text diff | 1.617 ms | 0.436 ms | 73.0% |
+| Incremental decoration | 0.117 ms | 0.061 ms | 47.9% |
+| Wholesale decoration | 162.957 ms | 67.489 ms | 58.6% |
+| Typing/storage | 0.159 ms | 0.089 ms | 44.0% |
+| Semantic convergence | 28.521 ms | 18.949 ms | 33.6% |
+| Parse 100 KB | 23.512 ms | 15.696 ms | 33.2% |
+| Syntax highlighting | 0.115 ms | 0.060 ms | 47.8% |
+
+The pipeline corpus remains 120,825 characters / 4,885 lines, and the cold-parse
+corpus is exactly 100,000 characters. The historical 100 KB row below used an
+older corpus; it is not the baseline for these percentages. These measurements
+cover parsing, diffing, storage and decoration; they do not establish first-pixel
+time, visible scroll frames, or complete native transition latency.
+
+[Raw runs and machine/artifact identity](Benchmarks/2026-10-27/snapshot.json) ·
+[Machine-readable comparison](Benchmarks/2026-10-27/timings.json) ·
+[Source gate](Benchmarks/2026-10-27/source-gate.txt)
+
+### Native memory certification is incomplete
+
+The latest isolated native release host opened the unchanged 1,032,709-byte
+stress document with a **126.2 MB lifetime peak**. That is an open-only
+observation, not an interactive-session certificate. The latest executable and
+source digest are recorded in [the native observation](Benchmarks/2026-10-27/native-open-only.json).
+
+Earlier interactive trials still exceeded 150 MB. The last change releases the
+previous parsed tree before fresh decoration/layout during synchronous undo;
+an actual document-class regression failed before the change and passes after
+it. Three complete fresh native sessions on that final snapshot remain required.
+Native control then returned `cgWindowNotFound`, preventing those repeats.
+The separately built Xcode UI runner also [timed out enabling automation mode](Benchmarks/2026-10-27/ui-automation-blocker.txt).
+The packaged app, CLI, Spotlight importer and both Finder extensions passed
+[structural bundle verification](Benchmarks/2026-10-27/packaged-verification.txt).
+
+Do not call the 150 MB session target certified or publish this snapshot on the
+strength of the open-only result. The source gate passed 1,459 Swift tests and
+42 script checks, with the two existing headless known-issue sites. Finder
+Spacebar preview, thumbnail registration, native frame delivery and production
+updater behavior remain separate acceptance surfaces.
 
 ## Local optimization check (2026-10-25)
 
@@ -110,7 +165,7 @@ bound decoration temporaries. Speech, clipboard, theme, projected-edit, and
 caret checks cover the dependent paths. An additional per-marker pool experiment
 did not improve the fresh-open peak and was removed.
 
-The 150 MB **peak** target is still unmet by this stress case. These session
+At that snapshot, the 150 MB **peak** target was unmet by this stress case. Those session
 numbers do not establish a universal memory ceiling or a 120 Hz scroll budget.
 
 ## Historical pipeline baseline

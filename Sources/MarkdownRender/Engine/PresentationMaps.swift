@@ -277,7 +277,11 @@ final class LayoutMapBuilder {
     func layoutDisplayMap(
         from logical: DisplayMap, paragraphs: ParagraphIndex, storage: NSTextStorage?
     ) -> DisplayMap {
-        let substitutions = logical.substitutions.map { layoutSubstitution($0, storage: storage) }
+        let logicalSubstitutions = logical.substitutions
+        if logicalSubstitutions.allSatisfy(\.isHidden) {
+            return logical.stylingHiddenMarkersFromSource()
+        }
+        let substitutions = logicalSubstitutions.map { layoutSubstitution($0, storage: storage) }
         return DisplayMap(paragraphs: paragraphs, substitutions: substitutions)
     }
 

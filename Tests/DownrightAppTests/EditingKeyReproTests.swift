@@ -27,6 +27,28 @@ struct EditingKeyReproTests {
         #expect(elements < 1_000)
     }
 
+    @Test("derived UI and native drawing keep a large task document lazy")
+    func largeTaskDocumentRemainsLazyAfterDerivedUIRefresh() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-lazy-tasks-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = (1...1_200).map {
+            "## Section \($0)\n\nA paragraph with **bold**, `code`, and a [link](https://example.com).\n\n- [ ] Task \($0) café 😀\n- [x] Done\n\n"
+        }.joined()
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        controller.refreshDerivedUI()
+        controller.primaryContainer.textView.prepareForDisplay()
+        let elements = controller.primaryContainer.textView.cachedLayoutElementCountForTesting
+        print("LAZY_TASK_OPEN materialized elements: \(elements)")
+        #expect(elements > 0)
+        #expect(elements < 1_000)
+        #expect(controller.markdownDocument.text == text)
+    }
+
     @discardableResult
     private func pumpMainRunLoop(
         until condition: () -> Bool,

@@ -5,6 +5,11 @@ import Testing
 
 @testable import MarkdownRender
 
+private final class ListUndoHostView: NSView {
+    let manager = UndoManager()
+    override var undoManager: UndoManager? { manager }
+}
+
 /// Nested lists are the shape agent-written markdown arrives in, and two
 /// defects made them read wrong in opposite directions.
 ///
@@ -29,6 +34,67 @@ import Testing
 @Suite("List ornaments and task completion")
 @MainActor
 struct ListOrnamentTests {
+
+    @Test("Task labels do not retain unique fragment metadata")
+    func taskLabelsKeepOrnamentMetadataOnMarkers() {
+        let source = "- [ ] repeated label\n- [ ] repeated label\n"
+        let container = Self.makeContainer(source)
+        let storage = container.textView.textStorage!
+        let tasks = container.textView.parsedDocument.tasks
+        #expect(tasks.count == 2)
+        for task in tasks {
+            #expect(storage.attribute(.drFragment, at: task.contentRange.location, effectiveRange: nil) == nil)
+            let hit = container.textView.fragmentPayload(atSourceOffset: task.contentRange.location)
+            #expect(hit?.payload.kind == .listOrnament)
+            #expect(hit?.payload.sourceRange.contains(offset: task.markRange.location) == true)
+        }
+        #expect(Self.drawnOrnaments(in: container).count == 2)
+        #expect(storage.string == source)
+    }
+
+    @Test("A list label inside a callout resolves its own ornament")
+    func listInsideCalloutResolvesOwnMetadata() {
+        let source = "> [!NOTE]\n>\n> - a label\n>\n>   a continuation\n"
+        let container = Self.makeContainer(source)
+        let label = (source as NSString).range(of: "a label")
+        let hit = container.textView.fragmentPayload(atSourceOffset: label.location)
+        #expect(hit?.payload.kind == .listOrnament)
+        #expect(hit?.payload.sourceRange.contains(offset: label.location) == true)
+        #expect(Self.drawnOrnaments(in: container).count == 1)
+    }
+
+    @Test("Task ornament lookup survives an edit, incremental commit, and undo", arguments: ["a label", "continuation"])
+    func taskLabelEditKeepsOrnamentPrefix(needle: String) throws {
+        let source = "- [ ] a label\n\n  continuation\n\n- [ ] next\n"
+        let container = Self.makeContainer(source)
+        let host = ListUndoHostView()
+        host.addSubview(container)
+        host.manager.groupsByEvent = false
+        let view = container.textView
+        view.mode = .live
+        let previous = view.parsedDocument
+        let task = try #require(previous.tasks.first)
+        let originalPayload = try #require(view.fragmentPayload(atSourceOffset: task.contentRange.location)?.payload)
+        let originalEnd = originalPayload.sourceRange.upperBound
+        let insertion = (source as NSString).range(of: needle).location + 2
+        host.manager.beginUndoGrouping()
+        view.insertText("x", replacementRange: NSRange(location: insertion, length: 0))
+        host.manager.endUndoGrouping()
+        #expect(originalPayload.sourceRange.upperBound == originalEnd + 1)
+        let fresh = MarkdownParser.parse(view.string)
+        view.update(document: fresh, dirty: ASTDiff.dirtySet(old: previous, new: fresh))
+        let current = try #require(fresh.tasks.first)
+        let hit = view.fragmentPayload(atSourceOffset: current.contentRange.location)
+        #expect(hit?.payload.kind == .listOrnament)
+        #expect(Self.drawnOrnaments(in: container).count == 2)
+        #expect(host.manager.canUndo)
+        host.manager.undo()
+        let restored = MarkdownParser.parse(view.string)
+        view.update(document: restored, dirty: ASTDiff.dirtySet(old: fresh, new: restored))
+        #expect(view.string == source)
+        #expect(view.fragmentPayload(atSourceOffset: task.contentRange.location)?.payload.kind == .listOrnament)
+        #expect(Self.drawnOrnaments(in: container).count == 2)
+    }
 
     private static func makeContainer(_ text: String) -> MarkdownContainerView {
         let storage = NSTextStorage(string: text)

@@ -8,6 +8,23 @@ import Testing
 @Suite("Content resize")
 @MainActor
 struct ContentResizeTests {
+    @Test("display repairs a native frame narrower than its text container")
+    func displayRestoresContainerWidthAfterNativeShrink() throws {
+        let text = "A paragraph with enough source text and a [link](https://example.com/longer/path) to use the full column.\n"
+        let pane = MarkdownContainerView(storage: NSTextStorage(string: text))
+        pane.frame = NSRect(x: 0, y: 0, width: 1_020, height: 700)
+        pane.layoutSubtreeIfNeeded()
+        let view = pane.textView
+        view.mode = .source
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.minSize = .zero
+        view.setFrameSize(NSSize(width: 200, height: view.frame.height))
+        view.prepareForDisplay()
+        let required = try #require(view.textContainer).size.width + 2 * view.textContainerInset.width
+        #expect(view.frame.width >= required)
+        #expect(view.string == text)
+    }
+
     @discardableResult
     private func pumpMainQueue(
         until condition: () -> Bool,

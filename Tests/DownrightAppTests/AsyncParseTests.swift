@@ -6,6 +6,35 @@ import MarkdownCore
 @Suite(.serialized)
 struct AsyncParseTests {
     @Test @MainActor
+    func synchronousCommitReleasesPreviousTreeBeforePresentation() {
+        let document = MarkdownDocument()
+        defer { document.close() }
+        document.adopt(text: "# Old\n\nOriginal paragraph.\n", displayURL: nil)
+        weak var previousRoot = document.parsed.root
+        #expect(document.replace(NSRange(location: 2, length: 3), with: "New", actionName: "Edit"))
+        var committed = false
+        document.onReparse = { _, _ in
+            committed = true
+            #expect(previousRoot == nil)
+        }
+        document.ensureParsedCurrent()
+        #expect(committed)
+    }
+    @Test @MainActor
+    func openingDocumentIsFullyParsedBeforeFirstPresentation() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-complete-open-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let text = "# Complete open\n\nAn inline $x + y$ formula and `src/main.swift:42`.\n"
+        try text.write(to: file, atomically: true, encoding: .utf8)
+        let document = MarkdownDocument()
+        defer { document.close() }
+        try document.open(file)
+        #expect(document.text == text)
+        #expect(document.parsed.pathTokens.map(\.token.rawPath) == ["src/main.swift"])
+    }
+
+    @Test @MainActor
     func externalAbsorbPublishesBoundedIncrementalRender() async throws {
         let document = MarkdownDocument()
         let initial = "# One\n\nA calm paragraph.\n"

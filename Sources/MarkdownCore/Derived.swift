@@ -286,6 +286,9 @@ struct DerivedStructures {
     /// panel reads like the document without the `**`/`` ` `` scaffolding.
     private static func plainInlineText(_ source: String) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.utf8.contains(0x2A) || trimmed.utf8.contains(0x5F) || trimmed.utf8.contains(0x60) else {
+            return trimmed
+        }
         var text = trimmed.replacingOccurrences(of: "**", with: "")
         text = text.replacingOccurrences(of: "__", with: "")
         text = text.replacingOccurrences(of: "*", with: "")

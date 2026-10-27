@@ -1,0 +1,46 @@
+==> Verifying .build-perf-xcode-20261027/Build/Products/Release/Downright.app
+    ok  Sparkle.framework embedded
+    ok  Sparkle Downloader XPC helper
+    ok  Sparkle Installer XPC helper
+    ok  Sparkle Autoupdate helper
+    ok  Sparkle Updater app
+    ok  no absolute dylib paths (offending:  )
+    ok  bundle-relative rpath present
+    ok  all nested binaries support the host architectures
+    ok  down CLI embedded
+    ok  PrivacyInfo.xcprivacy present
+    ok  privacy manifest declares UserDefaults (CA92.1)
+    ok  privacy manifest declares file timestamps (C617.1)
+    ok  host carries the MarkdownRender themes
+    ok  host carries the SwiftMath math fonts
+    ok  Spotlight importer embedded
+    ok  Spotlight importer executable present
+    ok  Spotlight importer schema present
+    ok  Spotlight importer is a CFPlugIn bundle
+    ok  Spotlight importer executable name
+    ok  Spotlight importer declares the MDImporter plug-in type
+    ok  Spotlight importer claims Markdown UTI
+    ok  Spotlight importer has no absolute build-machine dylib paths
+    ok  DownrightQL.appex embedded
+    ok  DownrightThumb.appex embedded
+    ok  DownrightQL.appex carries the MarkdownRender themes
+    ok  DownrightQL.appex carries the SwiftMath math fonts
+    ok  DownrightQL.appex retains App Sandbox entitlement
+    ok  DownrightQL.appex omits get-task-allow
+    ok  DownrightThumb.appex carries the MarkdownRender themes
+    ok  DownrightThumb.appex carries the SwiftMath math fonts
+    ok  DownrightThumb.appex retains App Sandbox entitlement
+    ok  DownrightThumb.appex omits get-task-allow
+    ok  Spotlight importer marketing version matches host
+    ok  Spotlight importer build version matches host
+    ok  Spotlight importer identifier follows host
+    ok  DownrightQL.appex marketing version matches host
+    ok  DownrightQL.appex build version matches host
+    ok  DownrightQL.appex identifier follows host
+    ok  DownrightThumb.appex marketing version matches host
+    ok  DownrightThumb.appex build version matches host
+    ok  DownrightThumb.appex identifier follows host
+    ok  CFBundleVersion '9310.16.18' is numeric
+    ok  updater-disabled configuration (dev bundle)
+
+verify-bundle: bundle layout OK

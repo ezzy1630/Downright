@@ -21,6 +21,14 @@ struct SyntaxTests {
 
     private let highlighter = BuiltinSyntaxHighlighter.shared
 
+    @Test("CSS custom properties and vendor prefixes retain the full identifier")
+    func cssHyphenatedIdentifiers() {
+        let code = "--main: red; -webkit-transform: none; width: -5px;"
+        let runs = highlighter.highlight(code, language: "css")
+        expectToken("--main", is: .attribute, in: code, runs: runs, language: "css")
+        expectToken("-webkit-transform", is: .attribute, in: code, runs: runs, language: "css")
+    }
+
     // MARK: - Language registry
 
     @Test("Supported languages cover the spec list")

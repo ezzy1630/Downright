@@ -371,7 +371,7 @@ struct RealWindowPerformanceTests {
         let textView = fixture.controller.primaryContainer.textView
         let length = fixture.controller.markdownDocument.storage.length
         let initialConverged = await awaitCondition(timeout: 30) {
-            fixture.controller.markdownDocument.lastAsyncParseRevision
+            fixture.controller.markdownDocument.lastCompletedParseRevision
                 == fixture.controller.markdownDocument.revision
         }
         #expect(initialConverged, "initial 10k parse did not converge before external-rewrite measurement")

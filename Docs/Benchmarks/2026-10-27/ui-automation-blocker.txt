@@ -1,0 +1,32 @@
+==> Running activated-app acceptance tests
+    result bundle: /private/tmp/downright-perf-20261027/checkout/.build-perf-xcode-20261027/TestResults/20261027T114952-32072.xcresult
+Command line invocation:
+    /Volumes/Neural/Applications/Xcode-26.6.app/Contents/Developer/usr/bin/xcodebuild test-without-building -resultBundlePath /private/tmp/downright-perf-20261027/checkout/.build-perf-xcode-20261027/TestResults/20261027T114952-32072.xcresult -xctestrun /private/tmp/downright-perf-20261027/checkout/.build-perf-xcode-20261027/Build/Products/Downright_macosx27.0-arm64-x86_64.xctestrun -destination platform=macOS,arch=arm64 "-only-testing:DownrightUITests" -parallel-testing-enabled NO -test-timeouts-enabled YES
+
+Writing result bundle at path:
+	/private/tmp/downright-perf-20261027/checkout/.build-perf-xcode-20261027/TestResults/20261027T114952-32072.xcresult
+
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+{ platform:macOS, arch:arm64, id:00008132-000E719E210B801C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:Mac Catalyst, id:00008132-000E719E210B801C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:DriverKit, id:00008132-000E719E210B801C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:00008132-000E719E210B801C, name:My Mac }
+2026-10-27 04:49:55.289674-0700 DownrightUITests-Runner[34888:40670225] [Default] Running tests...
+2026-10-27 04:50:55.419222-0700 DownrightUITests-Runner[34888:40670225] [Default] Failed to initialize for UI testing: Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 "Timed out while enabling automation mode." UserInfo={NSLocalizedDescription=Timed out while enabling automation mode.}
+
+
+*** If you believe this error represents a bug, please attach the result bundle at /tmp/downright-perf-20261027/checkout/.build-perf-xcode-20261027/TestResults/20261027T114952-32072.xcresult
+
+2026-10-27 04:51:11.019 xcodebuild[34880:40670025] [MT] IDETestOperationsObserverDebug: 76.950 elapsed -- Testing started completed.
+2026-10-27 04:51:11.019 xcodebuild[34880:40670025] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-10-27 04:51:11.019 xcodebuild[34880:40670025] [MT] IDETestOperationsObserverDebug: 76.950 sec, +76.950 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/downright-perf-20261027/checkout/.build-perf-xcode-20261027/TestResults/20261027T114952-32072.xcresult
+
+Testing failed:
+	DownrightUITests-Runner (34888) encountered an error (The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.))
+
+** TEST EXECUTE FAILED **
+
+Testing started

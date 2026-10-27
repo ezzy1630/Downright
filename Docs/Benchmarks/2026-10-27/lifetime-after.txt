@@ -1,0 +1,50 @@
+Building for debugging...
+[Computing dependencies]
+[Provisioning 3 / 40]
+[Using on-disk description]
+[3 / 13] Downright-product
+[3 / 13] DownrightApp
+[7 / 17] DownrightApp
+[7 / 17] Downright-product
+[15 / 22] DownrightApp
+[15 / 24] DownrightApp
+[15 / 24] Downright-product
+[16 / 24] Downright-product
+[18 / 20] DownrightAppTests-product
+[20 / 22] DownrightAppTests-product
+Build complete! (19.71 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite AsyncParseTests started.
+◇ Test synchronousCommitReleasesPreviousTreeBeforePresentation() started.
+✔ Test synchronousCommitReleasesPreviousTreeBeforePresentation() passed after 0.007 seconds.
+◇ Test openingDocumentIsFullyParsedBeforeFirstPresentation() started.
+✔ Test openingDocumentIsFullyParsedBeforeFirstPresentation() passed after 0.005 seconds.
+◇ Test externalAbsorbPublishesBoundedIncrementalRender() started.
+✔ Test externalAbsorbPublishesBoundedIncrementalRender() passed after 0.006 seconds.
+◇ Test externalAbsorbUndoRedoDoesNotConsumeNextLocalEdit() started.
+✔ Test externalAbsorbUndoRedoDoesNotConsumeNextLocalEdit() passed after 0.007 seconds.
+◇ Test semanticEditConvergesBeforeReadingTree() started.
+✔ Test semanticEditConvergesBeforeReadingTree() passed after 0.001 seconds.
+◇ Test undoAndRedoLockViewportAndReparseBeforeReturning() started.
+✔ Test undoAndRedoLockViewportAndReparseBeforeReturning() passed after 0.001 seconds.
+◇ Test groupedUndoLocksOnceForSeveralInverseEdits() started.
+✔ Test groupedUndoLocksOnceForSeveralInverseEdits() passed after 0.001 seconds.
+◇ Test injectedWorkerRunsPureParseAndDiff() started.
+✔ Test injectedWorkerRunsPureParseAndDiff() passed after 0.001 seconds.
+◇ Test latestRevisionWinsWithOneInFlightWorker() started.
+✔ Test latestRevisionWinsWithOneInFlightWorker() passed after 0.001 seconds.
+◇ Test burstKeepsOnlyLatestPendingSnapshot() started.
+✔ Test burstKeepsOnlyLatestPendingSnapshot() passed after 0.001 seconds.
+◇ Test closeDropsQueuedParseBeforeWorkerStarts() started.
+✔ Test closeDropsQueuedParseBeforeWorkerStarts() passed after 0.001 seconds.
+◇ Test closeRejectsInFlightParseResult() started.
+✔ Test closeRejectsInFlightParseResult() passed after 0.001 seconds.
+◇ Test reopenAfterCloseAcceptsTheNewestSnapshot() started.
+✔ Test reopenAfterCloseAcceptsTheNewestSnapshot() passed after 0.001 seconds.
+◇ Test sourceEditPathNeverParsesSynchronously() started.
+[typing response] p95 0.007541 ms (informational; budget enforced by drbench)
+✔ Test sourceEditPathNeverParsesSynchronously() passed after 0.049 seconds.
+✔ Suite AsyncParseTests passed after 0.080 seconds.
+✔ Test run with 14 tests in 1 suite passed after 0.080 seconds.

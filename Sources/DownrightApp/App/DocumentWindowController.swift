@@ -100,7 +100,8 @@ final class DocumentWindowController: NSWindowController {
     /// document while keeping the surface out of the document's glass group.
     private var floatingPanelWindow: FloatingPanelWindow?
     var isTaskPanelFloating: Bool {
-        floatingSurface != nil && inspectorHost?.selectedSection == .tasks
+        guard let surface = floatingSurface, !surface.isDismissing else { return false }
+        return inspectorHost?.selectedSection == .tasks
     }
     /// The surface's resting frame in screen space, remembered so a retarget
     /// can still aim after the dismissal hands the glass off early.
@@ -379,7 +380,7 @@ final class DocumentWindowController: NSWindowController {
         applyRenderConfiguration()
         primaryContainer.textView.zoomLevel = markdownDocument.state.zoomLevel
         primaryContainer.textView.foldedHeadingSlugs = markdownDocument.state.foldedHeadings
-        // Structure-only tree is ready; full decoration follows via onReparse.
+        // The full initial tree is ready before the first decoration.
         primaryContainer.textView.update(
             document: markdownDocument.parsed,
             dirty: .wholesale,
@@ -1249,10 +1250,8 @@ final class DocumentWindowController: NSWindowController {
         let parsed = markdownDocument.parsed
         let source = containerTextView
         let metrics = sectionMetrics(for: parsed)
-        if let taskPanel {
-            taskPanel.tasks = parsed.tasks
-            taskPanel.headings = parsed.headings
-            taskPanel.reload()
+        if let taskPanel, isTaskPanelFloating {
+            taskPanel.update(tasks: parsed.tasks, headings: parsed.headings)
             refitFloatingSurface()
         }
         frontMatterEditor?.document = parsed
@@ -1984,7 +1983,8 @@ final class DocumentWindowController: NSWindowController {
         guard let surface = floatingSurface,
               let panelWindow = floatingPanelWindow,
               panelWindow.parent === window,
-              surface.window === panelWindow else { return }
+              surface.window === panelWindow,
+              !surface.isDismissing else { return }
         panelWindow.orderFrontRegardless()
         if !panelWindow.isKeyWindow { panelWindow.makeKey() }
     }
@@ -2011,13 +2011,11 @@ final class DocumentWindowController: NSWindowController {
             }
             taskPanel = panel
         }
-        panel.tasks = markdownDocument.parsed.tasks
-        panel.headings = markdownDocument.parsed.headings
-        panel.onClose = { [weak self] in self?.closeTaskPanel() }
         // Build the final row model before the floating surface measures its
         // target. Measuring while the empty model is still installed reserves
         // the empty-state height and leaves dead space after the rows arrive.
-        panel.reload()
+        panel.update(tasks: markdownDocument.parsed.tasks, headings: markdownDocument.parsed.headings)
+        panel.onClose = { [weak self] in self?.closeTaskPanel() }
         showInInspector(panel, section: .tasks)
         progressRing.isActive = true
     }
@@ -2130,6 +2128,7 @@ final class DocumentWindowController: NSWindowController {
         let restore = floatingFocusRestoreView
         dismissFloatingSurface()
         if restoringFocus {
+            window?.makeKey()
             if let restore, restore.window === window {
                 window?.makeFirstResponder(restore)
             } else {

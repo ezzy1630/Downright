@@ -1,0 +1,14 @@
+{
+  "pid": 35018,
+  "phase": "latest-open-only",
+  "physical_mib": 100.54806518554688,
+  "peak_physical_mib": 120.34494018554688,
+  "resident_mib": 38.328125,
+  "scope": "Fresh open only; interactive memory NOT certified",
+  "artifact_sha256": "800bd07bdbdbaf700002d63ac3e93d96a68dd42e0b8690f49184f4d9713892b6",
+  "source_sha256": "41dc1830e018d7ef2486a491e7b653519c1b8c9f97f02f05009350a9833ec953",
+  "source_bytes": 1032709,
+  "completed_actions": [
+    "open"
+  ]
+}

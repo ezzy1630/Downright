@@ -148,9 +148,24 @@ extension MarkdownTextView {
     }
 
     func fragmentPayload(atSourceOffset offset: Int) -> (payload: FragmentPayload, range: NSRange)? {
-        guard let hit = attribute(.drFragment, atSourceOffset: offset),
-              let payload = hit.value as? FragmentPayload else { return nil }
-        return (payload, hit.range)
+        let hit = attribute(.drFragment, atSourceOffset: offset)
+        let direct = hit?.value as? FragmentPayload
+        if let hit, let payload = direct,
+           payload.kind != .callout, payload.kind != .listOrnament {
+            return (payload, hit.range)
+        }
+        guard let storage = textStorage, offset >= 0, offset < storage.length else { return nil }
+        let paragraph = (storage.string as NSString).paragraphRange(for: NSRange(location: offset, length: 0))
+        if let payload = FragmentProvider.payload(in: storage, paragraph: paragraph),
+           payload.kind == .listOrnament, payload.sourceRange.contains(offset: offset) {
+            let isInnermost = direct.map {
+                payload.sourceRange.location >= $0.sourceRange.location
+                    && payload.sourceRange.upperBound <= $0.sourceRange.upperBound
+            } ?? true
+            if isInnermost { return (payload, payload.sourceRange) }
+        }
+        if let hit, let direct { return (direct, hit.range) }
+        return nil
     }
 
     // MARK: - Hover (§7.1)
@@ -834,12 +849,12 @@ extension MarkdownTextView {
     private func projectFragmentPayloads(across range: NSRange, insertedLength: Int) {
         guard let storage = textStorage, storage.length > 0 else { return }
         var seen = Set<ObjectIdentifier>()
+        // A list carrier can precede an edit inside its label. Include the
+        // paragraph prefix before projecting the suffix's reference payloads.
+        let start = paragraphIndex.paragraphRange(containing: min(range.location, storage.length)).location
         storage.enumerateAttribute(
             .drFragment,
-            in: NSRange(
-                location: min(range.location, storage.length),
-                length: max(0, storage.length - min(range.location, storage.length))
-            )
+            in: NSRange(location: start, length: storage.length - start)
         ) { value, _, _ in
             guard let payload = value as? FragmentPayload else { return }
             let identity = ObjectIdentifier(payload)
@@ -1346,7 +1361,7 @@ extension MarkdownTextView {
     }
 
     static let privateAttributeKeys: [NSAttributedString.Key] = [
-        .drHidden, .drMarker, .drFragment, .drBlock, .drHeading, .drLink, .drPathToken,
+        .drHidden, .drMarker, .drFragment, .drHeading, .drLink, .drPathToken,
         .drPathExists, .drCheckbox, .drChange, .drReference, .drElided, .drGutterMarker,
         .drSearchHit, .drCurrentSearchHit, .drSpeechHighlight, .drInlineCode,
         .drSourceFocus,

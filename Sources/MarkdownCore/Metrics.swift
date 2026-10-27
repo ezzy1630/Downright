@@ -43,9 +43,9 @@ enum PlainText {
             return
         }
         for (index, child) in block.children.enumerated() {
-            let beforeCount = out.count
+            let beforeCount = out.utf8.count
             append(block: child, in: text, to: &out)
-            if out.count > beforeCount && index < block.children.count - 1 {
+            if out.utf8.count > beforeCount && index < block.children.count - 1 {
                 out.append(" ")
             }
         }
@@ -166,7 +166,21 @@ public enum Metrics {
             let start = heading.range.upperBound
             spans.append(NSRange(location: start, length: max(0, end - start)))
         }
-        return PlainText.prosePerSection(in: doc.root, spans: spans, text: text).map { metrics(of: $0) }
+        // Sentence tokenizers are reusable. Keep one per traversal and drain
+        // bridged strings per section rather than retaining thousands of
+        // tokenizer/string temporaries through the first display transaction.
+        let tokenizer = NLTokenizer(unit: .sentence)
+        return PlainText.prosePerSection(in: doc.root, spans: spans, text: text).map { prose in
+            autoreleasepool {
+                let words = wordCount(prose)
+                return ReadingMetrics(
+                    words: words,
+                    characters: prose.count,
+                    sentences: sentenceCount(prose, tokenizer: tokenizer),
+                    readMinutes: Double(words) / wordsPerMinute
+                )
+            }
+        }
     }
 
     /// Readable word count for the whole document, excluding code/math/HTML.
@@ -276,7 +290,11 @@ public enum Metrics {
 
     static func sentenceCount(_ prose: String) -> Int {
         guard !prose.isEmpty else { return 0 }
-        let tokenizer = NLTokenizer(unit: .sentence)
+        return sentenceCount(prose, tokenizer: NLTokenizer(unit: .sentence))
+    }
+
+    private static func sentenceCount(_ prose: String, tokenizer: NLTokenizer) -> Int {
+        guard !prose.isEmpty else { return 0 }
         tokenizer.string = prose
         var count = 0
         tokenizer.enumerateTokens(in: prose.startIndex..<prose.endIndex) { _, _ in

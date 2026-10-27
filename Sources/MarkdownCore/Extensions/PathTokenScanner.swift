@@ -51,9 +51,15 @@ enum PathTokenScanner {
             if i > range.location, isTokenCharacter(text.character(at: i - 1)) { i += 1; continue }
 
             var j = i
-            while j < end, isTokenCharacter(text.character(at: j)) { j += 1 }
+            var hasPathPunctuation = false
+            while j < end {
+                let unit = text.character(at: j)
+                guard isTokenCharacter(unit) else { break }
+                hasPathPunctuation = hasPathPunctuation || unit == 0x2E || unit == 0x2F
+                j += 1
+            }
             let raw = NSRange(location: i, length: j - i)
-            if let match = evaluate(text, raw: raw, relaxed: false) { out.append(match) }
+            if hasPathPunctuation, let match = evaluate(text, raw: raw, relaxed: false) { out.append(match) }
             i = j
         }
         return out

@@ -270,10 +270,9 @@ final class MarkdownDocument: NSObject {
     private var parseTask: Task<Void, Never>?
     private var parseControlTask: Task<Void, Never>?
     private(set) var revision = MarkdownParseRevision.zero
-    /// Most recent immutable snapshot accepted from the asynchronous parse
-    /// lane. This distinguishes structure-only first paint from full parse
-    /// convergence in diagnostics and rendered-window acceptance.
-    private(set) var lastAsyncParseRevision: MarkdownParseRevision?
+    /// Most recent full snapshot, from opening or the asynchronous edit lane.
+    /// Diagnostics compare it with the current source revision for convergence.
+    private(set) var lastCompletedParseRevision: MarkdownParseRevision?
     private var isClosed = false
     private var preferencesObservation: NSObjectProtocol?
     private var savedStateWorkItem: DispatchWorkItem?
@@ -288,9 +287,6 @@ final class MarkdownDocument: NSObject {
     /// identity churn from shifted offsets must not force a document-wide
     /// redecorate.
     private var nextExternalDirtyOverride: DirtySet?
-    /// After open's structure-only first paint, the next full async parse must
-    /// restyle wholesale — structure trees are not decoration-compatible.
-    private var forceNextDirtyWholesale = false
 
     // MARK: - Init
 
@@ -389,27 +385,23 @@ final class MarkdownDocument: NSObject {
         diskByteHash = DocumentIO.contentHash(snapshot.data)
         lastCommittedText = text
         isDirty = false
-        lastAsyncParseRevision = nil
+        lastCompletedParseRevision = nil
         publishPresentationState(.neutral)
 
-        // Structure-only first paint for outline/state. The controller paints
-        // decorations after applying zoom/folds; full decoration converges on
-        // the async parse lane.
-        let structure = MarkdownParser.parse(text, options: .structureOnly)
-        parsed = structure
+        // Both passes used the full CommonMark parse. Building a structure
+        // tree here and a full tree immediately afterward duplicated the AST,
+        // decoration, and maps during the highest-memory part of an open.
+        // Publish full semantics once; subsequent typing still parses off-main.
+        let document = MarkdownParser.parse(text)
+        parsed = document
+        lastCompletedParseRevision = revision
 
         snapshotStore.record(text, for: canonical, kind: .baseline)
-        documentStateStore.noteOpened(canonical, document: structure)
+        documentStateStore.noteOpened(canonical, document: document)
 
         restoreReviewState(currentText: text)
 
         startWatching(canonical)
-        forceNextDirtyWholesale = true
-        // First full paint must not depend on the serial typing lane's
-        // resume/discard control messages for a document that may have just
-        // been reused in place. The immutable revision gate makes this direct
-        // parse safe, and subsequent edits return to the coalescing lane.
-        startPriorityAsyncReparse()
     }
 
     // MARK: - Review baseline (§8.1, §8.2)
@@ -853,7 +845,8 @@ final class MarkdownDocument: NSObject {
     /// pre-edit offsets.
     private func projectFragmentPayloads(across range: NSRange, insertedLength: Int) {
         var seen = Set<ObjectIdentifier>()
-        let start = max(0, min(range.location, storage.length))
+        let location = max(0, min(range.location, storage.length))
+        let start = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0)).location
         storage.enumerateAttribute(
             .drFragment,
             in: NSRange(location: start, length: storage.length - start)
@@ -1095,13 +1088,20 @@ final class MarkdownDocument: NSObject {
     }
 
     private func reparseSynchronously(notifying: Bool, wholesale: Bool) {
-        cancelParseWork()
-        let previous = parsed
-        let fresh = MarkdownParser.parse(storage.string)
-        parsed = fresh
-        guard notifying else { return }
-        let dirty = wholesale ? DirtySet.wholesale : ASTDiff.dirtySet(old: previous, new: fresh)
-        onReparse?(fresh, dirty)
+        // Undo can publish several snapshots in one native event turn. Drain
+        // presentation/layout temporaries after each committed snapshot.
+        autoreleasepool {
+            cancelParseWork()
+            let fresh = MarkdownParser.parse(storage.string)
+            // Finish the comparison before replacing the model, so the caller
+            // does not pin the old tree throughout fresh decoration/layout.
+            let dirty: DirtySet? = notifying
+                ? (wholesale ? .wholesale : ASTDiff.dirtySet(old: parsed, new: fresh))
+                : nil
+            parsed = fresh
+            lastCompletedParseRevision = revision
+            if let dirty { onReparse?(fresh, dirty) }
+        }
     }
 
     private func startAsyncReparse() {
@@ -1141,16 +1141,18 @@ final class MarkdownDocument: NSObject {
     }
 
     private func applyAsyncParse(_ result: MarkdownParseResult) {
+        autoreleasepool { commitAsyncParse(result) }
+    }
+
+    private func commitAsyncParse(_ result: MarkdownParseResult) {
         guard !isClosed,
               result.revision == revision,
               result.text == storage.string,
               result.document.text == result.text else { return }
         parsed = result.document
-        lastAsyncParseRevision = result.revision
-        let dirty = nextExternalDirtyOverride
-            ?? (forceNextDirtyWholesale ? DirtySet.wholesale : result.dirty)
+        lastCompletedParseRevision = result.revision
+        let dirty = nextExternalDirtyOverride ?? result.dirty
         nextExternalDirtyOverride = nil
-        forceNextDirtyWholesale = false
         onReparse?(result.document, dirty)
         if let restore = pendingExternalRestore {
             pendingExternalRestore = nil

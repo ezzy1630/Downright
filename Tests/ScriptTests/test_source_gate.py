@@ -42,7 +42,7 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
         if ripgrep := shutil.which("rg"):
             (self.root / "bin/rg").symlink_to(ripgrep)
         self.environment = dict(os.environ)
-        for key in ("TEST_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH"):
+        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH"):
             self.environment.pop(key, None)
         self.environment.update(
             PATH=f"{self.root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -81,6 +81,12 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
         self.assertEqual(len(benchmarks), 1)
         self.assertIn("release", benchmarks[0])
         self.assertIn(".build-gate-bench", benchmarks[0])
+
+    def test_explicit_benchmark_scratch_is_preserved(self):
+        result, calls = self.run_gate(RUN_DRBENCH="1", BENCH_SCRATCH=".build-isolated-benchmark")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        benchmark = next(call for call in calls if call[0] == "run")
+        self.assertEqual(benchmark[benchmark.index("--scratch-path") + 1], ".build-isolated-benchmark")
 
     def test_explicit_test_scratch_is_preserved(self):
         result, calls = self.run_gate(TEST_SCRATCH=".build-isolated-tests")

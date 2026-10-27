@@ -49,7 +49,12 @@ public enum SpotlightMetadataImporter {
     ]
 
     public static func metadata(forText text: String, url: URL) -> SpotlightMetadata {
-        let document = MarkdownParser.parse(text, options: .structureOnly)
+        metadata(for: MarkdownParser.parse(text, options: .structureOnly), url: url)
+    }
+
+    /// The app already owns a current parsed snapshot. Reusing its semantic
+    /// metadata avoids a second full AST during the first visible frame.
+    public static func metadata(for document: ParsedDocument, url: URL) -> SpotlightMetadata {
         let title = document.headings.first?.title
             ?? document.frontMatter?.fields.first(where: { $0.key.lowercased() == "title" })?.value
             ?? url.deletingPathExtension().lastPathComponent
@@ -65,7 +70,7 @@ public enum SpotlightMetadataImporter {
             .map { String($0) } ?? []
         return SpotlightMetadata(
             title: title,
-            textContent: text,
+            textContent: document.text,
             keywords: keywords,
             contentType: contentType(for: url)
         )

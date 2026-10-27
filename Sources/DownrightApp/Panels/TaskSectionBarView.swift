@@ -18,7 +18,12 @@ import QuartzCore
 final class TaskSectionBarView: NSView {
     var segments: [TaskWorklist.Segment] = [] {
         didSet {
-            if segments.count != oldValue.count { rebuildLayers() }
+            var weight: CGFloat = 0
+            precedingWeights = segments.map { segment in
+                defer { weight += CGFloat(segment.weight) }
+                return weight
+            }
+            refreshVisibleLayers()
             placeSegments(animated: window != nil)
             updateAccessibility()
         }
@@ -41,11 +46,13 @@ final class TaskSectionBarView: NSView {
     static let gap: CGFloat = 2
 
     private struct SegmentLayers {
+        let index: Int
         let track = CALayer()
         let fill = CALayer()
     }
 
     private var segmentLayers: [SegmentLayers] = []
+    private var precedingWeights: [CGFloat] = []
     private var trackingAreaRef: NSTrackingArea?
     private var hoveredIndex: Int? {
         didSet {
@@ -84,6 +91,7 @@ final class TaskSectionBarView: NSView {
 
     override func layout() {
         super.layout()
+        refreshVisibleLayers()
         placeSegments(animated: false)
     }
 
@@ -95,10 +103,7 @@ final class TaskSectionBarView: NSView {
         guard count > 0, index < count else { return .zero }
         let gaps = CGFloat(count - 1) * Self.gap
         let available = max(0, bounds.width - gaps)
-        var x: CGFloat = 0
-        for earlier in 0..<index {
-            x += available * CGFloat(segments[earlier].weight) + Self.gap
-        }
+        let x = available * precedingWeights[index] + CGFloat(index) * Self.gap
         let width = max(Self.barHeight, available * CGFloat(segments[index].weight))
         let height = barHeight(for: index)
         let y = (bounds.height - height) / 2
@@ -115,20 +120,24 @@ final class TaskSectionBarView: NSView {
 
     private func hitSegment(at point: NSPoint) -> Int? {
         guard !segments.isEmpty else { return nil }
-        for index in segments.indices
+        for index in segmentLayers.map(\.index)
         where segmentFrame(for: index).insetBy(dx: -Self.gap / 2, dy: -4).contains(point) {
             return index
         }
         return nil
     }
 
-    private func rebuildLayers() {
+    /// A large plan can have thousands of sections. Keep their model and
+    /// navigation, but do not create animation layers outside this viewport.
+    private func refreshVisibleLayers() {
+        let visible = segments.indices.filter { segmentFrame(for: $0).intersects(bounds) }
+        guard visible != segmentLayers.map(\.index) else { return }
         for pair in segmentLayers {
             pair.track.removeFromSuperlayer()
             pair.fill.removeFromSuperlayer()
         }
-        segmentLayers = segments.map { _ in
-            let pair = SegmentLayers()
+        segmentLayers = visible.map { index in
+            let pair = SegmentLayers(index: index)
             for layer in [pair.track, pair.fill] {
                 layer.cornerRadius = PanelMetrics.capsuleRadius(forHeight: Self.barHeight)
                 // Geometry animates through the transaction `placeSegments`
@@ -143,7 +152,6 @@ final class TaskSectionBarView: NSView {
     }
 
     private func placeSegments(animated: Bool, duration: TimeInterval = Motion.deliberate) {
-guard segmentLayers.count == segments.count else { return }
         CATransaction.begin()
         if animated, !styleSheet.reduceMotion {
             // Implicit animation of the frame pair gives each segment one smooth
@@ -154,7 +162,8 @@ guard segmentLayers.count == segments.count else { return }
             CATransaction.setDisableActions(true)
         }
         let firstStart = CACurrentMediaTime() + 0.02
-        for (index, pair) in segmentLayers.enumerated() {
+        for pair in segmentLayers {
+            let index = pair.index
             let frame = segmentFrame(for: index)
             if animated, !styleSheet.reduceMotion, index > 0 {
                 // A count changed: the segments cascade in one behind the
@@ -191,7 +200,8 @@ guard segmentLayers.count == segments.count else { return }
         let contrast = styleSheet.increaseContrast
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for (index, pair) in segmentLayers.enumerated() {
+        for pair in segmentLayers {
+            let index = pair.index
             let hovered = index == hoveredIndex
             pair.track.backgroundColor = styleSheet.text
                 .panelAlpha(hovered ? 0.26 : 0.16, increaseContrast: contrast).cgColor
@@ -237,7 +247,7 @@ guard segmentLayers.count == segments.count else { return }
     }
 
     override func resetCursorRects() {
-        for index in segments.indices {
+        for index in segmentLayers.map(\.index) {
             addCursorRect(segmentFrame(for: index).insetBy(dx: 0, dy: -4), cursor: .pointingHand)
         }
     }
@@ -262,13 +272,19 @@ guard segmentLayers.count == segments.count else { return }
         let done = segments.reduce(0) { $0 + $1.doneCount }
         let total = segments.reduce(0) { $0 + $1.taskCount }
         setAccessibilityValue(total > 0 ? "\(done) of \(total) tasks done" : "No tasks")
-        setAccessibilityCustomActions(segments.indices.map { index in
+    }
+
+    // Most readers never request these actions. Keep all section destinations
+    // available to accessibility without retaining thousands of action objects
+    // in a closed inspector.
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        segments.indices.map { index in
             let segment = segments[index]
             let action = NSAccessibilityCustomAction(
                 name: "Open \(segment.title)",
                 handler: { [weak self] in self?.onSelectSegment?(index); return true }
             )
             return action
-        })
+        }
     }
 }

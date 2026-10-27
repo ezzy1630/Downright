@@ -2,9 +2,7 @@ import AppKit
 import MarkdownCore
 import MarkdownRender
 
-private final class PresentationSnapshotView: NSImageView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
+private final class PresentationSnapshotLayer: CALayer {}
 
 /// Small actions the context menus and delegates reach for.
 extension DocumentWindowController {
@@ -546,21 +544,30 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         window?.makeFirstResponder(primaryContainer.textView)
     }
 
-    private func snapshot(of view: NSView) -> NSImageView? {
-        guard !view.bounds.isEmpty,
-              let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-        else { return nil }
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
-        let snapshot = PresentationSnapshotView(frame: view.bounds)
-        snapshot.image = image
-        snapshot.imageScaling = .scaleAxesIndependently
-        snapshot.autoresizingMask = [.width, .height]
-        snapshot.wantsLayer = true
-        snapshot.layer?.masksToBounds = true
-        view.addSubview(snapshot, positioned: .above, relativeTo: nil)
-        return snapshot
+    private func snapshot(of view: NSView) -> CALayer? {
+        autoreleasepool {
+            view.wantsLayer = true
+            guard let parent = view.layer else { return nil }
+            for case let previous as PresentationSnapshotLayer in parent.sublayers ?? [] {
+                previous.removeAllAnimations()
+                previous.contents = nil
+                previous.removeFromSuperlayer()
+            }
+            guard !view.bounds.isEmpty,
+                  let image = PresentationStill.capture(of: view, scale: 0.5)
+            else { return nil }
+            // A layer-backed NSView can allocate a second Retina bitmap when
+            // AppKit redisplays it. This still owns only the captured image.
+            let snapshot = PresentationSnapshotLayer()
+            snapshot.frame = view.bounds
+            snapshot.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+            snapshot.masksToBounds = true
+            snapshot.contents = image
+            snapshot.contentsGravity = .resize
+            snapshot.contentsScale = 0.5
+            parent.addSublayer(snapshot)
+            return snapshot
+        }
     }
 
     /// Keep the viewport fixed while the two presentations pass each other.
@@ -568,14 +575,14 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     /// TextKit's synchronous fragment rebuild without turning it into a flash.
     private func animatePresentationChange(
         in pane: MarkdownContainerView,
-        outgoing: NSImageView?,
+        outgoing: CALayer?,
         showSource: Bool
     ) {
         guard !activeStyleSheet.reduceMotion, let outgoing,
-              let incomingLayer = pane.textView.layer,
-              let outgoingLayer = outgoing.layer
+              let incomingLayer = pane.textView.layer
         else {
-            outgoing?.removeFromSuperview()
+            outgoing?.contents = nil
+            outgoing?.removeFromSuperlayer()
             return
         }
         let direction: CGFloat = showSource ? 1 : -1
@@ -605,9 +612,12 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
         leaving.duration = Motion.deliberate
         leaving.timingFunction = Motion.timing(.structural)
         CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak outgoing] in outgoing?.removeFromSuperview() }
-        outgoingLayer.opacity = 0
-        outgoingLayer.add(leaving, forKey: "presentation-out")
+        CATransaction.setCompletionBlock { [weak outgoing] in
+            outgoing?.contents = nil
+            outgoing?.removeFromSuperlayer()
+        }
+        outgoing.opacity = 0
+        outgoing.add(leaving, forKey: "presentation-out")
         CATransaction.commit()
     }
 

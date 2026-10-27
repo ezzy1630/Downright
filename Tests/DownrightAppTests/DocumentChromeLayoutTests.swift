@@ -11,6 +11,30 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct DocumentChromeLayoutTests {
+    @Test("A closed Tasks inspector defers derivation and catches up on reopen")
+    func closedTasksDefersUpdatesUntilReopen() throws {
+        let (file, cleanup) = try makeDocument()
+        defer { cleanup() }
+        let controller = DocumentWindowController()
+        defer { controller.close() }
+        try controller.open(file, mode: .live)
+        controller.toggleTaskPanel()
+        controller.floatingSurface?.settleForTesting()
+        let panel = try #require(controller.taskPanel)
+        #expect(panel.progress.total == 3)
+        controller.closeTaskPanel()
+        controller.floatingSurface?.settleForTesting()
+        #expect(!controller.isTaskPanelFloating)
+        let document = controller.markdownDocument
+        #expect(document.replace(NSRange(location: document.storage.length, length: 0),
+                                 with: "\n- [ ] Newly added\n", actionName: "Add task"))
+        document.reparseNow()
+        controller.refreshDerivedUI()
+        #expect(panel.progress.total == 3)
+        controller.toggleTaskPanel()
+        controller.floatingSurface?.settleForTesting()
+        #expect(panel.progress.total == 4)
+    }
     private func makeDocument() throws -> (URL, () -> Void) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("downright-chrome-\(UUID().uuidString)", isDirectory: true)

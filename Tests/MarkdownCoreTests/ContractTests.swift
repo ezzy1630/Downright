@@ -6,6 +6,40 @@ import Testing
 // would otherwise pin down.
 
 @Suite struct ContractTests {
+    @Test func copiedInlineRangesRemainIndependent() {
+        let source = NSRange(location: 10, length: 8)
+        let original = InlineSpan(kind: .text, range: source, contentRange: source)
+        var copy = original
+        copy.range.location += 2
+        #expect(copy.contentRange == source)
+        #expect(original.range == source)
+        copy.contentRange = copy.range
+        copy.leadingMarkerRange = NSRange(location: 12, length: 0)
+        copy.trailingMarkerRange = NSRange(location: 19, length: 1)
+        var another = copy
+        another.contentRange.length -= 1
+        another.leadingMarkerRange = nil
+        #expect(copy.contentRange == copy.range)
+        #expect(copy.leadingMarkerRange == NSRange(location: 12, length: 0))
+        #expect(original.leadingMarkerRange == nil)
+        #expect(another.trailingMarkerRange == copy.trailingMarkerRange)
+    }
+
+    @Test func rareBlockMetadataFieldsRemainIndependent() {
+        let range = NSRange(location: 0, length: 10)
+        let block = MDBlock(content: .paragraph, range: range, contentRange: range)
+        let html = SafeHTMLDocument(range: range, annotations: [], isSafe: true)
+        block.safeHTML = html
+        block.trailingMarkerRange = NSRange(location: 8, length: 2)
+        #expect(block.safeHTML == html)
+        block.safeHTML = nil
+        #expect(block.trailingMarkerRange == NSRange(location: 8, length: 2))
+        block.safeHTML = html
+        block.trailingMarkerRange = nil
+        #expect(block.safeHTML == html)
+        #expect(block.trailingMarkerRange == nil)
+    }
+
 
     @Test func parseOptionsDisableTheirPasses() {
         let text = "---\na: b\n---\n\n$x$ and [[W]] and src/a.ts and\n\n```mermaid\ngraph TD;\n```\n"

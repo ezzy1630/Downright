@@ -1,0 +1,55 @@
+Building for debugging...
+[Computing dependencies]
+[Using on-disk description]
+[1 / 1]
+[1 / 2] drdownright-product
+[1 / 35] MarkdownCore
+[1 / 48] DownrightSpotlightMetadata
+[1 / 58] SwiftMath
+[1 / 14] down-product
+[2 / 8] DownrightAppTests-product
+/private/tmp/downright-perf-20261027/checkout/Tests/DownrightAppTests/AsyncParseTests.swift:13:18: warning: weak variable 'previousRoot' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 11 |         defer { document.close() }
+ 12 |         document.adopt(text: "# Old\n\nOriginal paragraph.\n", displayURL: nil)
+ 13 |         weak var previousRoot = document.parsed.root
+    |                  `- warning: weak variable 'previousRoot' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 14 |         #expect(document.replace(NSRange(location: 2, length: 3), with: "New", actionName: "Edit"))
+ 15 |         var committed = false
+
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+[4 / 10] DownrightAppTests-product
+[10 / 12] DownrightAppTests-product
+[12 / 14] DownrightAppTests-product
+Build complete! (14.11 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite AsyncParseTests started.
+◇ Test synchronousCommitReleasesPreviousTreeBeforePresentation() started.
+✘ Test synchronousCommitReleasesPreviousTreeBeforePresentation() recorded an issue at AsyncParseTests.swift:18:13: Expectation failed: previousRoot == nil
+↳ previousRoot == nil → false
+↳   previousRoot → MarkdownCore.MDBlock
+↳     some → MarkdownCore.MDBlock
+↳       content → .document
+↳       range → {0, 27}
+↳         location → 0
+↳         length → 27
+↳       contentRange → {0, 27}
+↳         location → 0
+↳         length → 27
+↳       markerRange → nil
+↳       extendedData → nil
+↳       children → [MarkdownCore.MDBlock, MarkdownCore.MDBlock]
+↳       inlines → []
+↳       depth → 0
+↳       quoteDepth → 0
+↳       subtreeHash → 12805045501039456964
+↳       identity → BlockIdentity(kind: 0, ordinal: 0)
+↳         kind → 0
+↳         ordinal → 0
+✘ Test synchronousCommitReleasesPreviousTreeBeforePresentation() failed after 0.011 seconds with 1 issue.
+✘ Suite AsyncParseTests failed after 0.011 seconds with 1 issue.
+✘ Test run with 1 test in 1 suite failed after 0.011 seconds with 1 issue.
+Note: Some test targets reported failures:
+  - DownrightAppTests (Swift Testing)

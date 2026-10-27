@@ -63,8 +63,24 @@ final class TaskPanelView: NSView, PanelSurface {
         }
     }
 
-    var tasks: [TaskItem] = [] { didSet { reload() } }
-    var headings: [HeadingNode] = [] { didSet { reload() } }
+    private var storedTasks: [TaskItem] = []
+    private var storedHeadings: [HeadingNode] = []
+    var tasks: [TaskItem] {
+        get { storedTasks }
+        set { update(tasks: newValue, headings: headings) }
+    }
+    var headings: [HeadingNode] {
+        get { storedHeadings }
+        set { update(tasks: tasks, headings: newValue) }
+    }
+
+    /// Publish one coherent parse snapshot without building the worklist and
+    /// accessibility actions separately for tasks, headings, and a final reload.
+    func update(tasks: [TaskItem], headings: [HeadingNode]) {
+        storedTasks = tasks
+        storedHeadings = headings
+        reload()
+    }
 
     var progress: (done: Int, total: Int) { (worklist.doneCount, worklist.totalCount) }
     /// A worklist is a narrow tool, not a working surface: the slim panel
@@ -1002,9 +1018,9 @@ final class TaskPanelView: NSView, PanelSurface {
             heightCache.removeAll()
         }
         if let cached = heightCache[taskIndex] { return cached }
-        let height = TaskRowView.fittingHeight(
-            for: tasks[taskIndex], width: width, styleSheet: styleSheet
-        )
+        let height = autoreleasepool {
+            TaskRowView.fittingHeight(for: tasks[taskIndex], width: width, styleSheet: styleSheet)
+        }
         heightCache[taskIndex] = height
         return height
     }

@@ -42,7 +42,7 @@ remains a separate gate from source tests.
 file bytes
   -> encoding and line-ending detection
   -> NSTextStorage (exact text)
-  -> full swift-markdown parse
+  -> full cmark parse, blockwise swift-markdown conversion
   -> extension pass
   -> AST subtree-hash diff
   -> dirty block set
@@ -50,6 +50,21 @@ file bytes
   -> TextKit 2 layout
   -> one NSTextView surface
 ```
+
+The pinned swift-markdown sources live in `Vendor/swift-markdown`. The core
+consumes detached top-level Swift subtrees as cmark converts them, keeping only
+Downright's document-wide tree. cmark still parses and resolves the entire
+CommonMark source before conversion, so forward reference definitions and source
+positions retain their normal semantics. The original Document API and upstream
+tests are retained; `PATCHES.md` records the narrow changes. After advancing
+the iterator, conversion frees each consumed top-level C subtree, bounding the
+overlap between the C tree and Downright's tree.
+Streaming parses isolate temporary cmark allocations in a synchronous,
+thread-local macOS malloc zone. Destroying it after all C objects are freed
+reclaims pages that progressive conversion would otherwise interleave with the
+retained Swift model. Inline spans keep ordinary source-only ranges compact;
+exceptional marker/content data and rare block annotations are boxed without
+changing their public mutation semantics.
 
 The extension pass adds math, YAML front matter, callouts, wikilinks, path
 tokens, Mermaid fences, and language metadata. The parser uses disabled smart
@@ -59,6 +74,20 @@ The parser can reparse the full document. The expensive work is layout, so the
 renderer diffs blocks and restyles only dirty blocks. A wholesale restyle is
 used for mode or theme changes.
 
+Opening performs one full parse before the first decorated presentation.
+The former structure-only first paint required the same CommonMark work and
+an immediate second full parse/decorate, retaining overlapping trees and maps.
+Subsequent source edits keep their serial, revision-checked asynchronous lane.
+Synchronous undo finishes its old/new comparison before publishing the fresh
+tree, so its caller does not retain the previous tree through decoration and
+layout. Each parse commit drains presentation temporaries before the next
+commit can begin.
+Source decoration begins with its final uniform typography rather than rewriting
+all attribute dictionaries a second time. Scoped source lenses retain their
+local edge spacing. Rail and swipe transitions capture existing layers at half
+resolution; their temporary still does not redraw TextKit or own another text
+surface.
+
 ## Text and editing
 
 TextKit 2 stores the exact source. Marker hiding uses a source-to-display index
@@ -66,11 +95,20 @@ map and custom layout fragments. It does not use zero-width fonts, transparent
 text, or shortened replacement strings.
 
 Document-wide layout maps retain range descriptors for hidden markers, rather
-than an attributed string per marker. A requested paragraph resolves its
+than an attributed string per marker. Maps containing only hidden markers
+share the logical map's immutable ranges; the layout view styles entries lazily
+without retaining a second descriptor array. A requested paragraph resolves its
 source-length word joiners against the current storage attributes through
 `DisplaySubstitution.resolvedReplacement(in:)`. Source-edit projection moves
 the descriptors along with the source ranges; it does not retain old styles
 or create replacement text for offscreen elements.
+List ornaments carry their unique fragment payload on paragraph prefixes,
+rather than every character of a task label. The payload still addresses the
+whole source item; drawing and interaction resolve the innermost paragraph
+prefix, including nested items and continuations. Repeated label text can then
+share attribute dictionaries. The Tasks panel adopts tasks and headings as one
+snapshot, and its section bar creates layers only for segments intersecting
+its bounds while retaining the full navigation model.
 `MarkdownContentStorage` supplies a lazy paragraph enumerator to the small
 Objective-C `MarkdownTextKitBridge` adapter. The adapter invokes AppKit's
 native enumeration callback without rebridging it through a Swift override:
@@ -89,9 +127,15 @@ native selection retires that edit position and resolves against visible text.
 A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
-AppKit owns the text-container origin and viewport surface lifecycle. Preserve
-its native geometry calculation and all text-view drawing entry points. The
-container supplies the opaque page behind a transparent native text view.
+AppKit owns the viewport surface lifecycle and all text-view drawing entry
+points. Small documents use its native text-container origin calculation.
+Above the eager-layout paragraph/byte budget, the top-aligned surface reports
+its inset as its origin: the native getter resolves used bounds through EOF,
+materializing offscreen fragments even for a margin update. Tests compare this
+bounded calculation with native geometry; activated-app memory and interaction
+checks remain required.
+
+The container supplies the opaque page behind a transparent native text view.
 Clipped, viewport-sized background and foreground views draw page ornaments
 below text and hover underlines/drop carets above fragment backgrounds. Neither
 receives input or owns another text surface; fragments retain glyph/object drawing.
@@ -177,7 +221,10 @@ The filesystem Spotlight importer lives at
 `Downright.app/Contents/Library/Spotlight`. Its `schema.xml` declares only
 title, text content, keywords, and kind. It extracts metadata from unopened
 Markdown files, while `CoreSpotlight` remains the fast path for documents the
-app has already opened.
+app has already opened. When the file fits the importer's 2 MiB input limit,
+the app derives metadata from its current parsed snapshot and sends only the
+metadata value to the indexing queue. Larger files retain the bounded importer
+path; opening a document must not trigger a second full AST for indexing.
 
 Quick Look and thumbnail targets share parser, theme, and render contracts but
 have strict limits:

@@ -335,3 +335,20 @@ import Testing
         #expect(Date().timeIntervalSince(start) < 5.0)
     }
 }
+
+@Suite struct BufferedTextDiffTests {
+    @Test(arguments: ["\n", "\r", "\r\n"])
+    func externalRewriteKeepsSourceRangesAndTrailingLines(_ separator: String) {
+        let old = "α😀" + separator + "unchanged" + separator + "old" + separator + "tail"
+        let new = "α😀" + separator + "unchanged" + separator + "new" + separator + "tail"
+        let hunks = TextDiff.hunks(old: old, new: new)
+        #expect(hunks.count == 1)
+        #expect(hunks.first?.kind == .modified)
+        if let hunk = hunks.first {
+            #expect((old as NSString).substring(with: hunk.oldRange) == "old" + separator)
+            #expect((new as NSString).substring(with: hunk.newRange) == "new" + separator)
+        }
+        #expect(TextDiff.hunks(old: "", new: new).first?.newRange == NSRange(location: 0, length: new.utf16.count))
+        #expect(TextDiff.hunks(old: old, new: "").first?.oldRange == NSRange(location: 0, length: old.utf16.count))
+    }
+}
