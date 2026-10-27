@@ -1,7 +1,7 @@
 {
   "passed": false,
   "scope": "timings only",
-  "baseline": "baseline.txt",
+  "baseline": "../../baseline.txt",
   "candidates": [
     "candidate-1.txt",
     "candidate-2.txt",
