@@ -188,7 +188,7 @@ xcodebuild \
     -resultBundlePath "$RESULT_BUNDLE" \
     -xctestrun "$XCTESTRUN" \
     -destination "$DESTINATION" \
-    -only-testing:DownrightUITests/DownrightActivatedAppTests \
+    -only-testing:DownrightUITests \
     -parallel-testing-enabled NO \
     -test-timeouts-enabled YES 2>&1 | tee "$TEST_LOG"
 

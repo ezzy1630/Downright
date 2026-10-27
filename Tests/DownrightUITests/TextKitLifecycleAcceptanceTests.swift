@@ -127,9 +127,13 @@ final class TextKitLifecycleAcceptanceTests: XCTestCase {
             XCTAssertFalse(content.hasEditingTransaction, "Loading left an active native editing transaction")
             if declarePrimary { content.primaryTextLayoutManager = textView.textLayoutManager }
             content.performEditingTransaction {}
+            let synchronized = expectation(description: "Native content synchronization completed")
             content.synchronizeTextLayoutManagers { error in
-                print("LIFECYCLE synchronization error: \(String(describing: error))")
+                XCTAssertNil(error, "Native content synchronization failed")
+                synchronized.fulfill()
             }
+            let synchronizationResult = XCTWaiter.wait(for: [synchronized], timeout: 10)
+            XCTAssertEqual(synchronizationResult, .completed)
         }
         if !mountBeforeLoad { window.contentView = root }
         if initiallyZeroSized { surface.frame = viewport }
