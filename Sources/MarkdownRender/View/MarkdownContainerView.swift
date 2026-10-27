@@ -15,6 +15,8 @@ public final class MarkdownContainerView: NSView {
     public let scrollView: NSScrollView
     private let gutter: GutterRailView
     private let footnoteMargin: FootnoteMarginView
+    private let backgroundOverlay: MarkdownDecorationOverlay
+    private let foregroundOverlay: MarkdownDecorationOverlay
 
     public var styleSheet: StyleSheet {
         get { textView.styleSheet }
@@ -90,6 +92,8 @@ public final class MarkdownContainerView: NSView {
         scrollView = NSScrollView(frame: .zero)
         gutter = GutterRailView(textView: textView)
         footnoteMargin = FootnoteMarginView(textView: textView)
+        backgroundOverlay = MarkdownDecorationOverlay(textView: textView, phase: .background)
+        foregroundOverlay = MarkdownDecorationOverlay(textView: textView, phase: .foreground)
         super.init(frame: .zero)
 
         scrollView.documentView = textView
@@ -108,11 +112,21 @@ public final class MarkdownContainerView: NSView {
         // view and throw away the measure cap (§11.1).
         scrollView.automaticallyAdjustsContentInsets = false
         textView.autoresizingMask = []
-        scrollView.drawsBackground = true
+        // The container supplies the opaque page; its background ornaments
+        // remain below native text and fragment backgrounds.
+        scrollView.drawsBackground = false
+        textView.drawsBackground = false
         scrollView.backgroundColor = styleSheet.background
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
+        addSubview(backgroundOverlay)
         addSubview(scrollView)
+        addSubview(foregroundOverlay, positioned: .above, relativeTo: scrollView)
+        textView.foregroundInvalidationHandler = { [weak overlay = foregroundOverlay, weak view = textView] rect in
+            guard let overlay, let view else { return }
+            if let rect { overlay.setNeedsDisplay(overlay.convert(rect, from: view)) }
+            else { overlay.needsDisplay = true }
+        }
         // The rail floats over the scroll view rather than inside it, so it
         // never scrolls horizontally away from the text it annotates.
         addSubview(gutter)
@@ -131,7 +145,11 @@ public final class MarkdownContainerView: NSView {
 
     deinit { NotificationCenter.default.removeObserver(self) }
 
-    @objc private func scrolled(_ note: Notification) { footnoteMargin.needsDisplay = true }
+    @objc private func scrolled(_ note: Notification) {
+        footnoteMargin.needsDisplay = true
+        backgroundOverlay.needsDisplay = true
+        foregroundOverlay.needsDisplay = true
+    }
 
     public func refreshMarginNotes() { footnoteMargin.needsDisplay = true }
 
@@ -300,7 +318,16 @@ public final class MarkdownContainerView: NSView {
             addSubview(footnoteMargin, positioned: .above, relativeTo: scrollView)
             footnoteMargin.needsDisplay = true
         }
+        backgroundOverlay.frame = scrollView.frame
+        foregroundOverlay.frame = scrollView.frame
+        backgroundOverlay.needsDisplay = true
+        foregroundOverlay.needsDisplay = true
+    }
 
+    public override func viewWillDraw() {
+        super.viewWillDraw()
+        backgroundOverlay.needsDisplay = true
+        foregroundOverlay.needsDisplay = true
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -315,4 +342,37 @@ public final class MarkdownContainerView: NSView {
         needsLayout = true
     }
 
+}
+
+/// Viewport-sized ornaments, independent of TextKit's rendering surfaces.
+/// It never owns input, source storage, or a document-sized backing surface.
+private final class MarkdownDecorationOverlay: NSView {
+    enum Phase { case background, foreground }
+    private weak var textView: MarkdownTextView?
+    private let phase: Phase
+
+    init(textView: MarkdownTextView, phase: Phase) {
+        self.textView = textView
+        self.phase = phase
+        super.init(frame: .zero)
+        clipsToBounds = true
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { nil }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let textView, let context = NSGraphicsContext.current?.cgContext else { return }
+        let origin = convert(NSPoint.zero, from: textView)
+        let textRect = textView.convert(dirtyRect, from: self)
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        context.translateBy(x: origin.x, y: origin.y)
+        switch phase {
+        case .background: textView.drawPageBackground(in: textRect)
+        case .foreground: textView.drawForeground(in: textRect)
+        }
+    }
 }

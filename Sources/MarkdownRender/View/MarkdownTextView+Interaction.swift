@@ -1561,10 +1561,10 @@ extension MarkdownTextView {
         dropInsertionOffset = offset
         for candidate in [previous, offset] {
             guard let candidate, let rect = dropCaretRect(at: candidate) else {
-                needsDisplay = true
+                foregroundInvalidationHandler?(nil)
                 return
             }
-            setNeedsDisplay(rect.insetBy(dx: -3, dy: -3))
+            foregroundInvalidationHandler?(rect.insetBy(dx: -3, dy: -3))
         }
     }
 

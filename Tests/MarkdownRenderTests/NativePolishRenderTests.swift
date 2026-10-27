@@ -6,6 +6,43 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct NativePolishRenderTests {
+    @Test func dropCaretRemainsVisibleAboveOpaqueTextBackground() throws {
+        let text = "MMMMMMMM next line.\n"
+        let storage = NSTextStorage(string: text)
+        let pane = MarkdownContainerView(storage: storage)
+        pane.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
+        pane.textView.mode = .source
+        pane.textView.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        pane.layoutSubtreeIfNeeded()
+        storage.addAttribute(.backgroundColor, value: NSColor.red,
+                             range: NSRange(location: 0, length: storage.length))
+        let content = try #require(pane.textView.textContentStorage as? MarkdownContentStorage)
+        content.configure(paragraphIndex: ParagraphIndex(text: text as NSString),
+                          reflowRanges: [], displayMap: .identity)
+        pane.textView.invalidateAllFragments()
+        pane.textView.prepareForDisplay()
+        pane.textView.dropInsertionOffset = 1
+        let caret = try #require(pane.textView.rect(forOffset: 1))
+        let location = pane.convert(NSPoint(x: caret.minX, y: caret.midY), from: pane.textView)
+        let bitmap = try #require(pane.bitmapImageRepForCachingDisplay(in: pane.bounds))
+        pane.cacheDisplay(in: pane.bounds, to: bitmap)
+        let accent = try #require(pane.textView.styleSheet.accent.usingColorSpace(.deviceRGB))
+        var accentVisible = false
+        let scaleX = CGFloat(bitmap.pixelsWide) / pane.bounds.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / pane.bounds.height
+        for y in Int((location.y - 2) * scaleY)...Int((location.y + 2) * scaleY) {
+            for x in Int((location.x - 1) * scaleX)...Int((location.x + 1) * scaleX) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                let distance = abs(color.redComponent - accent.redComponent)
+                    + abs(color.greenComponent - accent.greenComponent)
+                    + abs(color.blueComponent - accent.blueComponent)
+                if distance < 0.15 { accentVisible = true }
+            }
+        }
+        #expect(accentVisible)
+        #expect(storage.string == text)
+    }
+
     @Test func sharedPanePreservesFragmentPresentationState() {
         let text = "- first line\n  second line\n\n```swift\nlet value = 1\n```\n\n## Hidden section\n\n| A | B |\n|---|---|\n| C | D |\n"
         let storage = NSTextStorage(string: text)

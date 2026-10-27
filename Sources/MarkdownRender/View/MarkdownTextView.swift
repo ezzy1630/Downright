@@ -501,7 +501,12 @@ public final class MarkdownTextView: NSTextView {
     /// `draw(_:)` rather than a storage attribute, because the decoration pass
     /// wipes attributes on every reflow and an underline that vanishes while
     /// the pointer is still sitting on it reads as a bug (§7.1).
-    var hoveredLinkRange: NSRange?
+    var foregroundInvalidationHandler: ((NSRect?) -> Void)?
+    var hoveredLinkRange: NSRange? {
+        didSet {
+            if oldValue != hoveredLinkRange { foregroundInvalidationHandler?(nil) }
+        }
+    }
     /// Where a drag hovering over the surface would land, in *source*
     /// coordinates, or nil when no drag is over it.
     ///
@@ -3362,14 +3367,17 @@ public final class MarkdownTextView: NSTextView {
     /// geometry up by source range in absolute view coordinates — a lookup that
     /// is only valid against the layout it was made in.  They belong to the
     /// fragment that draws the glyphs; see `ProseFragment`.
-    public override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in: rect)
+    func drawPageBackground(in rect: NSRect) {
         drawScopedSourceBackground(in: rect)
-        // Keep NSTextView's drawing entry point native: TextKit owns the
-        // fragment rendering surfaces. Our marks belong to the page behind
-        // the glyphs and use the dedicated background customization hook.
+        // Page ornaments draw below the transparent native text surface.
+        // TextKit retains all NSTextView background and fragment drawing.
         drawDeletedChangeMarks(in: rect)
         drawObjectChangeMarks(in: rect)
+    }
+
+    /// The viewport overlay paints transient pointer feedback above native
+    /// glyph and fragment backgrounds without overriding NSTextView.draw.
+    func drawForeground(in rect: NSRect) {
         drawHoveredLinkUnderline(in: rect)
         drawDropInsertionCaret(in: rect)
     }

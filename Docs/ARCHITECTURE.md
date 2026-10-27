@@ -82,8 +82,11 @@ A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
 AppKit owns the text-container origin and viewport surface lifecycle. Preserve
-its native geometry calculation and drawing entry point; page ornaments use
-`drawBackground(in:)`, while fragments draw their own glyphs and object content.
+its native geometry calculation and all text-view drawing entry points. The
+container supplies the opaque page behind a transparent native text view.
+Clipped, viewport-sized background and foreground views draw page ornaments
+below text and hover underlines/drop carets above fragment backgrounds. Neither
+receives input or owns another text surface; fragments retain glyph/object drawing.
 Keep large-file layout lazy by suppressing
 synthetic selection work and bounding explicit layout requests.
 Attach a shared pane's scroll surface while empty, then bind the shared storage
