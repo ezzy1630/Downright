@@ -305,21 +305,23 @@ More detail: [Architecture](Docs/ARCHITECTURE.md) ·
 
 ## Measured performance
 
-Apple M4, macOS 27.0, release builds; unchanged corpus and worst p95 across three
-candidate runs against a fresh same-machine baseline:
+Apple M4, macOS 27.0, release builds; unchanged corpus. The conservative final
+comparison uses the fastest baseline p95 and worst candidate p95 from three
+interleaved old/new pairs:
 
 | Pipeline stage | Before p95 | After p95 | Faster |
 |---|---:|---:|---:|
-| Full parse | 30.876 ms | 19.636 ms | 36.4% |
-| Typing / paragraph map | 0.159 ms | 0.090 ms | 43.4% |
-| Semantic convergence | 28.521 ms | 19.792 ms | 30.6% |
-| Whole-document decoration | 162.957 ms | 69.677 ms | 57.2% |
+| Full parse | 27.477 ms | 20.807 ms | 24.3% |
+| Typing / paragraph map | 0.149 ms | 0.099 ms | 33.6% |
+| Semantic convergence | 28.090 ms | 20.483 ms | 27.1% |
+| Whole-document decoration | 157.616 ms | 73.180 ms | 53.6% |
 
-All ten pipeline cases improved by at least 25%.
-[Complete results and raw evidence](Docs/PERFORMANCE.md#release-pipeline-comparison-2026-10-27)
-include the other stages and measurement limits. The below-150-MB native session
-memory target still needs certification; the latest recorded fresh-open peak of
-126.2 MB does not establish an interactive-session peak.
+Seven of ten cases exceeded 25% in this comparison. An earlier snapshot exceeded
+25% in all ten, but later runs did not consistently reproduce that threshold.
+[Complete results and raw evidence](Docs/PERFORMANCE.md#later-input-fix-validation-and-timing-variability)
+include every stage and the measurement limits. The below-150-MB native session
+memory target remains uncertified; the earlier fresh-open peak of 126.2 MB
+covers opening only.
 
 ## Test and verify
 

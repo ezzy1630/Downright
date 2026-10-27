@@ -1,0 +1,47 @@
+
+Downright performance budget (§12)
+  build: release
+  corpus: 120825 chars, 4885 lines
+  cold-open corpus: 100000 chars
+
+Parse (§3.5 — full reparse on every edit)
+  cmark alone  p50    9.128 ms   p95    9.230 ms   max    9.230 ms (n=15)
+  MarkdownParser.parse, all passes  p50   20.201 ms   p95   20.466 ms   max   20.466 ms (n=15)
+    … extension passes off  p50   17.187 ms   p95   17.335 ms   max   17.335 ms (n=15)
+    … without path tokens  p50   18.769 ms   p95   18.926 ms   max   18.926 ms (n=15)
+    … without math  p50   19.151 ms   p95   19.226 ms   max   19.226 ms (n=15)
+    … without wikilinks  p50   19.610 ms   p95   19.656 ms   max   19.656 ms (n=15)
+    … without callouts  p50   20.085 ms   p95   20.944 ms   max   20.944 ms (n=15)
+
+Unicode source positions (16800 bytes, one inline-heavy line)
+  Unicode inline-heavy parse  p50    9.560 ms   p95   10.431 ms   max   10.431 ms (n=10)
+
+Diff
+  ASTDiff.dirtySet, one-character edit  p50    0.017 ms   p95    0.018 ms   max    0.021 ms (n=25)
+  TextDiff.hunks, external rewrite  p50    0.435 ms   p95    0.456 ms   max    0.456 ms (n=10)
+
+Decorate (§12 — keystroke → updated render, budget 8 ms p95)
+  incremental, one dirty block  p50    0.059 ms   p95    0.066 ms   max    1.092 ms (n=25)   ✓ under 8 ms
+  wholesale (mode switch)  p50   70.004 ms   p95   70.442 ms   max   70.442 ms (n=5)
+
+Synchronous typing response (§12 — main-thread budget 8 ms p95)
+  edit + paragraph map  p50    0.095 ms   p95    0.099 ms   max    0.171 ms (n=100)   ✓ under 8 ms
+
+Semantic convergence (end to end; outside the typing budget)
+  worker pipeline  p50   19.723 ms   p95   20.483 ms   max   36.011 ms (n=60)   ✓ under 100 ms
+  … phase breakdown (same corpus, not separately budgeted)
+    parse phase  p50   19.641 ms   p95   19.820 ms   max   19.820 ms (n=15)
+    diff phase  p50    0.017 ms   p95    0.018 ms   max    0.018 ms (n=15)
+    decoration phase  p50    0.059 ms   p95    0.065 ms   max    0.065 ms (n=15)
+
+Cold open (§12 — first rendered pixel under 250 ms for 100 KB)
+  parse 100 KB  p50   16.300 ms   p95   16.489 ms   max   16.531 ms (n=30)   ✓ under 250 ms
+
+Other
+  StructuralZoom.plan, skeleton  p50    6.410 ms   p95    6.549 ms   max    6.549 ms (n=10)
+  Metrics.metrics  p50   19.406 ms   p95   19.552 ms   max   19.552 ms (n=10)
+  TidyDocument.plan  p50    2.295 ms   p95    2.343 ms   max    2.343 ms (n=10)
+  syntax highlight 10 KB Swift  p50    0.058 ms   p95    0.059 ms   max    0.059 ms (n=20)
+
+Typing response p95: 0.10 ms against an 8 ms budget.
+End-to-end semantic convergence p95: 20.48 ms against a 100 ms budget.

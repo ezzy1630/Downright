@@ -1,0 +1,30 @@
+Building for debugging...
+[Computing dependencies]
+[Provisioning 3 / 40]
+[Using on-disk description]
+[1 / 1]
+[1 / 2] drdownright-product
+[1 / 56] ElkSwift
+[1 / 57] Downright-product
+[2 / 8] MarkdownRenderTests-product
+[4 / 10] MarkdownRenderTests-product
+[9 / 11] MarkdownRenderTests-product
+[11 / 11] MarkdownRenderTests-product
+Build complete! (9.81 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite NativeLinkActivationTests started.
+◇ Test firstLineNativeLinkHitUsesReaderTypography() started.
+LINK THEME=Paper Light font=".NewYork-Regular 16.00 pt. P [] (0x7889278a00) fobj=0x7889278a00, spc=3.86" source=2 sourceHit=Optional((value: sibling.md, range: {1, 21})) contains=false selected={1, 0}
+LINE bounds=(0.0, 0.0, 174.42772722244263, 26.0) range={0, 36} start=(0.0, 22.0) end=(0.0, 22.0)
+LINE bounds=(0.0, 39.0, 0.0, 26.0) range={36, 0} start=(0.0, 22.0) end=(0.0, 22.0)
+✘ Test firstLineNativeLinkHitUsesReaderTypography() recorded an issue at NativeLinkActivationTests.swift:30:9: Expectation failed: view.attribute(.drLink, at: point)?.value as? String == "sibling.md"
+↳ view.attribute(.drLink, at: point)?.value as? String == "sibling.md" → false
+↳   view.attribute(.drLink, at: point)?.value as? String → nil
+↳     some → "sibling.md"
+✘ Test firstLineNativeLinkHitUsesReaderTypography() failed after 0.128 seconds with 1 issue.
+✘ Suite NativeLinkActivationTests failed after 0.128 seconds with 1 issue.
+✘ Test run with 1 test in 1 suite failed after 0.128 seconds with 1 issue.
+Note: Some test targets reported failures:
+  - MarkdownRenderTests (Swift Testing)

@@ -1,0 +1,85 @@
+{
+  "passed": false,
+  "scope": "timings only",
+  "baseline": "baseline-1.txt",
+  "candidates": [
+    "candidate-1.txt",
+    "candidate-2.txt",
+    "candidate-3.txt"
+  ],
+  "memory_records": [],
+  "metrics": [
+    {
+      "metric": "cmark conversion",
+      "baseline_p95_ms": 16.349,
+      "candidate_p95_ms": 10.605,
+      "improvement_percent": 35.13364731787877,
+      "passed": true
+    },
+    {
+      "metric": "Full parse",
+      "baseline_p95_ms": 27.477,
+      "candidate_p95_ms": 20.807,
+      "improvement_percent": 24.274848054736697,
+      "passed": false
+    },
+    {
+      "metric": "AST diff",
+      "baseline_p95_ms": 0.034,
+      "candidate_p95_ms": 0.018,
+      "improvement_percent": 47.058823529411775,
+      "passed": true
+    },
+    {
+      "metric": "Text diff",
+      "baseline_p95_ms": 1.605,
+      "candidate_p95_ms": 0.503,
+      "improvement_percent": 68.66043613707164,
+      "passed": true
+    },
+    {
+      "metric": "Incremental decoration",
+      "baseline_p95_ms": 0.104,
+      "candidate_p95_ms": 0.102,
+      "improvement_percent": 1.9230769230769273,
+      "passed": false
+    },
+    {
+      "metric": "Wholesale decoration",
+      "baseline_p95_ms": 157.616,
+      "candidate_p95_ms": 73.18,
+      "improvement_percent": 53.57070348188001,
+      "passed": true
+    },
+    {
+      "metric": "Typing/storage",
+      "baseline_p95_ms": 0.151,
+      "candidate_p95_ms": 0.099,
+      "improvement_percent": 34.437086092715234,
+      "passed": true
+    },
+    {
+      "metric": "Semantic convergence",
+      "baseline_p95_ms": 28.507,
+      "candidate_p95_ms": 20.483,
+      "improvement_percent": 28.147472550601606,
+      "passed": true
+    },
+    {
+      "metric": "Parse 100 KB",
+      "baseline_p95_ms": 23.02,
+      "candidate_p95_ms": 16.489,
+      "improvement_percent": 28.37098175499565,
+      "passed": true
+    },
+    {
+      "metric": "Syntax highlighting",
+      "baseline_p95_ms": 0.09,
+      "candidate_p95_ms": 0.065,
+      "improvement_percent": 27.777777777777768,
+      "passed": true
+    }
+  ],
+  "peak_physical_mib": null,
+  "memory_limit_bytes": 150000000
+}

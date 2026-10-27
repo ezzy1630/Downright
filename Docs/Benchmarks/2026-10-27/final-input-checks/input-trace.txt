@@ -1,0 +1,22 @@
+Timestamp               Ty Process[PID:TID]
+2026-10-27 15:54:40.785 Df Downright[9949:7f44] (Foundation) INPUT mouseDown point={394.87938792940599, 286} bounds={{0, 0}, {789.12061207059401, 4440}} frame={{-0.87938792940599342, 0}, {789.12061207059401, 4440}} origin={44, 36} source=186 link=nil selected={2, 0} modifiers=0 clicks=1
+2026-10-27 15:54:40.900 Df Downright[9949:7f44] (Foundation) INPUT mouseDown completed selected={186, 0} activation=none
+2026-10-27 15:54:49.280 Df Downright[10408:84d5] (Foundation) INPUT mouseDown point={394.87938792940599, 278} bounds={{0, 0}, {789.12061207059401, 556}} frame={{-0.87938792940599342, 0}, {789.12061207059401, 556}} origin={44, 36} source=31 link=nil selected={1, 0} modifiers=0 clicks=1
+2026-10-27 15:54:49.291 Df Downright[10408:84d5] (Foundation) INPUT mouseDown completed selected={31, 0} activation=none
+2026-10-27 15:55:00.631 Df Downright[10625:8837] (Foundation) INPUT mouseDown point={394.87938792940599, 286} bounds={{0, 0}, {789.12061207059401, 572}} frame={{-0.87938792940599342, 0}, {789.12061207059401, 572}} origin={44, 36} source=31 link=nil selected={1, 0} modifiers=0 clicks=1
+2026-10-27 15:55:00.746 Df Downright[10625:8837] (Foundation) INPUT mouseDown completed selected={31, 0} activation=none
+2026-10-27 15:55:07.176 Df Downright[10913:8b7e] (Foundation) INPUT mouseDown point={59.999993398155993, 49} bounds={{0, 0}, {789.12061207059401, 1698}} frame={{-0.87938792940599342, 0}, {789.12061207059401, 1698}} origin={44, 36} source=2 link=nil selected={1, 0} modifiers=0 clicks=1
+2026-10-27 15:55:07.276 Df Downright[10913:8b7e] (Foundation) INPUT mouseDown completed selected={1, 0} activation=none
+2026-10-27 15:55:27.083 Df Downright[11252:900e] (Foundation) INPUT mouseDown point={394.87938792940599, 286} bounds={{0, 0}, {789.12061207059401, 4440}} frame={{-0.87938792940599342, 0}, {789.12061207059401, 4440}} origin={44, 36} source=186 link=nil selected={2, 0} modifiers=0 clicks=1
+2026-10-27 15:55:27.087 Df Downright[11252:900e] (Foundation) INPUT mouseDown completed selected={186, 0} activation=none
+2026-10-27 15:55:49.898 Df Downright[12119:998f] (Foundation) INPUT creating playback key=196 rect={{236.12061207059401, 169}, {120, 24}} old=nil
+2026-10-27 15:55:49.985 Df Downright[12119:998f] (Foundation) INPUT creating playback key=196 rect={{236.12061207059401, 169}, {120, 24}} old=nil
+2026-10-27 15:55:51.370 Df Downright[12119:998f] (Foundation) INPUT playback hit point={343.2412109375, 181} local={344.12059886690599, 181} imageFrame={{236.12061207059401, 169}, {120, 24}} imageBounds={{0, 0}, {120, 24}} buttonFrame={{96, 0}, {24, 24}}
+2026-10-27 15:55:51.400 Df Downright[12119:998f] (Foundation) INPUT playback hit point={343.2412109375, 181} local={344.12059886690599, 181} imageFrame={{236.12061207059401, 169}, {120, 24}} imageBounds={{0, 0}, {120, 24}} buttonFrame={{96, 0}, {24, 24}}
+2026-10-27 15:55:51.409 Df Downright[12119:998f] (Foundation) INPUT playback hit point={343, 181} local={343.87938792940599, 181} imageFrame={{236.12061207059401, 169}, {120, 24}} imageBounds={{0, 0}, {120, 24}} buttonFrame={{96, 0}, {24, 24}}
+2026-10-27 15:55:51.744 Df Downright[12119:998f] (Foundation) INPUT playback hit point={343, 181} local={343.87938792940599, 181} imageFrame={{236.12061207059401, 169}, {120, 24}} imageBounds={{0, 0}, {120, 24}} buttonFrame={{96, 0}, {24, 24}}
+2026-10-27 15:55:51.745 Df Downright[12119:998f] (Foundation) INPUT togglePlayback view=<MarkdownRender.AnimatedImagePlaybackView: 0x9d44ca800> old=paused active=yes visible=yes frame={{236.12061207059401, 169}, {120, 24}} bounds={{0, 0}, {120, 24}} loops=1 frames=2
+2026-10-27 15:56:15.909 Df Downright[12881:a2df] (Foundation) INPUT mouseDown point={59.999993398155993, 49} bounds={{0, 0}, {789.12061207059401, 556}} frame={{-0.87938792940599342, 0}, {789.12061207059401, 556}} origin={44, 36} source=2 link=nil selected={1, 0} modifiers=0 clicks=1
+2026-10-27 15:56:15.924 Df Downright[12881:a2df] (Foundation) INPUT mouseDown completed selected={1, 0} activation=none
+2026-10-27 15:56:37.819 Df Downright[13264:a71b] (Foundation) INPUT mouseDown point={229.5, 304} bounds={{0, 0}, {493, 5825.1999999999998}} frame={{-0.5, 0}, {493, 5825.1999999999998}} origin={44, 36} source=164 link=nil selected={2, 0} modifiers=0 clicks=1
+2026-10-27 15:56:37.909 Df Downright[13264:a71b] (Foundation) INPUT mouseDown completed selected={164, 0} activation=none

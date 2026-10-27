@@ -1,0 +1,19 @@
+{
+  "candidate_commit": "cbef8ff2db62ea46b78425b03db6b62a319012bb",
+  "baseline_commit": "ce2cad6deb287fa34d3561615c6655e3eb29a17e",
+  "order": "baseline then candidate, three pairs; every baseline compared with all candidates",
+  "comparisons": [
+    {
+      "baseline": 1,
+      "exit_code": 1
+    },
+    {
+      "baseline": 2,
+      "exit_code": 1
+    },
+    {
+      "baseline": 3,
+      "exit_code": 1
+    }
+  ]
+}

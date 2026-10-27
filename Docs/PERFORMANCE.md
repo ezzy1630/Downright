@@ -49,7 +49,9 @@ applies dirty decoration.
 
 ## Release pipeline comparison (2026-10-27)
 
-All ten unchanged pipeline cases exceed the requested 25% improvement. These
+In the initial recorded snapshot, all ten unchanged pipeline cases exceeded
+the requested 25% improvement. Later repeats below did not consistently
+reproduce that threshold. These
 are Apple M4 / macOS 27.0 release measurements against a fresh same-machine
 baseline at `ce2cad6deb287fa34d3561615c6655e3eb29a17e`. The candidate is the
 clean integration snapshot at `8c0b6f340d95fd0110946a17e3bf44779813e551`,
@@ -81,6 +83,40 @@ time, visible scroll frames, or complete native transition latency.
 [Machine-readable comparison](Benchmarks/2026-10-27/landing/timings.json) ·
 [Source gate](Benchmarks/2026-10-27/landing/final-clean-source-gate.txt)
 
+### Later input-fix validation and timing variability
+
+The final input fix at `cbef8ff2db62ea46b78425b03db6b62a319012bb` passed
+1,462 Swift tests, 52 script checks, and [hosted native acceptance](https://github.com/ezzy1630/Downright/actions/runs/40539739996).
+It repairs link hit testing across hidden marker boundaries and paragraph-local
+coordinates. The animation acceptance fixture now explicitly loops so its Pause
+control remains observable; finite playback coverage remains in the unit suite.
+
+Three fresh release runs against the original overnight baseline met the 25%
+goal in **8 of 10** cases. Three interleaved old/new pairs were then run under
+the current desktop conditions. Comparing the fastest baseline p95 with the
+worst candidate p95 across those pairs gives the conservative results below.
+All trials, including failed comparisons, are [retained](Benchmarks/2026-10-27/final-input-checks/snapshot.json).
+The corpus and sample counts were unchanged.
+
+| Measurement | Baseline p95 (fastest) | Candidate p95 (worst) | Faster | ≥25% |
+|---|---:|---:|---:|:---:|
+| cmark conversion | 13.076 ms | 10.605 ms | 18.9% | No |
+| Full parse | 27.477 ms | 20.807 ms | 24.3% | No |
+| AST diff | 0.030 ms | 0.018 ms | 40.0% | Yes |
+| Text diff | 1.605 ms | 0.503 ms | 68.7% | Yes |
+| Incremental decoration | 0.104 ms | 0.102 ms | 1.9% | No |
+| Wholesale decoration | 157.616 ms | 73.180 ms | 53.6% | Yes |
+| Typing/storage | 0.149 ms | 0.099 ms | 33.6% | Yes |
+| Semantic convergence | 28.090 ms | 20.483 ms | 27.1% | Yes |
+| Parse 100 KB | 23.020 ms | 16.489 ms | 28.4% | Yes |
+| Syntax highlighting | 0.090 ms | 0.065 ms | 27.8% | Yes |
+
+These later runs do **not** certify a consistent 25% improvement in every case.
+The initial table remains a dated observation. Desktop load differed, but its
+contribution to the variation was not isolated. The unchanged 8 ms typing,
+100 ms semantic convergence, and 250 ms parse budgets passed; those product
+budgets are separate from the requested percentage improvement.
+
 ### Native memory certification is incomplete
 
 The latest measured isolated native release host opened the unchanged 1,032,709-byte
@@ -99,8 +135,8 @@ The packaged app, CLI, Spotlight importer and both Finder extensions passed
 
 The 150 MB session target remains uncertified. The owner approved landing with
 that evidence gap and unavailable visual testing on 2026-10-27; this approval
-does not turn the open-only observation into a session result. The final integration
-source gate passed 1,461 Swift tests and 52 script checks, with the two existing
+does not turn the open-only observation into a session result. The later input-fix
+source gate passed 1,462 Swift tests and 52 script checks, with the two existing
 headless known-issue sites. The open-only observation predates the final image
 permission fixes; it is not a measurement of the signed release. Finder
 Spacebar preview, thumbnail registration, native frame delivery and production

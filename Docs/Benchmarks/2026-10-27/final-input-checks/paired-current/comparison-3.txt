@@ -1,0 +1,14 @@
+| Metric | Before p95 | After p95 (worst run) | Faster | Result |
+|---|---:|---:|---:|---|
+| cmark conversion | 13.178 ms | 10.605 ms | 19.5% | FAIL |
+| Full parse | 29.215 ms | 20.807 ms | 28.8% | PASS |
+| AST diff | 0.030 ms | 0.018 ms | 40.0% | PASS |
+| Text diff | 1.677 ms | 0.503 ms | 70.0% | PASS |
+| Incremental decoration | 0.113 ms | 0.102 ms | 9.7% | FAIL |
+| Wholesale decoration | 160.717 ms | 73.180 ms | 54.5% | PASS |
+| Typing/storage | 0.152 ms | 0.099 ms | 34.9% | PASS |
+| Semantic convergence | 28.535 ms | 20.483 ms | 28.2% | PASS |
+| Parse 100 KB | 23.410 ms | 16.489 ms | 29.6% | PASS |
+| Syntax highlighting | 0.104 ms | 0.065 ms | 37.5% | PASS |
+
+Timing comparison only; native memory is not certified.

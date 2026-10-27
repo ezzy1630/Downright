@@ -1,0 +1,69 @@
+Building for debugging...
+[Computing dependencies]
+[Provisioning 28 / 40]
+[Using on-disk description]
+[1 / 1]
+[1 / 2] drdownright-product
+[1 / 56] ElkSwift
+[2 / 32] MarkdownRender
+[4 / 34] MarkdownRender
+[7 / 35] MarkdownRender
+[9 / 35] MarkdownRender
+[14 / 25] MarkdownRender-product
+[14 / 25] drbench-product
+[14 / 25] DownrightQLTests-product
+[16 / 27] Downright-product
+[17 / 27] Downright-product
+[21 / 22] DownrightAppTests-product
+[23 / 23] DownrightQLTests-product
+[23 / 23] MarkdownRenderTests-product
+[23 / 23] DownrightAppTests-product
+[24 / 24] drbench-product
+Build complete! (21.02 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Bounded native image playback" started.
+◇ Suite NativeLinkActivationTests started.
+◇ Suite "Click stability" started.
+◇ Test firstLineNativeLinkHitUsesReaderTypography(_:) started.
+◇ Test metadataAndDecodedFramesStayBounded() started.
+◇ Test "clicking a paragraph leaves it exactly where it was on screen" started.
+◇ Test case passing 1 argument suffix → "" to firstLineNativeLinkHitUsesReaderTypography(_:) started.
+✔ Test metadataAndDecodedFramesStayBounded() passed after 0.131 seconds.
+✔ Test "clicking a paragraph leaves it exactly where it was on screen" passed after 0.131 seconds.
+◇ Test malformedTimingsNeverScheduleAnInvalidTimer() started.
+◇ Test "a click leaves untouched paragraphs' markers hidden" started.
+◇ Test case passing 1 argument suffix → "
+" to firstLineNativeLinkHitUsesReaderTypography(_:) started.
+✔ Test malformedTimingsNeverScheduleAnInvalidTimer() passed after 0.074 seconds.
+✔ Test "a click leaves untouched paragraphs' markers hidden" passed after 0.074 seconds.
+◇ Test playbackStartsPausedAndHasAnAccessibleControl() started.
+◇ Test "markers still reveal under the caret and re-hide when it leaves" started.
+◇ Test case passing 1 argument suffix → " after.
+" to firstLineNativeLinkHitUsesReaderTypography(_:) started.
+✔ Test playbackStartsPausedAndHasAnAccessibleControl() passed after 0.049 seconds.
+✔ Test "markers still reveal under the caret and re-hide when it leaves" passed after 0.049 seconds.
+◇ Test finitePlaybackCanReplayEveryAuthoredLoop() started.
+◇ Test "clicking does not scroll the viewport" started.
+✔ Test firstLineNativeLinkHitUsesReaderTypography(_:) with 3 test cases passed after 0.273 seconds.
+◇ Test appKitLinkActivationUsesTheMarkdownHost() started.
+✔ Test finitePlaybackCanReplayEveryAuthoredLoop() passed after 0.044 seconds.
+✔ Test "clicking does not scroll the viewport" passed after 0.044 seconds.
+◇ Test playbackButtonReceivesHitTestsInsideTheTextView() started.
+◇ Test "point hit testing follows the rendered line" started.
+✔ Test appKitLinkActivationUsesTheMarkdownHost() passed after 0.030 seconds.
+✔ Suite NativeLinkActivationTests passed after 0.303 seconds.
+✔ Test "point hit testing follows the rendered line" passed after 0.030 seconds.
+✔ Test playbackButtonReceivesHitTestsInsideTheTextView() passed after 0.030 seconds.
+◇ Test "point hit testing resolves a rendered link label" started.
+◇ Test svgRasterizationIsBounded() started.
+✔ Test "point hit testing resolves a rendered link label" passed after 0.003 seconds.
+✔ Test svgRasterizationIsBounded() passed after 0.003 seconds.
+✔ Suite "Bounded native image playback" passed after 0.334 seconds.
+◇ Test "clicking the whitespace after a link does not keep the link target hot" started.
+✔ Test "clicking the whitespace after a link does not keep the link target hot" passed after 0.002 seconds.
+◇ Test "a checkbox double-click toggles only once" started.
+✔ Test "a checkbox double-click toggles only once" passed after 0.004 seconds.
+✔ Suite "Click stability" passed after 0.340 seconds.
+✔ Test run with 16 tests in 3 suites passed after 0.340 seconds.

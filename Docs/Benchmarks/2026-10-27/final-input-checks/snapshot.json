@@ -1,0 +1,15 @@
+{
+  "measured_commit": "cbef8ff2db62ea46b78425b03db6b62a319012bb",
+  "baseline_commit": "ce2cad6deb287fa34d3561615c6655e3eb29a17e",
+  "source_state": "clean",
+  "original_reference_comparison": "8 of 10 cases exceed 25%; not certified",
+  "paired_comparison": "7 of 10 exceed 25% using fastest baseline and worst candidate across three interleaved pairs; not certified",
+  "native_ci": "https://github.com/ezzy1630/Downright/actions/runs/40539739996",
+  "source_gate": {
+    "swift_tests": 1462,
+    "script_tests": 52,
+    "result": "PASS"
+  },
+  "memory_certification": "INCOMPLETE",
+  "method": "All trials retained. No changes to corpus, sample counts, source gate, or release budgets."
+}
