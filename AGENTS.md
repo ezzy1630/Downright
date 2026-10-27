@@ -56,5 +56,6 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 
 - For a numbered audit or broad implementation plan, expand grouped bullets into concrete acceptance items. Reconcile every original item and later correction as proved, explicitly approved as changed, or blocked before claiming completion.
 - A push or merge to this repository’s `main` is a consequential signed-release action, including documentation-only changes. Obtain explicit authorization immediately before it. Feature-branch pushes and merged PRs are not release proof.
+- Keep customer-facing release notes in the matching version section of `CHANGELOG.md`; the release workflow uses it for the GitHub Release and signed Sparkle appcast.
 - For release claims, follow `Docs/RELEASE.md` and keep these states distinct: intended `main` SHA, workflow completion, version/build, GitHub Release, signed/notarized/stapled DMG and checksum, stable download URL, signed Sparkle appcast/enclosure, update availability, and installed `/Applications` bundle.
 - Verify every release stage the request places in scope and label the rest unverified. “Update available” does not mean existing installations have already updated.

@@ -52,7 +52,7 @@ applies dirty decoration.
 All ten unchanged pipeline cases exceed the requested 25% improvement. These
 are Apple M4 / macOS 27.0 release measurements against a fresh same-machine
 baseline at `ce2cad6deb287fa34d3561615c6655e3eb29a17e`. The candidate is the
-uncommitted performance snapshot identified in [the evidence manifest](Benchmarks/2026-10-27/snapshot.json).
+pre-integration performance snapshot identified in [the evidence manifest](Benchmarks/2026-10-27/snapshot.json).
 Each candidate value below is the worst p95 from three isolated runs, with the
 original sample counts. The comparison checks conservative bounds for the
 benchmark's 0.001 ms rounding.
@@ -96,9 +96,11 @@ The separately built Xcode UI runner also [timed out enabling automation mode](B
 The packaged app, CLI, Spotlight importer and both Finder extensions passed
 [structural bundle verification](Benchmarks/2026-10-27/packaged-verification.txt).
 
-Do not call the 150 MB session target certified or publish this snapshot on the
-strength of the open-only result. The source gate passed 1,459 Swift tests and
-42 script checks, with the two existing headless known-issue sites. Finder
+The 150 MB session target remains uncertified. The owner approved landing with
+that evidence gap and unavailable visual testing on 2026-10-27; this approval
+does not turn the open-only observation into a session result. The pre-integration
+source gate passed 1,459 Swift tests and 42 script checks, with the two existing
+headless known-issue sites. Finder
 Spacebar preview, thumbnail registration, native frame delivery and production
 updater behavior remain separate acceptance surfaces.
 
@@ -246,11 +248,18 @@ scoring and highlight positions while using a running prefix maximum for gap
 scores, bounding matching work to query length times heading length. Alignment
 tests cover consecutive, separated, boundary, and case-sensitive bonuses.
 
-Large-document opening must keep offscreen elements lazy. The top-aligned text
-view computes its container origin from its insets; AppKit's default getter
-can resolve the whole document's used bounds. During an open, the controller
-also defers selection-driven geometry until the new display map is installed,
-so AppKit's transient storage-repair selection cannot force layout to EOF.
+Large-document opening must keep offscreen elements lazy while preserving
+AppKit's viewport lifecycle and native top-aligned geometry. A shared pane is
+attached to its scroll surface while empty, then adopts the shared storage and
+parsed presentation in one content-storage editing transaction. During an open,
+the controller defers selection-driven geometry until the new display map is
+installed, so AppKit's transient storage-repair selection cannot force layout to
+EOF. Small documents use the native origin getter. Above the eager-layout
+budget, or while the paragraph index and storage lengths differ, the origin
+returns the top-aligned inset without asking AppKit to resolve used bounds
+through EOF. Native viewport and drawing entry points remain intact. Width
+repairs keep the text view at least as wide as its container plus insets;
+geometry regressions compare the bounded origin with native layout.
 `EditingKeyReproTests.openingLargeDocumentDoesNotMaterializeEveryParagraph`
 checks the existing element cache after displaying the viewport. Do not count
 fragments by enumerating the document: that enumeration creates fragments and

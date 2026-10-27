@@ -440,23 +440,12 @@ jobs:
             "$DSYMS" "artifacts/Downright-$TAG-dSYMs.zip"
           shasum -a 256 "artifacts/Downright-$TAG-dSYMs.zip" \
             > "artifacts/Downright-$TAG-dSYMs.zip.sha256"
-          # Auto-assemble release notes from the commits since the previous
-          # generated or manually tagged release.
+          # Prefer the version's curated customer notes; versions without an
+          # entry retain the existing history fallback.
           PREV_TAG="$(git tag --sort=-creatordate | grep -E '^(auto-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)$' | grep -v "^${RELEASE_TAG}$" | head -1 || true)"
-          if [ -n "$PREV_TAG" ]; then
-            COMMITS="$(git log --oneline --no-merges "${PREV_TAG}..HEAD")"
-          else
-            COMMITS="$(git log --oneline --no-merges -30 HEAD)"
-          fi
-          {
-            echo "# Downright $MARKETING_VERSION (build $BUILD)"
-            echo
-            echo "## What's new"
-            echo
-            echo "$COMMITS" | sed 's/^/- /'
-            echo
-            echo "_Full history: https://github.com/${{ github.repository }}/releases_"
-          } > artifacts/RELEASE-NOTES.md
+          python3 Scripts/release-notes.py "$MARKETING_VERSION" "$BUILD" \
+            "${{ github.repository }}" --previous-tag "$PREV_TAG" \
+            > artifacts/RELEASE-NOTES.md
           echo "APP_BASENAME=Downright-$TAG.zip" >> "$GITHUB_ENV"
 
       - name: Fetch Sparkle signing tools (pinned version)
