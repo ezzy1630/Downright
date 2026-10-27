@@ -143,6 +143,21 @@ If another app or coding agent rewrites an open file, Downright can show the
 change in place, preserve dirty local edits, and let you review word-level
 differences. It is a useful extra, not a different way of owning your files.
 
+## Reading and window preferences
+
+In **Settings → Typography**, Measure (characters) controls line length from
+60–110 characters without changing the font size. The default is 70, and narrow
+windows fit the column to the available space. Reader profiles also support the
+full range.
+
+In **Settings → General**, When the last document closes offers **Show start
+window**, **Quit Downright**, and **Do nothing**. The default remains Show start
+window; closing a document with unsaved changes still offers the normal save
+choices.
+
+See the [1.0.17 changelog](CHANGELOG.md#1017) for link navigation, split-view,
+save-state, Find, and performance improvements.
+
 ## Everyday commands
 
 ```bash

@@ -12,6 +12,55 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.17]
+
+### Added
+
+- Choose what happens when the last document closes in **Settings → General →
+  When the last document closes**: Show start window, Quit Downright, or Do
+  nothing. Show start window remains the default. ([#42](https://github.com/ezzy1630/Downright/issues/42))
+
+### Changed
+
+- **Reading width follows your choice.** Settings → Typography → Measure
+  (characters) now supports 60–110 characters, including reader profiles and
+  HTML export. The default stays at 70; narrow windows fit the column to the
+  available space without overriding the saved setting.
+  ([#41](https://github.com/ezzy1630/Downright/issues/41))
+- Faster parsing of long Unicode-heavy lines and outline searches, with lower
+  memory use for large documents. Hidden syntax and split panes materialize
+  layout as needed. [Performance measurements and remaining limits](https://github.com/ezzy1630/Downright/blob/main/Docs/PERFORMANCE.md)
+  distinguish source-edit timing from whole-app rendering and peak memory.
+
+### Fixed
+
+- **Local Markdown links open inside Downright.** Sibling paths, encoded
+  filenames, and heading fragments resolve correctly. Back/Forward restores
+  the document and reading position, and failed or cancelled opens leave
+  history unchanged. ([#43](https://github.com/ezzy1630/Downright/issues/43))
+- **Deleting an accidental edit clears the save prompt.** Returning to the
+  exact saved text by editing or undo clears the edited state without saving.
+  Pending external-file conflicts are still protected.
+- Blank document and split-pane rendering on macOS 26, split reopening and
+  saved split-state restoration, and reading-position jumps during navigation
+  and resizing.
+- Find Next keeps moving through matches after the Find bar closes and refreshes
+  its results when the text changes.
+- Autosave waits for an idle period after the latest edit. Discard keeps implicit
+  saves suppressed until a fresh edit, including after a cancelled quit.
+- Exact-artifact installation reports staging failures and preserves the previous
+  app if the replacement cannot complete.
+
+### Maintenance
+
+- Updated Sparkle to 2.10.0 with matching build and release-tool pins.
+
+## Earlier main-channel notes
+
+These notes were accumulated before 1.0.17 and are retained as historical context
+without assigning them retrospective version numbers. Some implementation details
+were subsequently replaced by the changes above.
+
 ### Added
 
 - **Update Now.** A build published from a push to `main` now reaches a running
