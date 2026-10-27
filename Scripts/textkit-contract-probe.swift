@@ -140,6 +140,7 @@ final class ElementDelegate: NSObject, NSTextContentStorageDelegate {
 
 enum ProbeVariant: String {
     case stock
+    case objcForward = "objc-forward"
     case rangeDelegate = "range-delegate"
     case groupDelegate = "group-delegate"
     case swiftView = "swift-view"
@@ -172,7 +173,11 @@ struct TextKitContractProbe {
         let text = String(repeating: "Native text rendering has predictable paragraph locations.\n\n", count: 15)
         let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.black])
         let content: NSTextContentStorage
-        if variant == .plainContent { content = PlainContentStorage() }
+        if variant == .objcForward {
+            let type = NSClassFromString("DRForwardingContentStorage") as! NSTextContentStorage.Type
+            content = type.init()
+        }
+        else if variant == .plainContent { content = PlainContentStorage() }
         else if variant == .forwardingContent || variant == .retainedContent {
             let forwarding = ForwardingContentStorage()
             forwarding.retainsElements = variant == .retainedContent

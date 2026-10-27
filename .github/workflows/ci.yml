@@ -26,9 +26,10 @@ jobs:
       - name: Compare native TextKit graph contracts
         run: |
           set -uo pipefail
-          xcrun swiftc -swift-version 5 -parse-as-library Scripts/textkit-contract-probe.swift -o "$RUNNER_TEMP/textkit-contract-probe" || exit 1
+          xcrun clang -fobjc-arc -c Scripts/textkit-objc-probe.m -o "$RUNNER_TEMP/textkit-objc-probe.o" || exit 1
+          xcrun swiftc -swift-version 5 -parse-as-library Scripts/textkit-contract-probe.swift "$RUNNER_TEMP/textkit-objc-probe.o" -o "$RUNNER_TEMP/textkit-contract-probe" || exit 1
           failed=0
-          for variant in stock range-delegate group-delegate; do
+          for variant in stock plain-content objc-forward forwarding-content; do
             "$RUNNER_TEMP/textkit-contract-probe" "$variant" || failed=1
           done
           exit "$failed"
