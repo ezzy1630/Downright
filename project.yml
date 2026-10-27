@@ -120,6 +120,10 @@ targets:
       - path: Tests/DownrightUITests
     dependencies:
       - target: Downright
+      - package: Downright
+        product: MarkdownCore
+      - package: Downright
+        product: MarkdownRender
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ezzy.downright.uitests

@@ -222,3 +222,9 @@ prose viewport, excluding chrome and margin controls, and read AppKit's native
 scrollbar for link/history positions. Diagnostic `cacheDisplay` captures are
 kept out of that user-path acceptance; a PNG's existence or size does not prove
 that the document was visible.
+
+The UI-test runner also hosts framework lifecycle windows covering initially
+empty storage, mounting before load, and zero-sized viewports that later resize.
+These inspect WindowServer pixels and record native observer/viewport state;
+they isolate rendering lifecycle failures without adding alternate app paths.
+The activated-app journeys remain required for the actual document host.
