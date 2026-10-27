@@ -40,8 +40,9 @@ jobs:
           jq -n --arg total "$TOTAL" \
             '{schemaVersion: 1, label: "total downloads", message: $total, color: "307afe"}' \
             > "$RUNNER_TEMP/download-counter/downloads.json"
+          bash Scripts/download-count-badge.sh "$TOTAL" > "$RUNNER_TEMP/download-counter/downloads.svg"
 
-      - name: Publish the Shields endpoint
+      - name: Publish the download counter
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -58,4 +59,6 @@ jobs:
           fi
           TAG="$(gh release view --json tagName --jq .tagName)"
           # Metrics are mutable; signed application archives and feeds are not.
-          gh release upload "$TAG" "$RUNNER_TEMP/download-counter/downloads.json" --clobber
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP/download-counter/downloads.json" \
+            "$RUNNER_TEMP/download-counter/downloads.svg" --clobber

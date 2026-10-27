@@ -200,9 +200,12 @@ asset-request count, not a unique-person or completed-install count.
 The README's total-downloads badge is backed by
 `.github/workflows/download-count.yml`. It refreshes daily, after each push to
 `main`, after a successful release, or on manual dispatch, and publishes the
-Shields-compatible `downloads.json` asset on the latest production release.
-Only this metrics asset is mutable; signed app archives and appcasts remain
-immutable. This avoids extra branches and scheduled commits to `main`.
+`downloads.svg` badge and Shields-compatible `downloads.json` data on the latest
+production release. `Scripts/download-count-badge.sh` renders the SVG from the
+same count. The README loads it directly from GitHub Releases: Shields' custom
+endpoint blocks the `github.com` domain. Only these metrics assets are mutable;
+signed app archives and appcasts remain immutable. This avoids extra branches
+and scheduled commits to `main`.
 
 ## DMG packaging
 

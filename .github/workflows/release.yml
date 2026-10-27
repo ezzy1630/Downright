@@ -538,7 +538,7 @@ jobs:
         env:
           SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
 
-      - name: Prepare download counter endpoint
+      - name: Prepare download counter
         # A README badge must never be able to fail a signed release. The
         # counter needs a live API call, so it is allowed to fail: the publish
         # step below skips an asset that is not there, and the daily counter
@@ -553,6 +553,7 @@ jobs:
           jq -n --arg total "$TOTAL" \
             '{schemaVersion: 1, label: "total downloads", message: $total, color: "307afe"}' \
             > artifacts/downloads.json
+          bash Scripts/download-count-badge.sh "$TOTAL" > artifacts/downloads.svg
 
       # --------------------------------------------------------------- publish
       - name: Publish GitHub Release
@@ -573,6 +574,7 @@ jobs:
             artifacts/Downright-${{ steps.release_identity.outputs.tag }}-dSYMs.zip.sha256
             artifacts/*.delta
             artifacts/downloads.json
+            artifacts/downloads.svg
           body_path: artifacts/RELEASE-NOTES.md
 
       - name: Verify public asset URL
