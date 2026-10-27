@@ -36,6 +36,17 @@ Scripts/sync-versions.sh        # verify
 Scripts/sync-versions.sh fix    # rewrite the consumers from version.env
 ```
 
+## Release notes
+
+Keep customer-facing changes in the matching `## [X.Y.Z]` section of
+`CHANGELOG.md` before landing a release. `Scripts/release-notes.py` combines that
+section with the actual version/build identity for both the GitHub Release and
+the signed Sparkle appcast's embedded notes. The README links to the changelog.
+Use absolute URLs in that section so links work in GitHub and the app as well
+as in the repository. Historical sections are not included. Empty or duplicate matching
+sections fail publication; a version without a section retains the existing
+commit-history fallback.
+
 ## Updater architecture
 
 - `Sources/DownrightApp/Updater/UpdateCoordinator.swift` — `@MainActor`

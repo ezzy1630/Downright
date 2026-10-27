@@ -175,11 +175,14 @@ scoring and highlight positions while using a running prefix maximum for gap
 scores, bounding matching work to query length times heading length. Alignment
 tests cover consecutive, separated, boundary, and case-sensitive bonuses.
 
-Large-document opening must keep offscreen elements lazy. The top-aligned text
-view computes its container origin from its insets; AppKit's default getter
-can resolve the whole document's used bounds. During an open, the controller
-also defers selection-driven geometry until the new display map is installed,
-so AppKit's transient storage-repair selection cannot force layout to EOF.
+Large-document opening must keep offscreen elements lazy while preserving
+AppKit's native text-container origin and viewport lifecycle. A shared pane is
+attached to its scroll surface while empty, then adopts the shared storage and
+parsed presentation in one content-storage editing transaction. During an open,
+the controller defers selection-driven geometry until the new display map is
+installed, so AppKit's transient storage-repair selection cannot force layout to
+EOF. Do not replace the native origin getter with a fixed inset: that bypasses
+the geometry needed for native rendering.
 `EditingKeyReproTests.openingLargeDocumentDoesNotMaterializeEveryParagraph`
 checks the existing element cache after displaying the viewport. Do not count
 fragments by enumerating the document: that enumeration creates fragments and
