@@ -108,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+#if DEBUG
+        defer { NativeRenderingDiagnostic.showIfRequested(content: windowControllers.first?.markdownDocument.storage) }
+#endif
         // Start the Sparkle updater after launch, as the spec requires.  Dev
         // bundles without the Sparkle Info.plist block make this a no-op.
         UpdateCoordinator.shared.start()

@@ -71,6 +71,74 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
     }
 
+    // Temporary differential controls; remove before release.
+    func testDiagnosticDocumentWithoutLayoutLogging() throws {
+        app.launchEnvironment.removeValue(forKey: "DOWNRIGHT_DEBUG_LAYOUT")
+        app.launch()
+        app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
+    }
+
+    func testDiagnosticNativeParagraphs() throws {
+        try assertDiagnosticDocument(nativeFragments: false, nativeView: false)
+    }
+
+    func testDiagnosticNativeParagraphsAndFragments() throws {
+        try assertDiagnosticDocument(nativeFragments: true, nativeView: false)
+    }
+
+    func testDiagnosticNativeViewInDocument() throws {
+        try assertDiagnosticDocument(nativeFragments: false, nativeView: true)
+    }
+
+    func testDiagnosticStockTextKit2DecoratedWindow() throws {
+        try assertDiagnosticWindow(mode: "textkit2-decorated")
+    }
+
+    func testDiagnosticStockTextKit2SystemWindow() throws {
+        try assertDiagnosticWindow(mode: "textkit2-system")
+    }
+
+    func testDiagnosticStockTextKit1SystemWindow() throws {
+        try assertDiagnosticWindow(mode: "textkit1-system")
+    }
+
+    private func writeDiagnosticFixture() throws {
+        let text = String(repeating: "Native text rendering has plain prose with predictable source positions.\n\n", count: 20)
+        try Data(text.utf8).write(to: fixture)
+    }
+
+    private func assertDiagnosticDocument(nativeFragments: Bool, nativeView: Bool) throws {
+        try writeDiagnosticFixture()
+        if nativeView {
+            app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_VIEW_IN_DOCUMENT"] = "1"
+        } else {
+            app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_PARAGRAPHS"] = "1"
+            if nativeFragments { app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_FRAGMENTS"] = "1" }
+        }
+        app.launch()
+        app.activate()
+        let window = app.windows.firstMatch
+        let label = nativeView ? "Native rendering control" : "Document editor"
+        XCTAssertTrue(window.textViews[label].waitForExistence(timeout: 15))
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
+    }
+
+    private func assertDiagnosticWindow(mode: String) throws {
+        try writeDiagnosticFixture()
+        app.launchEnvironment.removeValue(forKey: "DOWNRIGHT_DEBUG_LAYOUT")
+        app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_WINDOW"] = mode
+        app.launch()
+        app.activate()
+        let title = "Native rendering control: " + mode
+        let window = app.windows.matching(NSPredicate(format: "title == %@", title)).firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
+        XCTAssertTrue(window.textViews["Native rendering control"].waitForExistence(timeout: 15))
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
+    }
+
     func testUnterminatedParagraphRendersWithoutChangingSource() throws {
         let text = "An unterminated Markdown paragraph remains visible and keeps every source byte. A native text surface must render this document without needing a final newline or another paragraph to initialize its viewport."
         let original = Data(text.utf8)
@@ -409,6 +477,12 @@ final class DownrightActivatedAppTests: XCTestCase {
             return edgeCount > 150
         }, object: nil)
         let result: XCTWaiter.Result = XCTWaiter.wait(for: [expected], timeout: 10)
+        if result != .completed {
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Full screen at missing prose"
+            screen.lifetime = .keepAlways
+            add(screen)
+        }
         if let lastScreenshot {
             let attachment = XCTAttachment(screenshot: lastScreenshot)
             attachment.lifetime = .keepAlways
@@ -443,7 +517,14 @@ final class DownrightActivatedAppTests: XCTestCase {
             position = value
             return true
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 10), .completed,
+        let result = XCTWaiter.wait(for: [expected], timeout: 10)
+        if result != .completed {
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Full screen at unexpected scroll position"
+            screen.lifetime = .keepAlways
+            add(screen)
+        }
+        XCTAssertEqual(result, .completed,
                        "Expected native document scroll position. Last value: \(lastValue). \(window.debugDescription)")
         return try XCTUnwrap(position)
     }

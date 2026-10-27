@@ -34,6 +34,12 @@ struct ContentStorageTilingTests {
                          reflowRanges: [], displayMap: .identity)
         let native = NSTextContentStorage()
         native.textStorage = NSTextStorage(string: text)
+        let separatorLength = separator.utf16.count
+        let expectedSeparators = [
+            NSRange(location: "First".utf16.count, length: separatorLength),
+            NSRange(location: "First".utf16.count + separatorLength, length: separatorLength),
+            NSRange(location: text.utf16.count, length: 0),
+        ]
         for content in [custom as NSTextContentStorage, native] {
             var paragraphs: [NSTextParagraph] = []
             _ = content.enumerateTextElements(from: nil) { element in
@@ -41,14 +47,23 @@ struct ContentStorageTilingTests {
                 return true
             }
             #expect(!paragraphs.isEmpty)
+            var actualSeparators: [NSRange] = []
             for paragraph in paragraphs {
                 let element = try #require(paragraph.elementRange)
                 let body = try #require(paragraph.paragraphContentRange)
                 let separator = try #require(paragraph.paragraphSeparatorRange)
+                let actualSeparator = NSRange(
+                    location: content.offset(from: content.documentRange.location, to: separator.location),
+                    length: content.offset(from: separator.location, to: separator.endLocation)
+                )
+                actualSeparators.append(actualSeparator)
                 #expect(content.offset(from: element.location, to: body.location) == 0)
                 #expect(content.offset(from: body.endLocation, to: separator.location) == 0)
                 #expect(content.offset(from: separator.endLocation, to: element.endLocation) == 0)
             }
+            // Native storage may group NEL within a paragraph. Our source
+            // provider explicitly treats it as a paragraph separator.
+            if content === custom { #expect(actualSeparators == expectedSeparators) }
         }
         #expect(storage.string == text)
     }

@@ -563,7 +563,13 @@ public final class MarkdownTextView: NSTextView {
         super.init(frame: frame, textContainer: container)
 
         fragmentProvider = FragmentProvider(context: fragmentContext)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_NATIVE_FRAGMENTS"] != "1" {
+            markdownLayoutManager.delegate = fragmentProvider
+        }
+        #else
         markdownLayoutManager.delegate = fragmentProvider
+        #endif
         fragmentContext.textView = self
 
         isVerticallyResizable = true
