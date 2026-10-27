@@ -113,8 +113,35 @@ final class FragmentDelegate: NSObject, NSTextLayoutManagerDelegate {
     }
 }
 
+final class ElementDelegate: NSObject, NSTextContentStorageDelegate {
+    var groupsParagraphs = false
+    private var elements: [Int: NSTextParagraph] = [:]
+    func textContentManager(_ manager: NSTextContentManager, textElementAt location: NSTextLocation) -> NSTextElement? {
+        guard let content = manager as? NSTextContentStorage, let storage = content.textStorage else { return nil }
+        let start = manager.documentRange.location
+        let offset = manager.offset(from: start, to: location)
+        guard offset < storage.length else { return nil }
+        let text = storage.string as NSString
+        let range: NSRange
+        if groupsParagraphs {
+            let first = (offset / 120) * 120
+            range = NSRange(location: first, length: min(120, storage.length - first))
+        } else { range = text.paragraphRange(for: NSRange(location: offset, length: 0)) }
+        if let element = elements[range.location] { return element }
+        let first = manager.location(start, offsetBy: range.location)!
+        let last = manager.location(start, offsetBy: NSMaxRange(range))!
+        let end = manager.location(start, offsetBy: NSMaxRange(range) - 1)!
+        let element = RangedParagraph(text: storage.attributedSubstring(from: range), manager: manager,
+            element: NSTextRange(location: first, end: last)!, separator: NSTextRange(location: end, end: last)!)
+        elements[range.location] = element
+        return element
+    }
+}
+
 enum ProbeVariant: String {
     case stock
+    case rangeDelegate = "range-delegate"
+    case groupDelegate = "group-delegate"
     case swiftView = "swift-view"
     case configuredView = "configured-view"
     case plainContent = "plain-content"
@@ -165,6 +192,9 @@ struct TextKitContractProbe {
         content.textStorage = storage
         let configuresLate = [.lateContent, .transactionalContent, .combinedAll].contains(variant)
         if !configuresLate { (content as? ExplicitContentStorage)?.prepare() }
+        let elements = ElementDelegate()
+        elements.groupsParagraphs = variant == .groupDelegate
+        if variant == .rangeDelegate || variant == .groupDelegate { content.delegate = elements }
         let substitution = IdentitySubstitution()
         if variant == .substitution || variant == .combinedAll { content.delegate = substitution }
         let frame = NSRect(x: 0, y: 0, width: 688, height: 480)
@@ -215,9 +245,18 @@ struct TextKitContractProbe {
         layout.textViewportLayoutController.layoutViewport()
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         window.displayIfNeeded()
+        if variant == .rangeDelegate || variant == .groupDelegate {
+            var count = 0
+            _ = content.enumerateTextElements(from: nil) { element in
+                if count < 4 { print("DELEGATE element=\(String(describing: element.elementRange))") }
+                count += 1
+                return true
+            }
+            print("DELEGATE count=\(count)")
+        }
         let viewport = layout.textViewportLayoutController.viewportRange
         print("TEXTKIT \(variant.rawValue): viewport=\(String(describing: viewport)) bounds=\(layout.textViewportLayoutController.viewportBounds) usage=\(layout.usageBoundsForTextContainer) observerOwns=\((storage.textStorageObserver as AnyObject?) === content) bindsContent=\(view.textContentStorage === content) bindsLayout=\(view.textLayoutManager === layout) layoutDelegate=\(String(describing: layout.delegate)) contentDelegate=\(String(describing: content.delegate))")
-        withExtendedLifetime((content, substitution, fragment)) { window.close() }
+        withExtendedLifetime((content, substitution, fragment, elements)) { window.close() }
         exit(viewport == nil ? 1 : 0)
     }
 }
