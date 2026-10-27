@@ -146,17 +146,18 @@ differences. It is a useful extra, not a different way of owning your files.
 ## Reading and window preferences
 
 In **Settings → Typography**, Measure (characters) controls line length from
-60–110 characters without changing the font size. The default is 70, and narrow
-windows fit the column to the available space. Reader profiles also support the
-full range.
+60–120 characters without changing the font size, with a Full width option.
+The default is 70, and narrow windows fit the column to the available space.
+Reader profiles, HTML export, and Quick Look use the saved measure.
 
 In **Settings → General**, When the last document closes offers **Show start
 window**, **Quit Downright**, and **Do nothing**. The default remains Show start
 window; closing a document with unsaved changes still offers the normal save
 choices.
 
-See the [1.0.17 changelog](CHANGELOG.md#1017) for link navigation, split-view,
-save-state, Find, and performance improvements.
+See the [1.0.18 changelog](CHANGELOG.md#1018) for images, reading width, and
+performance improvements, and [1.0.17](CHANGELOG.md#1017) for navigation,
+split-view, save-state, and Find fixes.
 
 ## Everyday commands
 

@@ -14,7 +14,7 @@ not public releases.
 | Extensions | Math, front matter, callouts, wikilinks, paths, Mermaid | P1 | Extension tests pass, no false math in shell text |
 | Code | Native syntax highlighting, diff fences, copy | P1/P7 | Canonical language tests pass |
 | Tables | Render, wrap, numeric alignment, edit in Live | P1/P3 | Long cells remain readable and editable |
-| Images | Native render, caption, lightbox | P1 | Missing image has safe fallback |
+| Images | Native block/inline images, linked badge rows, caption, lightbox; opt-in remote loading and paused animation | P1 | Missing image has safe fallback; network consent is document-scoped |
 | Navigation | Outline, heading jump, folding, structural zoom | P1/P5 | Levels 1–5 preserve anchor position |
 | Tasks | Grouped task panel and direct checkbox toggle | P5 | Toggle writes one source edit |
 | Density gutter | Shape, changes, search, tasks, progress | P5 | Gutter state matches document ranges |
@@ -31,7 +31,7 @@ not public releases.
 | Document Health | Structure, access, references, links, media, syntax, prose | P5 | Stable findings and safe local fixes |
 | Render Targets | Built-in and custom renderer profiles | P5 | Exact findings and reversible proposals |
 | Review | Local comments, suggestions, and resolved state in sidecars | P6 | Markdown stays clean; stale anchors are visible |
-| Reader profiles | Saved typography, width, chrome, and motion sets | P4/P10 | Profiles do not change source |
+| Reader profiles | Saved typography, finite 60–120 character or Full width measure, chrome, and motion sets | P4/P10 | Profiles do not change source |
 | Visual Debugger | Source range, AST block, style, target, and asset state | P5 | A render element explains its inputs |
 | Command palette | Searchable actions, keys, scope, and recent use | P4 | Every action has one command owner |
 | Trust | Per-file and per-folder link, asset, and automation trust | P7/P8 | Untrusted content cannot cause an external effect |
