@@ -1,6 +1,5 @@
 import AppKit
 import XCTest
-import Vision
 
 /// Acceptance coverage for the surface that SwiftPM's AppKit test runner
 /// cannot provide: an actual Downright.app with a running display cycle.
@@ -369,40 +368,45 @@ final class DownrightActivatedAppTests: XCTestCase {
 
     private func assertVisibleHeading(_ heading: String, in pane: XCUIElement,
                                       file: StaticString = #filePath, line: UInt = #line) {
-        var observed: [String] = []
-        var lastScreenshot: XCUIScreenshot?
+        // Read the actual line under a native pointer at the navigation's
+        // 36pt top inset. A source value or estimated scrollbar fraction
+        // cannot establish which heading occupies this screen position.
+        let pasteboard = NSPasteboard.general
+        var savedItems: [NSPasteboardItem] = []
+        for original in pasteboard.pasteboardItems ?? [] {
+            let saved = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) { saved.setData(data, forType: type) }
+            }
+            savedItems.append(saved)
+        }
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(savedItems)
+        }
+        let editor = pane.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), file: file, line: line)
+        let columnX = editor.frame.minX - pane.frame.minX + 60
+        pane.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: columnX, dy: 49)).click()
+        app.typeKey(.leftArrow, modifierFlags: [.command])
+        app.typeKey(.rightArrow, modifierFlags: [.command, .shift])
+        pasteboard.clearContents()
+        app.typeKey("c", modifierFlags: [.command])
+        var observed = "No copied text"
         let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let screenshot = pane.screenshot()
-            lastScreenshot = screenshot
-            guard let image = NSBitmapImageRep(data: screenshot.pngRepresentation)?.cgImage else { return false }
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["en-US"]
-            request.usesLanguageCorrection = false
-            request.usesCPUOnly = true
-            // Vision coordinates start at the lower-left. Only the top of
-            // the document viewport counts, excluding toolbar/breadcrumbs.
-            request.regionOfInterest = CGRect(x: 0, y: 0.70, width: 1, height: 0.30)
-            do {
-                try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
-                observed = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            } catch {
-                observed = ["Text recognition failed: \(error)"]
-                return false
-            }
-            return observed.contains {
-                $0.trimmingCharacters(in: CharacterSet(charactersIn: "# \t\n")) == heading
-            }
+            guard let text = pasteboard.string(forType: .string) else { return false }
+            observed = text
+            return text.trimmingCharacters(in: CharacterSet(charactersIn: "# \t\n")) == heading
         }, object: nil)
         let result = XCTWaiter.wait(for: [expected], timeout: 10)
-        if let lastScreenshot {
-            let attachment = XCTAttachment(screenshot: lastScreenshot)
-            attachment.name = "Viewport heading: " + heading
-            attachment.lifetime = .keepAlways
-            add(attachment)
-        }
+        let attachment = XCTAttachment(screenshot: pane.screenshot())
+        attachment.name = "Viewport heading: " + heading
+        attachment.lifetime = .keepAlways
+        add(attachment)
         XCTAssertEqual(result, .completed,
-                       "Expected heading \(heading) at the top of the viewport; observed \(observed)", file: file, line: line)
+                       "Expected heading \(heading) at the top of the viewport; native line copy returned \(observed)",
+                       file: file, line: line)
     }
 
     private func assertVisibleProse(in pane: XCUIElement, window: XCUIElement,
