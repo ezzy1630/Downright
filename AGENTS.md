@@ -27,6 +27,7 @@ This file contains Downright-specific context, invariants, and evidence gates. F
 - A document replacement discards the previous buffer’s queued camera repairs before resizing; ordinary edits and mode changes preserve their reading anchor.
 - Split panes adopt the current parsed presentation before any operation that can decorate their shared storage. Local document navigation commits history only after a successful open and restores the recorded file and semantic reading anchor.
 - Keep the one-TextKit-2-surface architecture unless the task explicitly changes that contract. Incremental typing must not cause a whole-document rebuild; length-changing edits must invalidate all shifted ranges and fragments.
+- Keep AppKit enumeration callbacks in the Objective-C `MarkdownTextKitBridge` adapter; Swift supplies lazy elements without overriding native callback enumeration.
 - Keep hidden-marker layout text lazy: document-wide maps retain source ranges, and requested text elements materialize styled fillers with source-length UTF-16 mapping.
 - Make source mutations and undo boundaries explicit. Storage, autosave, watcher, and external-write changes need focused coverage for the relevant clean/dirty states and, when applicable, atomic replacement, deletion/rename, own-write suppression, conflict/review, failure, and recovery.
 - Returning to the exact saved source by editing or undo clears local dirty state without saving; it must not erase a pending external conflict.

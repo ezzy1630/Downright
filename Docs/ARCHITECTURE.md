@@ -17,6 +17,7 @@ Downright is a native macOS app. The architecture must keep these rules true:
 Sources/
   MarkdownCore/     parse, extensions, ranges, AST diff, text edits
   MarkdownRender/   TextKit 2 decoration, fragments, layout, themes
+  MarkdownTextKitBridge/  native enumeration callback adapter
   DownrightApp/     windows, commands, panels, file and agent workflows
   DownrightQL/      Quick Look preview extension
   DownrightThumb/   Quick Look thumbnail extension
@@ -70,6 +71,13 @@ source-length word joiners against the current storage attributes through
 `DisplaySubstitution.resolvedReplacement(in:)`. Source-edit projection moves
 the descriptors along with the source ranges; it does not retain old styles
 or create replacement text for offscreen elements.
+`MarkdownContentStorage` supplies a lazy paragraph enumerator to the small
+Objective-C `MarkdownTextKitBridge` adapter. The adapter invokes AppKit's
+native enumeration callback without rebridging it through a Swift override:
+on macOS 26, even a Swift override forwarding directly to `super` leaves the
+native viewport empty. Swift retains ownership of source ranges, element caches,
+and display substitutions. The adapter consumes one element at a time and falls
+back to native physical paragraphs while custom ranges are suspended.
 Custom paragraph content and separator ranges partition the source element
 without overlap, including empty paragraphs and two-unit CRLF separators.
 

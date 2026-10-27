@@ -68,6 +68,29 @@ struct ContentStorageTilingTests {
         #expect(storage.string == text)
     }
 
+    @Test("forward enumeration at EOF matches native paragraphs", arguments: ["", "First", "First\n", "First\n\n"])
+    func endOfDocumentEnumerationMatchesNative(text: String) {
+        let (custom, storage) = Self.makeStorage(text)
+        custom.configure(paragraphIndex: ParagraphIndex(text: text as NSString),
+                         reflowRanges: [], displayMap: .identity)
+        let native = NSTextContentStorage()
+        native.textStorage = NSTextStorage(string: text)
+        func ranges(_ content: NSTextContentStorage) -> [NSRange] {
+            var result: [NSRange] = []
+            _ = content.enumerateTextElements(from: content.documentRange.endLocation) { element in
+                if let range = element.elementRange {
+                    result.append(NSRange(
+                        location: content.offset(from: content.documentRange.location, to: range.location),
+                        length: content.offset(from: range.location, to: range.endLocation)))
+                }
+                return true
+            }
+            return result
+        }
+        #expect(ranges(custom) == ranges(native))
+        #expect(storage.string == text)
+    }
+
     // MARK: - Documents
 
     /// Hard-wrapped prose: several source lines per visual paragraph, a blank

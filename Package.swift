@@ -95,10 +95,13 @@ let package = Package(
             dependencies: [.product(name: "Markdown", package: "swift-markdown")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // AppKit's native enumeration callback must not cross a Swift override
+        // on macOS 26. MarkdownRender supplies its lazy elements to this adapter.
+        .target(name: "MarkdownTextKitBridge"),
         .target(
             name: "MarkdownRender",
             dependencies: [
-                "MarkdownCore",
+                "MarkdownCore", "MarkdownTextKitBridge",
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "BeautifulMermaid", package: "beautiful-mermaid-swift"),
             ],
