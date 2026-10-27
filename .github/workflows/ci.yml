@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  textkit-contract:
+    # Temporary framework isolation, ahead of the cold app build. No package
+    # dependencies or installed-app changes; remove after the regression is fixed.
+    if: github.event_name == 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+      - run: ./Scripts/select-toolchain.sh
+      - name: Compare native TextKit graph contracts
+        run: |
+          set -uo pipefail
+          xcrun swiftc -swift-version 5 -parse-as-library Scripts/textkit-contract-probe.swift -o "$RUNNER_TEMP/textkit-contract-probe" || exit 1
+          failed=0
+          for variant in stock swift-view configured-view forwarding-content explicit-content ranged-content substitution default-fragment explicit-fragment subclass-fragment late-content transactional-content combined combined-all; do
+            "$RUNNER_TEMP/textkit-contract-probe" "$variant" || failed=1
+          done
+          exit "$failed"
   swift:
     # AppKit Liquid Glass symbols are part of the macOS 26 SDK.  macos-15's
     # default Xcode 16.4 has Swift 6 but cannot resolve those APIs at compile
