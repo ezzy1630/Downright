@@ -561,6 +561,9 @@ public final class MarkdownTextView: NSTextView {
         contentStorage.delegate = substitution
 
         super.init(frame: frame, textContainer: container)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYER_BACKED_TEXT"] == "1" { wantsLayer = true }
+        #endif
 
         fragmentProvider = FragmentProvider(context: fragmentContext)
         #if DEBUG
@@ -1138,6 +1141,13 @@ public final class MarkdownTextView: NSTextView {
     /// far navigation can show fragments from the camera it left. Resolve only
     /// the visible rectangle, then advance the viewport controller explicitly.
     func synchronizeVisibleLayout() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_SKIP_VIEWPORT"] == "1" {
+            needsLayout = true
+            needsDisplay = true
+            return
+        }
+        #endif
         guard let layoutManager = textLayoutManager else { return }
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin
@@ -2764,6 +2774,9 @@ public final class MarkdownTextView: NSTextView {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !isApplyingSelection, !isPerformingSourceEdit,
               !isTrackingMouseSelection, !stillSelecting else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_SKIP_SELECTION"] == "1" { return }
+        #endif
         handleSelectionChanged()
     }
 

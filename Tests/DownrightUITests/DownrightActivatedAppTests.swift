@@ -72,37 +72,31 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     // Temporary differential controls; remove before release.
-    func testDiagnosticDocumentWithoutLayoutLogging() throws {
+    func testDiagnosticManualNativeTextSystem() throws {
+        try writeDiagnosticFixture()
         app.launchEnvironment.removeValue(forKey: "DOWNRIGHT_DEBUG_LAYOUT")
+        app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_WINDOW"] = "textkit2-manual"
         app.launch()
         app.activate()
-        let window = app.windows.firstMatch
-        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
+        let window = app.windows.matching(NSPredicate(format: "title == %@", "Native rendering control: textkit2-manual")).firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
         assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
     }
 
-    func testDiagnosticNativeParagraphs() throws {
-        try assertDiagnosticDocument(nativeFragments: false, nativeView: false)
+    func testDiagnosticReusesMarkdownTextSystemInNativeView() throws {
+        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_REUSE_TEXT_SYSTEM", nativeLabel: true)
     }
 
-    func testDiagnosticNativeParagraphsAndFragments() throws {
-        try assertDiagnosticDocument(nativeFragments: true, nativeView: false)
+    func testDiagnosticNativeSchedulingOfViewport() throws {
+        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_SKIP_VIEWPORT")
     }
 
-    func testDiagnosticNativeViewInDocument() throws {
-        try assertDiagnosticDocument(nativeFragments: false, nativeView: true)
+    func testDiagnosticLayerBackedTextView() throws {
+        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_LAYER_BACKED_TEXT")
     }
 
-    func testDiagnosticStockTextKit2DecoratedWindow() throws {
-        try assertDiagnosticWindow(mode: "textkit2-decorated")
-    }
-
-    func testDiagnosticStockTextKit2SystemWindow() throws {
-        try assertDiagnosticWindow(mode: "textkit2-system")
-    }
-
-    func testDiagnosticStockTextKit1SystemWindow() throws {
-        try assertDiagnosticWindow(mode: "textkit1-system")
+    func testDiagnosticWithoutSelectionCallbacks() throws {
+        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_SKIP_SELECTION")
     }
 
     private func writeDiagnosticFixture() throws {
@@ -110,32 +104,13 @@ final class DownrightActivatedAppTests: XCTestCase {
         try Data(text.utf8).write(to: fixture)
     }
 
-    private func assertDiagnosticDocument(nativeFragments: Bool, nativeView: Bool) throws {
+    private func assertDiagnosticDocument(flag: String, nativeLabel: Bool = false) throws {
         try writeDiagnosticFixture()
-        if nativeView {
-            app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_VIEW_IN_DOCUMENT"] = "1"
-        } else {
-            app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_PARAGRAPHS"] = "1"
-            if nativeFragments { app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_FRAGMENTS"] = "1" }
-        }
+        app.launchEnvironment[flag] = "1"
         app.launch()
         app.activate()
         let window = app.windows.firstMatch
-        let label = nativeView ? "Native rendering control" : "Document editor"
-        XCTAssertTrue(window.textViews[label].waitForExistence(timeout: 15))
-        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
-    }
-
-    private func assertDiagnosticWindow(mode: String) throws {
-        try writeDiagnosticFixture()
-        app.launchEnvironment.removeValue(forKey: "DOWNRIGHT_DEBUG_LAYOUT")
-        app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_WINDOW"] = mode
-        app.launch()
-        app.activate()
-        let title = "Native rendering control: " + mode
-        let window = app.windows.matching(NSPredicate(format: "title == %@", title)).firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 15))
-        XCTAssertTrue(window.textViews["Native rendering control"].waitForExistence(timeout: 15))
+        XCTAssertTrue(window.textViews[nativeLabel ? "Native rendering control" : "Document editor"].waitForExistence(timeout: 15))
         assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
     }
 

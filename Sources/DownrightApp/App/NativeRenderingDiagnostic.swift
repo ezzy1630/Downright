@@ -6,10 +6,23 @@ import MarkdownRender
 @MainActor
 enum NativeRenderingDiagnostic {
     private static var controlWindow: NSWindow?
+    private static var controlContentStorage: NSTextContentStorage?
 
     static func makeTextView(content: NSAttributedString, textKit2: Bool,
-                             decorated: Bool, styleSheet: StyleSheet) -> NSTextView {
-        let view = NSTextView(usingTextLayoutManager: textKit2)
+                             decorated: Bool, styleSheet: StyleSheet, manual: Bool = false) -> NSTextView {
+        let view: NSTextView
+        if manual {
+            let contentStorage = NSTextContentStorage()
+            let manager = NSTextLayoutManager()
+            let container = NSTextContainer(size: NSSize(width: 700, height: CGFloat.greatestFiniteMagnitude))
+            manager.textContainer = container
+            contentStorage.addTextLayoutManager(manager)
+            contentStorage.textStorage = NSTextStorage(attributedString: content)
+            controlContentStorage = contentStorage
+            view = NSTextView(frame: .zero, textContainer: container)
+        } else {
+            view = NSTextView(usingTextLayoutManager: textKit2)
+        }
         view.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
         view.minSize = NSSize(width: 0, height: 500)
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
@@ -39,10 +52,10 @@ enum NativeRenderingDiagnostic {
 
     static func showIfRequested(content: NSAttributedString?) {
         guard let mode = ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_NATIVE_WINDOW"],
-              ["textkit1-system", "textkit2-system", "textkit2-decorated"].contains(mode),
+              ["textkit1-system", "textkit2-system", "textkit2-decorated", "textkit2-manual"].contains(mode),
               let content else { return }
         let view = makeTextView(content: content, textKit2: mode != "textkit1-system",
-                                decorated: mode == "textkit2-decorated", styleSheet: .current)
+                                decorated: mode == "textkit2-decorated", styleSheet: .current, manual: mode == "textkit2-manual")
         let scroll = NSScrollView(frame: view.frame)
         scroll.hasVerticalScroller = true
         scroll.documentView = view
