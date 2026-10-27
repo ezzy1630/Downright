@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+import Vision
 
 /// Acceptance coverage for the surface that SwiftPM's AppKit test runner
 /// cannot provide: an actual Downright.app with a running display cycle.
@@ -71,49 +72,6 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
     }
 
-    // Temporary differential controls; remove before release.
-    func testDiagnosticManualNativeTextSystem() throws {
-        try writeDiagnosticFixture()
-        app.launchEnvironment.removeValue(forKey: "DOWNRIGHT_DEBUG_LAYOUT")
-        app.launchEnvironment["DOWNRIGHT_DEBUG_NATIVE_WINDOW"] = "textkit2-manual"
-        app.launch()
-        app.activate()
-        let window = app.windows.matching(NSPredicate(format: "title == %@", "Native rendering control: textkit2-manual")).firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 15))
-        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
-    }
-
-    func testDiagnosticReusesMarkdownTextSystemInNativeView() throws {
-        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_REUSE_TEXT_SYSTEM", nativeLabel: true)
-    }
-
-    func testDiagnosticNativeSchedulingOfViewport() throws {
-        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_SKIP_VIEWPORT")
-    }
-
-    func testDiagnosticLayerBackedTextView() throws {
-        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_LAYER_BACKED_TEXT")
-    }
-
-    func testDiagnosticWithoutSelectionCallbacks() throws {
-        try assertDiagnosticDocument(flag: "DOWNRIGHT_DEBUG_SKIP_SELECTION")
-    }
-
-    private func writeDiagnosticFixture() throws {
-        let text = String(repeating: "Native text rendering has plain prose with predictable source positions.\n\n", count: 20)
-        try Data(text.utf8).write(to: fixture)
-    }
-
-    private func assertDiagnosticDocument(flag: String, nativeLabel: Bool = false) throws {
-        try writeDiagnosticFixture()
-        app.launchEnvironment[flag] = "1"
-        app.launch()
-        app.activate()
-        let window = app.windows.firstMatch
-        XCTAssertTrue(window.textViews[nativeLabel ? "Native rendering control" : "Document editor"].waitForExistence(timeout: 15))
-        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
-    }
-
     func testUnterminatedParagraphRendersWithoutChangingSource() throws {
         let text = "An unterminated Markdown paragraph remains visible and keeps every source byte. A native text surface must render this document without needing a final newline or another paragraph to initialize its viewport."
         let original = Data(text.utf8)
@@ -172,9 +130,11 @@ final class DownrightActivatedAppTests: XCTestCase {
             .withOffset(CGVector(dx: 60, dy: 49)).click()
         let destination = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", target.lastPathComponent)).firstMatch
         XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
-        // Equal paragraph blocks surround Target. Ignoring its fragment would
-        // leave the viewport at zero instead of near the document's midpoint.
-        let targetPosition = try waitForScrollPosition(in: destination) { (0.45...0.65).contains($0) }
+        // TextKit estimates the unvisited document height, so normalized
+        // scrollbar percentages cannot identify a source heading reliably.
+        // Check the actual heading near the top of the rendered viewport.
+        assertVisibleHeading("Target", in: destination.scrollViews.firstMatch)
+        let targetPosition = try waitForScrollPosition(in: destination) { $0 > 0.01 }
         assertVisibleProse(in: destination.scrollViews.firstMatch, window: destination)
         let destinationCapture = XCTAttachment(screenshot: destination.screenshot())
         destinationCapture.lifetime = .keepAlways
@@ -186,6 +146,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         app.typeKey("]", modifierFlags: [.command, .control])
         XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
         _ = try waitForScrollPosition(in: destination) { abs($0 - targetPosition) < 0.01 }
+        assertVisibleHeading("Target", in: destination.scrollViews.firstMatch)
         app.typeKey("[", modifierFlags: [.command, .control])
         XCTAssertTrue(original.waitForExistence(timeout: 10), app.windows.debugDescription)
         _ = try waitForScrollPosition(in: original) { abs($0 - originalPosition) < 0.01 }
@@ -404,6 +365,44 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
         dismissButton.click()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "the app stopped after the updater check")
+    }
+
+    private func assertVisibleHeading(_ heading: String, in pane: XCUIElement,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        var observed: [String] = []
+        var lastScreenshot: XCUIScreenshot?
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let screenshot = pane.screenshot()
+            lastScreenshot = screenshot
+            guard let image = NSBitmapImageRep(data: screenshot.pngRepresentation)?.cgImage else { return false }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.usesLanguageCorrection = false
+            request.usesCPUOnly = true
+            // Vision coordinates start at the lower-left. Only the top of
+            // the document viewport counts, excluding toolbar/breadcrumbs.
+            request.regionOfInterest = CGRect(x: 0, y: 0.70, width: 1, height: 0.30)
+            do {
+                try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+                observed = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            } catch {
+                observed = ["Text recognition failed: \(error)"]
+                return false
+            }
+            return observed.contains {
+                $0.trimmingCharacters(in: CharacterSet(charactersIn: "# \t\n")) == heading
+            }
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [expected], timeout: 10)
+        if let lastScreenshot {
+            let attachment = XCTAttachment(screenshot: lastScreenshot)
+            attachment.name = "Viewport heading: " + heading
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertEqual(result, .completed,
+                       "Expected heading \(heading) at the top of the viewport; observed \(observed)", file: file, line: line)
     }
 
     private func assertVisibleProse(in pane: XCUIElement, window: XCUIElement,

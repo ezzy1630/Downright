@@ -561,18 +561,9 @@ public final class MarkdownTextView: NSTextView {
         contentStorage.delegate = substitution
 
         super.init(frame: frame, textContainer: container)
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_LAYER_BACKED_TEXT"] == "1" { wantsLayer = true }
-        #endif
 
         fragmentProvider = FragmentProvider(context: fragmentContext)
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_NATIVE_FRAGMENTS"] != "1" {
-            markdownLayoutManager.delegate = fragmentProvider
-        }
-        #else
         markdownLayoutManager.delegate = fragmentProvider
-        #endif
         fragmentContext.textView = self
 
         isVerticallyResizable = true
@@ -1141,13 +1132,6 @@ public final class MarkdownTextView: NSTextView {
     /// far navigation can show fragments from the camera it left. Resolve only
     /// the visible rectangle, then advance the viewport controller explicitly.
     func synchronizeVisibleLayout() {
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_SKIP_VIEWPORT"] == "1" {
-            needsLayout = true
-            needsDisplay = true
-            return
-        }
-        #endif
         guard let layoutManager = textLayoutManager else { return }
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin
@@ -2774,9 +2758,6 @@ public final class MarkdownTextView: NSTextView {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !isApplyingSelection, !isPerformingSourceEdit,
               !isTrackingMouseSelection, !stillSelecting else { return }
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_SKIP_SELECTION"] == "1" { return }
-        #endif
         handleSelectionChanged()
     }
 
@@ -3343,16 +3324,8 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - Layout plumbing
 
-    public override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        drawDeletedChangeMarks(in: dirtyRect)
-        drawObjectChangeMarks(in: dirtyRect)
-        drawHoveredLinkUnderline(in: dirtyRect)
-        drawDropInsertionCaret(in: dirtyRect)
-    }
-
-    /// Underlines the link under the pointer.  Drawn after the text so it sits
-    /// right on the baseline, with a hair of gap so descenders stay legible —
+    /// Underlines the link under the pointer. Drawn below the baseline,
+    /// with a hair of gap so descenders stay legible —
     /// the classic affordance for "this is interactive" (§7.1).
     private func drawHoveredLinkUnderline(in dirtyRect: NSRect) {
         guard textStorage != nil,
@@ -3392,6 +3365,13 @@ public final class MarkdownTextView: NSTextView {
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         drawScopedSourceBackground(in: rect)
+        // Keep NSTextView's drawing entry point native: TextKit owns the
+        // fragment rendering surfaces. Our marks belong to the page behind
+        // the glyphs and use the dedicated background customization hook.
+        drawDeletedChangeMarks(in: rect)
+        drawObjectChangeMarks(in: rect)
+        drawHoveredLinkUnderline(in: rect)
+        drawDropInsertionCaret(in: rect)
     }
 
     private func applyInvisibles(scopes: [NSRange]? = nil) {

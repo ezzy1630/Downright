@@ -68,11 +68,6 @@ final class MarkdownContentStorage: NSTextContentStorage {
         // reflow group straddling a paragraph boundary) make it ask for the
         // same location forever and the app stops responding.
         usesCustomLayout = Self.tiles(ranges, length: length)
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_NATIVE_PARAGRAPHS"] == "1" {
-            usesCustomLayout = false
-        }
-        #endif
         if let invalidatedRanges, previouslyUsedCustomLayout, usesCustomLayout {
             // A keystroke changes one element and shifts the ranges after it.
             // Preserve the exact prefix whose source ranges and presentation

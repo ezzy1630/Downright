@@ -515,28 +515,6 @@ final class DocumentWindowController: NSWindowController {
                 ? "Changed since you last read it — the previous version is damaged"
                 : "Changed since you last read it — the previous version is no longer available")
         }
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_REUSE_TEXT_SYSTEM"] == "1" {
-            let original = primaryContainer.textView
-            let view = NSTextView(frame: original.frame, textContainer: original.textContainer)
-            view.minSize = original.minSize
-            view.maxSize = original.maxSize
-            view.isVerticallyResizable = true
-            view.isHorizontallyResizable = false
-            view.textContainerInset = original.textContainerInset
-            view.backgroundColor = original.backgroundColor
-            view.setAccessibilityLabel("Native rendering control")
-            primaryContainer.scrollView.documentView = view
-            window?.makeFirstResponder(view)
-        }
-        if ProcessInfo.processInfo.environment["DOWNRIGHT_DEBUG_NATIVE_VIEW_IN_DOCUMENT"] == "1" {
-            let view = NativeRenderingDiagnostic.makeTextView(
-                content: markdownDocument.storage, textKit2: true,
-                decorated: true, styleSheet: activeStyleSheet)
-            primaryContainer.scrollView.documentView = view
-            window?.makeFirstResponder(view)
-        }
-        #endif
         dumpLayoutIfRequested()
 
         let expectedAfterFirstRestore = initialRestoreViewportY ?? clip.bounds.origin.y

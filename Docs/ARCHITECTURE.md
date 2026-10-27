@@ -82,7 +82,9 @@ A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
 AppKit owns the text-container origin and viewport surface lifecycle. Preserve
-its native geometry calculation; keep large-file layout lazy by suppressing
+its native geometry calculation and drawing entry point; page ornaments use
+`drawBackground(in:)`, while fragments draw their own glyphs and object content.
+Keep large-file layout lazy by suppressing
 synthetic selection work and bounding explicit layout requests.
 Attach a shared pane's scroll surface while empty, then bind the shared storage
 and adopt its presentation in one content-storage editing transaction. This
