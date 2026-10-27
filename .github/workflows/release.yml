@@ -2,7 +2,7 @@ name: Release
 
 # Every push to `main` triggers the rolling production pipeline: gates → tests →
 # signed, notarized, stapled universal build → Sparkle-signed appcast → GitHub
-# Release → GitHub Pages deployment. Feature-branch pushes are covered by CI;
+# Release → GitHub Pages deployment. Feature branches can run CI manually;
 # a merge or push to `main` is the release event. All secrets live in the
 # `release` environment, and the newest verified build becomes the download
 # and updater channel.

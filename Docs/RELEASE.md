@@ -149,8 +149,8 @@ notarise and staple the DMG. Credentials come from either a stored
 
 The GitHub Actions pipeline (`.github/workflows/release.yml`) is the supported
 path for the rolling production channel: every push to `main` publishes the
-reviewed commit as the newest customer-facing build. Feature-branch pushes run
-CI but do not publish. The pipeline signs every nested executable
+reviewed commit as the newest customer-facing build. Feature branches can run
+CI manually with `workflow_dispatch` and do not publish. The pipeline signs every nested executable
 individually (no `codesign --deep`), notarises with the App Store Connect API key, staples, runs
 `codesign --verify --deep --strict` / `spctl` / `stapler validate`, publishes
 the GitHub Release, and deploys the appcast to GitHub Pages.
