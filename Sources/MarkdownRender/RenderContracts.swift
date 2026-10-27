@@ -180,6 +180,10 @@ extension NSAttributedString.Key {
     public static let drChangeGhost = NSAttributedString.Key("drChangeGhost")
     /// Footnote or reference-link identifier, for hover popovers.
     public static let drReference = NSAttributedString.Key("drReference")
+    /// `CGFloat` — on an inline image's attachment, its height in points.  A
+    /// paragraph holding one taller than its line lets that line grow instead
+    /// of clipping the picture to the baseline grid.
+    public static let drInlineImageHeight = NSAttributedString.Key("drInlineImageHeight")
     /// Set on ranges elided by structural zoom (§5.2) or folding.
     public static let drElided = NSAttributedString.Key("drElided")
     /// `String` gutter marker text drawn in the left rail in Live mode.
@@ -407,10 +411,19 @@ public struct CodeTheme: Codable, Sendable, Equatable {
 }
 
 public struct TypographyConfig: Codable, Sendable, Equatable {
-    public static let measureRange: ClosedRange<CGFloat> = 60...110
+    public static let measureRange: ClosedRange<CGFloat> = 60...120
+    /// A persisted explicit choice, resolved against the available pane width.
+    public static let fullWidthMeasure: CGFloat = 1000
+    public static let measureChoices = Array(60...120).map(CGFloat.init) + [fullWidthMeasure]
+
+    public static func measureTitle(_ value: CGFloat) -> String {
+        value == fullWidthMeasure ? "Full width" : "\(Int(clampedMeasureCharacters(value))) characters"
+    }
 
     public static func clampedMeasureCharacters(_ value: CGFloat) -> CGFloat {
-        value.isFinite ? min(measureRange.upperBound, max(measureRange.lowerBound, value)) : 70
+        guard value.isFinite else { return 70 }
+        if value == fullWidthMeasure { return fullWidthMeasure }
+        return min(measureRange.upperBound, max(measureRange.lowerBound, value))
     }
 
     public enum BodyPreset: String, Codable, Sendable, CaseIterable {

@@ -12,9 +12,6 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 SCRATCH="${SCRATCH:-.build-main}"
-# Tests need an extra `-F` flag, and alternating flag sets in one scratch
-# path makes SwiftPM rebuild the world on every switch.  Keep them apart.
-TEST_SCRATCH="${TEST_SCRATCH:-.build-test}"
 
 # Model and app-layer tests exercise snapshot/state persistence, including
 # destructive pruning. Never let the authoritative gate inherit the user's
@@ -49,6 +46,14 @@ SELECTED_DEVELOPER="$(xcode-select -p 2>/dev/null || true)"
 if [[ "$SELECTED_DEVELOPER" == /Library/Developer/CommandLineTools* ]] \
     && [ -d "$CLT_FRAMEWORKS/Testing.framework" ]; then
     TEST_FLAGS=(-Xswiftc -F -Xswiftc "$CLT_FRAMEWORKS")
+fi
+# Xcode builds and tests use identical compiler flags, so reuse their modules.
+# Only CLT needs a separate graph: its generated test runner needs an extra -F,
+# and alternating those flags in one scratch path recompiles every target.
+if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
+    TEST_SCRATCH="${TEST_SCRATCH:-${SCRATCH}-test}"
+else
+    TEST_SCRATCH="${TEST_SCRATCH:-$SCRATCH}"
 fi
 
 echo "==> Release verifier regression tests"
@@ -176,7 +181,7 @@ fi
 # test and the raster smoke test; an activated-app lane exercises both without
 # this exception.
 if command -v rg >/dev/null 2>&1; then
-    KNOWN_ISSUE_SITES=$(rg -n "withKnownIssue\\(" Tests | wc -l | tr -d ' ')
+    KNOWN_ISSUE_SITES=$(rg -n --glob '*.swift' "withKnownIssue\\(" Tests | wc -l | tr -d ' ')
 else
     # The release runner intentionally uses only the tools shipped by macOS.
     # Keep the gate portable when ripgrep is not preinstalled there.
@@ -197,19 +202,9 @@ if [ "$TEST_STATUS" -ne 0 ]; then
 fi
 
 echo
-echo "==> Bench (debug, informational — exercises drbench and catches crashes)"
-BENCH_LOG="$LOG_DIR/downright-bench-$LOG_TAG.log"
-if ! swift run --scratch-path "$SCRATCH" drbench > "$BENCH_LOG" 2>&1; then
-    echo "    FAILED"
-    tail -30 "$BENCH_LOG"
-    exit 1
-fi
-grep -aE "Typing response p95|End-to-end semantic convergence" "$BENCH_LOG" || true
-echo "    ok"
-
 # `RUN_DRBENCH=1 Scripts/check.sh` builds release and treats the budget as a
-# gate, the way §12 intends it to be used in CI.  Debug numbers are not the
-# product promise, so the default run above only checks that the tool runs.
+# gate. Run the corpus once: release enforces the product budgets, while the
+# default debug run only checks that the tool runs.
 if [ "${RUN_DRBENCH:-0}" = "1" ]; then
     echo "==> Bench (release, budgets enforced)"
     BENCH_RELEASE_LOG="$LOG_DIR/downright-bench-release-$LOG_TAG.log"
@@ -225,6 +220,16 @@ if [ "${RUN_DRBENCH:-0}" = "1" ]; then
         exit 1
     fi
     grep -aE "Typing response p95|End-to-end semantic convergence" "$BENCH_RELEASE_LOG" || true
+    echo "    ok"
+else
+    echo "==> Bench (debug, informational — exercises drbench and catches crashes)"
+    BENCH_LOG="$LOG_DIR/downright-bench-$LOG_TAG.log"
+    if ! swift run --scratch-path "$SCRATCH" drbench > "$BENCH_LOG" 2>&1; then
+        echo "    FAILED"
+        tail -30 "$BENCH_LOG"
+        exit 1
+    fi
+    grep -aE "Typing response p95|End-to-end semantic convergence" "$BENCH_LOG" || true
     echo "    ok"
 fi
 

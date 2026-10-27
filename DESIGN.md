@@ -28,7 +28,7 @@ and drag the density gutter.
 ## Layout
 
 - Default to a readable measure of about 68–72 characters. Honor explicit
-  60–110 character measures from settings and reader profiles; constrain the
+  60–120 character measures or Full width from settings and reader profiles; constrain the
   column to available space in narrow windows and split panes. At compact
   widths, give the text and code blocks priority over the document map; retain
   enough pane width for the marker rail and fixed block bleed.
@@ -117,3 +117,11 @@ Design and implementation use explicit ownership and small effect boundaries.
 Do not add a chat sidebar, permanent status bar, rich-text document model,
 plugin marketplace, sync layer, graph view, or decorative gradients. Do not
 trade byte identity or typing latency for visual effects.
+
+## Images
+
+Render inline images, linked badges, safe HTML rows, and author-specified
+image dimensions in the document flow. Keep alt text when loading is blocked
+or fails. Remote images require an explicit choice, with no automatic network
+access on opening a document. Mac animated images show native Play/Pause
+controls; opening a document never starts their motion.

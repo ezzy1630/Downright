@@ -230,7 +230,7 @@ final class ThemeTests {
         var theme = try #require(bundled().first)
         theme.typography.measureCharacters = 400
         var sheet = StyleSheet(theme: theme, appearance: aqua)
-        expectClose(sheet.measureWidth / sheet.averageCharacterWidth, 110, within: 0.001, "clamped down to 110")
+        expectClose(sheet.measureWidth / sheet.averageCharacterWidth, 120, within: 0.001, "clamped down to 120")
 
         theme.typography.measureCharacters = 10
         sheet = StyleSheet(theme: theme, appearance: aqua)

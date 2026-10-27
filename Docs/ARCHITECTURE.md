@@ -236,3 +236,18 @@ empty storage, mounting before load, and zero-sized viewports that later resize.
 These inspect WindowServer pixels and record native observer/viewport state;
 they isolate rendering lifecycle failures without adding alternate app paths.
 The activated-app journeys remain required for the actual document host.
+
+## Image presentation
+
+Inline images and linked badges use source-addressed display substitutions.
+Safe HTML paragraph joining and image dimensions affect only presentation;
+source bytes and source UTF-16 coordinates remain authoritative. Async arrivals
+coalesce a refresh that preserves selection and the semantic reading anchor.
+
+The renderer never makes network requests. View > Load Remote Images installs
+a host-owned loader for the current Mac document; opening another file revokes
+that choice. Quick Look never installs a loader. HTTPS responses are limited
+while receiving, requests carry no cookies or credentials, and SVG rasterization
+uses native AppKit. Animated pictures begin as stills with native Play/Pause
+controls and decode only the next frame at the displayed size. Hidden or
+inactive views pause; Quick Look remains still.

@@ -234,7 +234,8 @@ public final class MarkdownContainerView: NSView {
         // Keep the same measure across Document and Source. Widening source to
         // 90ch recenters the column and slides the left gutter rail, which
         // reads as the leading chrome teleporting on every mode switch.
-        let preferredMeasure = textView.styleSheet.measureWidth
+        let preferredMeasure = textView.styleSheet.theme.typography.measureCharacters == TypographyConfig.fullWidthMeasure
+            ? CGFloat.greatestFiniteMagnitude : textView.styleSheet.measureWidth
         // Keep the column out from under the overlay thumb when the measure is
         // capped by a narrow window; a wide window's centring margin already
         // clears it (§7).

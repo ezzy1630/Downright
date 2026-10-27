@@ -200,3 +200,11 @@ this:
     <string>DownrightThumb.ThumbnailProvider</string>
 </dict>
 ```
+
+## Reading width
+
+Previews use the app's saved line-width preference, including Full width,
+through the same namespaced global preference bridge as appearance and theme.
+An absent or malformed value uses the theme default. A preview remains limited
+to its actual panel width, and a newly opened preview reads updated settings.
+Remote images remain blocked and animated images remain still.

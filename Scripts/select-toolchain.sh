@@ -12,7 +12,7 @@
 # guaranteed to be the newest, so relying on it silently couples every CI run to
 # an image detail nobody controls.
 #
-# This script picks the newest installed Xcode, exports it for the rest of the
+# This script picks a compatible installed Xcode, exports it for the rest of the
 # job through `DEVELOPER_DIR` (which outranks `xcode-select` and needs no sudo),
 # and then *asserts* the resulting toolchain satisfies the manifest.  A future
 # image regression therefore fails here, naming the versions it found, instead
@@ -82,9 +82,12 @@ for app in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do
     version="$(swift_version_of "$app")"
     [ -n "$version" ] || continue
     REPORT="$REPORT    $app -> Swift $version"$'\n'
-    if [ -z "$FOUND" ] && satisfies "$version"; then
+    if satisfies "$version"; then
         FOUND="$app"
         SELECTED_VERSION="$version"
+        # Probing every other installed Xcode initializes unused toolchains
+        # on hosted runners. The first compatible candidate is the selection.
+        break
     fi
 done
 

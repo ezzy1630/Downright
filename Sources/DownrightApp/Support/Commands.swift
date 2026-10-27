@@ -13,7 +13,7 @@ enum Command: String, CaseIterable, Codable {
     case statusBar
     case taskPanel, versionTimeline, compareFiles
     case frontMatterEditor, tableEditor, assetDoctor
-    case commandPalette, documentLens, readerProfiles
+    case commandPalette, documentLens, readerProfiles, loadRemoteImages
     case documentHealth, renderTargets, visualDebugger, reviewPanel, workspace, localAI
 
     // Navigation
@@ -88,6 +88,7 @@ enum Command: String, CaseIterable, Codable {
         case .commandPalette: return "Command Palette…"
         case .documentLens: return "Contents / Outline"
         case .readerProfiles: return "Reader Profiles"
+        case .loadRemoteImages: return "Load Remote Images"
         case .documentHealth: return "Document Health"
         case .renderTargets: return "Render Targets"
         case .visualDebugger: return "Visual Debugger"
@@ -223,7 +224,7 @@ enum Command: String, CaseIterable, Codable {
              .zoomLevel5, .zoomIn, .zoomOut, .increaseTextSize, .decreaseTextSize, .resetTextSize,
              .focusMode, .typewriterScrolling, .statusBar, .taskPanel,
              .reloadTheme, .commandPalette, .documentLens,
-             .readerProfiles, .documentHealth, .renderTargets, .visualDebugger,
+             .readerProfiles, .loadRemoteImages, .documentHealth, .renderTargets, .visualDebugger,
              .reviewPanel, .workspace, .localAI:
             return .view
         case .nextHeading, .previousHeading, .nextChange, .previousChange,

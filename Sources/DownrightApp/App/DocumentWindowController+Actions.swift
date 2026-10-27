@@ -751,6 +751,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
 
     func commandState(_ command: Command) -> Bool {
         switch command {
+        case .loadRemoteImages: return containerTextView.remoteImageLoader != nil
         case .focusMode: return isFocusModeEnabled
         case .splitView: return splitViewContainer != nil
         case .pinWindow: return isWindowPinned

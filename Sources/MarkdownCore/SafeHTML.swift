@@ -11,8 +11,13 @@ public enum SafeHTMLKind: Sendable, Equatable {
     case emphasis
     case link(destination: String, title: String?)
     case image(source: String, alt: String)
-    /// A recognized but deliberately non-rendered tag, such as a remote image.
-    /// Its source remains visible and no network or file access is attempted.
+    /// An `https:` image.  The parser never fetches it; a renderer shows it
+    /// only when its host has opted in to remote images, and otherwise treats
+    /// it exactly like `inert`.
+    case remoteImage(source: String, alt: String)
+    /// A recognized but deliberately non-rendered tag, such as an image with
+    /// an unsupported source.  Its source remains visible and no network or
+    /// file access is attempted.
     case inert
     case lineBreak
     case details(open: Bool)
@@ -355,6 +360,16 @@ public enum SafeHTMLParser {
 
     private static let allowedNames: Set<String> = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em", "i", "a", "img", "br", "details", "summary", "table", "thead", "tbody", "tr", "th", "td"]
 
+    /// Presentational attributes README HTML commonly carries.  A native
+    /// reader has no use for them, so they are dropped instead of rejecting
+    /// the whole block.  Anything else unknown, and every `on…` handler, still
+    /// rejects it.
+    private static let ignoredAttributes: Set<String> = [
+        "width", "height", "align", "valign", "border", "hspace", "vspace",
+        "class", "id", "style", "dir", "lang", "target", "rel",
+        "loading", "decoding", "referrerpolicy",
+    ]
+
     private static func attributes(in raw: String, for name: String) -> [String: String]? {
         var result: [String: String] = [:]
         var index = raw.startIndex
@@ -375,14 +390,24 @@ public enum SafeHTMLParser {
             index = raw.index(after: index)
             while index < raw.endIndex, raw[index].isWhitespace { index = raw.index(after: index) }
             guard index < raw.endIndex else { return nil }
+            let value: String
             let quote = raw[index]
-            guard quote == "\"" || quote == "'" else { return nil }
-            index = raw.index(after: index)
-            let valueStart = index
-            while index < raw.endIndex, raw[index] != quote { index = raw.index(after: index) }
-            guard index < raw.endIndex else { return nil }
-            let value = String(raw[valueStart..<index])
-            index = raw.index(after: index)
+            if quote == "\"" || quote == "'" {
+                index = raw.index(after: index)
+                let valueStart = index
+                while index < raw.endIndex, raw[index] != quote { index = raw.index(after: index) }
+                guard index < raw.endIndex else { return nil }
+                value = String(raw[valueStart..<index])
+                index = raw.index(after: index)
+            } else {
+                // HTML allows unquoted values (`width=128`); they end at
+                // whitespace and may not contain quotes, `=`, `<`, `>` or `` ` ``.
+                let valueStart = index
+                while index < raw.endIndex, !raw[index].isWhitespace { index = raw.index(after: index) }
+                value = String(raw[valueStart..<index])
+                guard !value.contains(where: { "\"'=<>`".contains($0) }) else { return nil }
+            }
+            if !allowedAttribute(key, for: name), ignoredAttributes.contains(key) { continue }
             guard allowedAttribute(key, for: name),
                   (name == "img" && key == "src" || safeURL(value, for: key, tag: name))
             else { return nil }
@@ -423,8 +448,10 @@ public enum SafeHTMLParser {
         case "a": guard let href = attributes["href"] else { return nil }; return .link(destination: href, title: attributes["title"])
         case "img":
             guard let src = attributes["src"] else { return nil }
-            guard safeLocalImageSource(src) else { return .inert }
-            return .image(source: src, alt: attributes["alt"] ?? "")
+            let alt = attributes["alt"] ?? ""
+            if safeLocalImageSource(src) { return .image(source: src, alt: alt) }
+            if remoteImageSource(src) { return .remoteImage(source: src, alt: alt) }
+            return .inert
         case "br": return .lineBreak
         case "details": return .details(open: attributes["open"] != nil)
         case "summary": return .summary
@@ -434,6 +461,15 @@ public enum SafeHTMLParser {
         case "td": return .tableCell(header: false, align: alignment)
         default: return nil
         }
+    }
+
+    /// `https:` only: plain `http:` images would be blocked by App Transport
+    /// Security anyway, and a cleartext fetch leaks the URL on the wire.
+    private static func remoteImageSource(_ source: String) -> Bool {
+        let value = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.lowercased().hasPrefix("https://"),
+              let url = URL(string: value), url.host?.isEmpty == false else { return false }
+        return true
     }
 
     private static func safeLocalImageSource(_ source: String) -> Bool {

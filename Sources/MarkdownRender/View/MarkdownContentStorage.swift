@@ -172,7 +172,17 @@ final class MarkdownContentStorage: DRTextContentStorage {
             toSourceOffset: sourceRange.location,
             in: storage
         )
-        let attributed = paragraphStyle(for: sourceRange, in: storage).map { style in
+        // Usually the element's style is its own first character's; an inline
+        // image taller than the line still needs that style relaxed.
+        let ownStyle = anchored.length > 0
+            ? anchored.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle : nil
+        let style = paragraphStyle(for: sourceRange, in: storage)
+            .map { Self.fittingInlineImages($0, in: anchored) }
+            ?? ownStyle.flatMap { own in
+                let fitted = Self.fittingInlineImages(own, in: anchored)
+                return fitted === own ? nil : fitted
+            }
+        let attributed = style.map { style in
             let styled = NSMutableAttributedString(attributedString: anchored)
             styled.addAttribute(
                 .paragraphStyle, value: style,
@@ -201,6 +211,31 @@ final class MarkdownContentStorage: DRTextContentStorage {
         )
         elementCache[index] = paragraph
         return paragraph
+    }
+
+    /// The block's fixed line height, unless an inline image in the paragraph
+    /// is taller than it: then the paragraph's lines are as tall as the
+    /// picture.  Only inline images carry `drInlineImageHeight`, so text and
+    /// inline math keep the baseline grid exactly as before.
+    ///
+    /// The minimum is raised rather than the maximum lifted: TextKit sizes a
+    /// line from an attachment only when visible text follows it, and an
+    /// image in an HTML paragraph is followed by hidden `</a></p>`, which the
+    /// layout map turns into zero-width word joiners.  A picture taller than
+    /// the line sits on the descender (`InlineImageDisplay`), so a line one
+    /// point taller than the picture holds all of it.
+    static func fittingInlineImages(_ style: NSParagraphStyle, in string: NSAttributedString) -> NSParagraphStyle {
+        guard string.length > 0 else { return style }
+        var tallest: CGFloat = 0
+        string.enumerateAttribute(.drInlineImageHeight, in: NSRange(location: 0, length: string.length)) { value, _, _ in
+            if let height = value as? CGFloat { tallest = max(tallest, height) }
+        }
+        let needed = (tallest + 1).rounded(.up)
+        guard tallest > 0, needed > style.minimumLineHeight,
+              let relaxed = style.mutableCopy() as? NSMutableParagraphStyle else { return style }
+        relaxed.minimumLineHeight = needed
+        relaxed.maximumLineHeight = needed
+        return relaxed
     }
 
     /// TextKit takes a paragraph's indent, spacing and line height from its

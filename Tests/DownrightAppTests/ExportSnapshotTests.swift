@@ -7,13 +7,22 @@ import MarkdownRender
 @Suite(.serialized)
 @MainActor
 struct ExportSnapshotTests {
-    @Test(arguments: [(10.0, 60), (100.0, 100), (120.0, 110)])
+    @Test(arguments: [(10.0, 60), (100.0, 100), (120.0, 120)])
     func exportedMeasureUsesTheSupportedRange(requested: Double, expected: Int) {
         var theme = ThemeStore.shared.current
         theme.typography.measureCharacters = requested
         let html = HTMLExporter(document: MarkdownParser.parse("Body"), theme: theme,
                                 title: "Measure", baseDirectory: nil, imageProvider: nil).html()
         #expect(html.contains("max-width: \(expected)ch;"))
+    }
+
+    @Test func fullWidthExportHasNoCharacterCap() {
+        var theme = ThemeStore.shared.current
+        theme.typography.measureCharacters = TypographyConfig.fullWidthMeasure
+        let html = HTMLExporter(document: MarkdownParser.parse("Body"), theme: theme,
+                                title: "Measure", baseDirectory: nil, imageProvider: nil).html()
+        #expect(html.contains("max-width: none;"))
+        #expect(!html.contains("max-width: 1000ch;"))
     }
 
     @Test(arguments: [false, true])

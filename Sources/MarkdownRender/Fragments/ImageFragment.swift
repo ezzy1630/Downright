@@ -5,15 +5,17 @@ import MarkdownCore
 /// a non-Sendable reference across the background queue.  The completion runs
 /// on the main actor, where the weak view is valid; the box only exists to
 /// make the handoff honest under strict concurrency.
+private typealias ImageLoadHost = MarkdownTextView
+
 private final class ImageLoadCompletionBox: @unchecked Sendable {
-    weak var view: MarkdownTextView?
+    weak var view: ImageLoadHost?
     /// The payload reference, not a copied range: an edit that lands while the
     /// decode is in flight projects the payload's ranges in place, so reading
     /// `sourceRange` at completion time invalidates where the image lives
     /// *now* rather than where it lived when the load was scheduled.
     let payload: FragmentPayload
 
-    init(view: MarkdownTextView?, payload: FragmentPayload) {
+    init(view: ImageLoadHost?, payload: FragmentPayload) {
         self.view = view
         self.payload = payload
     }
@@ -49,7 +51,8 @@ final class ImageFragment: DownrightFragment {
     }
 
     override func drawObject(at point: CGPoint, in cg: CGContext) {
-        guard isFirstParagraphOfBlock, let style = styleSheet else { return }
+        let rawPoint = point
+                guard isFirstParagraphOfBlock, let style = styleSheet else { return }
         let picture = displaySize()
         // Images sit in the reading column, so they centre on it — centring on
         // the full column would push every picture into the right bleed lane.
@@ -66,6 +69,12 @@ final class ImageFragment: DownrightFragment {
                         radius: RenderMetrics.imageCornerRadius)
             cg.restoreGState()
             draw(image: image, in: rect, in: cg, cornerRadius: RenderMetrics.imageCornerRadius)
+            if let animation = image.animatedSource, let view = context?.textView {
+                let frame = super.layoutFragmentFrame
+                let inContainer = rect.offsetBy(dx: frame.minX - rawPoint.x, dy: frame.minY - rawPoint.y)
+                view.showAnimation(image, animation: animation, key: payload.sourceRange.location, containerRect: inContainer,
+                                   background: matte(for: image, style: style), cornerRadius: RenderMetrics.imageCornerRadius)
+            }
             if style.theme.appearance == .dark {
                 cg.setStrokeColor(style.text.withAlphaComponent(0.08).cgColor)
                 cg.setLineWidth(1)
@@ -141,7 +150,7 @@ final class ImageFragment: DownrightFragment {
     /// one.  An opaque image covers the plate entirely, so this costs nothing
     /// when there is no alpha to matte.
     private func matte(for image: NSImage, style: StyleSheet) -> NSColor {
-        guard image.representations.first?.hasAlpha == true else { return style.background }
+        guard (image.representations.first?.hasAlpha == true) else { return style.background }
         let page = style.background
         let ink = style.text
         guard Self.brightness(of: ink) > Self.brightness(of: page) else { return page }
@@ -167,6 +176,7 @@ final class ImageFragment: DownrightFragment {
     }
 
     private func loadResult() -> LoadResult {
+        if let (url, loader) = remoteRequest() { return remoteResult(url, loader: loader) }
         guard let request = resolvedRequest() else { return .blocked }
         guard LocalAssetPolicy.allows(
             request, authorizer: context?.localAssetAuthorizer
@@ -215,6 +225,30 @@ final class ImageFragment: DownrightFragment {
         // defeating the cache's total budget before it can be evicted.
         let points = max(contentWidth, viewportHeightCap)
         return min(2048, max(1, Int(ceil(points * scale))))
+    }
+
+    /// An `https:` destination and the host's loader, when it installed one.
+    private func remoteRequest() -> (URL, RemoteImageLoading)? {
+        guard let loader = context?.remoteImageLoader else { return nil }
+        let raw = payload.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.lowercased().hasPrefix("https://"),
+              let url = URL(string: raw), url.host?.isEmpty == false else { return nil }
+        return (url, loader)
+    }
+
+    /// Same shape as the local path: a cached picture draws, a miss starts a
+    /// load and draws the placeholder.  The loader remembers failures, so a
+    /// broken image settles on the missing placeholder instead of refetching
+    /// on every layout pass, and the completion can invalidate either way.
+    private func remoteResult(_ url: URL, loader: RemoteImageLoading) -> LoadResult {
+        let dimension = targetPixelDimension
+        if let image = loader.cachedImage(for: url, maxPixelDimension: dimension) { return .loaded(image) }
+        if loader.hasFailed(url) { return .missing }
+        let box = ImageLoadCompletionBox(view: context?.textView, payload: payload)
+        loader.loadImage(for: url, maxPixelDimension: dimension) { _ in
+            box.view?.invalidateFragments(in: box.payload.sourceRange)
+        }
+        return .loading
     }
 
     private func resolvedRequest() -> LocalAssetRequest? {

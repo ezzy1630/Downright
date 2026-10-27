@@ -73,7 +73,7 @@ public enum MarkerPolicy {
                     // source range, so hiding the range as a marker would also
                     // hide the fragment's display substitution.
                     switch annotation.kind {
-                    case .image, .inert: continue
+                    case .image, .remoteImage, .inert: continue
                     default: break
                     }
                     out.append(contentsOf: annotation.tagRanges)

@@ -142,6 +142,22 @@ then applies the newest result on the main actor.
 
 ## Measurement procedure
 
+CI runs automatically on pushes to `main`, including PR merges, with a manual
+workflow trigger for branches. PRs do not run CI automatically and have no
+required review or status checks. The release workflow retains its own checks
+before publication.
+
+On Xcode, `Scripts/check.sh` shares compiled debug modules between the build
+and all source tests. CLT uses a separate test graph because its framework
+flags differ; `TEST_SCRATCH` can override either default. With `RUN_DRBENCH=1`,
+the release benchmark replaces the informational debug benchmark rather than
+running the same corpus twice. Sample counts and enforced budgets are unchanged.
+
+CI caches source and native build intermediates by OS, architecture, compiler,
+SDK, and build inputs. A cache hit still rebuilds changed sources and executes
+every test and benchmark. Native acceptance always rebuilds/verifies its exact
+bundle and runs the activated-app suite; cached test results are not accepted.
+
 Run from the repository root:
 
 ```bash
@@ -229,3 +245,17 @@ Keep parser, diff, and policy helpers pure. Reparse the full document when that
 is simpler, but restyle only dirty blocks. Cancel stale asynchronous work.
 Measure layout and decoration separately from parsing. Keep Quick Look on the
 same render path, with lazy fragments and a hard memory guard.
+
+## Image budgets
+
+Animated pictures decode at the displayed size, bounded to 2048 pixels per
+axis, and retain only the displayed and pending frame rather than every frame.
+Mac playback is explicit and schedules one frame timer at a time; invisible,
+occluded, detached, or inactive views stop scheduling work. Inline animation
+placement must inspect the visible TextKit range rather than force layout from
+the document start to every image. Remote responses are capped while receiving
+before image decode, with a separate bounded image cache.
+
+Keep the existing source and release benchmark budgets when changing image
+presentation. Verify large documents on the native Mac surface; decoder unit
+tests alone do not prove visible scroll stability or peak memory.

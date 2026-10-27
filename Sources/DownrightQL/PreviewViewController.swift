@@ -149,6 +149,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         sourceURL = url
 
         let container = MarkdownContainerView(storage: storage)
+        container.textView.allowsAnimatedImages = false
         container.textView.styleSheet = makeStyleSheet()
         container.textView.mode = .read
         container.textView.update(document: document, dirty: .wholesale)
@@ -250,7 +251,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let mode = previewAppearance
         let appearance = mode.nsAppearance ?? view.effectiveAppearance
         let preferredName = PreviewAppearanceStore.themeName(for: appearance)
-        let theme = preferredName.flatMap { name in
+        var theme = preferredName.flatMap { name in
             ThemeStore.shared.themes.first { $0.name == name }
         } ?? ThemeStore.shared.themes.first {
             switch mode {
@@ -261,6 +262,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 return isDark ? $0.appearance == .dark : $0.appearance != .dark
             }
         } ?? .fallback
+        if let measure = PreviewAppearanceStore.measureCharacters {
+            theme.typography.measureCharacters = measure
+        }
         return StyleSheet(theme: theme, appearance: appearance)
     }
 

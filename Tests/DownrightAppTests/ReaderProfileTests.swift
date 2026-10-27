@@ -17,7 +17,7 @@ struct ReaderProfileTests {
     func profileClampsReadingMeasure() {
         #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 10).measureCharacters == 60)
         #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 100).measureCharacters == 100)
-        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 120).measureCharacters == 110)
+        #expect(ReaderProfile(id: "x", name: "x", measureCharacters: 120).measureCharacters == 120)
     }
 
     @Test
@@ -57,8 +57,11 @@ struct ReaderProfileTests {
         popup.selectItem(withTitle: "110 characters")
         popup.sendAction(popup.action, to: popup.target)
         #expect(picker.selectedProfile.measureCharacters == 110)
+        popup.selectItem(withTitle: "Full width")
+        popup.sendAction(popup.action, to: popup.target)
+        #expect(picker.selectedProfile.measureCharacters == TypographyConfig.fullWidthMeasure)
         picker.saveCustomProfileForTesting(name: "Widest")
-        #expect(store.profiles.last?.measureCharacters == 110)
+        #expect(store.profiles.last?.measureCharacters == TypographyConfig.fullWidthMeasure)
     }
 
     @Test

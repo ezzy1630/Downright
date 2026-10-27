@@ -15,14 +15,24 @@ enum HardWrapReflow {
         text: NSString,
         hiddenRanges: [NSRange],
         excludedRanges: [NSRange] = [],
-        enabled: Bool
+        enabled: Bool,
+        joinsHTMLParagraphs: Bool = false
     ) -> Plan {
-        guard enabled, text.length > 0 else { return Plan(ranges: [], substitutions: []) }
+        guard enabled || joinsHTMLParagraphs, text.length > 0 else { return Plan(ranges: [], substitutions: []) }
 
         var ranges: [NSRange] = []
         var substitutions: [DisplaySubstitution] = []
         document.root.walk { block in
-            guard case .paragraph = block.content else { return }
+            if joinsHTMLParagraphs, let html = block.safeHTML {
+                guard !excludedRanges.contains(where: { NSIntersectionRange($0, block.range).length > 0 }),
+                      isParagraphLike(block, html: html, text: text),
+                      let joined = htmlJoin(block, text: text, hiddenRanges: hiddenRanges)
+                else { return }
+                ranges.append(joined.range)
+                substitutions.append(contentsOf: joined.substitutions)
+                return
+            }
+            guard enabled, case .paragraph = block.content else { return }
             guard !excludedRanges.contains(where: {
                 NSIntersectionRange($0, block.range).length > 0
             }) else { return }
@@ -66,6 +76,115 @@ enum HardWrapReflow {
         }
 
         return Plan(ranges: ranges.sorted { $0.location < $1.location }, substitutions: substitutions)
+    }
+
+    // MARK: - HTML paragraphs
+
+    /// A `<p>` or heading HTML block whose element spans the whole block:
+    /// README rows of links and badges, one `<a>` per source line.
+    static func isParagraphLike(_ block: MDBlock, html: SafeHTMLDocument, text: NSString) -> Bool {
+        guard html.isSafe, block.range.length > 0, block.range.upperBound <= text.length else { return false }
+        var start = block.range.location
+        var end = block.range.upperBound
+        while start < end, isWhitespace(text.character(at: start)) { start += 1 }
+        while end > start, isWhitespace(text.character(at: end - 1)) { end -= 1 }
+        guard text.range(of: "\n", options: [], range: NSRange(location: start, length: end - start)).location
+                != NSNotFound else { return false }
+        return html.annotations.contains { annotation in
+            switch annotation.kind {
+            case .paragraph, .heading:
+                return annotation.range.location == start && annotation.range.upperBound >= end
+            default:
+                return false
+            }
+        }
+    }
+
+    /// HTML's whitespace rule for one paragraph-like block: a run of line
+    /// breaks and indentation between two pieces of visible content shows as
+    /// one space; at the start or end of the block, or around a line that
+    /// holds only hidden tags, it shows as nothing.  So
+    ///
+    ///     <p align="center">
+    ///       <a href="…"><img …></a>
+    ///       <a href="…"><img …></a>
+    ///     </p>
+    ///
+    /// reads as one centred line of badges, as it does on GitHub.
+    private static func htmlJoin(
+        _ block: MDBlock, text: NSString, hiddenRanges: [NSRange]
+    ) -> (range: NSRange, substitutions: [DisplaySubstitution])? {
+        let elementRange = rangeIncludingTrailingSeparator(for: block, text: text)
+        let upperBound = Swift.min(elementRange.upperBound, text.length)
+        let hidden = hiddenRanges.filter {
+            $0.location >= elementRange.location && $0.upperBound <= elementRange.upperBound
+        }
+
+        // Physical lines inside the block, and whether each shows anything.
+        var lines: [(content: NSRange, terminator: NSRange?)] = []
+        var lineStart = block.range.location
+        var cursor = lineStart
+        while cursor < upperBound {
+            let length = lineTerminatorLength(in: text, at: cursor)
+            guard length > 0 else { cursor += 1; continue }
+            lines.append((NSRange(location: lineStart, length: cursor - lineStart),
+                          NSRange(location: cursor, length: length)))
+            cursor += length
+            lineStart = cursor
+        }
+        if lineStart < upperBound {
+            lines.append((NSRange(location: lineStart, length: upperBound - lineStart), nil))
+        }
+        let visible = lines.map { showsContent($0.content, text: text, hidden: hidden) }
+
+        var substitutions: [DisplaySubstitution] = []
+        var joined: [NSRange] = []
+        var contentSinceSpace = false
+        for (index, line) in lines.enumerated() {
+            if visible[index] { contentSinceSpace = true }
+            // The block's own closing newline separates it from the next
+            // block; it is not joined.
+            guard let terminator = line.terminator, terminator.upperBound < elementRange.upperBound else { continue }
+            let contentFollows = visible[(index + 1)...].contains(true)
+            let replacement: NSAttributedString
+            if contentSinceSpace, contentFollows {
+                replacement = softBreakReplacement(for: text, range: terminator, opensElement: false)
+                contentSinceSpace = false
+            } else {
+                replacement = zeroWidthReplacement(length: terminator.length)
+            }
+            substitutions.append(.replaceHardWrap(terminator, with: replacement))
+            joined.append(terminator)
+            let indents = continuationIndents(
+                after: terminator, limit: elementRange.upperBound, text: text, hiddenRanges: hidden)
+            substitutions.append(contentsOf: indents.map {
+                .replaceHardWrap($0, with: zeroWidthReplacement(length: $0.length))
+            })
+            joined.append(contentsOf: indents)
+        }
+        guard !joined.isEmpty else { return nil }
+        for range in hidden where !joined.contains(where: { NSIntersectionRange($0, range).length > 0 }) {
+            substitutions.append(.replaceHidden(range, with: zeroWidthReplacement(length: range.length)))
+        }
+        return (elementRange, substitutions)
+    }
+
+    /// Whether any character of `line` is neither whitespace nor hidden.
+    private static func showsContent(_ line: NSRange, text: NSString, hidden: [NSRange]) -> Bool {
+        var cursor = line.location
+        while cursor < line.upperBound {
+            if let range = hidden.first(where: { $0.location <= cursor && $0.upperBound > cursor }) {
+                cursor = range.upperBound
+                continue
+            }
+            if !isWhitespace(text.character(at: cursor)) { return true }
+            cursor += 1
+        }
+        return false
+    }
+
+    private static func isWhitespace(_ character: unichar) -> Bool {
+        isHorizontalWhitespace(character) || character == 0x0A || character == 0x0D
     }
 
     /// A soft break to join, together with the continuation line's own

@@ -41,7 +41,6 @@ jobs:
     env:
       MARKETING_VERSION_FILE: Config/version.env
       SCRATCH: .build-ci-main
-      TEST_SCRATCH: .build-ci-test
 
     steps:
       # ---------------------------------------------------------------- gates
@@ -105,6 +104,25 @@ jobs:
       # (swift, xcodebuild, xcrun) inherits the exported DEVELOPER_DIR.
       - name: Select and verify the Swift toolchain
         run: ./Scripts/select-toolchain.sh
+
+      # Share only the source-check graphs with CI. Production archives and
+      # updater acceptance still build through their separate release paths.
+      - name: Identify compiler and SDK for the build cache
+        id: cache-toolchain
+        run: |
+          ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift build graphs
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .build-ci-main
+            .build-ci-main-bench
+            !.build-ci-main/**/index
+            !.build-ci-main-bench/**/index
+          key: swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-${{ github.sha }}
+          restore-keys: |
+            swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-
 
       # xcodegen generates the Xcode project that becomes the signed,
       # notarized archive, so it is pinned like every other release input:

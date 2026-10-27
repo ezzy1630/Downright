@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A force-push or a new commit on a PR branch supersedes the previous run:
-# the full macos-26 lane is expensive, and only the newest result matters.
+# Only the newest result on a branch matters, including manually started runs.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -19,9 +19,8 @@ jobs:
     # default Xcode 16.4 has Swift 6 but cannot resolve those APIs at compile
     # time, even behind availability checks.
     runs-on: macos-26
-    # check.sh with RUN_DRBENCH=1 builds debug + runs all suites + builds
-    # drbench in release and enforces the §12 budgets; that is three full
-    # build graphs, so leave generous headroom.
+    # Debug builds and tests share modules; release benchmarks retain their
+    # own graph and enforce the unchanged §12 budgets.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
@@ -31,19 +30,36 @@ jobs:
       # Xcode nor the alternatives.  Choose and verify the toolchain first.
       - name: Select and verify the Swift toolchain
         run: ./Scripts/select-toolchain.sh
+      - name: Identify compiler and SDK for the build cache
+        id: cache-toolchain
+        run: |
+          ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+      # Restore compiled modules, not test results. SwiftPM still checks the
+      # current sources, and every test and benchmark runs even on a cache hit.
+      - name: Restore Swift build graphs
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .build-ci-main
+            .build-ci-main-bench
+            !.build-ci-main/**/index
+            !.build-ci-main-bench/**/index
+          key: swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-${{ github.sha }}
+          restore-keys: |
+            swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-
       # The §12 performance budget is the product promise; RUN_DRBENCH makes
       # check.sh treat it as a gate (release numbers, exit non-zero on a miss).
       # The separate release `swift build` step is folded into this run.
       - name: Build, test, and enforce the §12 performance budget
         env:
           SCRATCH: .build-ci-main
-          TEST_SCRATCH: .build-ci-test
           RUN_DRBENCH: "1"
         run: ./Scripts/check.sh
 
   app-acceptance:
     # Unit tests exercise the package graph without an activated NSApplication.
-    # Keep this as a separate required lane so a green headless run cannot hide
+    # Keep this as a separate lane so a green headless run cannot hide
     # a stale bundle, missing nested code, or a broken real window.
     runs-on: macos-26
     timeout-minutes: 30
@@ -51,6 +67,25 @@ jobs:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Select and verify the Swift toolchain
         run: ./Scripts/select-toolchain.sh
+      - name: Identify compiler and SDK for the build cache
+        id: cache-toolchain
+        run: |
+          ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+      - name: Restore native build intermediates
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .build-ci-app/Build/Intermediates.noindex
+            .build-ci-app/Build/Products
+            .build-ci-app/ModuleCache.noindex
+            .build-ci-app/SourcePackages
+            .build-ci-app-spm-arm64
+            .build-ci-app-spm-x86_64
+            !.build-ci-app-spm-*/**/index
+          key: native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'project.yml', 'Config/**', 'Scripts/check-app.sh', 'Scripts/bundle-spotlight.sh', 'Scripts/build-universal-product.sh') }}-${{ github.sha }}
+          restore-keys: |
+            native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'project.yml', 'Config/**', 'Scripts/check-app.sh', 'Scripts/bundle-spotlight.sh', 'Scripts/build-universal-product.sh') }}-
       # Pinned like the release workflow: xcodegen generates the project the
       # acceptance lane builds, so it is a checksummed upstream binary, not a
       # floating Homebrew head.

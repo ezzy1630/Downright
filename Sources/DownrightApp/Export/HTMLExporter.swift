@@ -417,6 +417,8 @@ struct HTMLExporter {
     private func stylesheet() -> String {
         let palette = theme.palette
         let typography = theme.typography
+        let measure = TypographyConfig.clampedMeasureCharacters(typography.measureCharacters)
+        let measureCSS = measure == TypographyConfig.fullWidthMeasure ? "none" : "\(Int(measure))ch"
         let bodyFamily = typography.preset == .reading
             ? "'New York', 'Iowan Old Style', Georgia, serif"
             : "-apple-system, 'SF Pro Text', system-ui, sans-serif"
@@ -488,7 +490,7 @@ struct HTMLExporter {
         }
         .downright {
           /* Measure capped in ch so it tracks the font, not the window (§11.1). */
-          max-width: \(Int(TypographyConfig.clampedMeasureCharacters(typography.measureCharacters)))ch;
+          max-width: \(measureCSS);
           margin: 4rem auto;
           padding: 0 1.5rem;
           hanging-punctuation: first last;

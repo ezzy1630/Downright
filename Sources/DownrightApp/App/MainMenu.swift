@@ -260,6 +260,7 @@ enum MainMenu {
                 .commands([.increaseTextSize, .decreaseTextSize, .resetTextSize]),
                 .commands([.taskPanel]),
                 .commands([.commandPalette, .documentLens, .readerProfiles]),
+                .commands([.loadRemoteImages]),
                 .commands([.documentHealth, .renderTargets, .visualDebugger, .reviewPanel]),
                 .commands([.workspace, .localAI]),
                 .commands([.focusMode, .typewriterScrolling, .statusBar]),

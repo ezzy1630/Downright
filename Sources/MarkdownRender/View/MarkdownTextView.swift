@@ -297,7 +297,9 @@ public final class MarkdownTextView: NSTextView {
     /// Directory relative image and diagram paths resolve against (§3.4).
     public var documentURL: URL? {
         didSet {
+            if documentURL != oldValue { remoteImageLoader = nil }
             fragmentContext.documentURL = documentURL
+            inlineImages.documentURL = documentURL
             invalidateAllFragments()
         }
     }
@@ -308,13 +310,123 @@ public final class MarkdownTextView: NSTextView {
     public var localAssetAuthorizer: ((URL) -> Bool)? {
         didSet {
             fragmentContext.localAssetAuthorizer = localAssetAuthorizer
+            inlineImages.localAssetAuthorizer = localAssetAuthorizer
             invalidateAllFragments()
+        }
+    }
+
+    public var allowsAnimatedImages = true {
+        didSet { if allowsAnimatedImages != oldValue { refreshInlineImages() } }
+    }
+    private var installedRemoteImageLoader: RemoteImageLoading?
+    public var remoteImageLoader: RemoteImageLoading? {
+        get { installedRemoteImageLoader }
+        set {
+            guard newValue !== installedRemoteImageLoader else { return }
+            installedRemoteImageLoader = newValue
+            fragmentContext.remoteImageLoader = newValue
+            inlineImages.remoteImageLoader = newValue
+            engine.loadsRemoteImages = newValue != nil
+            refreshInlineImages()
+        }
+    }
+    private let inlineImages = InlineImageContext()
+    private var animationOverlays: [Int: AnimatedImagePlaybackView] = [:]
+    private var imagePlaybackIntent: Set<Int> = []
+    private var inlineRefreshPending = false
+
+    /// Called after fragment drawing; view hierarchy mutations wait until drawing ends.
+    nonisolated func showAnimation(_ image: NSImage, animation: AnimatedImageSource, key: Int, containerRect: CGRect, background: NSColor? = nil, cornerRadius: CGFloat = 0) {
+        let generation = MainActor.assumeIsolated { self.updateGeneration }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.updateGeneration == generation, self.mode != .source, self.allowsAnimatedImages else { return }
+            let rect = containerRect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y)
+            guard rect.intersects(self.visibleRect) else { return }
+            self.placeAnimation(image, animation: animation, key: key, rect: rect, background: background ?? self.styleSheet.background, cornerRadius: cornerRadius)
+        }
+    }
+
+    private func placeAnimation(_ image: NSImage, animation: AnimatedImageSource, key: Int, rect: CGRect, background: NSColor, cornerRadius: CGFloat) {
+        if let view = animationOverlays[key], view.animation === animation {
+            if view.frame != rect { view.frame = rect }
+            view.updateRunning()
+            return
+        }
+        animationOverlays[key]?.removeFromSuperview()
+        let view = AnimatedImagePlaybackView(image: image, animation: animation, background: background)
+        view.frame = rect
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.masksToBounds = true
+        addSubview(view)
+        animationOverlays[key] = view
+        view.playButton.setAccessibilityParent(self)
+        if imagePlaybackIntent.contains(key) { view.togglePlayback() }
+        publishFragmentAccessibility()
+    }
+
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        // NSTextView's native hit testing owns the text surface. Route only
+        // our explicit playback controls before deferring to that machinery.
+        for case let image as AnimatedImagePlaybackView in subviews.reversed() {
+            if let button = image.hitTest(local) { return button }
+        }
+        return super.hitTest(point)
+    }
+
+    private func pruneAnimationOverlays() {
+        let offscreen = animationOverlays.filter { !$0.value.frame.intersects(visibleRect) }
+        for (key, view) in offscreen {
+            if view.wantsPlayback { imagePlaybackIntent.insert(key) }
+            else { imagePlaybackIntent.remove(key) }
+            view.removeFromSuperview()
+            animationOverlays.removeValue(forKey: key)
+        }
+        if !offscreen.isEmpty { publishFragmentAccessibility() }
+    }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        pruneAnimationOverlays()
+        guard mode != .source, let viewport = markdownLayoutManager.textViewportLayoutController.viewportRange else { return }
+        let textKitVisible = NSRange(
+            location: contentStorage.offset(from: contentStorage.documentRange.location, to: viewport.location),
+            length: contentStorage.offset(from: viewport.location, to: viewport.endLocation))
+        let visible = displayMap.sourceRange(forTextKit: textKitVisible)
+        for item in inlineImages.animatedItems where visible.contains(offset: item.sourceLocation) {
+            guard let animation = item.image.animatedSource,
+                  let location = contentStorage.location(contentStorage.documentRange.location, offsetBy: displayMap.textKitOffset(forSource: item.sourceLocation)),
+                  let fragment = markdownLayoutManager.textLayoutFragment(for: location) else { continue }
+            let attachment = fragment.frameForTextAttachment(at: location)
+            guard attachment.width > 0, attachment.height > 0 else { continue }
+            showAnimation(item.image, animation: animation, key: item.sourceLocation,
+                          containerRect: attachment.offsetBy(dx: fragment.layoutFragmentFrame.minX, dy: fragment.layoutFragmentFrame.minY))
+        }
+        animationOverlays.values.forEach { $0.updateRunning() }
+    }
+
+    private func refreshInlineImages() {
+        guard textStorage?.length ?? 0 > 0 else { return }
+        let anchor = captureViewportAnchor()
+        rebuildEverything()
+        requestContentResize(.immediate, anchor: anchor, preservingReadingPosition: true)
+        restoreViewport(to: anchor)
+    }
+
+    private func scheduleInlineImageRefresh() {
+        guard !inlineRefreshPending else { return }
+        inlineRefreshPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.inlineRefreshPending = false
+            self.refreshInlineImages()
         }
     }
 
     /// Re-evaluate blocked local image fragments after an explicit trust grant.
     /// This is called by user actions, never from a draw callback.
     public func refreshLocalAssets() {
+        refreshInlineImages()
         invalidateAllFragments()
         needsDisplay = true
     }
@@ -656,6 +768,24 @@ public final class MarkdownTextView: NSTextView {
     public func adoptSharedPresentation(from source: MarkdownTextView) {
         guard textStorage === source.textStorage else { return }
         parsedDocument = source.parsedDocument
+        installedRemoteImageLoader = source.remoteImageLoader
+        fragmentContext.remoteImageLoader = installedRemoteImageLoader
+        engine.loadsRemoteImages = installedRemoteImageLoader != nil
+        inlineImages.remoteImageLoader = installedRemoteImageLoader
+        inlineImages.documentURL = source.documentURL
+        inlineImages.localAssetAuthorizer = source.localAssetAuthorizer
+        inlineImages.maximumSize = source.inlineImages.maximumSize
+        inlineImages.displayScale = source.inlineImages.displayScale
+        inlineImages.allowsPlayback = allowsAnimatedImages
+        inlineImages.animatedItems.removeAll(keepingCapacity: true)
+        animationOverlays.values.forEach { $0.removeFromSuperview() }
+        animationOverlays.removeAll()
+        imagePlaybackIntent.removeAll()
+        inlineImages.imageDidArrive = { [weak self] in self?.scheduleInlineImageRefresh() }
+        inlineImages.items = source.inlineImages.items
+        // Join in-flight image requests without rebuilding the document when
+        // opening a split. Each pane refits attachments at its own width.
+        _ = InlineImageDisplay.substitutions(for: inlineImages.items, context: inlineImages, styleSheet: styleSheet)
         paragraphIndex = source.paragraphIndex
         baseHiddenRanges = source.baseHiddenRanges
         hardWrapRanges = source.hardWrapRanges
@@ -913,7 +1043,13 @@ public final class MarkdownTextView: NSTextView {
             elements.append(element)
         }
         fragmentAccessibilityElements = elements
-        setAccessibilityChildren(elements)
+        publishFragmentAccessibility()
+    }
+
+    private func publishFragmentAccessibility() {
+        let buttons = animationOverlays.keys.sorted().compactMap { animationOverlays[$0]?.playButton }
+        let children: [Any] = fragmentAccessibilityElements.map { $0 as Any } + buttons.map { $0 as Any }
+        setAccessibilityChildren(children)
     }
 
     /// Keep the current pixel camera through the next parse/decorate commit.
@@ -1467,77 +1603,31 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func rebuildBaseDisplayMap(document: ParsedDocument) {
-        var hidden = engine.hiddenRanges(document: document, caret: nil, selections: [])
-        if let focus = sourceFocus.range {
-            hidden.removeAll { NSIntersectionRange($0, focus).length > 0 }
-        }
-        let lineBreakSubstitutions = effectivePolicy.rendersFragments
-            ? Self.safeHTMLLineBreakSubstitutions(in: document, excluding: sourceFocus.range)
-            : []
-        if !lineBreakSubstitutions.isEmpty {
-            hidden = Self.removingOverlaps(
-                hidden, with: lineBreakSubstitutions.map(\.sourceRange)
-            )
-        }
-
-        let mathRanges = effectivePolicy.rendersFragments
-            ? InlineMathDisplay.ranges(in: document).filter { range in
-                guard let focus = sourceFocus.range else { return true }
-                return NSIntersectionRange(range, focus).length == 0
-            }
-            : []
-        // The math replacement owns its delimiters and content as one visual
-        // object. Keeping the marker substitutions too would overlap the
-        // object range, causing DisplayMap to reject one of the entries.
-        hidden = Self.removingOverlaps(hidden, with: mathRanges)
-        let mathSubstitutions = effectivePolicy.rendersFragments
-            ? InlineMathDisplay.substitutions(
-                in: document, styleSheet: styleSheet, excluding: sourceFocus.range)
-            : []
-
-        let footnoteReferences = effectivePolicy.hidesInlineMarkers
-            ? FootnoteReferenceDisplay.references(in: document).filter { reference in
-                guard let focus = sourceFocus.range else { return true }
-                return NSIntersectionRange(reference.range, focus).length == 0
-            }
-            : []
-        hidden = Self.removingOverlaps(hidden, with: footnoteReferences.map(\.range))
-        let footnoteSubstitutions = effectivePolicy.hidesInlineMarkers
-            ? FootnoteReferenceDisplay.substitutions(
-                in: document, styleSheet: styleSheet, excluding: sourceFocus.range
-            )
-            : []
-
-        baseHiddenRanges = hidden
-        let source = (textStorage?.string ?? "") as NSString
-        let plan: HardWrapReflow.Plan
-        if configuration.reflowHardWrappedParagraphs,
-           Self.containsHardWrappedParagraph(in: document, text: source) {
-            plan = HardWrapReflow.plan(
-                document: document,
-                text: source,
-                hiddenRanges: hidden,
-                enabled: true
-            )
-        } else {
-            // Most generated large documents use one physical line per
-            // paragraph. HardWrapReflow still walks every character in every
-            // paragraph in that case, even though it cannot publish a
-            // substitution. Avoid that whole-document pass during a wholesale
-            // commit while preserving reflow for documents that actually have
-            // wrapped paragraphs.
-            plan = HardWrapReflow.Plan(ranges: [], substitutions: [])
-        }
-        hardWrapRanges = plan.ranges
-        hardWrapSubstitutions = plan.substitutions.filter(\.isHardWrapReflow)
-        baseDisplayMap = DisplayMap(
-            paragraphs: paragraphIndex,
-            substitutions: hidden.map(DisplaySubstitution.hide)
-                + mathSubstitutions
-                + footnoteSubstitutions
-                + lineBreakSubstitutions
-                + hardWrapSubstitutions
+        animationOverlays.values.forEach { $0.removeFromSuperview() }
+        animationOverlays.removeAll()
+        imagePlaybackIntent.removeAll()
+        publishFragmentAccessibility()
+        inlineImages.allowsPlayback = allowsAnimatedImages
+        inlineImages.maximumSize = CGSize(width: max(1, (textContainer?.size.width ?? styleSheet.measureWidth) - RenderMetrics.codeBleed), height: 480)
+        inlineImages.displayScale = window?.backingScaleFactor ?? 2
+        inlineImages.imageDidArrive = { [weak self] in self?.scheduleInlineImageRefresh() }
+        inlineImages.animatedItems.removeAll(keepingCapacity: true)
+        let maps = PresentationMaps.base(
+            document: document,
+            engine: engine,
+            styleSheet: styleSheet,
+            policy: effectivePolicy,
+            excluding: sourceFocus.range,
+            reflowHardWrappedParagraphs: configuration.reflowHardWrappedParagraphs,
+            text: (textStorage?.string ?? "") as NSString,
+            paragraphIndex: paragraphIndex,
+            inlineImages: inlineImages,
+            joinsHTMLParagraphs: true
         )
+        baseHiddenRanges = maps.hidden
+        hardWrapRanges = maps.hardWrapRanges
+        hardWrapSubstitutions = maps.hardWrapSubstitutions
+        baseDisplayMap = maps.logical
         // Selection / hit-testing speak TextKit coordinates from the layout map
         // (length-preserving joiners). Collapsed logical maps stay on the
         // substitution fallback path only.
@@ -1545,176 +1635,12 @@ public final class MarkdownTextView: NSTextView {
         displayMap = baseLayoutMap
     }
 
-    /// Hard-wrap planning is only meaningful when a paragraph contains a
-    /// physical line break. Checking that invariant once is linear in source
-    /// length and avoids a much more expensive character walk through every
-    /// single-line paragraph in a large generated document.
-    private static func containsHardWrappedParagraph(
-        in document: ParsedDocument,
-        text: NSString
-    ) -> Bool {
-        var found = false
-        document.root.walk { block in
-            guard !found, case .paragraph = block.content, block.range.length > 0 else { return }
-            found = text.rangeOfCharacter(
-                from: .newlines,
-                options: [],
-                range: block.range
-            ).location != NSNotFound
-        }
-        return found
-    }
-
-    /// Presents safe README structural tags with source-preserving display
-    /// replacements. The trailing zero-width joiners keep TextKit source
-    /// offsets one-to-one with the replacement, so selection, editing, and
-    /// copying continue to address the original tag bytes. Details gets its
-    /// authored disclosure state at the opening tag; table rows get a line
-    /// break at their closing tag so adjacent cells/rows cannot concatenate.
-    private static func safeHTMLLineBreakSubstitutions(
-        in document: ParsedDocument,
-        excluding excludedRange: NSRange?
-    ) -> [DisplaySubstitution] {
-        var substitutions: [DisplaySubstitution] = []
-        document.root.walk { block in
-            guard let html = block.safeHTML, html.isSafe else { return }
-            for annotation in html.annotations {
-                let replacementRange: NSRange
-                let replacementText: String
-                switch annotation.kind {
-                case .lineBreak:
-                    guard annotation.range.length > 0 else { continue }
-                    replacementRange = annotation.range
-                    replacementText = "\n"
-                case .details:
-                    // Replace only the opening tag, not the content. This
-                    // gives both open and closed details a stable native
-                    // disclosure marker without changing source bytes.
-                    guard let opening = annotation.tagRanges.first,
-                          opening.length > 0 else { continue }
-                    replacementRange = opening
-                    if case .details(let open) = annotation.kind {
-                        replacementText = open ? "▾" : "▸"
-                    } else {
-                        continue
-                    }
-                case .tableRow:
-                    // Rows are often emitted without physical newlines in
-                    // README HTML. A break on the closing tag keeps the row
-                    // model legible while preserving source coordinates.
-                    guard let closing = annotation.tagRanges.last,
-                          closing.length > 0 else { continue }
-                    replacementRange = closing
-                    replacementText = "\n"
-                default:
-                    continue
-                }
-                if let excludedRange,
-                   NSIntersectionRange(replacementRange, excludedRange).length > 0 {
-                    continue
-                }
-                let replacement = NSAttributedString(string:
-                    replacementText + String(repeating: "\u{200B}", count: replacementRange.length - 1)
-                )
-                substitutions.append(DisplaySubstitution(
-                    sourceRange: replacementRange,
-                    displayLength: replacementRange.length,
-                    replacement: replacement,
-                    preservesSourceOffsets: true
-                ))
-            }
-        }
-        return substitutions.sorted { $0.sourceRange.location < $1.sourceRange.location }
-    }
-
-    /// Removes ranges intersecting an ordered exclusion set in one merge pass.
-    /// The old nested `contains` walk made a document with inline math in every
-    /// paragraph quadratic while rebuilding its display map.
-    private static func removingOverlaps(_ ranges: [NSRange], with exclusions: [NSRange]) -> [NSRange] {
-        guard !ranges.isEmpty, !exclusions.isEmpty else { return ranges }
-        let orderedRanges = ranges.sorted { $0.location < $1.location }
-        let orderedExclusions = exclusions.sorted { $0.location < $1.location }
-        var kept: [NSRange] = []
-        kept.reserveCapacity(orderedRanges.count)
-        var exclusionIndex = 0
-        for range in orderedRanges {
-            while exclusionIndex < orderedExclusions.count,
-                  orderedExclusions[exclusionIndex].upperBound <= range.location {
-                exclusionIndex += 1
-            }
-            let overlaps = exclusionIndex < orderedExclusions.count
-                && orderedExclusions[exclusionIndex].location < range.upperBound
-                && orderedExclusions[exclusionIndex].upperBound > range.location
-            if !overlaps { kept.append(range) }
-        }
-        return kept
-    }
-
     /// TextKit 2 elements keep source-length ranges even when Markdown syntax
-    /// is visually omitted. Hidden runs become zero-width word joiners here;
-    /// the logical map used by marker policy still collapses them for semantic
-    /// selection and reveal decisions.
+    /// is visually omitted; see `LayoutMapBuilder`.
+    private let layoutMapBuilder = LayoutMapBuilder()
+
     private func layoutDisplayMap(from logical: DisplayMap) -> DisplayMap {
-        let substitutions = logical.substitutions.map(layoutSubstitution)
-        return DisplayMap(paragraphs: paragraphIndex, substitutions: substitutions)
-    }
-
-    /// One logical substitution in layout space.  Kept separate from the map so
-    /// a paragraph-local reveal can transform only its own handful of entries.
-    private func layoutSubstitution(_ substitution: DisplaySubstitution) -> DisplaySubstitution {
-        guard !substitution.isHidden,
-              let replacement = substitution.replacement,
-              replacement.length < substitution.sourceRange.length,
-              replacement.attribute(.attachment, at: 0, effectiveRange: nil) != nil else {
-            guard substitution.isHidden else { return substitution }
-            return .sourceStyledHidden(substitution.sourceRange)
-        }
-        let fillerCount = substitution.sourceRange.length - replacement.length
-        let layoutReplacement = NSMutableAttributedString(attributedString: replacement)
-        layoutReplacement.append(
-            layoutFiller(length: fillerCount, styledLike: substitution.sourceRange.location)
-        )
-        return DisplaySubstitution(
-            sourceRange: substitution.sourceRange,
-            displayLength: substitution.sourceRange.length,
-            replacement: layoutReplacement,
-            preservesSourceOffsets: true
-        )
-    }
-
-    /// A run of `length` word joiners carrying the storage's own attributes at
-    /// `offset`.
-    ///
-    /// Reading those attributes with `storage.attributes(at:)` and handing them
-    /// to `NSAttributedString(string:attributes:)` bridges one attribute
-    /// dictionary out of Objective-C and straight back into it, per hidden
-    /// marker, on every keystroke.  On a 5,000-line document that round trip
-    /// measured as most of the keystroke budget, and it buys nothing:
-    /// `attributedSubstring` hands back the storage's own dictionary without
-    /// bridging, and `replaceCharacters` extends the first replaced character's
-    /// attributes over the whole replacement.
-    private func layoutFiller(length: Int, styledLike offset: Int) -> NSAttributedString {
-        let joiners = wordJoiners(length)
-        guard let storage = textStorage, offset >= 0, offset < storage.length else {
-            return NSAttributedString(string: joiners)
-        }
-        let styled = NSMutableAttributedString(
-            attributedString: storage.attributedSubstring(from: NSRange(location: offset, length: 1))
-        )
-        styled.replaceCharacters(in: NSRange(location: 0, length: 1), with: joiners)
-        return styled
-    }
-
-    /// Word-joiner runs by length.  A document uses the same handful of marker
-    /// lengths over and over — `# `, `- [ ] `, a single `*` — so building the
-    /// string once keeps the allocation off the keystroke path.
-    private var wordJoinerRuns: [Int: String] = [:]
-
-    private func wordJoiners(_ length: Int) -> String {
-        if let cached = wordJoinerRuns[length] { return cached }
-        let run = String(repeating: "\u{2060}", count: max(0, length))
-        wordJoinerRuns[length] = run
-        return run
+        layoutMapBuilder.layoutDisplayMap(from: logical, paragraphs: paragraphIndex, storage: textStorage)
     }
 
     /// Source Focus changes typography and local material, never characters.
@@ -2216,16 +2142,7 @@ public final class MarkdownTextView: NSTextView {
     private func applyHiddenAttribute(_ hidden: [NSRange], scope: NSRange?, excluding: [NSRange] = []) {
         guard let storage = textStorage, storage.length > 0 else { return }
         let window = scope.flatMap { clampToStorage($0) } ?? NSRange(location: 0, length: storage.length)
-        guard window.length > 0 else { return }
-        storage.beginEditing()
-        storage.removeAttribute(.drHidden, range: window)
-        for range in RangeSet.intersecting(hidden, window) {
-            storage.addAttribute(.drHidden, value: true, range: range)
-        }
-        for range in RangeSet.intersecting(excluding, window) {
-            storage.removeAttribute(.drHidden, range: range)
-        }
-        storage.endEditing()
+        PresentationMaps.applyHiddenAttribute(hidden, to: storage, scope: window, excluding: excluding)
     }
 
     private func subtract(_ removed: [NSRange], from ranges: [NSRange]) -> [NSRange] {
@@ -3499,6 +3416,7 @@ public final class MarkdownTextView: NSTextView {
             // A responsive measure changes every fragment's wrapping and
             // object frame. Invalidate the old TextKit 2 layout before a
             // saved deep position asks it to paint lazily.
+            refreshInlineImages()
             invalidateAllFragments()
             requestContentResize(.viewport, anchor: anchor)
         }

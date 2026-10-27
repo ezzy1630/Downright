@@ -38,7 +38,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private let deleteButton = NSButton(title: "Delete Custom", target: nil, action: nil)
     private let revertButton = NSButton(title: "Revert", target: nil, action: nil)
     private let doneButton = NSButton(title: "Done", target: nil, action: nil)
-    private let measureChoices = Array(Int(TypographyConfig.measureRange.lowerBound)...Int(TypographyConfig.measureRange.upperBound))
+    private let measureChoices = TypographyConfig.measureChoices.map(Int.init)
     private var controls: [NSPopUpButton] = []
     private var isReloading = false
 
@@ -118,7 +118,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         addSubview(deleteButton)
 
         addControl(label: "Typography scale", titles: ReaderTypographyScale.allCases.map(\.title))
-        addControl(label: "Measure width", titles: measureChoices.map { "\($0) characters" })
+        addControl(label: "Measure width", titles: measureChoices.map { TypographyConfig.measureTitle(CGFloat($0)) })
         addControl(label: "Chrome density", titles: ReaderChromeDensity.allCases.map(\.title))
         addControl(label: "Motion", titles: ReaderMotionPreference.allCases.map(\.title))
 

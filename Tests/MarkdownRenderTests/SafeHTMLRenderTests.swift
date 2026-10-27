@@ -67,6 +67,26 @@ struct SafeHTMLRenderTests {
         #expect(storage.string == source)
     }
 
+    @Test func remoteHTMLImageStaysInertUnlessTheHostLoadsRemoteImages() throws {
+        let source = #"<p align="center"><img src="https://img.example/badge.svg" alt="badge"></p>"#
+        let document = MarkdownParser.parse(source)
+        let image = (source as NSString).range(of: "<img")
+
+        // The Mac's configuration: no fragment, faint source, nothing fetched.
+        let inert = NSTextStorage(string: source)
+        engine(.read).decorate(inert, document: document, dirty: .wholesale)
+        #expect(inert.attribute(.drFragment, at: image.location, effectiveRange: nil) == nil)
+
+        let opted = NSTextStorage(string: source)
+        let renderer = engine(.read)
+        renderer.loadsRemoteImages = true
+        renderer.decorate(opted, document: document, dirty: .wholesale)
+        let payload = try #require(opted.attribute(.drFragment, at: image.location, effectiveRange: nil) as? FragmentPayload)
+        #expect(payload.kind == .image)
+        #expect(payload.detail == "https://img.example/badge.svg")
+        #expect(opted.string == source)
+    }
+
     @Test func detailsAndTableAnnotationsReceiveNativeReadingChrome() throws {
         let source = "<details open><summary>More</summary>Body</details>\n<table><tr><td>A</td><td>B</td></tr></table>"
         let document = MarkdownParser.parse(source)

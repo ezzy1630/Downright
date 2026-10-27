@@ -269,6 +269,11 @@ final class ImageRenderCache {
     }
 
     private static func downsampledImage(at url: URL, maxPixelDimension: Int) -> NSImage? {
+        if url.pathExtension.lowercased() == "svg" {
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size <= 20 * 1024 * 1024, let data = try? Data(contentsOf: url) else { return nil }
+            return SVGImageDecoder.decode(data, maxPixelDimension: maxPixelDimension)
+        }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let sourceWidth = properties?[kCGImagePropertyPixelWidth] as? CGFloat
@@ -284,7 +289,7 @@ final class ImageRenderCache {
         }
         let image = NSImage(
             cgImage: cgImage,
-            size: NSSize(width: sourceWidth ?? CGFloat(cgImage.width),
+            size: CGSize(width: sourceWidth ?? CGFloat(cgImage.width),
                          height: sourceHeight ?? CGFloat(cgImage.height)))
         // The *source* is the authority on transparency: a thumbnail can be
         // handed back in a format that no longer advertises it.  Fragments
@@ -293,6 +298,9 @@ final class ImageRenderCache {
         if let declared = properties?[kCGImagePropertyHasAlpha] as? Bool {
             image.representations.first?.hasAlpha = declared
         }
+        // Keep one still frame and metadata; playback decodes subsequent
+        // frames on demand instead of retaining the entire animation.
+        image.animatedSource = AnimatedImageSource(url: url)
         return image
     }
 }

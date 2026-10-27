@@ -897,11 +897,17 @@ enum PreferencesForms {
             .stepper("Line height", help: nil, range: 1.2...2.0, step: 0.05,
                      get: { Double(Preferences.shared.values.typography.lineHeightMultiple) },
                      set: { value in Preferences.shared.update { $0.typography.lineHeightMultiple = CGFloat(value) } }),
-            .stepper("Measure (characters)",
-                     help: "How much text fits on a line before it wraps. Around 68 to 72 is a comfortable default; choose a wider measure for a large display.",
-                     range: Double(TypographyConfig.measureRange.lowerBound)...Double(TypographyConfig.measureRange.upperBound), step: 1,
-                     get: { Double(Preferences.shared.values.typography.measureCharacters) },
-                     set: { value in Preferences.shared.update { $0.typography.measureCharacters = CGFloat(value) } }),
+            .choice("Line width",
+                    help: "Choose a character measure, or Full width to use the available window. The default remains 70 characters.",
+                    options: TypographyConfig.measureChoices.map(TypographyConfig.measureTitle),
+                    get: {
+                        let value = TypographyConfig.clampedMeasureCharacters(Preferences.shared.values.typography.measureCharacters)
+                        return .index(TypographyConfig.measureChoices.firstIndex(of: value) ?? 10)
+                    },
+                    set: { index in
+                        guard TypographyConfig.measureChoices.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.typography.measureCharacters = TypographyConfig.measureChoices[index] }
+                    }),
 
             .section("Code"),
             .choice("Monospace family", help: nil,

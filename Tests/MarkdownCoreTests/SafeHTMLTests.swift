@@ -138,12 +138,45 @@ struct SafeHTMLTests {
         #expect(annotations.contains { if case .detailsClosing = $0.kind { true } else { false } })
     }
 
-    @Test func remoteImagesStayVisibleButInertInsideSafeParents() throws {
+    @Test func remoteImagesAreMarkedRemoteNotFetchedInsideSafeParents() throws {
         let source = #"<p align="center"><img src="https://tracker.example/pixel.png" alt="remote"></p>"#
         let parsed = MarkdownParser.parse(source)
         let html = try #require(parsed.root.children.first?.safeHTML)
         #expect(html.isSafe)
-        #expect(html.annotations.contains { if case .inert = $0.kind { true } else { false } })
+        #expect(html.annotations.contains {
+            $0.kind == .remoteImage(source: "https://tracker.example/pixel.png", alt: "remote")
+        })
+    }
+
+    @Test func cleartextAndProtocolRelativeImagesStayInert() throws {
+        for src in ["http://tracker.example/pixel.png", "//tracker.example/pixel.png", "https://"] {
+            let parsed = MarkdownParser.parse(#"<p><img src="\#(src)" alt="x"></p>"#)
+            let html = try #require(parsed.root.children.first?.safeHTML, "\(src)")
+            #expect(html.isSafe, "\(src)")
+            #expect(html.annotations.contains { $0.kind == .inert }, "\(src)")
+        }
+    }
+
+    @Test func presentationalAttributesAreDroppedNotRejected() throws {
+        let source = #"<p align="center" class="hero"><a href="https://downright.cc/" target="_blank" rel="noopener"><img src="Resources/AppIcon.png" width="128" height=128 style="border:0" alt="icon"></a></p>"#
+        let parsed = MarkdownParser.parse(source)
+        let html = try #require(parsed.root.children.first?.safeHTML)
+        #expect(html.isSafe)
+        #expect(html.annotations.contains { $0.kind == .image(source: "Resources/AppIcon.png", alt: "icon") })
+        #expect(html.annotations.contains { $0.kind == .paragraph(align: .center) })
+    }
+
+    @Test func handlersAndUnknownAttributesStillRejectTheBlock() throws {
+        for source in [
+            #"<p><img src="a.png" width=10 onerror="alert(1)"></p>"#,
+            #"<p><img src="a.png" data-track="1"></p>"#,
+            #"<p><a href=javascript:alert(1)>x</a></p>"#,
+            #"<p><img src="a.png" width=1"0></p>"#,
+        ] {
+            let parsed = MarkdownParser.parse(source)
+            let html = parsed.root.children.first?.safeHTML
+            #expect(html?.isSafe != true, "\(source)")
+        }
     }
 
     @Test func githubProfileContinuesToDescribeRawHTMLAsTargetCompatibility() {
@@ -170,7 +203,7 @@ struct SafeHTMLTests {
         }
         #expect(!documents.isEmpty)
         #expect(documents.contains { html in
-            html.annotations.contains { if case .inert = $0.kind { true } else { false } }
+            html.annotations.contains { if case .remoteImage = $0.kind { true } else { false } }
         })
         #expect(parsed.text == readme)
     }

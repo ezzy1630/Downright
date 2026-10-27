@@ -39,6 +39,21 @@ public enum PreviewAppearanceStore {
     public static let lightThemeKey = "com.ezzy.downright.quickLook.lightTheme"
     public static let darkThemeKey = "com.ezzy.downright.quickLook.darkTheme"
 
+    public static let measureKey = "com.ezzy.downright.quickLook.measureCharacters"
+
+    public static var measureCharacters: CGFloat? {
+        decodedMeasure(CFPreferencesCopyValue(
+            measureKey as CFString, kCFPreferencesAnyApplication,
+            kCFPreferencesCurrentUser, kCFPreferencesAnyHost
+        ))
+    }
+
+    static func decodedMeasure(_ value: Any?) -> CGFloat? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite else { return nil }
+        return TypographyConfig.clampedMeasureCharacters(CGFloat(number.doubleValue))
+    }
+
     private static func value(forKey key: String) -> String? {
         CFPreferencesCopyValue(
             key as CFString,
@@ -62,7 +77,8 @@ public enum PreviewAppearanceStore {
     public static func write(
         appearance: PreviewAppearance,
         lightThemeName: String,
-        darkThemeName: String
+        darkThemeName: String,
+        measureCharacters: CGFloat = 70
     ) {
         let values = [
             appearanceKey: appearance.rawValue,
@@ -78,6 +94,7 @@ public enum PreviewAppearanceStore {
                 kCFPreferencesAnyHost
             )
         }
+        CFPreferencesSetValue(measureKey as CFString, NSNumber(value: Double(TypographyConfig.clampedMeasureCharacters(measureCharacters))), kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         CFPreferencesSynchronize(
             kCFPreferencesAnyApplication,
             kCFPreferencesCurrentUser,

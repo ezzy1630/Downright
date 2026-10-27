@@ -325,3 +325,10 @@ implementation notes.
 
 Downright is available under the [MIT License](LICENSE). Vendored components
 retain their own license files and notices.
+
+### Image implementation credits
+
+Image presentation adapts work by Brad Nicholas in
+[Downright-patches](https://github.com/bradn/Downright-patches), at
+`1872f990d12a21198e4667afca769be00de1153d`. Its
+[MIT notice](Docs/Downright-patches-LICENSE.txt) is retained with derived code.

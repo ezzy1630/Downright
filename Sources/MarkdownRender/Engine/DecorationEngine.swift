@@ -56,6 +56,16 @@ public final class DecorationEngine {
         }
     }
 
+    /// Whether HTTPS images become fragments after the host's explicit opt-in.
+    /// The engine never fetches them; Quick Look leaves this off.
+    public var loadsRemoteImages = false {
+        didSet {
+            guard loadsRemoteImages != oldValue else { return }
+            programCache.removeAll(keepingCapacity: true)
+            programSeen.removeAll(keepingCapacity: true)
+        }
+    }
+
     public var codeCollapseLineCount: Int {
         get { collapseLineCount }
         set { collapseLineCount = min(10_000, max(1, newValue)) }
@@ -1005,18 +1015,15 @@ public final class DecorationEngine {
                 ], to: annotation.contentRange, state: &state)
 
             case .image(let source, let alt):
-                let payload = FragmentPayload(
-                    kind: .image,
-                    sourceRange: annotation.range,
-                    blockIdentity: block.identity,
-                    detail: source
-                )
-                apply([
-                    .drFragment: payload,
-                    .drLink: source,
-                    .drReference: alt,
-                ], to: annotation.range, state: &state)
-                state.fragmentCount += 1
+                applyHTMLImage(source: source, alt: alt, annotation: annotation, block: block, state: &state)
+
+            case .remoteImage(let source, let alt):
+                if loadsRemoteImages {
+                    applyHTMLImage(source: source, alt: alt, annotation: annotation, block: block, state: &state)
+                } else {
+                    apply([.foregroundColor: styleSheet.textFaint],
+                          to: annotation.range, state: &state)
+                }
 
             case .summary:
                 // Keep the summary visually distinct even though the source
@@ -1075,6 +1082,23 @@ public final class DecorationEngine {
                 break
             }
         }
+    }
+
+    private func applyHTMLImage(
+        source: String, alt: String, annotation: SafeHTMLAnnotation, block: MDBlock, state: inout DecorateState
+    ) {
+        let payload = FragmentPayload(
+            kind: .image,
+            sourceRange: annotation.range,
+            blockIdentity: block.identity,
+            detail: source
+        )
+        apply([
+            .drFragment: payload,
+            .drLink: source,
+            .drReference: alt,
+        ], to: annotation.range, state: &state)
+        state.fragmentCount += 1
     }
 
     /// Bold and italic inside a heading must stay at the heading's size, so
@@ -1247,8 +1271,23 @@ public final class DecorationEngine {
     }
 
     private func applyProgram(_ program: [AttributeOp], at origin: Int, state: inout DecorateState) {
+        let text = state.storage.string as NSString
         for op in program {
-            apply(op.attributes, to: shift(op.range, by: origin), state: &state)
+            let range = shift(op.range, by: origin)
+            guard let style = op.attributes[.paragraphStyle], range.upperBound <= text.length else {
+                apply(op.attributes, to: range, state: &state)
+                continue
+            }
+            var rest = op.attributes
+            rest.removeValue(forKey: .paragraphStyle)
+            if !rest.isEmpty { apply(rest, to: range, state: &state) }
+            // A program is recorded over the bare block, but the live path
+            // (`applyOwnParagraphStyle`) styles each whole paragraph the block
+            // starts in, from its first character.  For a list item's text that
+            // character is the marker before the block; replaying over the
+            // block alone let paragraph fixup take the marker's style instead,
+            // so a list lost its item spacing on every re-decoration.
+            apply([.paragraphStyle: style], to: text.paragraphRange(for: range), state: &state)
         }
     }
 

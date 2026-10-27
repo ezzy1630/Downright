@@ -1,5 +1,7 @@
 import AppKit
 import XCTest
+import ImageIO
+import UniformTypeIdentifiers
 
 /// Acceptance coverage for the surface that SwiftPM's AppKit test runner
 /// cannot provide: an actual Downright.app with a running display cycle.
@@ -69,6 +71,57 @@ final class DownrightActivatedAppTests: XCTestCase {
         if let root {
             try? FileManager.default.removeItem(at: root)
         }
+    }
+
+    func testInlineImagesAndAnimationControlsKeepSourceExact() throws {
+        let badge = NSImage(size: NSSize(width: 120, height: 24), flipped: false) { rect in
+            NSColor.systemBlue.setFill()
+            rect.fill()
+            return true
+        }
+        let bitmap = try XCTUnwrap(badge.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: bitmap).representation(using: .png, properties: [:]))
+        try png.write(to: root.appendingPathComponent("badge.png"))
+        let gif = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(gif, UTType.gif.identifier as CFString, 2, nil))
+        for _ in 0..<2 {
+            CGImageDestinationAddImage(destination, bitmap, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1]] as CFDictionary)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        try (gif as Data).write(to: root.appendingPathComponent("demo.gif"))
+        let source = """
+        # Image reading
+
+        Before ![Inline badge](badge.png) after.
+
+        <p>
+        <img src="badge.png" width="90" height="18" alt="First badge">
+        <img src="badge.png" width="90" height="18" alt="Second badge">
+        </p>
+
+        ![Animated demo](demo.gif)
+        """
+        let original = Data(source.utf8)
+        try original.write(to: fixture)
+        app.launch()
+        app.activate()
+        let play = app.buttons["Play image"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 20))
+        play.click()
+        let pause = app.buttons["Pause image"].firstMatch
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        pause.click()
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+        app.terminate()
+        app.launch()
+        app.activate()
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "Inline images and paused animation"
+        capture.lifetime = .keepAlways
+        add(capture)
     }
 
     func testUnterminatedParagraphRendersWithoutChangingSource() throws {
