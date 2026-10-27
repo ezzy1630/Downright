@@ -14,6 +14,45 @@ struct InlineImageDisplayTests {
         func loadImage(for url: URL, maxPixelDimension: Int, completion: @escaping @MainActor (NSImage?) -> Void) { requests += 1 }
     }
 
+    @Test func splitInheritsDocumentScopedImagePermission() {
+        let text = "![Image](https://img.example/a.png)\n"
+        let storage = NSTextStorage(string: text)
+        let source = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage)
+        let url = URL(fileURLWithPath: "/tmp/downright-image-split.md")
+        source.documentURL = url
+        source.localAssetAuthorizer = { _ in true }
+        source.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        let loader = Images()
+        source.remoteImageLoader = loader
+        let split = MarkdownTextView(frame: source.frame, storage: storage,
+                                     styleSheet: source.styleSheet, sharingPresentationOf: source)
+        // The host configures asset access after creating the shared pane.
+        split.documentURL = url
+        #expect(source.remoteImageLoader === loader)
+        #expect(split.remoteImageLoader === loader)
+        #expect(split.fragmentContext.documentURL == url)
+        #expect(split.localAssetAuthorizer?(url) == true)
+        #expect(storage.string == text)
+    }
+
+    @Test func changingDocumentRevokesImagesBeforeShorterPresentationArrives() {
+        let text = String(repeating: "A paragraph with **bold**.\nContinuation line.\n\n", count: 6)
+            + "![Image](https://img.example/a.png)\n"
+        let storage = NSTextStorage(string: text)
+        let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage)
+        view.documentURL = URL(fileURLWithPath: "/tmp/downright-image-first.md")
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.remoteImageLoader = Images()
+        // Opening in place replaces shared storage before the host updates URL
+        // and then installs the new parsed presentation.
+        storage.setAttributedString(NSAttributedString(string: "Short.\n"))
+        view.documentURL = URL(fileURLWithPath: "/tmp/downright-image-second.md")
+        #expect(view.remoteImageLoader == nil)
+        view.update(document: MarkdownParser.parse(storage.string), dirty: .wholesale)
+        #expect(view.parsedDocument.text == "Short.\n")
+        #expect(storage.string == "Short.\n")
+    }
+
     @Test func linkedBadgeUsesAuthorDimensionsAndKeepsItsLink() throws {
         let source = #"<p><a href="https://example.com"><img src="https://img.example/badge.svg" width="100" height="20" alt="Build passing"></a></p>"#
         let document = MarkdownParser.parse(source)

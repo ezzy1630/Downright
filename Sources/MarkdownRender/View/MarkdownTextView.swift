@@ -406,7 +406,12 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func refreshInlineImages() {
-        guard textStorage?.length ?? 0 > 0 else { return }
+        // Opening another file replaces shared storage before its presentation
+        // arrives. An image callback or consent revocation must wait for that
+        // update rather than apply the previous file's ranges to the new text.
+        guard let storage = textStorage, storage.length > 0,
+              storage.length == parsedDocument.length,
+              storage.string.utf16.elementsEqual(parsedDocument.text.utf16) else { return }
         let anchor = captureViewportAnchor()
         rebuildEverything()
         requestContentResize(.immediate, anchor: anchor, preservingReadingPosition: true)
@@ -767,6 +772,10 @@ public final class MarkdownTextView: NSTextView {
 
     public func adoptSharedPresentation(from source: MarkdownTextView) {
         guard textStorage === source.textStorage else { return }
+        // Identity must precede consent: the host configures this URL again
+        // after attaching a split, and a different file revokes its loader.
+        documentURL = source.documentURL
+        localAssetAuthorizer = source.localAssetAuthorizer
         parsedDocument = source.parsedDocument
         installedRemoteImageLoader = source.remoteImageLoader
         fragmentContext.remoteImageLoader = installedRemoteImageLoader
