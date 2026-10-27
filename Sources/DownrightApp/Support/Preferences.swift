@@ -4,6 +4,18 @@ import MarkdownRender
 
 /// App-wide settings.  Everything here is a deliberate default, not an accident
 /// — the ones that matter are called out in the spec and carry a note here.
+enum LastDocumentCloseBehavior: String, Codable, CaseIterable {
+    case showStartWindow, quit, doNothing
+
+    var title: String {
+        switch self {
+        case .showStartWindow: return "Show start window"
+        case .quit: return "Quit Downright"
+        case .doNothing: return "Do nothing"
+        }
+    }
+}
+
 final class Preferences {
     static let shared = Preferences()
 
@@ -38,6 +50,7 @@ final class Preferences {
         /// The rendered document stays editable; Source is an explicit choice.
         var defaultMode: RenderMode = .live
         var restoreSession: Bool = true
+        var lastDocumentCloseBehavior: LastDocumentCloseBehavior = .showStartWindow
 
         var externalEditor: ExternalEditor = .systemDefault
         var resolvePathTokens: Bool = true
@@ -106,6 +119,7 @@ final class Preferences {
             codeBlockCollapseThreshold = get(.codeBlockCollapseThreshold, 20)
             defaultMode = get(.defaultMode, RenderMode.live).normalizedForEditing
             restoreSession = get(.restoreSession, true)
+            lastDocumentCloseBehavior = get(.lastDocumentCloseBehavior, .showStartWindow)
             externalEditor = get(.externalEditor, ExternalEditor.systemDefault)
             resolvePathTokens = get(.resolvePathTokens, true)
             siblingScanDirectories = get(.siblingScanDirectories, ["docs", "plans", ".claude", "notes", "specs"])

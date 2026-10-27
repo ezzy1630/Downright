@@ -113,7 +113,9 @@ final class FindSession {
         return matches[currentIndex]
     }
 
-    func update(query: FindQuery, in text: String, caret: Int) {
+    func update(query: FindQuery, in text: String, caret: Int, preservingCurrentMatch: Bool = false) {
+        if preservingCurrentMatch, query == self.query,
+           searchResult?.text.utf16.elementsEqual(text.utf16) == true { return }
         self.query = query
         searchResult = FindEngine.search(in: text, query: query)
         matches = searchResult?.results.map(\.range) ?? []

@@ -43,7 +43,7 @@ app draws rather than a second implementation that could drift.
 
 ### Sparkle is embedded via SPM, released via the workflow
 
-Sparkle 2.9.6 is a SwiftPM dependency linked by the host app. Update checks are
+Sparkle 2.10.0 is a SwiftPM dependency linked by the host app. Update checks are
 gated on the Sparkle Info.plist block, which only signed production bundles
 carry — dev/ad-hoc bundles disable the updater. Signing, notarization,
 stapling, and appcast production run through
@@ -190,14 +190,12 @@ Approximate:
 
 ## Known gaps
 
-- **Sparkle updates** and **notarised distribution** ship through the release
-  workflow; dev bundles skip both. The `project.yml` path now builds a Release
-  `Downright.app` locally, but the signed, notarised, stapled pipeline around it
-  has never run end to end — that needs a tagged CI run, and until one happens
-  the release path is unproven.
+- **Sparkle updates** and **notarised distribution** use the main-channel release
+  workflow; dev bundles disable the updater. Verify the exact workflow, signed
+  artifacts, appcast and installed build using [RELEASE.md](RELEASE.md).
 - **Spotlight acceptance on a clean installed artifact.** The classic
   `MDImporter` target, schema, shared metadata extractor, bundle embedding, and
-  release signing hooks now exist. The remaining release gate is a live
+  release signing hooks exist. The remaining release gate is a live
   `mdimport` run against a freshly installed signed/notarised artifact; local
   source and bundle checks do not substitute for that OS registration proof.
 - **A dedicated Share extension.** The app provides a macOS Service and an App
@@ -227,16 +225,17 @@ It prints p50/p95 for parse, AST diff, text diff, synchronous typing response,
 incremental decoration, end-to-end semantic convergence, and cold open. Parse
 and diff run outside the synchronous typing path.
 
-Latest release run: typing response p95 **0.153 ms**, semantic convergence p95
-**31.445 ms**, and cold parse p95 **12.395 ms**. All are inside the product
-budget.
+Run `RUN_DRBENCH=1 Scripts/check.sh` for current release-mode typing and semantic
+convergence results. Each result belongs to its measured checkout and machine.
 
-See [PERFORMANCE.md](PERFORMANCE.md) for the measured numbers on this build and
-what they mean for §13's P0 kill criterion.
+See [PERFORMANCE.md](PERFORMANCE.md) for recorded comparisons and the remaining
+large-document peak-memory limitation.
 
 ## Test suites
 
-The full check currently runs **1003 tests in 85 suites**.
+`Scripts/check.sh` reports the executed test count and fails on zero tests or
+unexpected known-issue suppressions. Activated-app acceptance runs separately
+through `Scripts/check-app.sh`.
 
 | Suite | Covers |
 |---|---|

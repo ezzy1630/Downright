@@ -383,7 +383,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
             self.scheduleSessionSave()
-            if self.windowControllers.isEmpty { self.showStartWindow() }
+            guard self.windowControllers.isEmpty else { return }
+            switch Preferences.shared.values.lastDocumentCloseBehavior {
+            case .showStartWindow: self.showStartWindow()
+            case .quit: NSApp.terminate(nil)
+            case .doNothing: break
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 # Releasing Downright
 
 Downright is distributed **outside the Mac App Store**, signed and notarised,
-updated via Sparkle 2.9.6 with a fully custom user interface (spec §3.4 and the
+updated via Sparkle 2.10.0 with a fully custom user interface (spec §3.4 and the
 custom-updater spec). No standard Sparkle window ever appears; `UpdateCoordinator`
 owns every visible interaction.
 
@@ -18,7 +18,7 @@ no Xcode project involved. What it cannot do:
 | Developer ID signing and notarisation | Requires a certificate in the login keychain and an App Store Connect API key. |
 
 Everything else — the app, the render packages, the CLI, the tests, and the
-Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.9.6 binary
+Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.10.0 binary
 XCFramework (pinned exactly in `Package.swift`), so building the app needs
 network access the first time.
 
@@ -159,6 +159,13 @@ published DMG checksum and mounted app signature, register the Finder
 integrations, and leave Sparkle updates enabled. The npm launcher requires
 Node.js 18 or newer; the curl installer has no Node.js dependency.
 
+For acceptance of an exact local artifact, use
+`APP_SOURCE=/path/to/Downright.app Scripts/install.sh`. The installer verifies
+the candidate (and rejects a missing explicit path), stages it on the destination filesystem, and keeps the previous
+app as a rollback copy until the swap succeeds. Staged-signature or swap failures
+must report failure and preserve the installed app. A running installed app must
+be closed before replacement.
+
 Each successful invocation downloads `Downright.dmg`, so GitHub records it in
 the rolling DMG asset count. The installer itself is not a separate unique-user
 metric; GitHub counts asset requests, not completed installs or people.
@@ -228,7 +235,7 @@ nothing may rewrite the XML afterwards — the `SURequireSignedFeed=YES`
 contract. The private key is passed to both tools through standard input from
 the `SPARKLE_ED25519_PRIVATE_KEY` secret and is never written to disk or logged.
 `sign_update --verify` (also via stdin) is the workflow's post-sign validation;
-Sparkle 2.9.6 ships no `appcast_validate` binary.
+Sparkle 2.10.0 ships no `appcast_validate` binary.
 
 ## Bundle verification
 

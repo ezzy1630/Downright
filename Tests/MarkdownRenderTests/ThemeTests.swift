@@ -230,11 +230,11 @@ final class ThemeTests {
         var theme = try #require(bundled().first)
         theme.typography.measureCharacters = 400
         var sheet = StyleSheet(theme: theme, appearance: aqua)
-        expectClose(sheet.measureWidth / sheet.averageCharacterWidth, 72, within: 0.001, "clamped down to 72")
+        expectClose(sheet.measureWidth / sheet.averageCharacterWidth, 110, within: 0.001, "clamped down to 110")
 
         theme.typography.measureCharacters = 10
         sheet = StyleSheet(theme: theme, appearance: aqua)
-        expectClose(sheet.measureWidth / sheet.averageCharacterWidth, 68, within: 0.001, "clamped up to 68")
+        expectClose(sheet.measureWidth / sheet.averageCharacterWidth, 60, within: 0.001, "clamped up to 60")
     }
 
     @Test("Line height and heading spacing sit on the baseline grid")

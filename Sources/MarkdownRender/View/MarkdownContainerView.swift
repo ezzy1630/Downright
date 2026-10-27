@@ -15,6 +15,8 @@ public final class MarkdownContainerView: NSView {
     public let scrollView: NSScrollView
     private let gutter: GutterRailView
     private let footnoteMargin: FootnoteMarginView
+    private let backgroundOverlay: MarkdownDecorationOverlay
+    private let foregroundOverlay: MarkdownDecorationOverlay
 
     public var styleSheet: StyleSheet {
         get { textView.styleSheet }
@@ -77,15 +79,25 @@ public final class MarkdownContainerView: NSView {
         self.init(storage: storage, styleSheet: MarkdownTextView.fallbackStyleSheet())
     }
 
-    public init(storage: NSTextStorage, styleSheet: StyleSheet) {
+    public init(
+        storage: NSTextStorage, styleSheet: StyleSheet,
+        sharingPresentationOf source: MarkdownTextView? = nil
+    ) {
+        // Let AppKit establish the scroll surface against an empty buffer.
+        // Attaching a nonempty shared buffer makes its origin calculation
+        // resolve the entire document before it has viewport geometry.
+        let initialStorage = source == nil ? storage : NSTextStorage()
         textView = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: styleSheet.measureWidth, height: 100),
-                                    storage: storage, styleSheet: styleSheet)
+                                    storage: initialStorage, styleSheet: styleSheet, sharingPresentationOf: source)
         scrollView = NSScrollView(frame: .zero)
         gutter = GutterRailView(textView: textView)
         footnoteMargin = FootnoteMarginView(textView: textView)
+        backgroundOverlay = MarkdownDecorationOverlay(textView: textView, phase: .background)
+        foregroundOverlay = MarkdownDecorationOverlay(textView: textView, phase: .foreground)
         super.init(frame: .zero)
 
         scrollView.documentView = textView
+        if let source { textView.attachSharedStorage(storage, presentationOf: source) }
         // The contents map is the document's persistent scroll affordance, and
         // an overlay thumb (invisible until the user scrolls) gives position
         // feedback without a second, unrelated right-hand sidebar.  Overlay
@@ -100,11 +112,21 @@ public final class MarkdownContainerView: NSView {
         // view and throw away the measure cap (§11.1).
         scrollView.automaticallyAdjustsContentInsets = false
         textView.autoresizingMask = []
-        scrollView.drawsBackground = true
+        // The container supplies the opaque page; its background ornaments
+        // remain below native text and fragment backgrounds.
+        scrollView.drawsBackground = false
+        textView.drawsBackground = false
         scrollView.backgroundColor = styleSheet.background
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
+        addSubview(backgroundOverlay)
         addSubview(scrollView)
+        addSubview(foregroundOverlay, positioned: .above, relativeTo: scrollView)
+        textView.foregroundInvalidationHandler = { [weak overlay = foregroundOverlay, weak view = textView] rect in
+            guard let overlay, let view else { return }
+            if let rect { overlay.setNeedsDisplay(overlay.convert(rect, from: view)) }
+            else { overlay.needsDisplay = true }
+        }
         // The rail floats over the scroll view rather than inside it, so it
         // never scrolls horizontally away from the text it annotates.
         addSubview(gutter)
@@ -123,7 +145,11 @@ public final class MarkdownContainerView: NSView {
 
     deinit { NotificationCenter.default.removeObserver(self) }
 
-    @objc private func scrolled(_ note: Notification) { footnoteMargin.needsDisplay = true }
+    @objc private func scrolled(_ note: Notification) {
+        footnoteMargin.needsDisplay = true
+        backgroundOverlay.needsDisplay = true
+        foregroundOverlay.needsDisplay = true
+    }
 
     public func refreshMarginNotes() { footnoteMargin.needsDisplay = true }
 
@@ -166,15 +192,25 @@ public final class MarkdownContainerView: NSView {
         let densityMap = (leadingAccessory as? DensityGutterView)
             ?? (trailingAccessory as? DensityGutterView)
         let hasLeadingDensityMap = leadingAccessory is DensityGutterView
-        let leadingWidth = hasLeadingDensityMap
+        var leadingWidth = hasLeadingDensityMap
             ? (leadingAccessory?.fittingSize.width ?? DensityGutterView.width)
             : (leadingAccessory.map { $0.fittingSize.width > 0 ? $0.fittingSize.width : 24 } ?? 0)
-        let trailingWidth = trailingAccessory.map {
+        var trailingWidth = trailingAccessory.map {
             if $0 is DensityGutterView {
                 return $0.fittingSize.width > 0 ? $0.fittingSize.width : DensityGutterView.width
             }
             return $0.fittingSize.width > 0 ? $0.fittingSize.width : 14
         } ?? 0
+        // A compact pane needs the marker rail and fixed code bleed before
+        // it can afford the document map. Keep Focus Mode's visibility owned
+        // by the controller; only remove the map's geometric reservation.
+        let minimumContentWidth = RenderMetrics.minimumProseWidth + RenderMetrics.codeBleed
+            + gutterWidth + RenderMetrics.revealSlack
+            + NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
+        if bounds.width - leadingWidth - trailingWidth < minimumContentWidth {
+            if leadingAccessory is DensityGutterView { leadingWidth = 0 }
+            if trailingAccessory is DensityGutterView { trailingWidth = 0 }
+        }
         let contentWidth = max(0, bounds.width - leadingWidth - trailingWidth)
         let showsNoteLane = bounds.width >= 1100 && textView.mode != .source
         let noteLane: CGFloat = showsNoteLane ? 230 : 0
@@ -198,19 +234,7 @@ public final class MarkdownContainerView: NSView {
         // Keep the same measure across Document and Source. Widening source to
         // 90ch recenters the column and slides the left gutter rail, which
         // reads as the leading chrome teleporting on every mode switch.
-        let renderedTarget = min(
-            72,
-            max(68, textView.styleSheet.theme.typography.measureCharacters)
-        )
-        let responsiveCharacters: CGFloat
-        if bounds.width < 900 {
-            responsiveCharacters = 66
-        } else if bounds.width > 1200 {
-            responsiveCharacters = 72
-        } else {
-            responsiveCharacters = renderedTarget
-        }
-        let preferredMeasure = textView.styleSheet.averageCharacterWidth * responsiveCharacters
+        let preferredMeasure = textView.styleSheet.measureWidth
         // Keep the column out from under the overlay thumb when the measure is
         // capped by a narrow window; a wide window's centring margin already
         // clears it (§7).
@@ -223,7 +247,7 @@ public final class MarkdownContainerView: NSView {
         let bleed = RenderMetrics.codeBleed
         let available = max(
             RenderMetrics.minimumProseWidth + bleed,
-            contentWidth - RenderMetrics.revealSlack - overlayThumbWidth
+            contentWidth - gutterWidth - RenderMetrics.revealSlack - overlayThumbWidth
         )
         let column = min(preferredMeasure + bleed, available)
         let measure = column - bleed
@@ -281,6 +305,9 @@ public final class MarkdownContainerView: NSView {
                 width: hasLeadingDensityMap ? leadingWidth : trailingWidth,
                 height: bounds.height
             )
+            // AppKit allows sublayers to draw outside a zero-width view.
+            // Clip only the compact map so no stray ticks remain over text.
+            densityMap.clipsToBounds = densityMap.frame.width == 0
             // Keep the stick above the scroll view / marker rail so its hit
             // lane stays responsive.
             addSubview(densityMap, positioned: .above, relativeTo: nil)
@@ -291,7 +318,16 @@ public final class MarkdownContainerView: NSView {
             addSubview(footnoteMargin, positioned: .above, relativeTo: scrollView)
             footnoteMargin.needsDisplay = true
         }
+        backgroundOverlay.frame = scrollView.frame
+        foregroundOverlay.frame = scrollView.frame
+        backgroundOverlay.needsDisplay = true
+        foregroundOverlay.needsDisplay = true
+    }
 
+    public override func viewWillDraw() {
+        super.viewWillDraw()
+        backgroundOverlay.needsDisplay = true
+        foregroundOverlay.needsDisplay = true
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -306,4 +342,37 @@ public final class MarkdownContainerView: NSView {
         needsLayout = true
     }
 
+}
+
+/// Viewport-sized ornaments, independent of TextKit's rendering surfaces.
+/// It never owns input, source storage, or a document-sized backing surface.
+private final class MarkdownDecorationOverlay: NSView {
+    enum Phase { case background, foreground }
+    private weak var textView: MarkdownTextView?
+    private let phase: Phase
+
+    init(textView: MarkdownTextView, phase: Phase) {
+        self.textView = textView
+        self.phase = phase
+        super.init(frame: .zero)
+        clipsToBounds = true
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { nil }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let textView, let context = NSGraphicsContext.current?.cgContext else { return }
+        let origin = convert(NSPoint.zero, from: textView)
+        let textRect = textView.convert(dirtyRect, from: self)
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        context.translateBy(x: origin.x, y: origin.y)
+        switch phase {
+        case .background: textView.drawPageBackground(in: textRect)
+        case .foreground: textView.drawForeground(in: textRect)
+        }
+    }
 }

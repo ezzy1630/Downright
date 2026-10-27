@@ -1,10 +1,21 @@
 import AppKit
 import Testing
+import MarkdownCore
+import MarkdownRender
 @testable import DownrightApp
 
 @Suite(.serialized)
 @MainActor
 struct ExportSnapshotTests {
+    @Test(arguments: [(10.0, 60), (100.0, 100), (120.0, 110)])
+    func exportedMeasureUsesTheSupportedRange(requested: Double, expected: Int) {
+        var theme = ThemeStore.shared.current
+        theme.typography.measureCharacters = requested
+        let html = HTMLExporter(document: MarkdownParser.parse("Body"), theme: theme,
+                                title: "Measure", baseDirectory: nil, imageProvider: nil).html()
+        #expect(html.contains("max-width: \(expected)ch;"))
+    }
+
     @Test(arguments: [false, true])
     func exportIncludesEditsBeforeAsyncParsingFinishes(forPrint: Bool) {
         let controller = DocumentWindowController()

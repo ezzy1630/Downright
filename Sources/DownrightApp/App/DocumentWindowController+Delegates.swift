@@ -12,7 +12,7 @@ enum MarkdownLinkDestination: Equatable {
 
     static func classify(_ destination: String) -> Self {
         if destination.hasPrefix("#") {
-            return .anchor(String(destination.dropFirst()))
+            return .anchor(String(destination.dropFirst()).removingPercentEncoding ?? String(destination.dropFirst()))
         }
         guard let url = URL(string: destination), let scheme = url.scheme?.lowercased() else {
             return destination.isEmpty ? .invalid : .relative(destination)
@@ -22,6 +22,26 @@ enum MarkdownLinkDestination: Equatable {
         case "file": return .localFile(url)
         default: return .automation(url)
         }
+    }
+}
+
+/// Resolve URL syntax before touching the filesystem. URL.path decodes once;
+/// fragments identify headings and must never become part of a filename.
+struct LocalDocumentLink {
+    let url: URL
+    let fragment: String?
+
+    init?(_ destination: String, documentURL: URL?) {
+        guard let resolved = URL(string: destination, relativeTo: documentURL)?.absoluteURL,
+              resolved.isFileURL,
+              var components = URLComponents(url: resolved, resolvingAgainstBaseURL: true)
+        else { return nil }
+        let fragment = components.fragment
+        components.fragment = nil
+        components.query = nil
+        guard let url = components.url else { return nil }
+        self.url = url.standardizedFileURL
+        self.fragment = fragment.flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -94,33 +114,16 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     ) {
         switch MarkdownLinkDestination.classify(destination) {
         case .anchor(let slug):
-            guard let heading = markdownDocument.parsed.headings.first(where: { $0.slug == slug }) else { return }
-            jump(to: heading.range.location, label: heading.title)
+            revealLinkedHeading(slug)
             return
 
         case .web(let url):
             authorizeExternalURL(url) { NSWorkspace.shared.open(url) }
             return
 
-        case .localFile(let target):
-            let target = target.standardizedFileURL
-            guard FileManager.default.fileExists(atPath: target.path) else { return }
-            authorizeLocalEffect(.launchPathOrEditor, target: target) {
-                if DocumentTypes.isMarkdown(target.pathExtension) {
-                    (NSApp.delegate as? AppDelegate)?.open(target)
-                } else if DocumentTypes.executesWhenOpened(target) {
-                    // "Open in editor" never means "run this": an application
-                    // bundle or Terminal script linked from a document is
-                    // revealed in Finder instead, so showing where it lives
-                    // stays possible while running it stays a manual act.
-                    NSWorkspace.shared.selectFile(
-                        target.path,
-                        inFileViewerRootedAtPath: target.deletingLastPathComponent().path
-                    )
-                } else {
-                    NSWorkspace.shared.open(target)
-                }
-            }
+        case .localFile(let url):
+            guard let link = LocalDocumentLink(url.absoluteString, documentURL: markdownDocument.url) else { return }
+            openLocalLink(link, modifiers: modifiers, authorizing: true)
             return
 
         case .automation(let url):
@@ -131,31 +134,37 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             return
 
         case .relative(let relative):
-            // A relative link opens in place; ⌘-click keeps the current
-            // document and opens the target in the active native tab group.
-            guard let base = markdownDocument.url?.deletingLastPathComponent() else { return }
-            let target = base.appendingPathComponent(relative).standardizedFileURL
-            guard FileManager.default.fileExists(atPath: target.path) else { return }
-            if DocumentTypes.isMarkdown(target.pathExtension) {
-                if modifiers.contains(.command) {
-                    (NSApp.delegate as? AppDelegate)?.open(target)
-                } else {
-                    openInPlace(target)
-                }
-            } else if DocumentTypes.executesWhenOpened(target) {
-                // Same rule as .localFile: reveal execution-capable targets,
-                // never run them from inside a document.
-                authorizeLocalEffect(.launchPathOrEditor, target: target) {
-                    NSWorkspace.shared.selectFile(
-                        target.path,
-                        inFileViewerRootedAtPath: target.deletingLastPathComponent().path
-                    )
-                }
+            guard let link = LocalDocumentLink(relative, documentURL: markdownDocument.url) else { return }
+            if DocumentTypes.isMarkdown(link.url.pathExtension) {
+                openLocalLink(link, modifiers: modifiers)
             } else {
-                authorizeLocalEffect(.launchPathOrEditor, target: target) {
-                    NSWorkspace.shared.open(target)
-                }
+                openLocalLink(link, modifiers: modifiers, authorizing: true)
             }
+        }
+    }
+
+    private func openLocalLink(_ link: LocalDocumentLink, modifiers: NSEvent.ModifierFlags, authorizing: Bool = false) {
+        guard FileManager.default.fileExists(atPath: link.url.path) else {
+            presentOperationError("Couldn’t open linked file", error: CocoaError(.fileReadNoSuchFile))
+            return
+        }
+        if authorizing {
+            authorizeLocalEffect(.launchPathOrEditor, target: link.url) {
+                self.openLocalLink(link, modifiers: modifiers)
+            }
+            return
+        }
+        if DocumentTypes.isMarkdown(link.url.pathExtension) {
+            if modifiers.contains(.command) {
+                let controller = (NSApp.delegate as? AppDelegate)?.open(link.url)
+                if let fragment = link.fragment { controller?.revealLinkedHeading(fragment) }
+            } else {
+                _ = openInPlace(link.url, fragment: link.fragment)
+            }
+        } else if DocumentTypes.executesWhenOpened(link.url) {
+            NSWorkspace.shared.activateFileViewerSelecting([link.url])
+        } else {
+            NSWorkspace.shared.open(link.url)
         }
     }
 
@@ -212,6 +221,10 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         return pathResolver?.cachedResolution(for: token)?.exists ?? true
     }
 
+    func markdownTextViewShouldHandleSelectionChange(_ view: MarkdownTextView) -> Bool {
+        !isOpeningDocument
+    }
+
     func markdownTextViewDidChangeSelection(_ view: MarkdownTextView) {
         guard !isOpeningDocument else { return }
         synchronizePanes(from: view)
@@ -256,7 +269,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         // The document owns reparsing; the storage delegate already scheduled
         // it.  Change marks shift here so they keep pointing at the same text.
         markdownDocument.changes.adjust(forEditIn: range, delta: delta)
-        markdownDocument.noteMutation(view.lastMutationProvenance)
+        markdownDocument.noteSourceEdit(view.lastMutationProvenance)
         scheduleFindRefresh()
     }
 

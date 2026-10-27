@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import XCTest
 
 /// Acceptance coverage for the surface that SwiftPM's AppKit test runner
@@ -7,7 +7,6 @@ final class DownrightActivatedAppTests: XCTestCase {
     private var app: XCUIApplication!
     private var root: URL!
     private var fixture: URL!
-    private var captureDirectory: URL!
     private var isProductionUpdaterSmoke = false
 
     override func setUpWithError() throws {
@@ -15,9 +14,6 @@ final class DownrightActivatedAppTests: XCTestCase {
 
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("downright-activated-app-\(UUID().uuidString)", isDirectory: true)
-        captureDirectory = root.appendingPathComponent("capture", isDirectory: true)
-        try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
-
         let support = root.appendingPathComponent("support", isDirectory: true)
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         // Keep first-run registration UI out of this acceptance case. The app
@@ -66,13 +62,144 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
         app.launchEnvironment["DOWNRIGHT_SUPPORT_DIRECTORY"] = support.path
         app.launchEnvironment["DOWNRIGHT_DEBUG_LAYOUT"] = "1"
-        app.launchEnvironment["DOWNRIGHT_DEBUG_CAPTURE"] = captureDirectory.path
     }
 
     override func tearDown() {
         app?.terminate()
         if let root {
             try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    func testUnterminatedParagraphRendersWithoutChangingSource() throws {
+        let text = "An unterminated Markdown paragraph remains visible and keeps every source byte. A native text surface must render this document without needing a final newline or another paragraph to initialize its viewport."
+        let original = Data(text.utf8)
+        try original.write(to: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
+    func testPointerLinkOpensInPlaceAndBackReturns() throws {
+        let target = root.appendingPathComponent("sibling.md")
+        try Data("# Sibling\n\nDestination text.\n".utf8).write(to: target)
+        try Data("[Open sibling document](sibling.md)\n".utf8).write(to: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.firstMatch
+        let editor = window.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        add(XCTAttachment(screenshot: window.screenshot()))
+        // The fixture is one body-text line. Aim inside its first word after
+        // the 44pt reveal slack and 36pt top inset, using native pointer input.
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 60, dy: 49)).click()
+        // macOS windows expose their caption as title, independently of label.
+        // Resolve that title afresh after each document changes the caption.
+        let opened = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", "sibling.md")).firstMatch
+        XCTAssertTrue(opened.waitForExistence(timeout: 10),
+                      "A real link click must open the sibling in this window without a system error: \(app.windows.debugDescription)")
+        XCTAssertEqual(app.windows.count, 1)
+        app.typeKey("[", modifierFlags: [.command, .control])
+        let returned = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
+        XCTAssertTrue(returned.waitForExistence(timeout: 10), app.windows.debugDescription)
+        add(XCTAttachment(screenshot: returned.screenshot()))
+    }
+
+    func testEncodedHeadingLinkSupportsDeepBackAndForward() throws {
+        let target = root.appendingPathComponent("my notes.md")
+        let paragraphs = (1...100).map { "Paragraph \($0) keeps the destination tall." }.joined(separator: "\n\n")
+        try Data(("# Sibling\n\n" + paragraphs + "\n\n## Target\n\nDestination.\n\n" + paragraphs).utf8).write(to: target)
+        // Keep the original scrollable too, so both returns expose a native
+        // scroll position rather than relying on a missing/hidden scroller.
+        let originalBody = (1...40).map { "Original paragraph \($0)." }.joined(separator: "\n\n")
+        try Data(("[Open encoded heading](my%20notes.md#target)\n\n" + originalBody).utf8).write(to: fixture)
+        app.launch()
+        app.activate()
+        let initialWindow = app.windows.firstMatch
+        let editor = initialWindow.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        let originalPosition = try waitForScrollPosition(in: initialWindow) { $0 < 0.01 }
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 60, dy: 49)).click()
+        let destination = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", target.lastPathComponent)).firstMatch
+        XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
+        // TextKit estimates the unvisited document height, so normalized
+        // scrollbar percentages cannot identify a source heading reliably.
+        // Check the actual heading near the top of the rendered viewport.
+        assertVisibleHeading("Target", in: destination.scrollViews.firstMatch)
+        let targetPosition = try waitForScrollPosition(in: destination) { $0 > 0.01 }
+        assertVisibleProse(in: destination.scrollViews.firstMatch, window: destination)
+        let destinationCapture = XCTAttachment(screenshot: destination.screenshot())
+        destinationCapture.lifetime = .keepAlways
+        add(destinationCapture)
+        app.typeKey("[", modifierFlags: [.command, .control])
+        let original = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 10), app.windows.debugDescription)
+        _ = try waitForScrollPosition(in: original) { abs($0 - originalPosition) < 0.01 }
+        app.typeKey("]", modifierFlags: [.command, .control])
+        XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
+        _ = try waitForScrollPosition(in: destination) { abs($0 - targetPosition) < 0.01 }
+        assertVisibleHeading("Target", in: destination.scrollViews.firstMatch)
+        app.typeKey("[", modifierFlags: [.command, .control])
+        XCTAssertTrue(original.waitForExistence(timeout: 10), app.windows.debugDescription)
+        _ = try waitForScrollPosition(in: original) { abs($0 - originalPosition) < 0.01 }
+        XCTAssertEqual(app.windows.count, 1)
+    }
+
+    func testDeletingAccidentalSpaceClosesWithoutSavePrompt() throws {
+        try assertAccidentalSpaceClosesCleanly(inSourceMode: false)
+    }
+
+    func testDeletingAccidentalSpaceInSourceClosesWithoutSavePrompt() throws {
+        try assertAccidentalSpaceClosesCleanly(inSourceMode: true)
+    }
+
+    private func assertAccidentalSpaceClosesCleanly(inSourceMode: Bool) throws {
+        try Data("[Sibling document](sibling.md)\n".utf8).write(to: fixture)
+        let original = try Data(contentsOf: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let mode = app.radioButtons[inSourceMode ? "Source" : "Document"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 15))
+        mode.click()
+        let editor = app.windows.firstMatch.textViews[inSourceMode ? "Markdown source editor" : "Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeKey(.home, modifierFlags: .command)
+        editor.typeText(" ")
+        editor.typeKey(.delete, modifierFlags: [])
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.windows["Downright"].waitForExistence(timeout: 10),
+                      "Returning to the saved text must close without a Save/Discard prompt")
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
+    func testLastDocumentClosePreferences() throws {
+        for behavior in ["showStartWindow", "doNothing", "quit"] {
+            let preferences = "{\"hasAnsweredSetup\":true,\"restoreSession\":false,\"lastDocumentCloseBehavior\":\"\(behavior)\"}"
+            try Data(preferences.utf8).write(to: root.appendingPathComponent("support/preferences.json"))
+            app.launch()
+            app.activate()
+            XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+            app.typeKey("w", modifierFlags: .command)
+            switch behavior {
+            case "showStartWindow":
+                XCTAssertTrue(app.windows["Downright"].waitForExistence(timeout: 10))
+            case "doNothing":
+                let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: app.windows)
+                XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 10), .completed)
+                XCTAssertNotEqual(app.state, .notRunning)
+            default:
+                XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+            }
+            app.terminate()
         }
     }
 
@@ -90,12 +217,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         XCTAssertTrue(rendered.waitForExistence(timeout: 10), "the real toolbar never exposed Document mode")
         XCTAssertTrue(source.waitForExistence(timeout: 10), "the real toolbar never exposed Source mode")
 
-        // This capture is produced by DocumentWindowController only after the
-        // active window has completed TextKit 2's first display cycle. It is
-        // the concrete proof missing from headless cacheDisplay tests.
-        let containerCapture = captureDirectory.appendingPathComponent("container.png")
-        XCTAssertTrue(waitForFile(containerCapture, timeout: 15))
-        XCTAssertGreaterThan((try Data(contentsOf: containerCapture)).count, 1_000)
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
 
         source.click()
         let editor = app.textViews.firstMatch
@@ -184,6 +306,9 @@ final class DownrightActivatedAppTests: XCTestCase {
         XCTAssertTrue(left.isHittable)
         XCTAssertTrue(right.isHittable)
         XCTAssertLessThan(left.frame.midX, right.frame.midX)
+        for pane in window.scrollViews.allElementsBoundByIndex {
+            assertVisibleProse(in: pane, window: window)
+        }
         let splitScreenshot = XCTAttachment(screenshot: window.screenshot())
         splitScreenshot.lifetime = .keepAlways
         add(splitScreenshot)
@@ -239,6 +364,147 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
         dismissButton.click()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "the app stopped after the updater check")
+    }
+
+    private func assertVisibleHeading(_ heading: String, in pane: XCUIElement,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        // Read the actual line under a native pointer at the navigation's
+        // 36pt top inset. A source value or estimated scrollbar fraction
+        // cannot establish which heading occupies this screen position.
+        let pasteboard = NSPasteboard.general
+        var savedItems: [NSPasteboardItem] = []
+        for original in pasteboard.pasteboardItems ?? [] {
+            let saved = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) { saved.setData(data, forType: type) }
+            }
+            savedItems.append(saved)
+        }
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(savedItems)
+        }
+        let editor = pane.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), file: file, line: line)
+        let columnX = editor.frame.minX - pane.frame.minX + 60
+        pane.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: columnX, dy: 49)).click()
+        app.typeKey(.leftArrow, modifierFlags: [.command])
+        app.typeKey(.rightArrow, modifierFlags: [.command, .shift])
+        pasteboard.clearContents()
+        app.typeKey("c", modifierFlags: [.command])
+        var observed = "No copied text"
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let text = pasteboard.string(forType: .string) else { return false }
+            observed = text
+            return text.trimmingCharacters(in: CharacterSet(charactersIn: "# \t\n")) == heading
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [expected], timeout: 10)
+        let attachment = XCTAttachment(screenshot: pane.screenshot())
+        attachment.name = "Viewport heading: " + heading
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(result, .completed,
+                       "Expected heading \(heading) at the top of the viewport; native line copy returned \(observed)",
+                       file: file, line: line)
+    }
+
+    private func assertVisibleProse(in pane: XCUIElement, window: XCUIElement,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        // WindowServer pixels are the acceptance surface. A nonempty source
+        // accessibility value or cacheDisplay PNG also passes for a blank pane.
+        // Exclude the margin controls, toolbar, scrollbar and bottom chrome.
+        var lastScreenshot: XCUIScreenshot?
+        var edgeCount = 0
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let screenshot = window.screenshot()
+            lastScreenshot = screenshot
+            guard let bitmap = NSBitmapImageRep(data: screenshot.pngRepresentation),
+                  let image = bitmap.cgImage, window.frame.width > 0 else { return false }
+            let scale = CGFloat(image.width) / window.frame.width
+            let viewport = pane.frame.intersection(window.frame)
+            let crop = CGRect(x: (viewport.minX - window.frame.minX + viewport.width * 0.20) * scale,
+                              y: (viewport.minY - window.frame.minY + 24) * scale,
+                              width: viewport.width * 0.60 * scale,
+                              height: max(0, viewport.height - 48) * scale).integral
+            guard crop.width > 2, crop.height > 2, let prose = image.cropping(to: crop) else { return false }
+            let width = prose.width, height = prose.height
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: width, height: height,
+                                              bitsPerComponent: 8, bytesPerRow: width * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(prose, in: CGRect(x: 0, y: 0, width: width, height: height))
+                return true
+            }
+            guard rendered else { return false }
+            edgeCount = 0
+            for y in stride(from: 0, to: height, by: 2) {
+                for x in stride(from: 1, to: width, by: 2) {
+                    let index = (y * width + x) * 4
+                    let red = abs(Int(pixels[index]) - Int(pixels[index - 4]))
+                    let green = abs(Int(pixels[index + 1]) - Int(pixels[index - 3]))
+                    let blue = abs(Int(pixels[index + 2]) - Int(pixels[index - 2]))
+                    let contrast = max(red, max(green, blue))
+                    if contrast > 40 { edgeCount += 1 }
+                }
+            }
+            // Several visible lines yield thousands of edges. An empty pane,
+            // insertion caret or a single gutter badge cannot satisfy this.
+            return edgeCount > 150
+        }, object: nil)
+        let result: XCTWaiter.Result = XCTWaiter.wait(for: [expected], timeout: 10)
+        if result != .completed {
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Full screen at missing prose"
+            screen.lifetime = .keepAlways
+            add(screen)
+        }
+        if let lastScreenshot {
+            let attachment = XCTAttachment(screenshot: lastScreenshot)
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertEqual(result, .completed, "Visible prose is missing (\(edgeCount) contrasting pixel edges)",
+                       file: file, line: line)
+    }
+
+    private func waitForScrollPosition(
+        in window: XCUIElement, matching predicate: @escaping (Double) -> Bool
+    ) throws -> Double {
+        // The document map is a sibling of the scroll view. Querying within
+        // the scroll view observes AppKit's actual vertical viewport control.
+        let scroller = window.scrollViews.firstMatch.scrollBars.firstMatch
+        var position: Double?
+        var lastValue = "No vertical scroller"
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard scroller.exists else { return false }
+            let raw = scroller.value
+            lastValue = String(describing: raw)
+            let value: Double?
+            if let number = raw as? NSNumber {
+                value = number.doubleValue
+            } else if let text = raw as? String {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                value = trimmed.hasSuffix("%")
+                    ? Double(trimmed.dropLast()).map { $0 / 100 }
+                    : Double(trimmed)
+            } else { value = nil }
+            guard let value, value.isFinite, (0...1).contains(value), predicate(value) else { return false }
+            position = value
+            return true
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [expected], timeout: 10)
+        if result != .completed {
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Full screen at unexpected scroll position"
+            screen.lifetime = .keepAlways
+            add(screen)
+        }
+        XCTAssertEqual(result, .completed,
+                       "Expected native document scroll position. Last value: \(lastValue). \(window.debugDescription)")
+        return try XCTUnwrap(position)
     }
 
     private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {

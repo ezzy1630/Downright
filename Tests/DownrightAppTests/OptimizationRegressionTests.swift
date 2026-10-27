@@ -35,6 +35,65 @@ struct OptimizationRegressionTests {
     }
 
     @Test
+    func fuzzyMatcherScoresTheBestAlignment() {
+        // Enumerate alignments instead of using the matcher's dynamic program.
+        // These repeated letters admit both consecutive and separated matches.
+        for haystack in ["a_aAa", "ab_aB_ab", "a---bAb", "ba_a_ba", "xxabc_ab_c"] {
+            let characters = Array(haystack)
+            for needle in ["aa", "ab", "aB", "ba", "abc", "zz"] {
+                let query = Array(needle)
+                var best: Int?
+                func visit(_ positions: [Int], from start: Int) {
+                    if positions.count == query.count {
+                        var score = 0
+                        for (i, j) in positions.enumerated() {
+                            let boundary = j == 0 || characters[j - 1] == "_" || characters[j - 1] == "-"
+                            let camel = j > 0 && characters[j - 1].isLowercase && characters[j].isUppercase
+                            let bonus = boundary ? 10 : (camel ? 8 : 0)
+                            score += 16 + bonus * (i == 0 ? 2 : 1)
+                                + (query[i] == characters[j] ? 2 : 0)
+                            if i == 0 {
+                                score += max(-12, -j)
+                            } else {
+                                let gap = j - positions[i - 1] - 1
+                                score += gap == 0 ? 8 : -5 - (gap - 1)
+                            }
+                        }
+                        best = max(best ?? Int.min, score)
+                        return
+                    }
+                    for j in start..<characters.count
+                    where characters[j].lowercased() == query[positions.count].lowercased() {
+                        visit(positions + [j], from: j + 1)
+                    }
+                }
+                visit([], from: 0)
+                let match = FuzzyMatcher.match(needle: needle, in: haystack)
+                #expect(match?.score == best, "\(needle) in \(haystack)")
+                if let match {
+                    #expect(match.positions.count == query.count)
+                    #expect(zip(match.positions, match.positions.dropFirst()).allSatisfy { $0 < $1 })
+                    for (i, j) in match.positions.enumerated() {
+                        #expect(characters[j].lowercased() == query[i].lowercased())
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    func fuzzyMatcherHandlesLongRepeatedHeadings() throws {
+        let query = String(repeating: "a", count: 12)
+        let heading = String(repeating: "a", count: 1_500)
+        let start = DispatchTime.now().uptimeNanoseconds
+        let match = try #require(FuzzyMatcher.match(needle: query, in: heading))
+        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        print("FUZZY_MATCH long heading: \(milliseconds) ms")
+        #expect(match.positions == Array(0..<12))
+        #expect(match.score == 324)
+    }
+
+    @Test
     func findSessionClears() {
         let session = FindSession()
         var query = FindQuery()

@@ -47,7 +47,10 @@ fi
 if [ -z "$SPOTLIGHT_CONFIGURATION" ]; then
     SPOTLIGHT_CONFIGURATION="$(printf '%s' "$CONFIGURATION" | tr '[:upper:]' '[:lower:]')"
 fi
-HOST_BUNDLE_IDENTIFIER="com.ezzy.downright.acceptance"
+# Development overrides isolate the host for editor acceptance; CLI discovery
+# and system-extension registration intentionally retain their production IDs.
+# The production acceptance lane below always exercises the canonical identity.
+HOST_BUNDLE_IDENTIFIER="${DOWNRIGHT_HOST_BUNDLE_IDENTIFIER:-com.ezzy.downright.acceptance}"
 
 case "$APP_ACCEPTANCE_PRODUCTION" in
     0) ;;
@@ -175,12 +178,17 @@ fi
     echo "check-app: xctestrun manifest has no exact UI target app path: $XCTESTRUN" >&2
     exit 1
 }
+RESULT_ROOT="$ROOT/$APP_ACCEPTANCE_SCRATCH/TestResults"
+mkdir -p "$RESULT_ROOT"
+RESULT_BUNDLE="$RESULT_ROOT/$(date -u +%Y%m%dT%H%M%S)-$$.xcresult"
+echo "    result bundle: $RESULT_BUNDLE"
 DOWNRIGHT_UPDATER_SMOKE="$DOWNRIGHT_UPDATER_SMOKE" \
 xcodebuild \
     test-without-building \
+    -resultBundlePath "$RESULT_BUNDLE" \
     -xctestrun "$XCTESTRUN" \
     -destination "$DESTINATION" \
-    -only-testing:DownrightUITests/DownrightActivatedAppTests \
+    -only-testing:DownrightUITests \
     -parallel-testing-enabled NO \
     -test-timeouts-enabled YES 2>&1 | tee "$TEST_LOG"
 

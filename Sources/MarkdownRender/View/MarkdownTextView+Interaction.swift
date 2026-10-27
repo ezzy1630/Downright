@@ -5,6 +5,21 @@ import MarkdownCore
 // here is reachable without touching the keyboard.  Read mode has no insertion
 // caret and *all* of this still works.
 extension MarkdownTextView {
+    /// NSTextView otherwise asks Launch Services to open its `.link` attribute
+    /// during `super.mouseDown`, before our Markdown handler runs. Mouse
+    /// tracking below owns that gesture (including drag selection); other
+    /// native activations use the same host boundary as keyboard navigation.
+    public override func clicked(onLink link: Any, at charIndex: Int) {
+        guard !isTrackingMouseSelection, mode != .source else { return }
+        let offset = currentDisplayMap.sourceOffset(forTextKit: charIndex)
+        guard let hit = attribute(.drLink, atSourceOffset: offset),
+              let destination = hit.value as? String else { return }
+        markdownDelegate?.markdownTextView(
+            self, didActivateLink: destination, at: hit.range,
+            modifiers: NSApp.currentEvent?.modifierFlags ?? []
+        )
+    }
+
     public func activateLinkAtCaret() -> Bool {
         guard let hit = linkAtCaret() else { return false }
         markdownDelegate?.markdownTextView(
@@ -808,7 +823,7 @@ extension MarkdownTextView {
         markdownDelegate?.markdownTextView(self, didEdit: clamped, delta: inserted - clamped.length)
         shouldFollowCaretAfterLocalEdit = true
         localEditViewportAnchor = projectedViewportAnchor
-        setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)])
+        setSourceSelectedRanges([NSRange(location: clamped.location + inserted, length: 0)], preservingEditCaret: true)
         handleSelectionChanged(preservingViewport: projectedViewportAnchor)
         return true
     }
@@ -1273,7 +1288,7 @@ extension MarkdownTextView {
                 out.append(storage.attributedSubstring(
                     from: NSRange(location: cursor, length: sub.sourceRange.location - cursor)))
             }
-            if let replacement = sub.replacement { out.append(replacement) }
+            if let replacement = sub.resolvedReplacement(in: storage) { out.append(replacement) }
             cursor = sub.sourceRange.upperBound
         }
         if cursor < hi {
@@ -1546,10 +1561,10 @@ extension MarkdownTextView {
         dropInsertionOffset = offset
         for candidate in [previous, offset] {
             guard let candidate, let rect = dropCaretRect(at: candidate) else {
-                needsDisplay = true
+                foregroundInvalidationHandler?(nil)
                 return
             }
-            setNeedsDisplay(rect.insetBy(dx: -3, dy: -3))
+            foregroundInvalidationHandler?(rect.insetBy(dx: -3, dy: -3))
         }
     }
 

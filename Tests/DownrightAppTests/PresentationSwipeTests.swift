@@ -27,6 +27,9 @@ struct PresentationSwipeTests {
             wheel2: 0,
             wheel3: 0
         ))
+        // A nil event source inherits the keyboard's current modifiers.
+        // These fixtures model bare swipes, independent of live input.
+        event.flags = []
         event.setIntegerValueField(.scrollWheelEventIsContinuous, value: precise ? 1 : 0)
         event.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: Double(deltaY))
         event.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: Double(deltaX))
@@ -60,6 +63,7 @@ struct PresentationSwipeTests {
     func syntheticScrollEventsCarryTrackpadPhasesAndPreciseDeltas() throws {
         let event = try scroll(deltaX: -20, deltaY: 3, phase: .began, at: 1)
         #expect(event.hasPreciseScrollingDeltas)
+        #expect(event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty)
         #expect(event.phase == .began)
         #expect(event.momentumPhase.isEmpty)
         #expect(abs(event.scrollingDeltaX - -20) < 0.001)

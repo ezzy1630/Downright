@@ -1,11 +1,32 @@
 import AppKit
 import Testing
 import MarkdownCore
+@testable import MarkdownRender
 @testable import DownrightApp
 
 @Suite(.serialized)
 @MainActor
 struct EditingKeyReproTests {
+    @Test("opening a large document keeps offscreen TextKit elements lazy")
+    func openingLargeDocumentDoesNotMaterializeEveryParagraph() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-lazy-open-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = String(repeating: "A paragraph with **bold** text.\n\n", count: 3_000)
+        let controller = try makeController(text: text, file: url)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        controller.primaryContainer.textView.prepareForDisplay()
+        let elements = controller.primaryContainer.textView.cachedLayoutElementCountForTesting
+        print("LAZY_OPEN materialized elements: \(elements)")
+        #expect(controller.markdownDocument.text == text)
+        #expect(controller.primaryContainer.textView.sourceSelectedRange == NSRange(location: 0, length: 0))
+        #expect(elements > 0)
+        #expect(elements < 1_000)
+    }
+
     @discardableResult
     private func pumpMainRunLoop(
         until condition: () -> Bool,

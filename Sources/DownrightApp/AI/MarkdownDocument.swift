@@ -167,7 +167,10 @@ final class MarkdownDocument: NSObject {
     /// Last text generation successfully read from or committed to disk.
     /// Recovery discard returns here rather than leaving discarded edits in a
     /// buffer that a later keystroke could accidentally make savable again.
-    private var lastCommittedText: String = ""
+    private var lastCommittedLength = 0
+    private var lastCommittedText: String = "" {
+        didSet { lastCommittedLength = lastCommittedText.utf16.count }
+    }
     /// An external write the buffer has not yet been reconciled with.  Non-nil
     /// while a conflict bar is showing — and, critically, stays non-nil even if
     /// that bar is dismissed — so an implicit save never silently writes the
@@ -205,6 +208,8 @@ final class MarkdownDocument: NSObject {
     /// Deterministic filesystem-race seam. Production never assigns it.
     var beforeSaveCommitForTesting: (() -> Void)?
     var onDirtyChanged: ((Bool) -> Void)?
+    /// Actual local source edits, including edits while the buffer is already dirty.
+    var onSourceEdit: (() -> Void)?
     var onPresentationStateChanged: ((PresentationState) -> Void)?
     /// Undo and redo mutate storage outside `MarkdownTextView`'s source-edit
     /// path. The owner uses this boundary to lock every visible viewport before
@@ -494,6 +499,7 @@ final class MarkdownDocument: NSObject {
         enqueueParseControl { await $0.resume() }
         cancelParseWork()
         self.url = displayURL
+        lastCommittedText = text
         suppressReparse = true
         storage.beginEditing()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
@@ -868,7 +874,7 @@ final class MarkdownDocument: NSObject {
     func replace(_ range: NSRange, with replacement: String, actionName: String?) -> Bool {
         guard range.location >= 0, range.upperBound <= storage.length else { return false }
         let previous = (storage.string as NSString).substring(with: range)
-        guard previous != replacement else { return false }
+        guard !previous.utf16.elementsEqual(replacement.utf16) else { return false }
 
         if !isApplyingBatch && !undoManager.isApplyingUndoRedo {
             onWillApplyEdits?([
@@ -905,8 +911,7 @@ final class MarkdownDocument: NSObject {
         let delta = (replacement as NSString).length - range.length
         changes.adjust(forEditIn: range, delta: delta)
         if !isApplyingExternalChange {
-            noteMutation(undoManager.isApplyingUndoRedo ? "Undo" : (actionName ?? "Edit"))
-            setDirty(true)
+            noteSourceEdit(undoManager.isApplyingUndoRedo ? "Undo" : (actionName ?? "Edit"))
         }
         return true
     }
@@ -983,6 +988,25 @@ final class MarkdownDocument: NSObject {
         }
     }
 
+    private func refreshDirtyState() {
+        // Most keystrokes change length, so only a possible return to the
+        // saved generation needs an exact comparison. Unicode normalization
+        // is source data: Swift's canonically equivalent String equality is
+        // too permissive for deciding whether a document needs saving.
+        let matchesSaved = storage.length == lastCommittedLength
+            && storage.string.utf16.elementsEqual(lastCommittedText.utf16)
+        setDirty(!matchesSaved)
+        if matchesSaved, pendingConflict == nil, presentationState.phase == .edited {
+            publishPresentationState(.neutral)
+        }
+    }
+
+    func noteSourceEdit(_ provenance: String) {
+        refreshDirtyState()
+        noteMutation(provenance)
+        onSourceEdit?()
+    }
+
     /// Records the human-scale action that most recently changed source. This
     /// is deliberately callable from view/controller seams (Paste, Replace,
     /// panel actions) while parser and layout callbacks have no access to it.
@@ -990,7 +1014,7 @@ final class MarkdownDocument: NSObject {
         let value = provenance.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
         publishPresentationState(PresentationState(
-            phase: isDirty ? .edited : presentationState.phase,
+            phase: pendingConflict != nil ? .conflict : (isDirty ? .edited : presentationState.phase),
             provenance: value,
             detail: presentationState.detail
         ))
@@ -1054,7 +1078,8 @@ final class MarkdownDocument: NSObject {
     }
 
     private func finishUndoRedo() {
-        guard parsed.text != storage.string else { return }
+        refreshDirtyState()
+        guard !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
         // A grouped undo/redo can invoke several inverse closures. Keep the
         // renderer suspended for the whole transaction, then publish exactly
         // one parsed/display-map repair after AppKit has finished mutating the
@@ -1065,7 +1090,7 @@ final class MarkdownDocument: NSObject {
     /// Forces convergence before an operation that reads the tree.  Commands
     /// that rewrite source must never plan edits from an older async parse.
     func ensureParsedCurrent() {
-        guard parsed.text != storage.string else { return }
+        guard !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
         reparseNow()
     }
 
@@ -1716,7 +1741,8 @@ extension MarkdownDocument: NSTextStorageDelegate {
         // An explicit transaction may have already published its synchronous
         // parse before this delegate hop runs. Do not schedule a second parse
         // merely because NSTextStorage delivered the callback later.
-        guard parsed.text != storage.string else { return }
+        refreshDirtyState()
+        guard !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
         // `NSTextStorageDelegate` is delivered on a later main-actor turn. The
         // external transaction already submitted this exact snapshot; consume
         // only its callback above. A subsequent user edit must take the normal
@@ -1724,9 +1750,6 @@ extension MarkdownDocument: NSTextStorageDelegate {
         pendingExternalRestore = nil
         nextExternalDirtyOverride = nil
         invalidateParseWorkForEdit()
-        if !isApplyingExternalChange {
-            setDirty(true)
-        }
         if undoManager.isApplyingUndoRedo || isApplyingBatch {
             // The enclosing command/undo transaction publishes one coherent
             // parse after all storage edits have landed.

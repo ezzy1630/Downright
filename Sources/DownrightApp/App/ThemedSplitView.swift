@@ -12,7 +12,7 @@ import MarkdownRender
 /// Deliberately no animation: a hairline that crossfades on every pass of the
 /// pointer is a distraction in a window meant for reading, and the resize
 /// cursor AppKit already shows arrives at the same moment.
-final class ThemedSplitView: NSSplitView {
+final class ThemedSplitView: NSSplitView, NSSplitViewDelegate {
     private enum Grip {
         /// Length of the brightened segment along the divider.
         static let length: CGFloat = 26
@@ -25,17 +25,51 @@ final class ThemedSplitView: NSSplitView {
         didSet { needsDisplay = true }
     }
 
+    private let minimumPaneLength: CGFloat
     private var hoveredBand: NSRect?
     private var hoverTracking: NSTrackingArea?
 
-    init(styleSheet: StyleSheet, isVertical: Bool = true) {
+    init(styleSheet: StyleSheet, isVertical: Bool = true, minimumPaneLength: CGFloat = 0) {
         self.styleSheet = styleSheet
+        self.minimumPaneLength = minimumPaneLength
         super.init(frame: .zero)
         self.isVertical = isVertical
         dividerStyle = .thin
+        if minimumPaneLength > 0 { delegate = self }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        let available = max(0, (isVertical ? bounds.width : bounds.height) - dividerThickness)
+        let minimum = min(minimumPaneLength, available / 2)
+        return min(available - minimum, max(minimum, proposedPosition))
+    }
+
+    func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        let panes = arrangedSubviews
+        guard panes.count == 2 else {
+            panes.first?.frame = bounds
+            return
+        }
+        // Keep the reader's divider proportion while resizing, with enough
+        // room in each pane for the marker rail and fixed block bleed.
+        let available = max(0, (isVertical ? bounds.width : bounds.height) - dividerThickness)
+        let previousAvailable = (isVertical ? oldSize.width : oldSize.height) - dividerThickness
+        let firstLength = isVertical ? panes[0].frame.width : panes[0].frame.height
+        let fraction = previousAvailable > 0 ? firstLength / previousAvailable : 0.5
+        let resolvedLength = self.splitView(self, constrainSplitPosition: available * fraction, ofSubviewAt: 0)
+        let secondLength = max(0, available - resolvedLength)
+        if isVertical {
+            panes[0].frame = NSRect(x: 0, y: 0, width: resolvedLength, height: bounds.height)
+            panes[1].frame = NSRect(x: resolvedLength + dividerThickness, y: 0,
+                                    width: secondLength, height: bounds.height)
+        } else {
+            panes[0].frame = NSRect(x: 0, y: 0, width: bounds.width, height: resolvedLength)
+            panes[1].frame = NSRect(x: 0, y: resolvedLength + dividerThickness,
+                                    width: bounds.width, height: secondLength)
+        }
+    }
 
     override var dividerColor: NSColor { styleSheet.rule }
 

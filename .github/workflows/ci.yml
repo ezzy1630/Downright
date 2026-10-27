@@ -79,3 +79,11 @@ jobs:
           APP_ACCEPTANCE_SCRATCH: .build-ci-app
           SPOTLIGHT_SCRATCH: .build-ci-app-spm
         run: ./Scripts/check-app.sh
+      - name: Retain native interaction evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build-ci-app/TestResults
+          retention-days: 3
+          if-no-files-found: warn

@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownRender
 
 /// A reader profile changes presentation only. It never changes document text,
 /// the selected theme, or the document's saved state.
@@ -86,7 +87,7 @@ struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.name = name
         self.isBuiltIn = isBuiltIn
         self.typographyScale = typographyScale
-        self.measureCharacters = min(72, max(68, measureCharacters))
+        self.measureCharacters = TypographyConfig.clampedMeasureCharacters(measureCharacters)
         self.chromeDensity = chromeDensity
         self.motionPreference = motionPreference
     }

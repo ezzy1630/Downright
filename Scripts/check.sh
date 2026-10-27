@@ -86,12 +86,27 @@ echo "    ok"
 
 echo "==> Tests"
 TEST_LOG="$LOG_DIR/downright-test-$LOG_TAG.log"
-if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
-    swift test --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}" > "$TEST_LOG" 2>&1
+run_swift_tests() {
+    if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
+        swift test --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}"
+    else
+        swift test --no-parallel --scratch-path "$TEST_SCRATCH"
+    fi
+}
+if [ "${CI:-}" = "true" ]; then
+    # Preserve progress and stack evidence if the runner cancels a hung test.
+    # pipefail keeps a successful tee from masking swift test's failure.
+    python3 -u "$ROOT/Scripts/sample-test-processes.py" \
+        --parent-pid "$$" --output-prefix "$LOG_DIR/downright-test-$LOG_TAG" &
+    TEST_DIAGNOSTICS_PID=$!
+    NSUnbufferedIO=YES run_swift_tests 2>&1 | tee "$TEST_LOG"
+    TEST_STATUS=$?
+    kill "$TEST_DIAGNOSTICS_PID" 2>/dev/null || true
+    wait "$TEST_DIAGNOSTICS_PID" 2>/dev/null || true
 else
-    swift test --no-parallel --scratch-path "$TEST_SCRATCH" > "$TEST_LOG" 2>&1
+    run_swift_tests > "$TEST_LOG" 2>&1
+    TEST_STATUS=$?
 fi
-TEST_STATUS=$?
 grep -aE "Test run|✘|Suite .* (passed|failed)|error:|failed after" "$TEST_LOG" | tail -40
 if [ "$TEST_STATUS" -ne 0 ]; then
     echo

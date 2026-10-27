@@ -1,4 +1,5 @@
 import AppKit
+import MarkdownTextKitBridge
 
 private final class MarkdownTextParagraph: NSTextParagraph {
     private let contentRange: NSTextRange
@@ -10,7 +11,13 @@ private final class MarkdownTextParagraph: NSTextParagraph {
         elementRange: NSTextRange,
         separatorRange: NSTextRange?
     ) {
-        self.contentRange = elementRange
+        // TextKit expects content and separator to partition the element;
+        // including the terminator in both gives it overlapping locations.
+        guard let contentRange = NSTextRange(
+            location: elementRange.location,
+            end: separatorRange?.location ?? elementRange.endLocation
+        ) else { preconditionFailure("Paragraph content must precede its separator") }
+        self.contentRange = contentRange
         self.separatorRange = separatorRange
         super.init(attributedString: attributedString)
         self.textContentManager = textContentManager
@@ -30,7 +37,7 @@ private final class MarkdownTextParagraph: NSTextParagraph {
 /// measure instead. Every replacement published to this storage is
 /// source-length preserving, so the element and source coordinate spaces stay
 /// aligned during editing.
-final class MarkdownContentStorage: NSTextContentStorage {
+final class MarkdownContentStorage: DRTextContentStorage {
     private var sourceRanges: [NSRange] = []
     private var elementCache: [Int: NSTextParagraph] = [:]
     private var displayMap: DisplayMap = .identity
@@ -98,54 +105,30 @@ final class MarkdownContentStorage: NSTextContentStorage {
         displayMap = .identity
     }
 
-    override func enumerateTextElements(
+    override func makeTextElementEnumerator(
         from textLocation: NSTextLocation?,
-        options: NSTextContentManager.EnumerationOptions = [],
-        using block: (NSTextElement) -> Bool
-    ) -> NSTextLocation? {
-        // `configure` already proved the ranges tile the document; re-check only
-        // the length, which an edit can move out from under them.
+        options: NSTextContentManager.EnumerationOptions = []
+    ) -> NSEnumerator? {
+        // A source edit can temporarily move the storage beyond the ranges
+        // proved by configure. Native paragraphs cover that transition.
         guard usesCustomLayout,
               let storage = textStorage,
               sourceRanges.last?.upperBound == storage.length
-        else {
-            return super.enumerateTextElements(from: textLocation, options: options, using: block)
-        }
+        else { return nil }
 
         let reverse = options.contains(.reverse)
-        let documentLength = storage.length
         let requestedOffset = textLocation.map {
             offset(from: documentRange.location, to: $0)
-        } ?? (reverse ? documentLength : 0)
-
-        // The returned location must move past every element handed to `block`,
-        // including the one `block` stopped on.  TextKit resumes enumeration
-        // from this location, so returning the requested offset after
-        // delivering an element makes the viewport layout loop re-request the
-        // same element forever.
-        if reverse {
-            var index = lastIndex(startingBefore: requestedOffset)
-            var edge = requestedOffset
-            while index >= 0 {
-                let element = element(at: index, storage: storage)
-                let wantsMore = block(element)
-                edge = sourceRanges[index].location
-                if !wantsMore || index == 0 { break }
-                index -= 1
-            }
-            return location(documentRange.location, offsetBy: edge)
+        } ?? (reverse ? storage.length : 0)
+        var index = reverse
+            ? lastIndex(startingBefore: requestedOffset)
+            : firstIndex(endingAfter: requestedOffset)
+        return LayoutElementEnumerator { [self] in
+            guard sourceRanges.indices.contains(index) else { return nil }
+            let current = index
+            index += reverse ? -1 : 1
+            return element(at: current, storage: storage)
         }
-
-        var index = firstIndex(endingAfter: requestedOffset)
-        var edge = requestedOffset
-        while index < sourceRanges.count {
-            let element = element(at: index, storage: storage)
-            let wantsMore = block(element)
-            edge = sourceRanges[index].upperBound
-            index += 1
-            if !wantsMore { break }
-        }
-        return location(documentRange.location, offsetBy: edge)
     }
 
     /// First element that extends past `offset`, or `count` when none does.
@@ -385,4 +368,17 @@ final class MarkdownContentStorage: NSTextContentStorage {
             result.append(clipped)
         }
     }
+}
+
+/// Materializes only the next requested paragraph. AppKit can stop enumeration
+/// after one visible element without allocating an array for the document.
+private final class LayoutElementEnumerator: NSEnumerator {
+    private let nextElement: () -> NSTextElement?
+
+    init(nextElement: @escaping () -> NSTextElement?) {
+        self.nextElement = nextElement
+        super.init()
+    }
+
+    override func nextObject() -> Any? { nextElement() }
 }

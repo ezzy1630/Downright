@@ -17,6 +17,7 @@ Downright is a native macOS app. The architecture must keep these rules true:
 Sources/
   MarkdownCore/     parse, extensions, ranges, AST diff, text edits
   MarkdownRender/   TextKit 2 decoration, fragments, layout, themes
+  MarkdownTextKitBridge/  native enumeration callback adapter
   DownrightApp/     windows, commands, panels, file and agent workflows
   DownrightQL/      Quick Look preview extension
   DownrightThumb/   Quick Look thumbnail extension
@@ -29,6 +30,11 @@ Sources/
 The app owns windows, file access, and user actions. Quick Look uses the same
 core and render contracts as the app. The Spotlight targets share only the
 parser-backed metadata contract and never start an AppKit surface.
+
+Source-test hosts do not run `NSApplication.run()`. Document windows disable
+native transform animations in that host so they cannot strand dispatch workers;
+running applications keep the native animation policy. Activated-app acceptance
+remains a separate gate from source tests.
 
 ## Document pipeline
 
@@ -59,8 +65,45 @@ TextKit 2 stores the exact source. Marker hiding uses a source-to-display index
 map and custom layout fragments. It does not use zero-width fonts, transparent
 text, or shortened replacement strings.
 
+Document-wide layout maps retain range descriptors for hidden markers, rather
+than an attributed string per marker. A requested paragraph resolves its
+source-length word joiners against the current storage attributes through
+`DisplaySubstitution.resolvedReplacement(in:)`. Source-edit projection moves
+the descriptors along with the source ranges; it does not retain old styles
+or create replacement text for offscreen elements.
+`MarkdownContentStorage` supplies a lazy paragraph enumerator to the small
+Objective-C `MarkdownTextKitBridge` adapter. The adapter invokes AppKit's
+native enumeration callback without rebridging it through a Swift override:
+on macOS 26, even a Swift override forwarding directly to `super` leaves the
+native viewport empty. Swift retains ownership of source ranges, element caches,
+and display substitutions. The adapter consumes one element at a time and falls
+back to native physical paragraphs while custom ranges are suspended.
+Custom paragraph content and separator ranges partition the source element
+without overlap, including empty paragraphs and two-unit CRLF separators.
+
 Block markers live in the gutter. Inline markers reveal per span near the
 primary caret. IME composition suspends hiding in the composing paragraph.
+After a source edit, retain its exact source caret while its native projection
+is unchanged: hidden markers make a source-to-display round trip lossy. A new
+native selection retires that edit position and resolves against visible text.
+A split pane adopts the existing parsed presentation during construction, before
+any setter can decorate the shared storage. Each pane owns its layout caches;
+opening a split must preserve source attributes and avoid a full decoration pass.
+AppKit owns the text-container origin and viewport surface lifecycle. Preserve
+its native geometry calculation and all text-view drawing entry points. The
+container supplies the opaque page behind a transparent native text view.
+Clipped, viewport-sized background and foreground views draw page ornaments
+below text and hover underlines/drop carets above fragment backgrounds. Neither
+receives input or owns another text surface; fragments retain glyph/object drawing.
+Keep large-file layout lazy by suppressing
+synthetic selection work and bounding explicit layout requests.
+Attach a shared pane's scroll surface while empty, then bind the shared storage
+and adopt its presentation in one content-storage editing transaction. This
+establishes native geometry without sizing an entire file during attachment.
+Replacing a document discards the previous buffer's queued viewport/resize repairs
+before sizing the new presentation. Its shrink must not capture a reading anchor
+from the old camera; ordinary edits and mode changes continue preserving anchors.
+
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
 is a separate explicit command.
 
@@ -83,6 +126,14 @@ writes replace the inode. On an external write:
 5. If the buffer is clean, apply the new text.
 6. If the buffer is dirty, show Review, Keep Mine, and Take Theirs.
 
+Dirty state compares exact UTF-16 source with the last saved generation. Returning
+to that text by deletion or undo clears the edited state without writing the
+file; pending external conflicts remain independent and cannot be overwritten.
+
+Autosave is opt-in. Actual local source edits reset its idle deadline even when
+the buffer is already dirty. Discard suppresses implicit saves until a fresh
+source edit; parser and presentation updates cannot re-arm saving.
+
 Snapshots deduplicate by content hash. Retention applies the configured age,
 per-document, and global byte caps without rewriting unchanged indexes; a
 half-hour maintenance interval bounds long-running sessions. The newest
@@ -95,6 +146,12 @@ tests inject temporary support roots, and the repository gate also refuses to
 run them without an isolated Application Support directory.
 
 ## Workspace and path resolution
+
+Local document links resolve URL encoding and heading fragments separately from
+filesystem paths. The text surface routes native link activation through the app
+so Launch Services cannot independently open the same click. Back/Forward commit
+a history move only after the destination opens successfully and restore semantic
+reading anchors across files.
 
 The app can open one file or an optional folder workspace. Workspace mode scans
 the folder for sibling documents and shows them newest first. It does not build
@@ -152,3 +209,30 @@ zoom, folding, find, tasks, paths, Quick Look limits, and accessibility.
 Performance gates are defined in [PERFORMANCE.md](PERFORMANCE.md). The
 implementation must pass `Scripts/check.sh` and the release benchmark before a
 phase is complete.
+
+CI streams source-test progress while retaining the complete scratch-specific
+log. If the test phase remains running, a diagnostic helper captures its own
+descendant process tree and test/compiler stacks. This distinguishes compilation
+stalls from runtime waits without changing test deadlines, exit status, or budgets.
+
+Shared-pane parse commits capture each pane's reading anchor before either pane
+decorates their shared storage. Projected edit anchors and explicit pixel locks
+take precedence. Navigation that moves the viewport replaces any older pending
+resize camera while retaining the height repair; already-visible no-ops leave
+queued repairs intact. Applying a resize camera retires an animated scroll's
+obsolete pixel target before restoring the source anchor.
+
+Activated-app acceptance writes a per-run `.xcresult` under its scratch directory.
+CI retains that result bundle so screenshots and native interaction evidence can
+be reviewed against the exact tested host.
+The native editor journeys inspect WindowServer screenshot pixels inside each
+prose viewport, excluding chrome and margin controls, and read AppKit's native
+scrollbar for link/history positions. Diagnostic `cacheDisplay` captures are
+kept out of that user-path acceptance; a PNG's existence or size does not prove
+that the document was visible.
+
+The UI-test runner also hosts framework lifecycle windows covering initially
+empty storage, mounting before load, and zero-sized viewports that later resize.
+These inspect WindowServer pixels and record native observer/viewport state;
+they isolate rendering lifecycle failures without adding alternate app paths.
+The activated-app journeys remain required for the actual document host.

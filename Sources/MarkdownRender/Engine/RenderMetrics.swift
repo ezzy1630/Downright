@@ -50,9 +50,9 @@ public enum RenderMetrics {
     /// which narrows prose with it — which is what a narrow window should do.
     public static let codeBleed: CGFloat = 88
 
-    /// Narrowest prose column worth laying out.  The column floor is this plus
-    /// the bleed lane, so prose never collapses to keep the code lane alive.
-    public static let minimumProseWidth: CGFloat = 240
+    /// A very narrow split may compress prose rather than clip its trailing
+    /// text. The full bleed lane remains fixed for shared paragraph styles.
+    public static let minimumProseWidth: CGFloat = 80
 
     /// Padding inside a code block's tinted band.
     public static let codeInsetX: CGFloat = 22
