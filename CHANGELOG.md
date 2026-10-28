@@ -18,7 +18,8 @@ every release; Sparkle orders updates by it.
 
 - Editing and deleting words in document mode preserve the reading position
   and caret alignment, including in large documents. Stale queued repairs no
-  longer override newer edits or selections.
+  longer override newer edits or selections, and repeated scroll repairs no
+  longer accumulate fractional position errors.
 - Deferred layout repairs during typing restore the reading position before
   drawing, avoiding a forced repaint of the intermediate viewport.
 

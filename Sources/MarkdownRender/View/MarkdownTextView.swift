@@ -1212,7 +1212,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Snapshot the visible glyph geometry before metadata queries resolve
     /// estimated positions. This must not itself request more layout.
-    private func laidOutViewportAnchor() -> ViewportAnchor? {
+    func laidOutViewportAnchor() -> ViewportAnchor? {
         let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
         let origin = textContainerOrigin
         let sampleY = max(0, visible.minY - origin.y) + 1
@@ -1224,9 +1224,17 @@ public final class MarkdownTextView: NSTextView {
         let start = markdownLayoutManager.offset(
             from: markdownLayoutManager.documentRange.location,
             to: fragment.rangeInElement.location)
+        let offset = displayMap.sourceOffset(forTextKit: start + line.characterRange.location)
+        let textKitOffset = displayMap.textKitOffset(forSource: offset)
+        guard let location = contentStorage.location(
+            contentStorage.documentRange.location, offsetBy: textKitOffset),
+              let rect = laidOutRect(in: NSTextRange(location: location)) else { return nil }
+        // Native caret segments can differ from a line's typographic box by
+        // fractional points. Capture and restore must use the same geometry
+        // or each scroll callback feeds that difference back into the camera.
         return ViewportAnchor(
-            offset: displayMap.sourceOffset(forTextKit: start + line.characterRange.location),
-            gap: visible.minY - origin.y - fragment.layoutFragmentFrame.minY - line.typographicBounds.minY)
+            offset: offset,
+            gap: visible.minY - rect.minY)
     }
 
     func captureViewportAnchor(at offset: Int) -> ViewportAnchor {
@@ -2933,6 +2941,10 @@ public final class MarkdownTextView: NSTextView {
         else { return nil }
         let range = NSTextRange(location: location)
         markdownLayoutManager.ensureLayout(for: range)
+        return laidOutRect(in: range)
+    }
+
+    private func laidOutRect(in range: NSTextRange) -> NSRect? {
         var found: NSRect?
         markdownLayoutManager.enumerateTextSegments(in: range, type: .standard, options: []) { _, frame, _, _ in
             found = frame

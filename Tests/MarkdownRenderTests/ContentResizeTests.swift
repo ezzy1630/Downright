@@ -8,6 +8,36 @@ import Testing
 @Suite("Content resize")
 @MainActor
 struct ContentResizeTests {
+    @Test("laid-out reading anchors round-trip without moving the camera",
+          arguments: [(13.5, 80), (16, 80), (17.25, 80), (18, 80), (19.5, 80), (22, 80), (16, 1_600)])
+    func laidOutAnchorDoesNotMoveCamera(bodySize: Double, sectionCount: Int) throws {
+        var theme = MarkdownTextView.fallbackStyleSheet().theme
+        theme.typography.bodySize = CGFloat(bodySize)
+        let appearance = try #require(NSAppearance(named: .aqua))
+        let style = StyleSheet(theme: theme, appearance: appearance)
+        let text = (0..<sectionCount).map {
+            "## Section \($0)\n\nParagraph \($0) "
+                + String(repeating: "Some **formatted** words wrap onto another line. ", count: 12)
+        }.joined(separator: "\n\n")
+        let pane = MarkdownContainerView(storage: NSTextStorage(string: text), styleSheet: style)
+        pane.frame = NSRect(x: 0, y: 0, width: 900, height: 640)
+        pane.layoutSubtreeIfNeeded()
+        let view = pane.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        let target = (text as NSString).range(of: "Paragraph \(sectionCount / 2)").location + 180
+        view.scroll(toOffset: target, position: .top, animated: false)
+        view.prepareForDisplay()
+        let clip = pane.scrollView.contentView
+        let before = clip.bounds.minY
+        for _ in 0..<5 {
+            let anchor = try #require(view.laidOutViewportAnchor())
+            view.restoreViewport(to: anchor)
+            #expect(abs(clip.bounds.minY - before) < 0.5,
+                    "capturing and restoring an unchanged line drifted the camera")
+        }
+    }
+
     @Test("display repairs a native frame narrower than its text container")
     func displayRestoresContainerWidthAfterNativeShrink() throws {
         let text = "A paragraph with enough source text and a [link](https://example.com/longer/path) to use the full column.\n"
