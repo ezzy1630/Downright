@@ -264,7 +264,10 @@ stalls from runtime waits without changing test deadlines, exit status, or budge
 
 Shared-pane parse commits capture each pane's reading anchor before either pane
 decorates their shared storage. Projected edit anchors and explicit pixel locks
-take precedence. Navigation that moves the viewport replaces any older pending
+take precedence. Anchor gaps are measured in document-view coordinates; convert
+restored and navigated targets to clip coordinates before scrolling. Native
+TextKit document views can have fractional frame origins, so those coordinate
+spaces are not interchangeable. Navigation that moves the viewport replaces any older pending
 resize camera while retaining the height repair; already-visible no-ops leave
 queued repairs intact. Applying a resize camera retires an animated scroll's
 obsolete pixel target before restoring the source anchor.

@@ -1179,7 +1179,7 @@ public final class MarkdownTextView: NSTextView {
         // AppKit can briefly report the document view's old, undersized frame
         // while TextKit resolves a new viewport.  Clamping against that stale
         // zero-height estimate drops a reader at the top of the document.
-        let contentHeight = max(frame.height, clip.bounds.maxY)
+        let contentHeight = max(frame.maxY, clip.bounds.maxY)
         let maxY = max(0, contentHeight - clip.bounds.height)
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(max(0, y), maxY)))
         scrollView.reflectScrolledClipView(clip)
@@ -1208,28 +1208,6 @@ public final class MarkdownTextView: NSTextView {
 
     func captureViewportAnchor() -> ViewportAnchor {
         captureViewportAnchor(at: topVisibleOffset)
-    }
-
-    func captureViewportAnchor(forSourceEdit edit: NSRange) -> ViewportAnchor {
-        guard let caret = primarySourceCaret,
-              edit.location <= caret, caret <= edit.upperBound,
-              let location = contentStorage.location(
-                contentStorage.documentRange.location,
-                offsetBy: displayMap.textKitOffset(forSource: caret)),
-              let fragment = markdownLayoutManager.textLayoutFragment(for: location),
-              fragment.state == .layoutAvailable,
-              let rect = laidOutRect(in: NSTextRange(location: location))
-        else { return captureViewportAnchor() }
-        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
-        let paragraph = paragraphIndex.paragraphRange(containing: caret)
-        guard rect.maxY > visible.minY, rect.minY < visible.maxY,
-              edit.location >= paragraph.location, edit.upperBound <= paragraph.upperBound
-        else { return captureViewportAnchor() }
-        // Lazy fragments can refine their positions independently. During a
-        // local edit, pin the paragraph being typed in rather than a different
-        // paragraph at the viewport's top. Its start remains stable when the
-        // caret wraps onto another line, so wrapping can still move naturally.
-        return captureViewportAnchor(at: paragraph.location)
     }
 
     /// Snapshot the visible glyph geometry before metadata queries resolve
@@ -1278,9 +1256,13 @@ public final class MarkdownTextView: NSTextView {
         // Preserve the current clip extent when the document frame is
         // transiently stale; otherwise a chrome transition can clamp a valid
         // deep viewport to zero before the next layout pass repairs it.
-        let contentHeight = max(frame.height, clip.bounds.maxY)
+        let contentHeight = max(frame.maxY, clip.bounds.maxY)
         let maxY = max(0, contentHeight - clip.bounds.height)
-        let y = min(max(0, rect.minY + anchor.gap), maxY)
+        // Anchors use document coordinates; scrolling uses clip coordinates.
+        // AppKit can place the document at a fractional frame origin. Treating
+        // the spaces as identical feeds that offset into every camera repair.
+        let target = clip.convert(NSPoint(x: 0, y: rect.minY + anchor.gap), from: self)
+        let y = min(max(0, target.y), maxY)
         guard abs(y - clip.bounds.origin.y) > 0.5 else { return }
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
         scrollView.reflectScrolledClipView(clip)
@@ -3212,7 +3194,7 @@ public final class MarkdownTextView: NSTextView {
             // The document can grow or shrink under a trip — lazy TextKit
             // layout resolves above the viewport all the time — so the travel
             // is re-clamped every frame rather than only when it is planned.
-            let maxY = max(0, (clip.documentView?.frame.height ?? 0) - clip.bounds.height)
+            let maxY = max(0, (clip.documentView?.frame.maxY ?? 0) - clip.bounds.height)
             var y = scrollSpring.value
             if y < 0 || y > maxY {
                 y = min(maxY, max(0, y))
@@ -3305,31 +3287,33 @@ public final class MarkdownTextView: NSTextView {
         guard let scrollView = enclosingScrollView else { scrollToVisible(rect); return }
         let clip = scrollView.contentView
         let height = clip.bounds.height
+        let targetRect = clip.convert(rect, from: self)
 
         var y: CGFloat
         switch position {
-        case .top: y = rect.minY - RenderMetrics.verticalInset
-        case .center: y = rect.midY - height / 2
+        case .top: y = targetRect.minY - RenderMetrics.verticalInset
+        case .center: y = targetRect.midY - height / 2
         case .visible:
-            if clip.bounds.intersects(rect) {
+            if clip.bounds.intersects(targetRect) {
                 // Already on screen: nothing to ask for.  A trip still in the
                 // air is heading somewhere the last caller chose and will
                 // glide there on its own — stopping it here would strand the
                 // page mid-descent for no reason.
                 return
             }
-            y = rect.minY - height / 3
+            y = targetRect.minY - height / 3
         }
         // Explicit navigation supersedes the camera captured before a queued
         // responsive resize. A visible no-op above retains the pending repair.
         pendingResizeAnchor = nil
         pendingResizeViewportY = nil
         viewportRepairGeneration &+= 1
-        y = max(0, min(y, max(0, frame.height - height)))
+        y = max(0, min(y, max(0, frame.maxY - height)))
         if pendingResizeRequest != nil {
             // Reflow can still move this line after the jump. Carry the new
             // destination through that work instead of retaining raw pixels.
-            pendingResizeAnchor = ViewportAnchor(offset: offset, gap: y - rect.minY)
+            let documentTarget = convert(NSPoint(x: 0, y: y), from: clip)
+            pendingResizeAnchor = ViewportAnchor(offset: offset, gap: documentTarget.y - rect.minY)
         }
         let target = CGPoint(x: clip.bounds.origin.x, y: y)
         let distance = abs(y - clip.bounds.origin.y)

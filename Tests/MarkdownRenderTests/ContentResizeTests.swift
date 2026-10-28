@@ -8,6 +8,56 @@ import Testing
 @Suite("Content resize")
 @MainActor
 struct ContentResizeTests {
+    @Test("navigation retains its target across an offset document and queued layout repair",
+          arguments: [-0.8, 12.5], [false, true])
+    func navigationConvertsDocumentCoordinates(documentOriginY: Double, centered: Bool) async throws {
+        let text = (0..<80).map { "## Section \($0)\n\nA paragraph with some words." }.joined(separator: "\n\n")
+        let pane = MarkdownContainerView(storage: NSTextStorage(string: text))
+        pane.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        pane.layoutSubtreeIfNeeded()
+        let view = pane.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        view.setFrameOrigin(NSPoint(x: view.frame.minX, y: documentOriginY))
+        view.update(document: MarkdownParser.parse(text), dirty: DirtySet(
+            ranges: [NSRange(location: 0, length: 12)], isWholesale: false))
+        #expect(view.pendingResizeRequestForTesting != nil)
+        let source = text as NSString
+        let section = source.range(of: "Section 40").location
+        let target = source.range(of: "A paragraph", options: [],
+            range: NSRange(location: section, length: source.length - section)).location
+        view.scroll(toOffset: target, position: centered ? .center : .top, animated: false)
+        let clip = pane.scrollView.contentView
+        func targetError() throws -> CGFloat {
+            let rect = clip.convert(try #require(view.rect(forOffset: target)), from: view)
+            return centered ? rect.midY - clip.bounds.midY : rect.minY - clip.bounds.minY - RenderMetrics.verticalInset
+        }
+        #expect(abs(try targetError()) < 0.5)
+        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        #expect(abs(try targetError()) < 0.5)
+    }
+
+    @Test("reading anchors survive an offset document view", arguments: [-0.8, 0.8, 12.5])
+    func readingAnchorUsesDocumentCoordinates(documentOriginY: Double) throws {
+        let text = (0..<80).map { "## Section \($0)\n\nA paragraph with some words." }.joined(separator: "\n\n")
+        let pane = MarkdownContainerView(storage: NSTextStorage(string: text))
+        pane.frame = NSRect(x: 0, y: 0, width: 900, height: 420)
+        pane.layoutSubtreeIfNeeded()
+        let view = pane.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        view.scroll(toOffset: (text as NSString).range(of: "Section 40").location, position: .center, animated: false)
+        view.setFrameOrigin(NSPoint(x: view.frame.minX, y: documentOriginY))
+        let clip = pane.scrollView.contentView
+        let before = clip.bounds.minY
+        #expect(abs(pane.scrollView.documentVisibleRect.minY - before) > 0.5)
+        for _ in 0..<5 {
+            view.restoreViewport(to: view.captureViewportAnchor())
+            #expect(abs(clip.bounds.minY - before) < 0.5,
+                    "a document/clip coordinate offset fed back into scrolling")
+        }
+    }
+
     @Test("paragraph-preserving edits let the caret wrap without scrolling")
     func typingCanWrapWithoutMovingTheViewport() async throws {
         let text = (0..<80).map {

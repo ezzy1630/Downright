@@ -459,8 +459,8 @@ struct EditingKeyReproTests {
         #expect(view.sourceSelectedRange == NSRange(location: gamma.location, length: 0))
     }
 
-    @Test("word deletion keeps a wrapped caret line on screen", arguments: [50, 1_600])
-    func wordDeletionKeepsWrappedCaretLineFixed(sectionCount: Int) async throws {
+    @Test("word deletion keeps a wrapped caret line on screen", arguments: [50, 1_600], [false, true])
+    func wordDeletionKeepsWrappedCaretLineFixed(sectionCount: Int, offsetsDocument: Bool) async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditingKeyReproWordCamera-\(UUID().uuidString).md")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -493,16 +493,19 @@ struct EditingKeyReproTests {
             view.scroll(toOffset: caret, position: .center, animated: false)
             view.prepareForDisplay()
         }
+        if offsetsDocument {
+            view.setFrameOrigin(NSPoint(x: view.frame.minX, y: view.frame.minY - 0.8))
+        }
         let referenceRect = try #require(view.rect(forOffset: caret))
         let referenceClipY = clip.bounds.minY
-        let screenY = referenceRect.minY - referenceClipY
+        let screenY = clip.convert(referenceRect, from: view).minY - referenceClipY
         #expect(screenY >= 0 && screenY < clip.bounds.height)
 
         for _ in 0..<3 {
             pressOptionDelete(into: view)
             caret = view.sourceSelectedRange.location
             let immediateRect = try #require(view.rect(forOffset: caret))
-            let immediateY = immediateRect.minY - clip.bounds.minY
+            let immediateY = clip.convert(immediateRect, from: view).minY - clip.bounds.minY
             #expect(abs(immediateY - screenY) < 1,
                     "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
             let deadline = ContinuousClock().now + .seconds(3)
@@ -515,7 +518,7 @@ struct EditingKeyReproTests {
             let converged = view.parsedDocument.text == controller.markdownDocument.text
             #expect(converged, "the edit never reached its parsed presentation")
             let settledRect = try #require(view.rect(forOffset: caret))
-            let settledY = settledRect.minY - clip.bounds.minY
+            let settledY = clip.convert(settledRect, from: view).minY - clip.bounds.minY
             #expect(abs(settledY - screenY) < 1,
                     "word deletion moved the caret line after parsing; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(settledRect.minY)/\(clip.bounds.minY)")
         }
