@@ -796,7 +796,7 @@ extension MarkdownTextView {
         // Capture before `didChangeText()` can run AppKit's implicit
         // make-caret-visible path. Capturing after the mutation records the
         // teleported camera as if it were intentional.
-        let viewportAnchor = captureViewportAnchor()
+        let viewportAnchor = captureViewportAnchor(forSourceEdit: clamped)
         // AppKit's `shouldChangeText` coalesces into the undo manager. Synthetic
         // key events (and a few edge focus paths) can arrive with no open group;
         // open one so typing never traps on `NSUndoManager` state.

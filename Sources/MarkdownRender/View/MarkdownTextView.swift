@@ -1210,6 +1210,28 @@ public final class MarkdownTextView: NSTextView {
         captureViewportAnchor(at: topVisibleOffset)
     }
 
+    func captureViewportAnchor(forSourceEdit edit: NSRange) -> ViewportAnchor {
+        guard let caret = primarySourceCaret,
+              edit.location <= caret, caret <= edit.upperBound,
+              let location = contentStorage.location(
+                contentStorage.documentRange.location,
+                offsetBy: displayMap.textKitOffset(forSource: caret)),
+              let fragment = markdownLayoutManager.textLayoutFragment(for: location),
+              fragment.state == .layoutAvailable,
+              let rect = laidOutRect(in: NSTextRange(location: location))
+        else { return captureViewportAnchor() }
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        let paragraph = paragraphIndex.paragraphRange(containing: caret)
+        guard rect.maxY > visible.minY, rect.minY < visible.maxY,
+              edit.location >= paragraph.location, edit.upperBound <= paragraph.upperBound
+        else { return captureViewportAnchor() }
+        // Lazy fragments can refine their positions independently. During a
+        // local edit, pin the paragraph being typed in rather than a different
+        // paragraph at the viewport's top. Its start remains stable when the
+        // caret wraps onto another line, so wrapping can still move naturally.
+        return captureViewportAnchor(at: paragraph.location)
+    }
+
     /// Snapshot the visible glyph geometry before metadata queries resolve
     /// estimated positions. This must not itself request more layout.
     func laidOutViewportAnchor() -> ViewportAnchor? {

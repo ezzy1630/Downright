@@ -8,6 +8,34 @@ import Testing
 @Suite("Content resize")
 @MainActor
 struct ContentResizeTests {
+    @Test("paragraph-preserving edits let the caret wrap without scrolling")
+    func typingCanWrapWithoutMovingTheViewport() async throws {
+        let text = (0..<80).map {
+            "## Section \($0)\n\nParagraph \($0) " + String(repeating: "some words wrap here. ", count: 12)
+        }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let pane = MarkdownContainerView(storage: storage)
+        pane.frame = NSRect(x: 0, y: 0, width: 900, height: 640)
+        pane.layoutSubtreeIfNeeded()
+        let view = pane.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        let caret = (text as NSString).range(of: "Paragraph 40").location + 60
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+        view.scroll(toOffset: caret, position: .center, animated: false)
+        let clip = pane.scrollView.contentView
+        let beforeY = clip.bounds.minY
+        let beforeCaretY = try #require(view.rect(forOffset: caret)).minY - beforeY
+        let replacement = String(repeating: "more words to wrap. ", count: 6)
+        #expect(view.performSourceEdit(range: NSRange(location: caret, length: 0), replacement: replacement))
+        view.update(document: MarkdownParser.parse(storage.string), dirty: DirtySet(
+            ranges: [NSRange(location: caret, length: (replacement as NSString).length)], isWholesale: false))
+        try await Task.sleep(for: .milliseconds(150))
+        let afterCaretY = try #require(view.rect(forOffset: view.sourceSelectedRange.location)).minY - clip.bounds.minY
+        #expect(afterCaretY > beforeCaretY + view.styleSheet.lineHeight)
+        #expect(abs(clip.bounds.minY - beforeY) < 0.5)
+    }
+
     @Test("laid-out reading anchors round-trip without moving the camera",
           arguments: [(13.5, 80), (16, 80), (17.25, 80), (18, 80), (19.5, 80), (22, 80), (16, 1_600)])
     func laidOutAnchorDoesNotMoveCamera(bodySize: Double, sectionCount: Int) throws {

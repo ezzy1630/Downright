@@ -493,14 +493,18 @@ struct EditingKeyReproTests {
             view.scroll(toOffset: caret, position: .center, animated: false)
             view.prepareForDisplay()
         }
-        let screenY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.minY
+        let referenceRect = try #require(view.rect(forOffset: caret))
+        let referenceClipY = clip.bounds.minY
+        let screenY = referenceRect.minY - referenceClipY
         #expect(screenY >= 0 && screenY < clip.bounds.height)
 
         for _ in 0..<3 {
             pressOptionDelete(into: view)
             caret = view.sourceSelectedRange.location
-            let immediateY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.minY
-            #expect(abs(immediateY - screenY) < 1, "word deletion moved the caret line immediately")
+            let immediateRect = try #require(view.rect(forOffset: caret))
+            let immediateY = immediateRect.minY - clip.bounds.minY
+            #expect(abs(immediateY - screenY) < 1,
+                    "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
             let deadline = ContinuousClock().now + .seconds(3)
             while ContinuousClock().now < deadline,
                   view.parsedDocument.text != controller.markdownDocument.text
@@ -510,8 +514,10 @@ struct EditingKeyReproTests {
             }
             let converged = view.parsedDocument.text == controller.markdownDocument.text
             #expect(converged, "the edit never reached its parsed presentation")
-            let settledY = try #require(view.rect(forOffset: caret)).minY - clip.bounds.minY
-            #expect(abs(settledY - screenY) < 1, "word deletion moved the caret line after parsing")
+            let settledRect = try #require(view.rect(forOffset: caret))
+            let settledY = settledRect.minY - clip.bounds.minY
+            #expect(abs(settledY - screenY) < 1,
+                    "word deletion moved the caret line after parsing; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(settledRect.minY)/\(clip.bounds.minY)")
         }
         #expect(controller.markdownDocument.text != text)
     }
