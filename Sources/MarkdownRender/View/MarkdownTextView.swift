@@ -135,7 +135,7 @@ public final class MarkdownTextView: NSTextView {
                 guard let self,
                       self.viewportRepairGeneration == repairGeneration else { return }
                 self.layoutSubtreeIfNeeded()
-                self.prepareForDisplay()
+                self.prepareVisibleLayout()
                 repair()
             }
             markdownDelegate?.markdownTextView(self, didChangeSourceFocus: sourceFocus)
@@ -1012,7 +1012,10 @@ public final class MarkdownTextView: NSTextView {
                 guard let self,
                       self.viewportRepairGeneration == viewportGeneration else { return }
                 self.layoutSubtreeIfNeeded()
-                self.prepareForDisplay()
+                // First-frame preparation paints synchronously. During typing
+                // that exposes the temporary layout before the camera repair.
+                // Resolve geometry here; AppKit paints after the anchor is back.
+                self.prepareVisibleLayout()
                 repair()
             }
         }
@@ -1293,6 +1296,16 @@ public final class MarkdownTextView: NSTextView {
     /// deep restored offset lazily; the first keyboard scroll would otherwise
     /// be the thing that makes them appear.
     public func prepareForDisplay() {
+        prepareVisibleLayout()
+        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
+        // `displayIfNeeded()` may leave a freshly scrolled TextKit 2 surface
+        // pending when the view has not painted once at that offset yet.
+        // Force this small visible rect so programmatic restores behave like
+        // the first native scroll gesture.
+        autoreleasepool { display(visible) }
+    }
+
+    private func prepareVisibleLayout() {
         // AppKit can mount/shrink the native document view before the host
         // establishes its column. Container width is authoritative: a narrower
         // backing view clips valid glyphs even though TextKit laid them out.
@@ -1301,13 +1314,6 @@ public final class MarkdownTextView: NSTextView {
             setFrameSize(NSSize(width: width, height: frame.height))
         }
         autoreleasepool { synchronizeVisibleLayout() }
-        let visible = enclosingScrollView?.documentVisibleRect ?? visibleRect
-        // `displayIfNeeded()` may leave a freshly scrolled TextKit 2 surface
-        // pending when the view has not painted once at that offset yet.
-        // Force this small visible rect so programmatic restores behave like
-        // the first native scroll gesture.
-        autoreleasepool { display(visible) }
-
     }
 
     /// Makes TextKit's active fragment set agree with the clip view.

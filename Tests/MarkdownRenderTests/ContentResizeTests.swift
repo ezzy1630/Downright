@@ -182,6 +182,52 @@ struct ContentResizeTests {
         #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
     }
 
+    @Test("typing does not move an unchanged visible line between parse commits")
+    func typingHasNoIntermediateCameraMovement() async throws {
+        let text = (0..<80).map {
+            "## Section \($0)\n\nA short paragraph \($0) with room to type."
+        }.joined(separator: "\n\n")
+        let storage = NSTextStorage(string: text)
+        let container = MarkdownContainerView(storage: storage)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 420),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = container
+        defer { window.close() }
+        container.layoutSubtreeIfNeeded()
+        let view = container.textView
+        view.update(document: MarkdownParser.parse(text), dirty: .wholesale)
+        view.resizeToFitContent()
+        let source = text as NSString
+        let paragraph = source.range(of: "paragraph 40").location
+        var caret = source.range(of: "room to type.", options: [],
+            range: NSRange(location: paragraph, length: source.length - paragraph)).location
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+        view.scroll(toOffset: caret, position: .center, animated: false)
+        try await Task.sleep(for: .milliseconds(150))
+        let clip = container.scrollView.contentView
+        let initialY = clip.bounds.minY
+        var observedY: [CGFloat] = []
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { observedY.append(clip.bounds.minY) }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        for character in "steady" {
+            #expect(view.performSourceEdit(range: NSRange(location: caret, length: 0), replacement: String(character)))
+            view.update(document: MarkdownParser.parse(storage.string),
+                        dirty: DirtySet(ranges: [NSRange(location: caret, length: 1)], isWholesale: false))
+            caret += 1
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(abs(clip.bounds.minY - initialY) < 0.5)
+        #expect(observedY.allSatisfy { abs($0 - initialY) < 0.5 },
+                "typing exposed intermediate camera positions: \(observedY)")
+    }
+
     @Test("repeated typing leaves one ordered layout fragment per source element")
     func repeatedTypingDoesNotStackStaleFragments() throws {
         let paragraph = "A paragraph with enough words to form several stable lines of rendered text."
