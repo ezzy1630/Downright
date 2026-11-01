@@ -84,7 +84,7 @@ let package = Package(
         // download, validation, extraction, authorization, atomic replacement,
         // and relaunch are all owned by Sparkle 2.10.0.  Only the host app links
         // it — never MarkdownCore, MarkdownRender, the CLI, or Quick Look.
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.1"),
     ],
     targets: [
         .target(
