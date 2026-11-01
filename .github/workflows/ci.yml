@@ -38,7 +38,7 @@ jobs:
       # Restore compiled modules, not test results. SwiftPM still checks the
       # current sources, and every test and benchmark runs even on a cache hit.
       - name: Restore Swift build graphs
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .build-ci-main
@@ -73,7 +73,7 @@ jobs:
           ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
           echo "id=$ID" >> "$GITHUB_OUTPUT"
       - name: Restore native build intermediates
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .build-ci-app/Build/Intermediates.noindex
