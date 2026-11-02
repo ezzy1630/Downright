@@ -268,7 +268,8 @@ public class DownrightFragment: NSTextLayoutFragment {
         return storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
     }
 
-    /// Source range of the paragraph this fragment covers.
+    /// TextKit range of the paragraph, measured by its content manager.
+    /// Callers crossing into source coordinates must use DisplayMap.
     var elementSourceRange: NSRange {
         guard let element = textElement, let range = element.elementRange,
               let manager = element.textContentManager else { return payload.sourceRange }

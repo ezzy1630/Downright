@@ -107,7 +107,7 @@ public final class ThemeStore {
         return .module
     }()
 
-    private static func loadBundledThemes() -> [Theme] {
+    static func loadBundledThemes() -> [Theme] {
         guard let urls = resourceBundle.urls(forResourcesWithExtension: "json", subdirectory: "Themes") else {
             return []
         }

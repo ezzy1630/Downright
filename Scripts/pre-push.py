@@ -30,9 +30,11 @@ def main():
             # Actionlint resolves local actions/reusable workflows from a Git
             # project root. Metadata is disposable; proposed files stay exact.
             subprocess.run(["git", "init", "--quiet", directory], check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                           stdout=subprocess.DEVNULL)
+            environment = dict(os.environ, CHECK_ROOT=directory)
+            environment["ACTIONLINT"] = environment.get("ACTIONLINT") or str(Path(__file__).resolve().parents[1] / ".build-tools/actionlint")
             result = subprocess.run([str(Path(directory) / "Scripts/check-fast.sh")],
-                                    env=dict(os.environ, CHECK_ROOT=directory))
+                                    env=environment)
             if result.returncode:
                 return result.returncode
     return 0

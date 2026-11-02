@@ -25,7 +25,8 @@ Layout features that require Graphviz rather than Smetana are unsupported.
 
 The app runs its bundled `down` executable with a private worker argument.
 Each process handles one diagram, accepts at most 32 KiB of UTF-8, and emits
-at most 1 MiB of SVG with a 4096-pixel dimension limit. The host kills the
-worker after five seconds and caches bounded raster results. Document text
+at most 1 MiB of SVG. The engine is configured with `maxSvgSize: 4096`, and
+the host caps cached rasters at 2048 physical pixels per dimension. The host
+kills the worker after five seconds and caches bounded raster results. Document text
 is passed as data, never evaluated as JavaScript. Quick Look retains code
 because it never installs the host's worker adapter.

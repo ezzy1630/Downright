@@ -14,7 +14,7 @@ esac
 mkdir -p "$DESTINATION"
 TEMPORARY="$(mktemp -d)"
 trap 'rm -rf "$TEMPORARY"' EXIT
-curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_${PLATFORM}.tar.gz" -o "$TEMPORARY/actionlint.tar.gz"
+curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 180 "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_${PLATFORM}.tar.gz" -o "$TEMPORARY/actionlint.tar.gz"
 echo "$SHA  $TEMPORARY/actionlint.tar.gz" | shasum -a 256 -c -
 tar -xzf "$TEMPORARY/actionlint.tar.gz" -C "$TEMPORARY" actionlint
 cp "$TEMPORARY/actionlint" "$DESTINATION/actionlint"

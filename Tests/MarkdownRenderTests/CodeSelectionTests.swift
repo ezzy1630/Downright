@@ -47,15 +47,18 @@ struct CodeSelectionTests {
     }
 
     @Test func selectedTextHasAnExplicitContrastingForeground() throws {
-        let suite = "downright.tests.selection.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        for theme in ThemeStore(defaults: defaults).themes {
+        let themes = ThemeStore.loadBundledThemes()
+        #expect(!themes.isEmpty)
+        for theme in themes {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-                let sheet = StyleSheet(theme: theme, appearance: try #require(NSAppearance(named: appearance)))
-                let view = MarkdownTextView(frame: .zero, storage: NSTextStorage(string: "```\ncode\n```\n"), styleSheet: sheet)
-                let foreground = try #require(view.selectedTextAttributes[.foregroundColor] as? NSColor)
-                #expect(StyleSheet.contrastRatio(foreground, sheet.selection) >= 4.5, "\(theme.name), \(appearance)")
+                for alpha in [CGFloat(1), 0.25] {
+                    var sheet = StyleSheet(theme: theme, appearance: try #require(NSAppearance(named: appearance)))
+                    sheet.selection = sheet.selection.withAlphaComponent(alpha)
+                    let view = MarkdownTextView(frame: .zero, storage: NSTextStorage(string: "```\ncode\n```\n"), styleSheet: sheet)
+                    let foreground = try #require(view.selectedTextAttributes[.foregroundColor] as? NSColor)
+                    let field = ColorResolver.blend(sheet.background, sheet.selection, alpha)
+                    #expect(StyleSheet.contrastRatio(foreground, field) >= 4.5, "\(theme.name), \(appearance), alpha \(alpha)")
+                }
             }
         }
     }

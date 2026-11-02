@@ -29,6 +29,11 @@ struct PlantUMLPresentationTests {
         #expect(!renderer.completions.isEmpty, "a retained fragment must recover after cache eviction")
         #expect(storage.string == source)
         let staleCompletions = renderer.completions
+        storage.replaceCharacters(in: NSRange(location: storage.length, length: 0), with: "\nUnrelated edit.\n")
+        view.update(document: MarkdownParser.parse(storage.string), dirty: .wholesale)
+        renderer.image = NSImage(size: NSSize(width: 120, height: 600))
+        staleCompletions.forEach { $0() }
+        #expect(view.pendingResizeRequestForTesting == .viewport, "unchanged diagrams must refresh after an unrelated edit")
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: "Other document.\n")
         view.update(document: MarkdownParser.parse(storage.string), dirty: .wholesale)
         staleCompletions.forEach { $0() }

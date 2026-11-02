@@ -7,6 +7,48 @@ private final class PlantUMLWorkerTestAnchor: NSObject {}
 
 struct PlantUMLWorkerTests {
     @MainActor
+    @Test func transientFailureCanRetryAfterCooldown() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("plantuml-retry-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worker = root.appendingPathComponent("worker")
+        try Data("#!/bin/sh\ncat >/dev/null\nexit 1\n".utf8).write(to: worker)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: worker.path)
+        let renderer = try #require(LocalPlantUMLRenderer(executable: worker, retryDelay: 0))
+        let source = "@startuml\nA -> B\n@enduml"
+        await withCheckedContinuation { continuation in
+            renderer.render(source: source, dark: false) { continuation.resume() }
+        }
+        #expect(!renderer.hasFailed(source: source, dark: false))
+        try Data("#!/bin/sh\ncat >/dev/null\nprintf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\"/></svg>'\n".utf8).write(to: worker)
+        await withCheckedContinuation { continuation in
+            renderer.render(source: source, dark: false) { continuation.resume() }
+        }
+        #expect(renderer.cachedImage(source: source, dark: false) != nil)
+    }
+
+    @Test func missingResourcesExitCleanlyInsteadOfTrapping() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("plantuml-missing-resources-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let copied = root.appendingPathComponent("down")
+        try FileManager.default.copyItem(at: executable, to: copied)
+        let process = Process()
+        process.executableURL = copied
+        process.arguments = ["--downright-render-plantuml"]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: Data("@startuml\nA -> B\n@enduml".utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        #expect(process.terminationReason == .exit)
+        #expect(process.terminationStatus == 65)
+    }
+
+    @MainActor
     @Test func capacityDefersRenderingWithoutCachingFailure() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("plantuml-capacity-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -14,7 +56,7 @@ struct PlantUMLWorkerTests {
         let worker = root.appendingPathComponent("worker")
         try Data("#!/bin/sh\ncat >/dev/null\nsleep 0.02\nprintf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\"/></svg>'\n".utf8).write(to: worker)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: worker.path)
-        let renderer = LocalPlantUMLRenderer(executable: worker)
+        let renderer = try #require(LocalPlantUMLRenderer(executable: worker))
         let overflow = "@startuml\nOverflow -> Worker\n@enduml"
         await withCheckedContinuation { continuation in
             for index in 0..<16 {
@@ -41,7 +83,10 @@ struct PlantUMLWorkerTests {
     }
 
     private var executable: URL {
-        Bundle(for: PlantUMLWorkerTestAnchor.self).bundleURL
+        if let path = ProcessInfo.processInfo.environment["DOWNRIGHT_TEST_CLI_EXECUTABLE"] {
+            return URL(fileURLWithPath: path)
+        }
+        return Bundle(for: PlantUMLWorkerTestAnchor.self).bundleURL
             .deletingLastPathComponent().appendingPathComponent("down")
     }
 

@@ -37,7 +37,7 @@ def main():
         parser.error("limit must be between 1 and 100")
     runs = gh("run", "list", "--repo", args.repo, "--workflow", args.workflow,
               "--limit", str(args.limit), "--json",
-              "databaseId,headSha,createdAt,updatedAt,conclusion,status,url")
+              "databaseId,headSha,createdAt,startedAt,updatedAt,conclusion,status,url")
     records, groups = [], {}
     for run in runs:
         if run["status"] != "completed":
@@ -46,7 +46,7 @@ def main():
         for job in jobs:
             record = dict(run=run["databaseId"], head=run["headSha"], url=run["url"],
                           name=job["name"], conclusion=job["conclusion"],
-                          start_delay_seconds=seconds(run["createdAt"], job["started_at"]),
+                          start_delay_seconds=seconds(run["startedAt"], job["started_at"]),
                           duration_seconds=seconds(job["started_at"], job["completed_at"]),
                           steps=[dict(name=step["name"], conclusion=step["conclusion"],
                                       seconds=seconds(step.get("started_at"), step.get("completed_at")))

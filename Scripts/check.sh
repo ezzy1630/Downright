@@ -95,6 +95,11 @@ fi
 echo "    ok"
 
 echo "==> Tests"
+if ! CLI_BIN_DIRECTORY="$(swift build --scratch-path "$SCRATCH" --show-bin-path)"; then
+    echo "    FAILED — cannot locate the built CLI for worker tests"
+    exit 1
+fi
+export DOWNRIGHT_TEST_CLI_EXECUTABLE="$CLI_BIN_DIRECTORY/down"
 TEST_LOG="$LOG_DIR/downright-test-$LOG_TAG.log"
 run_swift_tests() {
     if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then

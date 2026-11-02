@@ -182,7 +182,7 @@ public final class MarkdownTextView: NSTextView {
 
     public var styleSheet: StyleSheet {
         didSet {
-            guard canRefreshPresentation else { return }
+            guard preparePresentationRefresh() else { return }
             let anchor = captureViewportAnchor()
             synchronizeStyleSheet()
             // Font / measure changes need a full geometry rebuild. Colour-only
@@ -328,10 +328,24 @@ public final class MarkdownTextView: NSTextView {
             rebuildEverything()
         }
     }
-    func plantUMLDidRender(in sourceRange: NSRange, generation: Int) {
-        guard generation == updateGeneration, canRefreshPresentation else { return }
+    func plantUMLDidRender(in sourceRange: NSRange, source: String, dark: Bool, generation: Int) {
+        guard preparePresentationRefresh() else { return }
+        var ranges = [sourceRange]
+        if generation != updateGeneration {
+            guard plantUMLRenderer?.cachedImage(source: source, dark: dark) != nil else { return }
+            // An unrelated edit may leave the original fragment's placeholder
+            // laid out. Match current blocks by exact source, never old offsets.
+            ranges = []
+            parsedDocument.root.walk { block in
+                if case .codeBlock(let language, _, let contentRange) = block.content,
+                   PlantUMLFence.accepts(language), parsedDocument.substring(contentRange).utf16.elementsEqual(source.utf16) {
+                    ranges.append(block.range)
+                }
+            }
+        }
+        guard !ranges.isEmpty else { return }
         let anchor = captureViewportAnchor()
-        invalidateFragments(in: sourceRange)
+        ranges.forEach { invalidateFragments(in: $0) }
         requestContentResize(.viewport, anchor: anchor, preservingReadingPosition: true)
     }
 
@@ -1647,7 +1661,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Storage edits precede their asynchronous parse. Presentation changes
     /// must wait rather than use the previous revision's source ranges.
-    private var canRefreshPresentation: Bool {
+    private func preparePresentationRefresh() -> Bool {
         guard let storage = textStorage,
               storage.length == parsedDocument.length,
               storage.string.utf16.elementsEqual(parsedDocument.text.utf16) else {
@@ -1666,7 +1680,7 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func rebuildEverything() {
-        guard canRefreshPresentation else { return }
+        guard preparePresentationRefresh() else { return }
         guard let storage = textStorage else { return }
         // The content storage is reconfigured from the paragraph index below,
         // so it has to describe the text that is in the buffer right now.  A
@@ -1690,7 +1704,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Theme colour / accent swaps that do not change typography.
     private func restyleAttributesPreservingGeometry() {
-        guard canRefreshPresentation else { return }
+        guard preparePresentationRefresh() else { return }
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
         applySourcePresentation()

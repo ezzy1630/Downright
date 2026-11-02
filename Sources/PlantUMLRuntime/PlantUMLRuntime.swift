@@ -30,16 +30,20 @@ public enum PlantUMLRuntime {
         let base64: @convention(block) (String) -> [UInt8] = { Array(Data(base64Encoded: $0) ?? Data()) }
         context.setObject(measure, forKeyedSubscript: "nativeMeasure" as NSString)
         context.setObject(base64, forKeyedSubscript: "nativeBase64" as NSString)
-        let adjacent = Bundle.main.executableURL?.deletingLastPathComponent()
-            .appendingPathComponent("../Resources/PlantUML/runtime.js").standardizedFileURL
-        let url: URL
-        if let adjacent, FileManager.default.fileExists(atPath: adjacent.path) {
-            url = adjacent
-        } else {
-            guard let bundled = Bundle.module.url(forResource: "runtime", withExtension: "js", subdirectory: "PlantUML") else {
-                throw RenderError.unavailable
-            }
-            url = bundled
+        let executables = [Bundle.main.executableURL, Bundle.main.executableURL?.resolvingSymlinksInPath()].compactMap { $0 }
+        let adjacent = executables.map {
+            $0.deletingLastPathComponent().appendingPathComponent("../Resources/PlantUML/runtime.js").standardizedFileURL
+        }
+        let roots = [Bundle.main.resourceURL, Bundle.main.bundleURL].compactMap { $0 }
+            + executables.map { $0.deletingLastPathComponent() }
+        let bundled = roots.compactMap { root in
+            Bundle(url: root.appendingPathComponent("Downright_PlantUMLRuntime.bundle"))?
+                .url(forResource: "runtime", withExtension: "js", subdirectory: "PlantUML")
+        }
+        // Bundle.module traps when a copied CLI has no resource bundle. A
+        // missing runtime is an ordinary worker failure, not a fatal error.
+        guard let url = (adjacent + bundled).first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            throw RenderError.unavailable
         }
         context.evaluateScript(try String(contentsOf: url, encoding: .utf8), withSourceURL: url)
         guard context.exception == nil else { throw RenderError.renderingFailed }

@@ -7,13 +7,16 @@ import MarkdownRender
 @MainActor
 final class LocalPlantUMLRenderer: PlantUMLRendering {
     private let images = NSCache<NSString, NSImage>()
-    private let failures = NSCache<NSString, NSString>()
+    private let failures = NSCache<NSString, NSDate>()
     private var waiting: [String: [@MainActor () -> Void]] = [:]
     private let queue = DispatchQueue(label: "com.ezzy.downright.plantuml", qos: .utility)
-    private let executable: URL?
+    private let executable: URL
+    private let retryDelay: TimeInterval
 
-    init(executable: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("down")) {
+    init?(executable: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("down"), retryDelay: TimeInterval = 30) {
+        guard let executable, FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
         self.executable = executable
+        self.retryDelay = retryDelay
         images.totalCostLimit = 32 * 1024 * 1024
         images.countLimit = 32
         failures.countLimit = 64
@@ -26,7 +29,13 @@ final class LocalPlantUMLRenderer: PlantUMLRendering {
     }
 
     nonisolated func hasFailed(source: String, dark: Bool) -> Bool {
-        MainActor.assumeIsolated { failures.object(forKey: Self.key(source, dark) as NSString) != nil }
+        MainActor.assumeIsolated {
+            let key = Self.key(source, dark) as NSString
+            guard let until = failures.object(forKey: key) else { return false }
+            if until.timeIntervalSinceNow > 0 { return true }
+            failures.removeObject(forKey: key)
+            return false
+        }
     }
 
     nonisolated func render(source: String, dark: Bool, completion: @escaping @MainActor () -> Void) {
@@ -37,12 +46,13 @@ final class LocalPlantUMLRenderer: PlantUMLRendering {
         let key = Self.key(source, dark)
         if waiting[key] != nil { waiting[key]?.append(completion); return }
         guard images.object(forKey: key as NSString) == nil,
-              failures.object(forKey: key as NSString) == nil else { return }
-        guard source.utf8.count <= 32_768, let executable else {
-            failures.setObject("unavailable", forKey: key as NSString)
+              !hasFailed(source: source, dark: dark) else { return }
+        guard source.utf8.count <= 32_768 else {
+            failures.setObject(Date.distantFuture as NSDate, forKey: key as NSString)
             DispatchQueue.main.async { completion() }
             return
         }
+        let executable = executable
         guard waiting.count < 16 else {
             // Capacity is temporary, unlike malformed source. Wake the
             // fragment after the queued workers have made room for its retry.
@@ -59,7 +69,10 @@ final class LocalPlantUMLRenderer: PlantUMLRendering {
                     let cost = Int(image.size.width * image.size.height * 16)
                     self.images.setObject(image, forKey: key as NSString, cost: cost)
                 } else {
-                    self.failures.setObject("failed", forKey: key as NSString)
+                    // Worker exit, timeout and memory pressure can be transient.
+                    // Retry on a later display after a cooldown, without a timer
+                    // that repeatedly repaints or respawns a failing diagram.
+                    self.failures.setObject(Date(timeIntervalSinceNow: self.retryDelay) as NSDate, forKey: key as NSString)
                 }
                 let callbacks = self.waiting.removeValue(forKey: key) ?? []
                 callbacks.forEach { $0() }

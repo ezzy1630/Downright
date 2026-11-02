@@ -38,12 +38,14 @@ if command == "test" and os.environ.get("ZERO_TESTS") != "1":
         print("✔ Test run with 1 test passed after 0.001 seconds.")
 elif command == "run":
     print("Typing response p95: 1 ms")
+elif command == "build" and "--show-bin-path" in sys.argv:
+    print(os.path.join(os.environ["TMPDIR"], "fake-bin"))
 sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
 ''')
         if ripgrep := shutil.which("rg"):
             (self.root / "bin/rg").symlink_to(ripgrep)
         self.environment = dict(os.environ)
-        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH"):
+        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH", "MISSING_TEST_SUMMARY"):
             self.environment.pop(key, None)
         self.environment.update(
             PATH=f"{self.root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",

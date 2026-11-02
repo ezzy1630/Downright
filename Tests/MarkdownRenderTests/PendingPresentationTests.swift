@@ -24,11 +24,11 @@ struct PendingPresentationTests {
             #expect(storage.string == replacement)
             let document = MarkdownParser.parse(replacement)
             view.update(document: document, dirty: DirtySet(ranges: [NSRange(location: 0, length: 1)], isWholesale: false))
-            let lastParagraph = replacement.contains("Unchanged") ? "Unchanged"
-                : replacement.contains("Second") ? "Second" : "Short"
-            let end = (replacement as NSString).range(of: lastParagraph).location
-            let foreground = try #require(storage.attribute(.foregroundColor, at: end, effectiveRange: nil) as? NSColor)
-            #expect(foreground == sheet.text)
+            for paragraph in replacement.components(separatedBy: "\n").filter({ !$0.isEmpty }) {
+                let offset = (replacement as NSString).range(of: paragraph).location
+                let foreground = try #require(storage.attribute(.foregroundColor, at: offset, effectiveRange: nil) as? NSColor)
+                #expect(foreground == sheet.text)
+            }
             #expect(storage.string == replacement)
         }
     }

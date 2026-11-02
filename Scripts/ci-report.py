@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -25,9 +26,9 @@ def fingerprint():
 
 
 def coverage(text):
-    # check.sh prints some summaries twice. SwiftPM may run several target
-    # executables: sum distinct run summaries rather than taking the last one.
-    runs = set(re.findall(r"Test run with (\d+) tests?[^\n]*?(?:passed|failed) after ([\d.]+) seconds", text))
+    # Callers supply raw test logs, not check.sh's echoed summary. Equal counts
+    # and rounded durations can belong to independent target executables.
+    runs = re.findall(r"Test run with (\d+) tests?[^\n]*?(?:passed|failed) after ([\d.]+) seconds", text)
     skipped = sorted(set(re.findall(r"Test (.+?) skipped[^\n]*", text)))
     xcode = re.findall(
         r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text
@@ -75,8 +76,10 @@ def compilation_logs(directory):
 def run(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    temporary = output / "tmp"
-    temporary.mkdir(exist_ok=True)
+    # A new directory binds test logs to this invocation, even when the output
+    # destination is reused. Retain it with the evidence rather than guessing
+    # freshness from filesystem timestamps.
+    temporary = Path(tempfile.mkdtemp(prefix="run-", dir=output))
     start_source = fingerprint()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     environment = dict(os.environ, TMPDIR=str(temporary) + os.sep,
@@ -124,7 +127,7 @@ def run(args):
         report = dict(name=args.name, head=head, source_sha256=start_source,
                       source_changed=changed, exit_status=status,
                       elapsed_seconds=time.monotonic()-started, phases=phases,
-                      coverage=result, compilation=compilation_logs(output),
+                      coverage=result, compilation=compilation_logs(temporary),
                       cache=dict(requested=os.environ.get("CI_CACHE_REQUESTED_KEY"),
                                  restored=os.environ.get("CI_CACHE_MATCHED_KEY"),
                                  exact_hit=os.environ.get("CI_CACHE_EXACT_HIT") == "true"))
