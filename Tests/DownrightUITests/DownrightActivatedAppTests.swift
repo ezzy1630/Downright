@@ -463,8 +463,8 @@ final class DownrightActivatedAppTests: XCTestCase {
         try assertStarSuggestionRetired()
     }
 
-    func testStarSuggestionFollowsNarrowResizeAndEscapeInDarkAppearance() throws {
-        try seedStarSuggestion(theme: "Warm Dark")
+    func testStarSuggestionFitsNarrowWindowAndEscapeInDarkAppearance() throws {
+        try seedStarSuggestion(theme: "Warm Dark", foregroundSeconds: 580)
         app.launch()
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
@@ -473,17 +473,33 @@ final class DownrightActivatedAppTests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
         let dismiss = app.buttons["Dismiss GitHub star suggestion"].firstMatch
-        XCTAssertTrue(dismiss.waitForExistence(timeout: 20))
         let originalWidth = window.frame.width
         let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
             .withOffset(CGVector(dx: -4, dy: -4))
         corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -350, dy: -80)))
         XCTAssertLessThan(window.frame.width, originalWidth)
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 20))
         XCTAssertTrue(dismiss.isHittable)
         XCTAssertTrue(window.frame.contains(CGPoint(x: dismiss.frame.midX, y: dismiss.frame.midY)))
         retainStarSuggestionScreenshot("GitHub suggestion — Warm Dark after resize")
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5))
+        try assertStarSuggestionRetired()
+    }
+
+    func testStarSuggestionOutsideClickDismissesAndKeepsTheEditorClickLive() throws {
+        try seedStarSuggestion(theme: "Paper Light")
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let editor = app.textViews["Document editor"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        let dismiss = app.buttons["Dismiss GitHub star suggestion"].firstMatch
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 20))
+        editor.click()
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5))
+        app.typeText("outside-click-kept")
+        XCTAssertTrue((editor.value as? String)?.contains("outside-click-kept") == true)
         try assertStarSuggestionRetired()
     }
 

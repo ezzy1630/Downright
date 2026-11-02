@@ -1,4 +1,5 @@
 import AppKit
+import MarkdownRender
 import Testing
 @testable import DownrightApp
 
@@ -12,6 +13,7 @@ struct StarPromptUsageTests {
         #expect(clock.sample(at: 1005, isReading: true) == 0)
         #expect(clock.sample(at: 1010, isReading: true) == 5)
         #expect(clock.sample(at: 1009, isReading: true) == 0)
+        #expect(clock.sample(at: 2000, isReading: true) == StarPromptReadingClock.maximumSampleSeconds)
     }
 
     @Test func bothUsageThresholdsAreRequired() {
@@ -88,6 +90,24 @@ struct StarPromptUsageTests {
 @Suite(.serialized)
 @MainActor
 struct StarPromptNoticeTests {
+    @Test func noticeTracksHostAppearanceAndThemeUntilDismissed() throws {
+        let originalTheme = ThemeStore.shared.current
+        defer { ThemeStore.shared.select(named: originalTheme.name) }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        let notice = StarPromptNotice(parent: window, openRepository: {})
+        defer { notice.dismiss(); window.close() }
+        notice.show()
+        #expect(notice.panel.appearance?.name == .aqua)
+        window.appearance = NSAppearance(named: .darkAqua)
+        ThemeStore.shared.select(named: "Warm Dark")
+        #expect(notice.panel.appearance?.name == .darkAqua)
+        let expected = StyleSheet(theme: ThemeStore.shared.current, appearance: window.effectiveAppearance)
+        #expect(notice.panel.contentView?.layer?.backgroundColor == expected.background.cgColor)
+    }
+
     @Test func successfulInPlaceOpensCountButFailedOpensDoNot() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

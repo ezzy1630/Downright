@@ -52,8 +52,10 @@ The offer waits for idle input and an unobstructed document, then appears as a
 nonactivating child notice below the toolbar. It does not reflow TextKit or take
 first responder. Displaying it retires the offer permanently across app updates;
 the Help-menu star action also retires it. Dismissal, Escape, closing the host,
-or leaving the app removes the notice. The repository opens only on an explicit
-action. No engagement analytics, GitHub identity, or star-status requests exist.
+outside clicks, or leaving the app remove the notice. Its body and native
+controls follow the host appearance and live theme changes. The repository opens
+only on an explicit action. No engagement analytics, GitHub identity, or
+star-status requests exist.
 
 ## PlantUML diagrams
 

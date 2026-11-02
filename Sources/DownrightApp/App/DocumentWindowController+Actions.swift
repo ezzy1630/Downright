@@ -25,7 +25,9 @@ extension DocumentWindowController {
             try open(url, mode: mode)
             resetWorkspaceState(for: url)
             let targetOffset: Int
+            var reachedTarget = fragment == nil
             if let fragment, let offset = linkedHeadingOffset(fragment) {
+                reachedTarget = true
                 prepareForExplicitNavigation()
                 containerTextView.scroll(toOffset: offset, position: .top, animated: false)
                 synchronizePanes(from: containerTextView, viewport: true)
@@ -38,7 +40,7 @@ extension DocumentWindowController {
                     anchor: ScrollAnchoring.anchor(for: offset, in: markdownDocument.parsed)
                 ))
             }
-            onDocumentOpen?()
+            if reachedTarget { onDocumentOpen?() }
             return true
         } catch {
             // The hop died mid-flight (the target vanished between the click

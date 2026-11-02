@@ -47,11 +47,14 @@ struct StarPromptUsage: Codable, Equatable {
 /// Only consecutive visible/active samples count. Focus transitions discard
 /// their partial interval so time in another app cannot make the offer eligible.
 struct StarPromptReadingClock {
+    /// One five-second sample plus timer tolerance. Event-tracking loops can
+    /// suspend the timer for minutes; that gap is not observed reading time.
+    static let maximumSampleSeconds: TimeInterval = 6
     private var previous: (time: TimeInterval, isReading: Bool)?
 
     mutating func sample(at time: TimeInterval, isReading: Bool) -> TimeInterval {
         defer { previous = (time, isReading) }
         guard let previous, previous.isReading, isReading else { return 0 }
-        return max(0, time - previous.time)
+        return min(Self.maximumSampleSeconds, max(0, time - previous.time))
     }
 }
