@@ -235,6 +235,8 @@ public final class FragmentPayload: NSObject {
     /// Table geometry, populated by the table fragment.
     public var tableData: TableData?
     public var isCollapsed: Bool = false
+    /// Parser-computed identity for locating an unchanged diagram after edits.
+    var parsedBlockHash: UInt64?
 
     public init(kind: FragmentKind, sourceRange: NSRange, blockIdentity: BlockIdentity, detail: String) {
         self.kind = kind

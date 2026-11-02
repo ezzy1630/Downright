@@ -328,19 +328,17 @@ public final class MarkdownTextView: NSTextView {
             rebuildEverything()
         }
     }
-    func plantUMLDidRender(in sourceRange: NSRange, source: String, dark: Bool, generation: Int) {
+    func plantUMLDidRender(in sourceRange: NSRange, source: String, dark: Bool, blockHash: UInt64?, generation: Int) {
         guard preparePresentationRefresh() else { return }
         var ranges = [sourceRange]
         if generation != updateGeneration {
-            guard plantUMLRenderer?.cachedImage(source: source, dark: dark) != nil else { return }
+            guard let blockHash, plantUMLRenderer?.cachedImage(source: source, dark: dark) != nil else { return }
             // An unrelated edit may leave the original fragment's placeholder
             // laid out. Match current blocks by exact source, never old offsets.
-            ranges = []
-            parsedDocument.root.walk { block in
-                if case .codeBlock(let language, _, let contentRange) = block.content,
-                   PlantUMLFence.accepts(language), parsedDocument.substring(contentRange).utf16.elementsEqual(source.utf16) {
-                    ranges.append(block.range)
-                }
+            ranges = (plantUMLBlocksByHash[blockHash] ?? []).compactMap { block in
+                guard case .codeBlock(_, _, let contentRange) = block.content,
+                      parsedDocument.substring(contentRange).utf16.elementsEqual(source.utf16) else { return nil }
+                return block.range
             }
         }
         guard !ranges.isEmpty else { return }
@@ -584,6 +582,7 @@ public final class MarkdownTextView: NSTextView {
     /// highlight had nothing to paint and a rule stands in for it.
     private var objectChangeMarks: [ChangeMark] = []
     private var fragmentAccessibilityElements: [NSAccessibilityElement] = []
+    private var plantUMLBlocksByHash: [UInt64: [MDBlock]] = [:]
     private var pathExistence: [PathToken: Bool] = [:]
     private var pathRefreshGeneration: UInt = 0
     private var codeCollapseOverrides: [Int: Bool] = [:]
@@ -1063,6 +1062,7 @@ public final class MarkdownTextView: NSTextView {
     /// source. These virtual nodes name the object while the text area keeps
     /// its normal editable range API.
     private func refreshFragmentAccessibility() {
+        plantUMLBlocksByHash.removeAll(keepingCapacity: true)
         guard mode != .source else {
             fragmentAccessibilityElements = []
             setAccessibilityChildren(nil)
@@ -1070,6 +1070,12 @@ public final class MarkdownTextView: NSTextView {
         }
         var elements: [NSAccessibilityElement] = []
         parsedDocument.root.walk { block in
+            // Reuse this existing parse-commit traversal. Completion callbacks
+            // inspect only hash candidates, never rescan unrelated blocks.
+            if case .codeBlock(let language, _, _) = block.content,
+               PlantUMLFence.accepts(language), plantUMLRenderer != nil {
+                plantUMLBlocksByHash[block.subtreeHash, default: []].append(block)
+            }
             let descriptor: (label: String, role: NSAccessibility.Role, help: String)? = switch block.content {
             case .table: ("Markdown table", .group, "Rendered markdown table")
             case .mathBlock: ("Display math", .group, "Rendered display math")

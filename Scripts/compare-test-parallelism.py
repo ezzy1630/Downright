@@ -65,19 +65,27 @@ def main():
                 process = subprocess.Popen(command, env=dict(os.environ, DOWNRIGHT_SUPPORT_DIRECTORY=support),
                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
                 try:
-                    log, _ = process.communicate(timeout=600)
-                except subprocess.TimeoutExpired:
-                    with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGTERM)
                     try:
-                        log, _ = process.communicate(timeout=5)
+                        log, _ = process.communicate(timeout=600)
                     except subprocess.TimeoutExpired:
                         with suppress(ProcessLookupError):
-                            os.killpg(process.pid, signal.SIGKILL)
-                        log, _ = process.communicate()
-                    path = args.output / f"{mode}-{repeat}.log"
-                    path.write_text(log)
-                    raise SystemExit(f"{mode} trial exceeded 600 seconds; see {path}")
+                            os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            log, _ = process.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            with suppress(ProcessLookupError):
+                                os.killpg(process.pid, signal.SIGKILL)
+                            log, _ = process.communicate()
+                        path = args.output / f"{mode}-{repeat}.log"
+                        path.write_text(log)
+                        raise SystemExit(f"{mode} trial exceeded 600 seconds; see {path}")
+                except BaseException:
+                    # The trial owns a separate process group, so terminal
+                    # interruption and communication errors must retire it too.
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                    raise
             duration = time.monotonic()-started
             (args.output / f"{mode}-{repeat}.log").write_text(log)
             coverage = report.coverage(log)

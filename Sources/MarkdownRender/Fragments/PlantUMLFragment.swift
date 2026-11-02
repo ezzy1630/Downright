@@ -33,7 +33,8 @@ final class PlantUMLFragment: DownrightFragment {
             // request after eviction, but never repair another source revision.
             self?.requested = false
             guard let generation else { return }
-            view?.plantUMLDidRender(in: payload.sourceRange, source: payload.detail, dark: dark, generation: generation)
+            view?.plantUMLDidRender(in: payload.sourceRange, source: payload.detail, dark: dark,
+                                   blockHash: payload.parsedBlockHash, generation: generation)
         }
         return nil
     }

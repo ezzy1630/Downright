@@ -268,8 +268,9 @@ public class DownrightFragment: NSTextLayoutFragment {
         return storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
     }
 
-    /// TextKit range of the paragraph, measured by its content manager.
-    /// Callers crossing into source coordinates must use DisplayMap.
+    /// The native element's UTF-16 range, or the payload's source range when
+    /// no element is attached. MarkdownContentStorage's source-length layout
+    /// keeps those positions aligned; these are not compact display offsets.
     var elementSourceRange: NSRange {
         guard let element = textElement, let range = element.elementRange,
               let manager = element.textContentManager else { return payload.sourceRange }

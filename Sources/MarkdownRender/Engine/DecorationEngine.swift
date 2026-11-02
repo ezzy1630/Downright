@@ -1207,6 +1207,7 @@ public final class DecorationEngine {
         if kind == .listOrnament && !policy.rendersFragments { return nil }
         let payload = FragmentPayload(kind: kind, sourceRange: block.range,
                                       blockIdentity: block.identity, detail: detail)
+        if kind == .plantUML { payload.parsedBlockHash = block.subtreeHash }
         if kind == .listOrnament {
             // The provider reads paragraph prefixes. Extending this unique
             // payload across every label prevents Foundation from sharing
