@@ -8,10 +8,12 @@ import Testing
 /// `NSWindow`, a TextKit 2 document view, and a running display cycle.
 ///
 /// The test target also runs on headless CI. In that environment AppKit cannot
-/// deliver a real display frame, so the tests print a diagnostic and leave the
-/// frame-specific assertions to the next window-capable run. The layout and
+/// deliver a real display frame. Disabled coverage is reported as skipped;
+/// explicitly enabling this suite requires a working window server. Layout and
 /// parser suites remain the non-window fallback for that machine.
-@Suite("Real window performance", .serialized)
+@Suite("Real window performance", .serialized,
+       .enabled(if: ProcessInfo.processInfo.environment["RUN_REAL_WINDOW_PERF"] == "1",
+                "Requires RUN_REAL_WINDOW_PERF=1 and a window server"))
 @MainActor
 struct RealWindowPerformanceTests {
     private struct WindowFixture {
@@ -65,23 +67,6 @@ struct RealWindowPerformanceTests {
         let refreshRate = max(1, screen.maximumFramesPerSecond)
         let frameMilliseconds = refreshRate >= 100 ? 1_000 / 120.0 : 1_000 / 60.0
         return FrameBudget(refreshRate: refreshRate, frameMilliseconds: frameMilliseconds)
-    }
-
-    private func realWindowOrPrintSkip(requiresFiftyThousandLines: Bool = false) -> Bool {
-        guard ProcessInfo.processInfo.environment["RUN_REAL_WINDOW_PERF"] == "1" else {
-            print("REAL_WINDOW_PERF SKIP: set RUN_REAL_WINDOW_PERF=1 for rendered-window acceptance")
-            return false
-        }
-        if requiresFiftyThousandLines,
-           ProcessInfo.processInfo.environment["RUN_REAL_WINDOW_50K"] != "1" {
-            print("REAL_WINDOW_PERF SKIP: set RUN_REAL_WINDOW_50K=1 for the exhaustive 50k-line case")
-            return false
-        }
-        guard NSScreen.main != nil else {
-            print("REAL_WINDOW_PERF SKIP: no NSScreen.main; display-cycle acceptance requires a window server")
-            return false
-        }
-        return true
     }
 
     private func makeFixture(lines: Int) throws -> WindowFixture {
@@ -239,7 +224,6 @@ struct RealWindowPerformanceTests {
 
     @Test("10k-line typing and scrolling stay within a bounded five-frame hitch")
     func tenThousandLineTypingAndScrolling() throws {
-        guard realWindowOrPrintSkip() else { return }
         let fixture = try makeFixture(lines: 10_000)
         defer { fixture.close() }
         let window = try #require(fixture.controller.window)
@@ -277,9 +261,10 @@ struct RealWindowPerformanceTests {
         #expect(textView.topVisibleOffset > 0)
     }
 
-    @Test("50k-line typing, scrolling, and split panes remain measurable")
+    @Test("50k-line typing, scrolling, and split panes remain measurable",
+          .enabled(if: ProcessInfo.processInfo.environment["RUN_REAL_WINDOW_50K"] == "1",
+                   "Requires RUN_REAL_WINDOW_50K=1"))
     func fiftyThousandLineTypingScrollingAndSplitView() throws {
-        guard realWindowOrPrintSkip(requiresFiftyThousandLines: true) else { return }
         let fixture = try makeFixture(lines: 50_000)
         defer { fixture.close() }
         let window = try #require(fixture.controller.window)
@@ -332,7 +317,6 @@ struct RealWindowPerformanceTests {
 
     @Test("IME marked text and rich constructs use the same frame path")
     func imeCompositionAndRichBlocks() throws {
-        guard realWindowOrPrintSkip() else { return }
         let fixture = try makeFixture(lines: 10_000)
         defer { fixture.close() }
         let window = try #require(fixture.controller.window)
@@ -363,7 +347,6 @@ struct RealWindowPerformanceTests {
 
     @Test("external atomic rewrite delivers bounded scroll frames through convergence")
     func externalRewriteWhileScrolling() async throws {
-        guard realWindowOrPrintSkip() else { return }
         let fixture = try makeFixture(lines: 10_000)
         defer { fixture.close() }
         let window = try #require(fixture.controller.window)

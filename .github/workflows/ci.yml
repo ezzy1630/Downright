@@ -1,17 +1,22 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      production:
+        description: Require production updater acceptance before release
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Only the newest result on a branch matters, including manually started runs.
+# Manual branch runs cancel older manual runs. Main release calls never
+# cancel an in-flight release or its validation.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
   swift:
@@ -24,6 +29,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Fast repository checks
+        run: Scripts/check-fast.sh
       # The runner's default developer directory is not guaranteed to provide
       # the Swift 6.0 tools this package's manifest declares, and when it does
       # not, every step fails with a message that names neither the selected
@@ -38,7 +45,8 @@ jobs:
       # Restore compiled modules, not test results. SwiftPM still checks the
       # current sources, and every test and benchmark runs even on a cache hit.
       - name: Restore Swift build graphs
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .build-ci-main
@@ -55,70 +63,51 @@ jobs:
         env:
           SCRATCH: .build-ci-main
           RUN_DRBENCH: "1"
-        run: ./Scripts/check.sh
+          CHECK_VERBOSE_BUILD: "1"
+          CI_CACHE_REQUESTED_KEY: ${{ steps.cache.outputs.cache-primary-key }}
+          CI_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
+          CI_CACHE_EXACT_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: python3 Scripts/ci-report.py --name source --output .build-ci-evidence/source --require-tests -- Scripts/check.sh
+      - name: Save validated Swift build graphs
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+          path: |
+            .build-ci-main
+            .build-ci-main-bench
+            !.build-ci-main/**/index
+            !.build-ci-main-bench/**/index
+      - name: Retain source diagnostics and timing report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build-ci-evidence/source
+          retention-days: 7
+          if-no-files-found: warn
 
   app-acceptance:
-    # Unit tests exercise the package graph without an activated NSApplication.
-    # Keep this as a separate lane so a green headless run cannot hide
-    # a stale bundle, missing nested code, or a broken real window.
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - name: Select and verify the Swift toolchain
-        run: ./Scripts/select-toolchain.sh
-      - name: Identify compiler and SDK for the build cache
-        id: cache-toolchain
-        run: |
-          ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
-          echo "id=$ID" >> "$GITHUB_OUTPUT"
-      - name: Restore native build intermediates
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: ./.github/actions/native-check
         with:
-          path: |
-            .build-ci-app/Build/Intermediates.noindex
-            .build-ci-app/Build/Products
-            .build-ci-app/ModuleCache.noindex
-            .build-ci-app/SourcePackages
-            .build-ci-app-spm-arm64
-            .build-ci-app-spm-x86_64
-            !.build-ci-app-spm-*/**/index
-          key: native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'project.yml', 'Config/**', 'Scripts/check-app.sh', 'Scripts/bundle-spotlight.sh', 'Scripts/build-universal-product.sh') }}-${{ github.sha }}
-          restore-keys: |
-            native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'project.yml', 'Config/**', 'Scripts/check-app.sh', 'Scripts/bundle-spotlight.sh', 'Scripts/build-universal-product.sh') }}-
-      # Pinned like the release workflow: xcodegen generates the project the
-      # acceptance lane builds, so it is a checksummed upstream binary, not a
-      # floating Homebrew head.
-      - name: Install pinned xcodegen
-        run: |
-          set -euo pipefail
-          XCODEGEN_VERSION=2.46.0
-          XCODEGEN_SHA256=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
-          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
-          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
-          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
-          sudo mkdir -p /usr/local/bin /usr/local/share
-          sudo cp "$RUNNER_TEMP/xcodegen/bin/xcodegen" /usr/local/bin/xcodegen
-          sudo chmod +x /usr/local/bin/xcodegen
-          # The SettingPresets (ONLY_ACTIVE_ARCH=YES for Debug, plus the other
-          # default settings) ship in the zip's share/ tree, which xcodegen
-          # resolves relative to the binary. A binary-only install silently
-          # drops them, and the generated project then builds the app-extension
-          # and UI-test targets for every standard architecture, mismatching
-          # the arm64-only package modules. Copy the tree, not just the binary.
-          sudo cp -R "$RUNNER_TEMP/xcodegen/share/xcodegen" /usr/local/share/xcodegen
-          xcodegen --version
-      - name: Build and run the activated-app acceptance suite
-        env:
-          APP_ACCEPTANCE_SCRATCH: .build-ci-app
-          SPOTLIGHT_SCRATCH: .build-ci-app-spm
-        run: ./Scripts/check-app.sh
-      - name: Retain native interaction evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          name: native-acceptance
+
+  production-updater:
+    if: inputs.production
+    runs-on: macos-26
+    environment: release
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          name: native-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .build-ci-app/TestResults
-          retention-days: 3
-          if-no-files-found: warn
+          fetch-depth: 0
+      - uses: ./.github/actions/native-check
+        with:
+          name: production-updater
+          configuration: Release
+          production: '1'
+          sparkle-public-key: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}

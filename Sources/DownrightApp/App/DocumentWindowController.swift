@@ -664,6 +664,7 @@ final class DocumentWindowController: NSWindowController {
 
     private func buildInterface() {
         primaryContainer = MarkdownContainerView(storage: markdownDocument.storage)
+        primaryContainer.textView.plantUMLRenderer = LocalPlantUMLRenderer()
         primaryContainer.textView.markdownDelegate = self
         wireKeyEventHandler(primaryContainer.textView)
         // Style through the container so `scrollView.backgroundColor` follows

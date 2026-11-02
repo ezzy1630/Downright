@@ -1,0 +1,101 @@
+name: Native acceptance
+description: Build, verify and exercise an exact native bundle with retained evidence
+inputs:
+  name:
+    description: Evidence name
+    required: true
+  configuration:
+    description: Xcode build configuration
+    default: Debug
+  production:
+    description: Exercise the production updater identity
+    default: '0'
+  sparkle-public-key:
+    description: Production Sparkle public key
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Select and verify the Swift toolchain
+      shell: bash
+      run: Scripts/select-toolchain.sh
+    - name: Identify compiler and SDK
+      id: toolchain
+      shell: bash
+      run: |
+        ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
+        echo "id=$ID" >> "$GITHUB_OUTPUT"
+    - name: Restore native build intermediates
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .build-ci-native/Build/Intermediates.noindex
+          .build-ci-native/Build/Products
+          .build-ci-native/ModuleCache.noindex
+          .build-ci-native/SourcePackages
+          .build-ci-native-spm-arm64
+          .build-ci-native-spm-x86_64
+          !.build-ci-native-spm-*/**/index
+        key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ inputs.configuration }}-${{ inputs.production }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'project.yml', 'Config/**', 'Scripts/check-app.sh', 'Scripts/build-universal-product.sh', 'Scripts/bundle-spotlight.sh') }}-${{ github.sha }}
+        restore-keys: |
+          native-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ inputs.configuration }}-${{ inputs.production }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'project.yml', 'Config/**', 'Scripts/check-app.sh', 'Scripts/build-universal-product.sh', 'Scripts/bundle-spotlight.sh') }}-
+    - name: Install pinned XcodeGen with its presets
+      shell: bash
+      run: Scripts/install-xcodegen.sh
+    - name: Build and run native acceptance
+      id: check
+      shell: bash
+      env:
+        CHECK_NAME: ${{ inputs.name }}
+        APP_ACCEPTANCE_CONFIGURATION: ${{ inputs.configuration }}
+        APP_ACCEPTANCE_PRODUCTION: ${{ inputs.production }}
+        DOWNRIGHT_UPDATER_SMOKE: ${{ inputs.production }}
+        SPARKLE_ED25519_PUBLIC_KEY: ${{ inputs.sparkle-public-key }}
+        CI_CACHE_REQUESTED_KEY: ${{ steps.cache.outputs.cache-primary-key }}
+        CI_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
+        CI_CACHE_EXACT_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        export APP_ACCEPTANCE_SCRATCH=.build-ci-native
+        export SPOTLIGHT_SCRATCH=.build-ci-native-spm
+        if [ "$APP_ACCEPTANCE_PRODUCTION" = 1 ]; then
+          export APP_ACCEPTANCE_MARKETING_VERSION=1.0.15
+          export APP_ACCEPTANCE_BUILD_NUMBER=1
+        fi
+        python3 Scripts/ci-report.py --name "$CHECK_NAME" --output .build-ci-evidence/native --require-tests -- Scripts/check-app.sh
+    - name: Exercise the hardened PlantUML worker
+      shell: bash
+      env:
+        CONFIGURATION: ${{ inputs.configuration }}
+      run: |
+        set -euo pipefail
+        APP=".build-ci-native/Build/Products/$CONFIGURATION/Downright.app"
+        COPY="$RUNNER_TEMP/plantuml-worker"
+        mkdir -p "$COPY/Contents/MacOS" "$COPY/Contents/Resources"
+        cp "$APP/Contents/MacOS/down" "$COPY/Contents/MacOS/down"
+        cp -R "$APP/Contents/Resources/PlantUML" "$COPY/Contents/Resources/PlantUML"
+        codesign --force --options runtime --sign - "$COPY/Contents/MacOS/down"
+        python3 Scripts/check-plantuml-worker.py "$COPY/Contents/MacOS/down"
+    - name: Save validated native intermediates
+      if: success() && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.cache.outputs.cache-primary-key }}
+        path: |
+          .build-ci-native/Build/Intermediates.noindex
+          .build-ci-native/Build/Products
+          .build-ci-native/ModuleCache.noindex
+          .build-ci-native/SourcePackages
+          .build-ci-native-spm-arm64
+          .build-ci-native-spm-x86_64
+          !.build-ci-native-spm-*/**/index
+    - name: Retain native evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          .build-ci-evidence/native
+          .build-ci-native/TestResults
+        retention-days: 7
+        if-no-files-found: warn

@@ -94,6 +94,7 @@ public final class MarkdownTextView: NSTextView {
     public var keyEventHandler: ((NSEvent) -> Bool)?
 
     public private(set) var parsedDocument: ParsedDocument = .empty
+    private var pendingPresentationRefresh = false
 
     /// Instant, and preserves scroll position and selection (§3.2).
     public var mode: RenderMode = .live {
@@ -181,12 +182,9 @@ public final class MarkdownTextView: NSTextView {
 
     public var styleSheet: StyleSheet {
         didSet {
+            guard canRefreshPresentation else { return }
             let anchor = captureViewportAnchor()
-            engine.styleSheet = styleSheet
-            fragmentContext.styleSheet = styleSheet
-            fragmentContext.invalidateDerivedLayout()
-            applyMeasure()
-            applyModeChrome()
+            synchronizeStyleSheet()
             // Font / measure changes need a full geometry rebuild. Colour-only
             // theme swaps only need attributes and fragment restyles.
             let geometryChanged =
@@ -320,6 +318,23 @@ public final class MarkdownTextView: NSTextView {
     public var allowsAnimatedImages = true {
         didSet { if allowsAnimatedImages != oldValue { refreshInlineImages() } }
     }
+    private var installedPlantUMLRenderer: PlantUMLRendering?
+    public var plantUMLRenderer: PlantUMLRendering? {
+        get { installedPlantUMLRenderer }
+        set {
+            installedPlantUMLRenderer = newValue
+            fragmentContext.plantUMLRenderer = newValue
+            engine.rendersPlantUML = newValue != nil
+            rebuildEverything()
+        }
+    }
+    func plantUMLDidRender(in sourceRange: NSRange, generation: Int) {
+        guard generation == updateGeneration, canRefreshPresentation else { return }
+        let anchor = captureViewportAnchor()
+        invalidateFragments(in: sourceRange)
+        requestContentResize(.viewport, anchor: anchor, preservingReadingPosition: true)
+    }
+
     private var installedRemoteImageLoader: RemoteImageLoading?
     public var remoteImageLoader: RemoteImageLoading? {
         get { installedRemoteImageLoader }
@@ -780,6 +795,9 @@ public final class MarkdownTextView: NSTextView {
         localAssetAuthorizer = source.localAssetAuthorizer
         parsedDocument = source.parsedDocument
         installedRemoteImageLoader = source.remoteImageLoader
+        installedPlantUMLRenderer = source.plantUMLRenderer
+        fragmentContext.plantUMLRenderer = installedPlantUMLRenderer
+        engine.rendersPlantUML = installedPlantUMLRenderer != nil
         fragmentContext.remoteImageLoader = installedRemoteImageLoader
         engine.loadsRemoteImages = installedRemoteImageLoader != nil
         inlineImages.remoteImageLoader = installedRemoteImageLoader
@@ -900,8 +918,13 @@ public final class MarkdownTextView: NSTextView {
         let currentMode = mode
         let oldParagraphCount = paragraphIndex.starts.count
         let isWholesaleUpdate = isInitialUpdate || dirty.isWholesale
-        let dirtyScopes = isWholesaleUpdate ? [] : sourceScopes(for: dirty)
+        let refreshesPresentation = pendingPresentationRefresh
+        pendingPresentationRefresh = false
+        let isFullRefresh = isWholesaleUpdate || refreshesPresentation
+        let decorationDirty: DirtySet = isFullRefresh ? .wholesale : dirty
+        let dirtyScopes = isFullRefresh ? [] : sourceScopes(for: dirty)
         parsedDocument = document
+        if refreshesPresentation { synchronizeStyleSheet() }
         hoveredLinkRange = nil
         updateGeneration &+= 1
         if isWholesaleUpdate {
@@ -924,10 +947,10 @@ public final class MarkdownTextView: NSTextView {
         contentStorage.performEditingTransaction {
             rebuildParagraphIndex()
 
-            engine.decorate(storage, document: document, dirty: dirty)
-            applySourcePresentation(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+            engine.decorate(storage, document: document, dirty: decorationDirty)
+            applySourcePresentation(scopes: isFullRefresh ? nil : dirtyScopes)
             if configuration.showInvisibles || invisiblesApplied {
-                applyInvisibles(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+                applyInvisibles(scopes: isFullRefresh ? nil : dirtyScopes)
             }
             autoreleasepool { rebuildBaseDisplayMap(document: document) }
             autoreleasepool { refreshElision(rebuildingMap: false) }
@@ -936,25 +959,25 @@ public final class MarkdownTextView: NSTextView {
             // and a narrower repair leaves the rest of those blocks claiming nothing
             // is hidden in them.  This is the path an external write takes, so it is
             // the one where it mattered most.
-            let decoratedScopes = isWholesaleUpdate
+            let decoratedScopes = isFullRefresh
                 ? []
                 : engine.decoratedBounds(for: dirty, in: document, length: storage.length)
             autoreleasepool {
                 rebuildDisplayMap(
-                    fullRefresh: isWholesaleUpdate,
+                    fullRefresh: isFullRefresh,
                     additionalScopes: decoratedScopes
                 )
             }
-            applyOverlays(scopes: isWholesaleUpdate ? nil : decoratedScopes)
-            applyPathExistence(scopes: isWholesaleUpdate ? nil : decoratedScopes)
-            if isWholesaleUpdate {
+            applyOverlays(scopes: isFullRefresh ? nil : decoratedScopes)
+            applyPathExistence(scopes: isFullRefresh ? nil : decoratedScopes)
+            if isFullRefresh {
                 invalidateAllFragments()
             }
         }
         gutterRail?.reload()
         refreshFragmentAccessibility()
         let resizeRequest: ContentResizeRequest
-        if isWholesaleUpdate {
+        if isFullRefresh {
             resizeRequest = .immediate
         } else if paragraphIndex.starts.count != oldParagraphCount {
             resizeRequest = .lineCount
@@ -1037,6 +1060,8 @@ public final class MarkdownTextView: NSTextView {
             case .table: ("Markdown table", .group, "Rendered markdown table")
             case .mathBlock: ("Display math", .group, "Rendered display math")
             case .mermaid: ("Mermaid diagram", .group, "Rendered mermaid diagram")
+            case .codeBlock(let language, _, _) where PlantUMLFence.accepts(language) && plantUMLRenderer != nil:
+                ("PlantUML diagram", .group, "Locally rendered PlantUML diagram")
             case .frontMatter: (
                 "Edit document metadata",
                 .button,
@@ -1620,7 +1645,28 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// Storage edits precede their asynchronous parse. Presentation changes
+    /// must wait rather than use the previous revision's source ranges.
+    private var canRefreshPresentation: Bool {
+        guard let storage = textStorage,
+              storage.length == parsedDocument.length,
+              storage.string.utf16.elementsEqual(parsedDocument.text.utf16) else {
+            pendingPresentationRefresh = true
+            return false
+        }
+        return true
+    }
+
+    private func synchronizeStyleSheet() {
+        engine.styleSheet = styleSheet
+        fragmentContext.styleSheet = styleSheet
+        fragmentContext.invalidateDerivedLayout()
+        applyMeasure()
+        applyModeChrome()
+    }
+
     private func rebuildEverything() {
+        guard canRefreshPresentation else { return }
         guard let storage = textStorage else { return }
         // The content storage is reconfigured from the paragraph index below,
         // so it has to describe the text that is in the buffer right now.  A
@@ -1644,6 +1690,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Theme colour / accent swaps that do not change typography.
     private func restyleAttributesPreservingGeometry() {
+        guard canRefreshPresentation else { return }
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
         applySourcePresentation()
@@ -3493,7 +3540,10 @@ public final class MarkdownTextView: NSTextView {
                          height: CGFloat.greatestFiniteMagnitude)
         backgroundColor = styleSheet.background
         insertionPointColor = mode.policy.showsInsertionPoint ? styleSheet.accent : styleSheet.text
-        selectedTextAttributes = [.backgroundColor: styleSheet.selection]
+        selectedTextAttributes = [
+            .backgroundColor: styleSheet.selection,
+            .foregroundColor: styleSheet.selectionText,
+        ]
     }
 
     func applyResponsiveMeasure(_ width: CGFloat) {

@@ -96,6 +96,7 @@ public final class FragmentContext {
     public var localAssetAuthorizer: ((URL) -> Bool)?
     /// Host-owned, explicit opt-in. Quick Look leaves this nil.
     public var remoteImageLoader: RemoteImageLoading?
+    public var plantUMLRenderer: PlantUMLRendering?
     /// Paragraph structure of the current text, for line counts and collapse.
     var paragraphIndex: ParagraphIndex = .empty
     /// Zoom + fold + search visibility (§5.2, §7.1, §9.4).

@@ -34,7 +34,8 @@ with open(os.environ["SWIFT_CALLS"], "a") as log:
 command = sys.argv[1]
 if command == "test" and os.environ.get("ZERO_TESTS") != "1":
     print("✔ Test example() passed after 0.001 seconds.")
-    print("✔ Test run with 1 test passed after 0.001 seconds.")
+    if os.environ.get("MISSING_TEST_SUMMARY") != "1":
+        print("✔ Test run with 1 test passed after 0.001 seconds.")
 elif command == "run":
     print("Typing response p95: 1 ms")
 sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
@@ -120,6 +121,11 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("NO TESTS RAN", result.stdout)
         self.assertFalse(any(call[0] == "run" for call in calls))
+
+    def test_success_without_a_completed_test_run_is_rejected(self):
+        result, _ = self.run_gate(MISSING_TEST_SUMMARY="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NO TESTS RAN", result.stdout)
 
     def test_release_budget_failure_is_rejected(self):
         result, _ = self.run_gate(RUN_DRBENCH="1", RUN_STATUS="1")

@@ -1,7 +1,7 @@
 # Releasing Downright
 
 Downright is distributed **outside the Mac App Store**, signed and notarised,
-updated via Sparkle 2.10.0 with a fully custom user interface (spec §3.4 and the
+updated via Sparkle 2.10.1 with a fully custom user interface (spec §3.4 and the
 custom-updater spec). No standard Sparkle window ever appears; `UpdateCoordinator`
 owns every visible interaction.
 
@@ -18,9 +18,20 @@ no Xcode project involved. What it cannot do:
 | Developer ID signing and notarisation | Requires a certificate in the login keychain and an App Store Connect API key. |
 
 Everything else — the app, the render packages, the CLI, the tests, and the
-Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.10.0 binary
+Spotlight importer — builds with the Command Line Tools alone. `swift build` fetches the Sparkle 2.10.1 binary
 XCFramework (pinned exactly in `Package.swift`), so building the app needs
 network access the first time.
+
+The Mac host must also carry the generated PlantUML runtime and its two
+upstream licenses. Xcode copies `Sources/PlantUMLRuntime/Resources/PlantUML`
+into `Contents/Resources/PlantUML`; SwiftPM bundles carry it inside
+`Downright_PlantUMLRuntime.bundle`. `verify-bundle.sh` checks both layouts.
+The embedded CLI remains universal with its host and runs diagram work in
+a bounded local JavaScriptCore worker, never in a WebView or remote service.
+Hosted acceptance exercises a hardened copy of the packaged worker, and the
+release workflow repeats that check on the Developer ID signed worker before
+notarization. Both use the host's five-second deadline without adding JIT
+entitlements.
 
 ## The one version source
 
@@ -148,8 +159,13 @@ notarise and staple the DMG. Credentials come from either a stored
 `notarytool` keychain profile or the App Store Connect API key variables.
 
 The GitHub Actions pipeline (`.github/workflows/release.yml`) is the supported
-path for the rolling production channel: every push to `main` publishes the
-reviewed commit as the newest customer-facing build. Feature branches can run
+path for the rolling production channel: every push to `main` first calls
+same-commit reusable CI. Source tests/release budgets, development native
+acceptance and production updater acceptance run concurrently. The archive job
+requires the whole validation workflow to pass; source validation is not repeated
+inside the signing job. Production updater intermediates have a separate
+configuration-specific cache. Only then can the reviewed commit become the
+newest customer-facing build. See [CI.md](CI.md) for logs, cache provenance and coverage boundaries. Feature branches can run
 CI manually with `workflow_dispatch` and do not publish. The pipeline signs every nested executable
 individually (no `codesign --deep`), notarises with the App Store Connect API key, staples, runs
 `codesign --verify --deep --strict` / `spctl` / `stapler validate`, publishes
@@ -249,7 +265,7 @@ nothing may rewrite the XML afterwards — the `SURequireSignedFeed=YES`
 contract. The private key is passed to both tools through standard input from
 the `SPARKLE_ED25519_PRIVATE_KEY` secret and is never written to disk or logged.
 `sign_update --verify` (also via stdin) is the workflow's post-sign validation;
-Sparkle 2.10.0 ships no `appcast_validate` binary.
+Sparkle 2.10.1 ships no `appcast_validate` binary.
 
 ## Bundle verification
 

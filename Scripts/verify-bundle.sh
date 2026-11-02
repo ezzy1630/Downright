@@ -77,6 +77,12 @@ fi
 
 # --- CLI ---------------------------------------------------------------------
 check "$([ -x "$MACOS/down" ] && echo 1 || echo 0)" "down CLI embedded"
+PLANTUML="$CONTENTS/Resources/PlantUML"
+if [ ! -d "$PLANTUML" ]; then
+    PLANTUML="$CONTENTS/Resources/Downright_PlantUMLRuntime.bundle/PlantUML"
+fi
+check "$([ -s "$PLANTUML/runtime.js" ] && [ -s "$PLANTUML/PlantUML-LICENSE" ] && [ -s "$PLANTUML/xmldom-LICENSE" ] && echo 1 || echo 0)" \
+      "local PlantUML worker runtime and licenses embedded"
 
 # --- Privacy manifest --------------------------------------------------------
 # Required-reason APIs (UserDefaults CA92.1, file timestamps C617.1) must be

@@ -18,6 +18,7 @@ Sources/
   MarkdownCore/     parse, extensions, ranges, AST diff, text edits
   MarkdownRender/   TextKit 2 decoration, fragments, layout, themes
   MarkdownTextKitBridge/  native enumeration callback adapter
+  PlantUMLRuntime/  pinned PlantUML engine for the disposable CLI worker
   DownrightApp/     windows, commands, panels, file and agent workflows
   DownrightQL/      Quick Look preview extension
   DownrightThumb/   Quick Look thumbnail extension
@@ -35,6 +36,24 @@ Source-test hosts do not run `NSApplication.run()`. Document windows disable
 native transform animations in that host so they cannot strand dispatch workers;
 running applications keep the native animation policy. Activated-app acceptance
 remains a separate gate from source tests.
+
+## PlantUML diagrams
+
+The Mac host installs `LocalPlantUMLRenderer` through the render package's
+`PlantUMLRendering` boundary. `plantuml` and `puml` fences retain their original
+code-block AST and source ranges; the decorator selects a diagram fragment
+only when the host adapter is present. Source Focus remains editable code.
+
+The adapter runs the bundled `down` worker off the main thread, with a
+five-second deadline, 32 KiB source limit, 1 MiB SVG limit, and bounded raster
+cache. The worker loads the official MIT-licensed PlantUML JavaScript build
+in JavaScriptCore, uses native font measurements and Smetana layout, and
+exposes no network or filesystem loaders. There is no WebView or Java runtime.
+The generated runtime, pinned build inputs, licenses, and layout limitations
+are documented in [Vendor/PlantUML](../Vendor/PlantUML/README.md).
+
+Quick Look never installs the worker adapter and keeps these fences as code.
+Mermaid continues to use its existing native renderer on both surfaces.
 
 ## Document pipeline
 
@@ -73,6 +92,9 @@ punctuation so quotes and dashes are not rewritten in the AST.
 The parser can reparse the full document. The expensive work is layout, so the
 renderer diffs blocks and restyles only dirty blocks. A wholesale restyle is
 used for mode or theme changes.
+If storage has advanced beyond its parsed revision, presentation refreshes wait
+for the matching parse. That commit restyles the whole presentation without
+clearing the user's code-collapse choices or source selection.
 
 Opening performs one full parse before the first decorated presentation.
 The former structure-only first paint required the same CommonMark work and

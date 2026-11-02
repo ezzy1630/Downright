@@ -61,7 +61,7 @@ performance, with the original Markdown remaining authoritative on disk.
 |---|---|
 | Native CommonMark and GFM rendering | Exact source remains authoritative |
 | Beautiful typography and six themes | Document and Source views share position and selection |
-| Math, Mermaid, tables, tasks, callouts, images, and footnotes | Safe external-change tracking and conflict protection |
+| Math, Mermaid, PlantUML, tables, tasks, callouts, images, and footnotes | Safe external-change tracking and conflict protection |
 | Quick Look previews and Finder thumbnails | Local snapshots and a version timeline |
 | Outline, structural zoom, and density navigation | Search sibling files without creating a vault |
 | HTML/PDF export, Services, and Spotlight metadata | `down` and `md` terminal commands |

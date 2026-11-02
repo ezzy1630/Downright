@@ -1,6 +1,6 @@
 name: Release
 
-# Every push to `main` triggers the rolling production pipeline: gates → tests →
+# Every push to `main` triggers shared source/native/updater validation, then
 # signed, notarized, stapled universal build → Sparkle-signed appcast → GitHub
 # Release → GitHub Pages deployment. Feature branches can run CI manually;
 # a merge or push to `main` is the release event. All secrets live in the
@@ -20,7 +20,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    uses: ./.github/workflows/ci.yml
+    with:
+      production: true
+    secrets: inherit
+
   release:
+    # All three lanes validate the caller SHA before any archive can ship.
+    needs: validation
     # The app directly references macOS 26 AppKit Liquid Glass APIs, so both
     # CI and the shipping archive must compile against the macOS 26 SDK.
     runs-on: macos-26
@@ -40,7 +48,6 @@ jobs:
 
     env:
       MARKETING_VERSION_FILE: Config/version.env
-      SCRATCH: .build-ci-main
 
     steps:
       # ---------------------------------------------------------------- gates
@@ -105,56 +112,8 @@ jobs:
       - name: Select and verify the Swift toolchain
         run: ./Scripts/select-toolchain.sh
 
-      # Share only the source-check graphs with CI. Production archives and
-      # updater acceptance still build through their separate release paths.
-      - name: Identify compiler and SDK for the build cache
-        id: cache-toolchain
-        run: |
-          ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
-          echo "id=$ID" >> "$GITHUB_OUTPUT"
-      - name: Restore Swift build graphs
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            .build-ci-main
-            .build-ci-main-bench
-            !.build-ci-main/**/index
-            !.build-ci-main-bench/**/index
-          key: swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-${{ github.sha }}
-          restore-keys: |
-            swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-
-
-      # xcodegen generates the Xcode project that becomes the signed,
-      # notarized archive, so it is pinned like every other release input:
-      # a checksummed upstream binary instead of a floating Homebrew head.
-      - name: Install pinned xcodegen
-        run: |
-          set -euo pipefail
-          XCODEGEN_VERSION=2.46.0
-          XCODEGEN_SHA256=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
-          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
-          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
-          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
-          sudo mkdir -p /usr/local/bin /usr/local/share
-          sudo cp "$RUNNER_TEMP/xcodegen/bin/xcodegen" /usr/local/bin/xcodegen
-          sudo chmod +x /usr/local/bin/xcodegen
-          # The SettingPresets (ONLY_ACTIVE_ARCH=YES for Debug, plus the other
-          # default settings) ship in the zip's share/ tree, which xcodegen
-          # resolves relative to the binary. A binary-only install silently
-          # drops them, and the generated project then builds app-extension
-          # targets for every standard architecture, mismatching the arm64-only
-          # package modules. Copy the tree, not just the binary.
-          sudo cp -R "$RUNNER_TEMP/xcodegen/share/xcodegen" /usr/local/share/xcodegen
-          xcodegen --version
-
-      - name: Resolve pinned dependencies
-        run: swift package resolve
-
-      - name: Run full check suite (all unit/UI suites + version gates)
-        env:
-          RUN_DRBENCH: "1"  # release performance budgets enforced
-        run: ./Scripts/check.sh
+      - name: Install pinned XcodeGen with its presets
+        run: Scripts/install-xcodegen.sh
 
       # ----------------------------------------------------------- build (Xcode)
       - name: Generate Xcode project
@@ -164,21 +123,6 @@ jobs:
         run: Scripts/prepare-release-info-plist.sh
         env:
           SPARKLE_ED25519_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
-
-      - name: Exercise production updater from a lower version
-        # This is intentionally before the archive is created. A future UI
-        # transition regression must stop the release while the public channel
-        # still points at the last known-good build.
-        env:
-          APP_ACCEPTANCE_PRODUCTION: "1"
-          APP_ACCEPTANCE_CONFIGURATION: Release
-          APP_ACCEPTANCE_MARKETING_VERSION: "1.0.15"
-          APP_ACCEPTANCE_BUILD_NUMBER: "1"
-          DOWNRIGHT_UPDATER_SMOKE: "1"
-          APP_ACCEPTANCE_SCRATCH: .build-production-updater-smoke
-          SPOTLIGHT_SCRATCH: .build-production-updater-smoke-spm
-          SPARKLE_ED25519_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
-        run: Scripts/check-app.sh
 
       - name: Build Release archive (universal)
         run: |
@@ -344,6 +288,9 @@ jobs:
             codesign --verify --strict --verbose=2 "$item"
           done
 
+      - name: Exercise the signed PlantUML worker
+        run: python3 Scripts/check-plantuml-worker.py "$APP/Contents/MacOS/down"
+
       - name: Notarize, staple, and verify
         shell: bash
         run: |
@@ -451,9 +398,9 @@ jobs:
       - name: Fetch Sparkle signing tools (pinned version)
         run: |
           set -euo pipefail
-          SPARKLE_SHA256="c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c"
+          SPARKLE_SHA256="1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27"
           curl -fsSL -o /tmp/sparkle.tar.xz \
-            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-2.10.1.tar.xz
           echo "$SPARKLE_SHA256  /tmp/sparkle.tar.xz" | shasum -a 256 -c -
           # Sparkle's archive has ./bin at its root; isolate extraction so the
           # tool paths remain stable and cannot collide with runner temp files.
@@ -508,7 +455,7 @@ jobs:
                 --link "https://github.com/${{ github.repository }}" \
                 --maximum-versions 1 \
                 /tmp/appcast-input
-          # Validation battery (Sparkle 2.10.0 ships no appcast_validate tool).
+          # Validation battery (Sparkle 2.10.1 ships no appcast_validate tool).
           # sign_update --verify needs the private seed (it derives the public
           # key); the public key alone is rejected.
           echo "Validating generated appcast XML"

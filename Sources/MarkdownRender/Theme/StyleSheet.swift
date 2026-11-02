@@ -69,6 +69,13 @@ public struct StyleSheet {
     public var searchHitCurrent: NSColor
     public var selection: NSColor
 
+    /// Syntax colours can blend into the selection fill. Use one contrasting
+    /// foreground while selected, then let AppKit restore syntax on dismissal.
+    public var selectionText: NSColor {
+        let field = ColorResolver.blend(background, selection, selection.alphaComponent)
+        return Self.contrastRatio(.black, field) >= Self.contrastRatio(.white, field) ? .black : .white
+    }
+
     /// The start action uses Apple's blue control colour rather than the
     /// document theme accent.  The latter is semantic editor colour used for
     /// carets, links, tasks, and review marks; changing those just to restyle
