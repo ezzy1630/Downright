@@ -102,6 +102,7 @@ struct StarPromptNoticeTests {
         notice.show()
         #expect(notice.panel.appearance?.name == .aqua)
         window.appearance = NSAppearance(named: .darkAqua)
+        #expect(notice.panel.appearance?.name == .darkAqua)
         ThemeStore.shared.select(named: "Warm Dark")
         #expect(notice.panel.appearance?.name == .darkAqua)
         let expected = StyleSheet(theme: ThemeStore.shared.current, appearance: window.effectiveAppearance)

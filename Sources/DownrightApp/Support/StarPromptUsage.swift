@@ -48,7 +48,7 @@ struct StarPromptUsage: Codable, Equatable {
 /// their partial interval so time in another app cannot make the offer eligible.
 struct StarPromptReadingClock {
     /// One five-second sample plus timer tolerance. Event-tracking loops can
-    /// suspend the timer for minutes; that gap is not observed reading time.
+    /// suspend the timer for minutes; a longer gap earns at most one sample.
     static let maximumSampleSeconds: TimeInterval = 6
     private var previous: (time: TimeInterval, isReading: Bool)?
 
