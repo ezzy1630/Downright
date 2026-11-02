@@ -425,7 +425,7 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     func testStarSuggestionKeepsTypingFocusAndRetiresAfterPointerDismissal() throws {
-        try seedStarSuggestion(theme: "Paper Light")
+        try seedStarSuggestion(theme: "Paper Light", foregroundSeconds: 580)
         let original = try Data(contentsOf: fixture)
         app.launch()
         app.activate()
@@ -487,7 +487,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         try assertStarSuggestionRetired()
     }
 
-    private func seedStarSuggestion(theme: String) throws {
+    private func seedStarSuggestion(theme: String, foregroundSeconds: Int = 600) throws {
         let support = try XCTUnwrap(app.launchEnvironment["DOWNRIGHT_SUPPORT_DIRECTORY"])
         let preferencesFile = URL(fileURLWithPath: support).appendingPathComponent("preferences.json")
         var preferences = try XCTUnwrap(
@@ -499,7 +499,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         // The fixture's real successful open supplies the fifth open. No
         // runtime switch bypasses production eligibility or input-idle rules.
         let usage: [String: Any] = [
-            "documentOpens": 4, "foregroundSeconds": 600, "hasBeenOffered": false,
+            "documentOpens": 4, "foregroundSeconds": foregroundSeconds, "hasBeenOffered": false,
         ]
         preferences["starPrompt"] = usage
         try JSONSerialization.data(withJSONObject: preferences).write(to: preferencesFile, options: .atomic)
