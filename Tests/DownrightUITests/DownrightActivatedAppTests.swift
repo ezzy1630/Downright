@@ -464,7 +464,9 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     func testStarSuggestionFitsNarrowWindowAndEscapeInDarkAppearance() throws {
-        try seedStarSuggestion(theme: "Warm Dark", foregroundSeconds: 580)
+        // Leave time to resize before eligibility, while keeping the first
+        // observation and the next five-second tick inside the 20-second wait.
+        try seedStarSuggestion(theme: "Warm Dark", foregroundSeconds: 590)
         app.launch()
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
