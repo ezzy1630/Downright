@@ -37,6 +37,24 @@ native transform animations in that host so they cannot strand dispatch workers;
 running applications keep the native animation policy. Activated-app acceptance
 remains a separate gate from source tests.
 
+## GitHub star suggestion
+
+`StarPromptCoordinator` owns one offer across the Mac host's document windows.
+`StarPromptUsage` retains only capped aggregate counters in local preferences:
+five successful user document opens and ten minutes in a visible foreground
+document make the offer eligible. Failed opens, raising an already-open file,
+session restoration, and the bundled tour do not increment the open counter.
+In-place document navigation counts after a successful open. Time in other apps,
+Settings, sheets, or covered documents does not qualify. Counter-only preference
+updates persist without broadcasting visual settings changes.
+
+The offer waits for idle input and an unobstructed document, then appears as a
+nonactivating child notice below the toolbar. It does not reflow TextKit or take
+first responder. Displaying it retires the offer permanently across app updates;
+the Help-menu star action also retires it. Dismissal, Escape, closing the host,
+or leaving the app removes the notice. The repository opens only on an explicit
+action. No engagement analytics, GitHub identity, or star-status requests exist.
+
 ## PlantUML diagrams
 
 The Mac host installs `LocalPlantUMLRenderer` through the render package's

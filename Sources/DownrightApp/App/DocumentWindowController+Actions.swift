@@ -38,6 +38,7 @@ extension DocumentWindowController {
                     anchor: ScrollAnchoring.anchor(for: offset, in: markdownDocument.parsed)
                 ))
             }
+            onDocumentOpen?()
             return true
         } catch {
             // The hop died mid-flight (the target vanished between the click

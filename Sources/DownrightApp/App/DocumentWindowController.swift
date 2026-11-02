@@ -45,6 +45,8 @@ final class DocumentWindowController: NSWindowController {
     var mode: RenderMode = .live
 
     var onClose: (() -> Void)?
+    /// Successful in-place navigation only; restoring a failed hop is not usage.
+    var onDocumentOpen: (() -> Void)?
 
     // Text surface.  Internal rather than private because the command and
     // support extensions live in sibling files, and `private` is file-scoped.

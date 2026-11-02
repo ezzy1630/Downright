@@ -38,6 +38,14 @@ enum FileIdentity {
 /// editable — poking at it is half the point — and nothing lands on disk that
 /// the reader has to clean up.
 enum WelcomeDocument {
+    static var materializedURL: URL {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("Downright Tour", isDirectory: true)
+            .appendingPathComponent("Welcome to Downright.md")
+    }
+
+    static func isTour(_ url: URL) -> Bool { FileIdentity.sameFile(url, materializedURL) }
+
     static var bundled: URL? {
         Bundle.main.url(forResource: "Welcome", withExtension: "md")
     }
@@ -49,10 +57,9 @@ enum WelcomeDocument {
             throw CocoaError(.fileNoSuchFile)
         }
         let manager = FileManager.default
-        let folder = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("Downright Tour", isDirectory: true)
+        let copy = materializedURL
+        let folder = copy.deletingLastPathComponent()
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
-        let copy = folder.appendingPathComponent("Welcome to Downright.md")
         // A fresh copy every time: the tour should read the same on the second
         // visit as on the first, whatever the reader typed into it. Render
         // shortcut tokens at open time so customized bindings stay truthful.
@@ -70,6 +77,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesWindow: NSWindowController?
     private var startWindow: StartWindowController?
     private var setupWindow: SetupWindowController?
+    private lazy var starPrompt = StarPromptCoordinator(
+        usage: Preferences.shared.values.starPrompt,
+        save: { usage in Preferences.shared.update { $0.starPrompt = usage } },
+        document: { [weak self] in
+            self?.windowControllers.first { $0.window === NSApp.keyWindow }
+        },
+        openRepository: { [weak self] in self?.openProjectPage(nil) }
+    )
     private let servicesProvider = DownrightServicesProvider()
     /// Set by `down --edit`; applies to the documents opened in this launch only.
     private var launchMode: RenderMode?
@@ -171,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SnapshotStore.shared.schedulePrune()
 
         hasFinishedLaunching = true
+        starPrompt.start()
 
         // The one-time setup panel: where the download-and-drag user gets their
         // file association, their Quick Look extensions, and `down`.  It never
@@ -230,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        starPrompt.stop()
         if let warningWindowObserver {
             NotificationCenter.default.removeObserver(warningWindowObserver)
             self.warningWindowObserver = nil
@@ -316,7 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         line: Int? = nil,
         review: Bool = false,
         disposition: DocumentOpenDisposition = .tab,
-        tabbingWith explicitHost: NSWindow? = nil
+        tabbingWith explicitHost: NSWindow? = nil,
+        origin: StarPromptUsage.OpenOrigin = .user
     ) -> DocumentWindowController? {
         // One window per file: reopening a file you already have open should
         // raise it, not give you two buffers over the same bytes.
@@ -364,6 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         controller.window?.makeKeyAndOrderFront(nil)
         controller.applyCommandLineOpen(line: line, review: review)
+        starPrompt.recordOpen(origin: WelcomeDocument.isTour(openedURL) ? .tour : origin)
         return controller
     }
 
@@ -387,6 +406,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func adopt(_ controller: DocumentWindowController) {
         windowControllers.append(controller)
+        controller.onDocumentOpen = { [weak self, weak controller] in
+            guard let url = controller?.markdownDocument.url else { return }
+            self?.starPrompt.recordOpen(origin: WelcomeDocument.isTour(url) ? .tour : .user)
+        }
         controller.onClose = { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
@@ -478,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tour" event, and having opened it once is the signal that matters.
         Preferences.shared.update { $0.hasTakenTour = true }
         do {
-            open(try WelcomeDocument.materialize(), mode: .live)
+            open(try WelcomeDocument.materialize(), mode: .live, origin: .tour)
         } catch {
             warn(
                 "Couldn't open the tour",
@@ -644,7 +667,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 url,
                 mode: RenderMode(rawValue: entry.mode),
                 disposition: host == nil ? .window : .tab,
-                tabbingWith: host
+                tabbingWith: host,
+                origin: .restoration
             ) else { continue }
             if let frame = AppDelegate.reachableFrame(NSRectFromString(entry.frame)) {
                 controller.window?.setFrame(frame, display: true)
@@ -766,6 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openProjectPage(_ sender: Any?) {
+        starPrompt.retire()
         guard let url = URL(string: "https://github.com/ezzy1630/Downright") else { return }
         NSWorkspace.shared.open(url)
     }

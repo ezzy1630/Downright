@@ -16,6 +16,9 @@ every release; Sparkle orders updates by it.
 
 ### Added
 
+- A one-time GitHub star suggestion after five document opens and ten minutes
+  of foreground reading. It waits for idle input, leaves editing focus alone,
+  and keeps eligibility and dismissal state entirely on your Mac.
 - Local PlantUML rendering for `plantuml` and `puml` code fences in the Mac
   app, alongside existing Mermaid diagrams. No Java installation, WebView,
   or diagram server is required. Source Focus keeps the original diagram

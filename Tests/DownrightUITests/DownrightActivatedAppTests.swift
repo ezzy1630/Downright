@@ -424,6 +424,105 @@ final class DownrightActivatedAppTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "the app stopped after the updater check")
     }
 
+    func testStarSuggestionKeepsTypingFocusAndRetiresAfterPointerDismissal() throws {
+        try seedStarSuggestion(theme: "Paper Light")
+        let original = try Data(contentsOf: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let editor = app.textViews["Document editor"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        let dismiss = app.buttons["Dismiss GitHub star suggestion"].firstMatch
+        editor.click()
+        // Cross a sampling deadline with real keyboard input. The notification
+        // must wait for idle rather than appearing during an editing gesture.
+        for _ in 0..<8 {
+            app.typeText("x")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.75))
+        }
+        XCTAssertFalse(dismiss.exists, "the suggestion interrupted typing")
+        let editorFrame = editor.frame
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 20))
+        XCTAssertEqual(editor.frame, editorFrame, "the suggestion reflowed the document")
+        retainStarSuggestionScreenshot("GitHub suggestion — Paper Light")
+        // App-level typing does not click/refocus the editor, so this exercises
+        // the responder preserved across the notification's actual arrival.
+        app.typeText("focus-stays-here")
+        XCTAssertTrue((editor.value as? String)?.contains("focus-stays-here") == true)
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+        dismiss.click()
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5))
+        try assertStarSuggestionRetired()
+
+        app.terminate()
+        app.launch()
+        app.activate()
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        RunLoop.current.run(until: Date().addingTimeInterval(11))
+        XCTAssertFalse(dismiss.exists, "an answered suggestion returned after relaunch")
+        try assertStarSuggestionRetired()
+    }
+
+    func testStarSuggestionFollowsNarrowResizeAndEscapeInDarkAppearance() throws {
+        try seedStarSuggestion(theme: "Warm Dark")
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.matching(
+            NSPredicate(format: "title BEGINSWITH %@", fixture.lastPathComponent)
+        ).firstMatch
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
+        let dismiss = app.buttons["Dismiss GitHub star suggestion"].firstMatch
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 20))
+        let originalWidth = window.frame.width
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+            .withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -350, dy: -80)))
+        XCTAssertLessThan(window.frame.width, originalWidth)
+        XCTAssertTrue(dismiss.isHittable)
+        XCTAssertTrue(window.frame.contains(CGPoint(x: dismiss.frame.midX, y: dismiss.frame.midY)))
+        retainStarSuggestionScreenshot("GitHub suggestion — Warm Dark after resize")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5))
+        try assertStarSuggestionRetired()
+    }
+
+    private func seedStarSuggestion(theme: String) throws {
+        let support = try XCTUnwrap(app.launchEnvironment["DOWNRIGHT_SUPPORT_DIRECTORY"])
+        let preferencesFile = URL(fileURLWithPath: support).appendingPathComponent("preferences.json")
+        var preferences = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: preferencesFile)) as? [String: Any]
+        )
+        preferences["appearancePreferenceVersion"] = 1
+        preferences["followsSystemAppearance"] = false
+        preferences["themeName"] = theme
+        // The fixture's real successful open supplies the fifth open. No
+        // runtime switch bypasses production eligibility or input-idle rules.
+        let usage: [String: Any] = [
+            "documentOpens": 4, "foregroundSeconds": 600, "hasBeenOffered": false,
+        ]
+        preferences["starPrompt"] = usage
+        try JSONSerialization.data(withJSONObject: preferences).write(to: preferencesFile, options: .atomic)
+    }
+
+    private func assertStarSuggestionRetired(file: StaticString = #filePath, line: UInt = #line) throws {
+        let support = try XCTUnwrap(app.launchEnvironment["DOWNRIGHT_SUPPORT_DIRECTORY"])
+        let preferencesFile = URL(fileURLWithPath: support).appendingPathComponent("preferences.json")
+        let preferences = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: preferencesFile)) as? [String: Any]
+        )
+        let usage = try XCTUnwrap(preferences["starPrompt"] as? [String: Any])
+        XCTAssertEqual(usage["documentOpens"] as? Int, 5, file: file, line: line)
+        XCTAssertEqual(usage["hasBeenOffered"] as? Bool, true, file: file, line: line)
+    }
+
+    private func retainStarSuggestionScreenshot(_ name: String) {
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        capture.name = name
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     private func assertVisibleHeading(_ heading: String, in pane: XCUIElement,
                                       file: StaticString = #filePath, line: UInt = #line) {
         // Read the actual line under a native pointer at the navigation's
