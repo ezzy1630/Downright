@@ -60,6 +60,40 @@ struct ImageLoadingPresentationTests {
         #expect(cache.cachedSize(for: url) == CGSize(width: 4, height: 4))
     }
 
+    @Test func wideLayoutDecodesOnlyTheFittedImagePixels() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-fitted-\(UUID().uuidString).png").resolvingSymlinksInPath()
+        try writePNG(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let cache = MarkdownFragmentImageCaches.images
+        #expect(await load(url, cache: cache) != nil)
+        let source = "![](\(url.lastPathComponent))\n"
+        let storage = NSTextStorage(string: source)
+        let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 2400, height: 800), storage: storage)
+        view.documentURL = url.deletingLastPathComponent().appendingPathComponent("document.md")
+        view.mode = .read
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+        view.prepareForDisplay()
+        view.fragmentContext.contentWidth = 2400
+        let manager = try #require(view.textLayoutManager)
+        let fragment = try #require(manager.textLayoutFragment(for: manager.documentRange.location) as? ImageFragment)
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 800, pixelsHigh: 600,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let graphics = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
+        fragment.drawObject(at: .zero, in: graphics.cgContext)
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let dimension = Int(ceil(4 * scale))
+        let deadline = ContinuousClock().now + .seconds(2)
+        while cache.cachedImage(for: url, maxPixelDimension: dimension) == nil,
+              ContinuousClock().now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(cache.cachedImage(for: url, maxPixelDimension: dimension) != nil,
+                "a wide document must request the fitted image pixels, not a column-sized bitmap")
+        #expect(storage.string == source)
+    }
+
     @Test func measuringImagesDoesNotStartLoadsButDrawingDoes() throws {
         let source = "![First](https://example.com/first.png)\n"
         let storage = NSTextStorage(string: source)

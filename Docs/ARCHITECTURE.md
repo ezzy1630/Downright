@@ -337,7 +337,9 @@ source bytes and source UTF-16 coordinates remain authoritative. Async arrivals
 coalesce a refresh that preserves selection and the semantic reading anchor.
 Block-image measurement never starts a load. Drawing requests pixels once per
 pending fragment; compact local-image dimensions survive bitmap-cache eviction
-so offscreen layout remains stable within the existing pixel budget. Local
+so offscreen layout remains stable within the existing pixel budget. Once local
+dimensions are known, decoding targets the fitted picture rather than the full
+column width, including in wide documents. Local
 decode failures become missing-image presentations and can recover on a later
 draw after the file is repaired.
 

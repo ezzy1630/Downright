@@ -179,6 +179,10 @@ final class ImageFragment: DownrightFragment {
             return CGSize(width: proseContentWidth,
                           height: failedObjectHeight(missing, style: style))
         }
+        return fittedSize(natural)
+    }
+
+    private func fittedSize(_ natural: CGSize) -> CGSize {
         let viewportCap = viewportHeightCap
         let widthScale = min(1, proseContentWidth / natural.width)
         let heightScale = min(1, viewportCap / natural.height)
@@ -241,7 +245,15 @@ final class ImageFragment: DownrightFragment {
             ?? 2
         // A hard per-image ceiling prevents one pathological asset from
         // defeating the cache's total budget before it can be evicted.
-        let points = max(contentWidth, viewportHeightCap)
+        let points: CGFloat
+        if let request = resolvedRequest(),
+           LocalAssetPolicy.allows(request, authorizer: context?.localAssetAuthorizer),
+           let natural = MarkdownFragmentImageCaches.images.cachedSize(for: request.url) {
+            let fitted = fittedSize(natural)
+            points = max(fitted.width, fitted.height)
+        } else {
+            points = max(contentWidth, viewportHeightCap)
+        }
         return min(2048, max(1, Int(ceil(points * scale))))
     }
 
