@@ -78,7 +78,9 @@ final class ImageFragment: DownrightFragment {
         if payload.detail.hasSuffix("/1.png") {
             let status: String
             switch result {
-            case .loaded(let image): status = "hit size=\(image.size) pixels=\(image.representations.first?.pixelsWide ?? -1)"
+            case .loaded(let image):
+                let bitmap = image.representations.first as? NSBitmapImageRep
+                status = "hit size=\(image.size) pixels=\(image.representations.first?.pixelsWide ?? -1) alpha=\(String(describing: bitmap?.colorAt(x: 0, y: 0)?.alphaComponent))"
             case .loading: status = "loading"
             case .missing: status = "missing"
             case .blocked: status = "blocked"

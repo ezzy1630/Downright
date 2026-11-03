@@ -59,6 +59,23 @@ struct ImageLoadingPresentationTests {
         #expect(cache.cachedSize(for: url) == CGSize(width: 1024, height: 1024))
     }
 
+    @Test func downsampledOpaqueImageStillDrawsOpaquePixels() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("downright-opaque-\(UUID().uuidString).png")
+        try writePNG(to: url, size: 1024)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let image = try #require(await load(url, cache: ImageRenderCache(), dimension: 64))
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let graphics = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
+        let target = CGRect(x: 0, y: 0, width: 64, height: 64)
+        graphics.cgContext.clear(target)
+        drawNSImage(image, in: target, in: graphics.cgContext)
+        let color = try #require(bitmap.colorAt(x: 32, y: 32)?.usingColorSpace(.sRGB))
+        #expect(color.alphaComponent > 0.99, "downsampling must not turn an opaque image transparent")
+        #expect(color.redComponent > 0.95 && color.greenComponent > 0.95 && color.blueComponent > 0.95)
+    }
+
     @Test func paintingAnOffscreenImageDoesNotStartALoad() throws {
         let prefix = String(repeating: "A paragraph before the image.\n\n", count: 100)
         let source = prefix + "![Offscreen](https://example.com/offscreen.png)\n"
