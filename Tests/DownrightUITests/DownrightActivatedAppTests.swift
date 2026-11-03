@@ -129,6 +129,56 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(capture)
     }
 
+    func testManyLocalImagesRemainVisibleAfterHover() throws {
+        let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { rect in
+            NSColor(srgbRed: 1, green: 0.05, blue: 0.1, alpha: 1).setFill()
+            rect.fill()
+            return true
+        }
+        let bitmap = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: bitmap).representation(using: .png, properties: [:]))
+        let images = root.appendingPathComponent("images/thread-local", isDirectory: true)
+        try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+        for index in 1...32 { try png.write(to: images.appendingPathComponent("\(index).png")) }
+        let source = "# Many local images\n\n"
+            + (1...32).map { "![](./images/thread-local/\($0).png)" }.joined(separator: "\n\n") + "\n"
+        let original = Data(source.utf8)
+        try original.write(to: fixture)
+        app.launch()
+        app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 20))
+
+        func hasVisibleImage() -> Bool {
+            guard let rep = NSBitmapImageRep(data: window.screenshot().pngRepresentation),
+                  let image = rep.cgImage else { return false }
+            var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
+            let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: 64, height: 64,
+                    bitsPerComponent: 8, bytesPerRow: 64 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+                return true
+            }
+            guard rendered else { return false }
+            return stride(from: 0, to: pixels.count, by: 4).filter {
+                pixels[$0] > 180 && pixels[$0 + 1] < 100 && pixels[$0 + 2] < 100
+            }.count > 160
+        }
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in hasVisibleImage() }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 20), .completed,
+                       "the first local image never replaced its loading placeholder")
+        for index in 0..<8 {
+            window.coordinate(withNormalizedOffset: CGVector(dx: index.isMultiple(of: 2) ? 0.45 : 0.55, dy: 0.40)).hover()
+            XCTAssertTrue(hasVisibleImage(), "hovering must not replace the visible image with a loading placeholder")
+        }
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+        let capture = XCTAttachment(screenshot: window.screenshot())
+        capture.name = "First local image after hover in a 32-image document"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testUnterminatedParagraphRendersWithoutChangingSource() throws {
         let text = "An unterminated Markdown paragraph remains visible and keeps every source byte. A native text surface must render this document without needing a final newline or another paragraph to initialize its viewport."
         let original = Data(text.utf8)

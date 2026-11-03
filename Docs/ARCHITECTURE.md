@@ -335,6 +335,11 @@ Inline images and linked badges use source-addressed display substitutions.
 Safe HTML paragraph joining and image dimensions affect only presentation;
 source bytes and source UTF-16 coordinates remain authoritative. Async arrivals
 coalesce a refresh that preserves selection and the semantic reading anchor.
+Block-image measurement never starts a load. Drawing requests pixels once per
+pending fragment; compact local-image dimensions survive bitmap-cache eviction
+so offscreen layout remains stable within the existing pixel budget. Local
+decode failures become missing-image presentations and can recover on a later
+draw after the file is repaired.
 
 The renderer never makes network requests. View > Load Remote Images installs
 a host-owned loader for the current Mac document; opening another file revokes

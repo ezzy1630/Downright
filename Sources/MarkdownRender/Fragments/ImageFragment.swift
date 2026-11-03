@@ -14,10 +14,12 @@ private final class ImageLoadCompletionBox: @unchecked Sendable {
     /// `sourceRange` at completion time invalidates where the image lives
     /// *now* rather than where it lived when the load was scheduled.
     let payload: FragmentPayload
+    weak var fragment: ImageFragment?
 
-    init(view: ImageLoadHost?, payload: FragmentPayload) {
+    init(view: ImageLoadHost?, payload: FragmentPayload, fragment: ImageFragment) {
         self.view = view
         self.payload = payload
+        self.fragment = fragment
     }
 }
 
@@ -28,6 +30,7 @@ private final class ImageLoadCompletionBox: @unchecked Sendable {
 /// Paths resolve against the document's directory, which is only possible
 /// because the app is unsandboxed (§3.4).
 final class ImageFragment: DownrightFragment {
+    private var loadPending = false
 
     private enum LoadResult {
         case loaded(NSImage)
@@ -59,7 +62,7 @@ final class ImageFragment: DownrightFragment {
         let origin = CGPoint(x: point.x + max(0, (proseContentWidth - picture.width) / 2), y: point.y)
         let rect = CGRect(origin: origin, size: picture)
 
-        let result = loadResult()
+        let result = loadResult(startLoad: true)
         if case let .loaded(image) = result {
             cg.saveGState()
             cg.setShadow(offset: CGSize(width: 0, height: 2),
@@ -162,12 +165,20 @@ final class ImageFragment: DownrightFragment {
     }
 
     private func displaySize() -> CGSize {
-        guard case let .loaded(image) = loadResult(), image.size.width > 0 else {
+        let natural: CGSize?
+        if case let .loaded(image) = loadResult(startLoad: false) {
+            natural = image.size
+        } else if remoteRequest() == nil, let request = resolvedRequest(),
+                  LocalAssetPolicy.allows(request, authorizer: context?.localAssetAuthorizer) {
+            natural = MarkdownFragmentImageCaches.images.cachedSize(for: request.url)
+        } else {
+            natural = nil
+        }
+        guard let natural, natural.width > 0, natural.height > 0 else {
             guard let style = styleSheet else { return CGSize(width: proseContentWidth, height: 64) }
             return CGSize(width: proseContentWidth,
                           height: failedObjectHeight(missing, style: style))
         }
-        let natural = image.size
         let viewportCap = viewportHeightCap
         let widthScale = min(1, proseContentWidth / natural.width)
         let heightScale = min(1, viewportCap / natural.height)
@@ -175,8 +186,8 @@ final class ImageFragment: DownrightFragment {
         return CGSize(width: (natural.width * scale).rounded(), height: (natural.height * scale).rounded())
     }
 
-    private func loadResult() -> LoadResult {
-        if let (url, loader) = remoteRequest() { return remoteResult(url, loader: loader) }
+    private func loadResult(startLoad: Bool) -> LoadResult {
+        if let (url, loader) = remoteRequest() { return remoteResult(url, loader: loader, startLoad: startLoad) }
         guard let request = resolvedRequest() else { return .blocked }
         guard LocalAssetPolicy.allows(
             request, authorizer: context?.localAssetAuthorizer
@@ -188,8 +199,9 @@ final class ImageFragment: DownrightFragment {
             // Never read the file here: this runs during draw and layout on
             // the main thread.  Schedule a background decode and draw a
             // placeholder until it lands.
-            scheduleAsyncLoad(request.url, dimension: dimension)
-            return .loading
+            if startLoad { scheduleAsyncLoad(request.url, dimension: dimension) }
+            return MarkdownFragmentImageCaches.images.hasFailed(for: request.url, maxPixelDimension: dimension)
+                ? .missing : .loading
         }
         return .loaded(image)
     }
@@ -199,16 +211,22 @@ final class ImageFragment: DownrightFragment {
     /// the picture's real size and the frame redraws it in place.
     ///
     /// The cache dedupes decodes by URL, so repeated misses during a slow
-    /// load share one background read; a failed load is retried on the next
-    /// layout pass because the cache still misses.
+    /// load share one background read. A later draw may retry a failed file;
+    /// layout measurement never starts I/O.
     private func scheduleAsyncLoad(_ url: URL, dimension: Int) {
-        let box = ImageLoadCompletionBox(view: context?.textView, payload: payload)
+        guard !loadPending else { return }
+        loadPending = true
+        let wasFailed = MarkdownFragmentImageCaches.images.hasFailed(for: url, maxPixelDimension: dimension)
+        let box = ImageLoadCompletionBox(view: context?.textView, payload: payload, fragment: self)
         MarkdownFragmentImageCaches.images.loadImageAsync(
             for: url, maxPixelDimension: dimension
         ) { image in
-            // A nil result means the file is missing or unreadable; only invalidate
-            // layout when an image is successfully loaded to avoid infinite layout loops.
-            guard image != nil, let view = box.view else { return }
+            box.fragment?.loadPending = false
+            // Publish the first failure as a missing image. A subsequent draw
+            // may check for a repaired file, but an unchanged failure must not
+            // invalidate itself forever.
+            guard image != nil || !wasFailed, let view = box.view,
+                  view.fragmentPayload(atSourceOffset: box.payload.sourceRange.location)?.payload === box.payload else { return }
             view.invalidateFragments(in: box.payload.sourceRange)
         }
     }
@@ -240,13 +258,18 @@ final class ImageFragment: DownrightFragment {
     /// load and draws the placeholder.  The loader remembers failures, so a
     /// broken image settles on the missing placeholder instead of refetching
     /// on every layout pass, and the completion can invalidate either way.
-    private func remoteResult(_ url: URL, loader: RemoteImageLoading) -> LoadResult {
+    private func remoteResult(_ url: URL, loader: RemoteImageLoading, startLoad: Bool) -> LoadResult {
         let dimension = targetPixelDimension
         if let image = loader.cachedImage(for: url, maxPixelDimension: dimension) { return .loaded(image) }
         if loader.hasFailed(url) { return .missing }
-        let box = ImageLoadCompletionBox(view: context?.textView, payload: payload)
+        guard startLoad, !loadPending else { return .loading }
+        loadPending = true
+        let box = ImageLoadCompletionBox(view: context?.textView, payload: payload, fragment: self)
         loader.loadImage(for: url, maxPixelDimension: dimension) { _ in
-            box.view?.invalidateFragments(in: box.payload.sourceRange)
+            box.fragment?.loadPending = false
+            guard let view = box.view,
+                  view.fragmentPayload(atSourceOffset: box.payload.sourceRange.location)?.payload === box.payload else { return }
+            view.invalidateFragments(in: box.payload.sourceRange)
         }
         return .loading
     }

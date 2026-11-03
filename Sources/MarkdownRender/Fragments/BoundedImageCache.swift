@@ -178,8 +178,11 @@ final class ImageRenderCache {
         let modified: Date?
     }
 
-    private let cache = BoundedImageCache<Key>(countLimit: 96, totalCostLimit: 32 * 1024 * 1024)
+    private let cache: BoundedImageCache<Key>
     private var freshness: [URL: Freshness] = [:]
+    // Geometry survives pixel eviction: measuring an offscreen image must not
+    // decode it again or collapse its height when the bitmap budget fills.
+    private var sourceSizes: [URL: CGSize] = [:]
     private var failedLoads: Set<Key> = []
     /// Decodes in flight, keyed by the same identity `cachedImage` looks up,
     /// so a page of repeated images (or a split view showing one document
@@ -187,6 +190,10 @@ final class ImageRenderCache {
     /// completion fires when the shared decode lands.
     private var inFlight: [Key: [(@Sendable @MainActor (NSImage?) -> Void)]] = [:]
     private let lock = NSLock()
+
+    init(countLimit: Int = 96, totalCostLimit: Int = 32 * 1024 * 1024) {
+        cache = BoundedImageCache(countLimit: countLimit, totalCostLimit: totalCostLimit)
+    }
 
     private func key(for url: URL, maxPixelDimension: Int) -> Key {
         Key(url: url.standardizedFileURL, maxPixelDimension: max(1, maxPixelDimension))
@@ -197,6 +204,18 @@ final class ImageRenderCache {
     /// uses; a miss means "schedule an async load", never "read it now".
     func cachedImage(for url: URL, maxPixelDimension: Int) -> NSImage? {
         cache.cached(key(for: url, maxPixelDimension: maxPixelDimension))
+    }
+
+    func cachedSize(for url: URL) -> CGSize? {
+        lock.lock()
+        defer { lock.unlock() }
+        return sourceSizes[url.standardizedFileURL]
+    }
+
+    func hasFailed(for url: URL, maxPixelDimension: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return failedLoads.contains(key(for: url, maxPixelDimension: maxPixelDimension))
     }
 
     /// Decodes `url` off the main thread, records it in the cache, then calls
@@ -245,6 +264,7 @@ final class ImageRenderCache {
         if changed {
             freshness[url] = current
             failedLoads.remove(key)
+            sourceSizes.removeValue(forKey: url)
         }
         let isFailed = failedLoads.contains(key)
         lock.unlock()
@@ -258,6 +278,7 @@ final class ImageRenderCache {
         }
         lock.lock()
         failedLoads.remove(key)
+        sourceSizes[url] = image.size
         lock.unlock()
         cache.store(image, for: key, keyCost: url.path.utf8.count)
         return image
