@@ -50,7 +50,9 @@ cancelled, missing, or unfinished required checks and reports their exact state.
 - `Scripts/install-hooks.sh`: install the tracked pre-push hook while preserving
   an existing custom hook. Each proposed commit is archived into a disposable
   directory and checked there, including pushes from a dirty checkout. Deleted
-  refs have no tree to check. The hook never pushes or modifies the proposed
+  refs have no tree to check. Snapshot initialization and checks clear Git's
+  repository-local hook environment so linked worktrees cannot redirect them
+  into the real repository. The hook never pushes or modifies the proposed
   commit, and never substitutes for full integration checks.
 - `RUN_DRBENCH=1 Scripts/check.sh`: authoritative complete source gate and
   unchanged release performance budgets.
