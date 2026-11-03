@@ -62,7 +62,18 @@ final class ImageFragment: DownrightFragment {
         let origin = CGPoint(x: point.x + max(0, (proseContentWidth - picture.width) / 2), y: point.y)
         let rect = CGRect(origin: origin, size: picture)
 
-        let result = loadResult(startLoad: true)
+        // TextKit can paint an offscreen fragment into its own rendering
+        // surface. That is not a request to fill the viewport's pixel cache.
+        let shouldLoad: Bool
+        if let view = context?.textView, view.enclosingScrollView != nil {
+            let frame = super.layoutFragmentFrame
+            let inView = rect.offsetBy(dx: frame.minX - rawPoint.x + view.textContainerOrigin.x,
+                                       dy: frame.minY - rawPoint.y + view.textContainerOrigin.y)
+            shouldLoad = inView.intersects(view.visibleRect)
+        } else {
+            shouldLoad = true
+        }
+        let result = loadResult(startLoad: shouldLoad)
         if case let .loaded(image) = result {
             cg.saveGState()
             cg.setShadow(offset: CGSize(width: 0, height: 2),

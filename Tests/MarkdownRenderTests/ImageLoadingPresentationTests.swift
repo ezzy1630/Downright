@@ -15,11 +15,12 @@ struct ImageLoadingPresentationTests {
         }
     }
 
-    private func writePNG(to url: URL) throws {
-        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4,
+    private func writePNG(to url: URL, size: Int = 4) throws {
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        for x in 0..<4 { for y in 0..<4 { bitmap.setColor(.white, atX: x, y: y) } }
+        let bytes = try #require(bitmap.bitmapData)
+        bytes.initialize(repeating: 255, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
         try #require(bitmap.representation(using: .png, properties: [:])).write(to: url)
     }
 
@@ -45,6 +46,44 @@ struct ImageLoadingPresentationTests {
         #expect(cache.cachedImage(for: first, maxPixelDimension: 16) == nil)
         #expect(cache.cachedSize(for: first) == CGSize(width: 4, height: 4),
                 "pixel eviction must not collapse the height of an offscreen image")
+    }
+
+    @Test func downsampledPixelsFitTheCacheDespiteLargeNaturalSize() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("downright-downsample-\(UUID().uuidString).png")
+        try writePNG(to: url, size: 1024)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let cache = ImageRenderCache(totalCostLimit: 1024 * 1024)
+        #expect(await load(url, cache: cache, dimension: 64) != nil)
+        #expect(cache.cachedImage(for: url, maxPixelDimension: 64) != nil,
+                "the cache must charge for decoded pixels rather than the image's natural point size")
+        #expect(cache.cachedSize(for: url) == CGSize(width: 1024, height: 1024))
+    }
+
+    @Test func paintingAnOffscreenImageDoesNotStartALoad() throws {
+        let prefix = String(repeating: "A paragraph before the image.\n\n", count: 100)
+        let source = prefix + "![Offscreen](https://example.com/offscreen.png)\n"
+        let storage = NSTextStorage(string: source)
+        let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage)
+        let scroll = NSScrollView(frame: view.frame)
+        scroll.documentView = view
+        let loader = PendingImages()
+        view.remoteImageLoader = loader
+        view.mode = .read
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+        view.prepareForDisplay()
+        let manager = try #require(view.textLayoutManager)
+        let location = try #require(manager.textContentManager?.location(
+            manager.documentRange.location, offsetBy: prefix.utf16.count))
+        manager.ensureLayout(for: manager.documentRange)
+        let fragment = try #require(manager.textLayoutFragment(for: location) as? ImageFragment)
+        #expect(fragment.layoutFragmentFrame.minY > scroll.contentSize.height)
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 800, pixelsHigh: 600,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let graphics = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
+        fragment.drawObject(at: .zero, in: graphics.cgContext)
+        #expect(loader.requests == 0, "offscreen rendering surfaces must not load pixels")
+        #expect(storage.string == source)
     }
 
     @Test func missingLocalImageRecordsFailureAndRecoversWhenCreated() async throws {

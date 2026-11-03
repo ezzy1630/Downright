@@ -339,7 +339,8 @@ Block-image measurement never starts a load. Drawing requests pixels once per
 pending fragment; compact local-image dimensions survive bitmap-cache eviction
 so offscreen layout remains stable within the existing pixel budget. Once local
 dimensions are known, decoding targets the fitted picture rather than the full
-column width, including in wide documents. Local
+column width, including in wide documents. Offscreen TextKit rendering surfaces
+do not request pixels until their picture intersects the view's viewport. Local
 decode failures become missing-image presentations and can recover on a later
 draw after the file is repaired.
 
