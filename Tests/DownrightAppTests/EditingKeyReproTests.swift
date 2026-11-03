@@ -501,58 +501,34 @@ struct EditingKeyReproTests {
         let screenY = clip.convert(referenceRect, from: view).minY - referenceClipY
         #expect(screenY >= 0 && screenY < clip.bounds.height)
 
-        let probeStarted = ContinuousClock().now
-        var events: [String] = []
-        var deletion = 0
         let document = controller.markdownDocument
-        let originalActivity = document.onParseActivity
-        let originalReparse = document.onReparse
-        func record(_ phase: String) {
-            let completed = document.lastCompletedParseRevision.map { String($0.rawValue) } ?? "none"
-            events.append("\(ContinuousClock().now - probeStarted) edit=\(deletion) \(phase) revision=\(document.revision.rawValue) completed=\(completed) modelCurrent=\(document.parsed.text == document.text) viewCurrent=\(view.parsedDocument.text == document.text) resize=\(String(describing: view.pendingResizeRequestForTesting))")
-            if events.count > 18 { events.removeFirst() }
-        }
-        document.onParseActivity = { busy in record("busy=\(busy)"); originalActivity?(busy) }
-        document.onReparse = { parsed, dirty in
-            record("publish-before")
-            originalReparse?(parsed, dirty)
-            record("publish-after")
-        }
-        defer {
-            document.onParseActivity = originalActivity
-            document.onReparse = originalReparse
-        }
-
-        for index in 0..<3 {
-            deletion = index
+        for _ in 0..<3 {
+            let beforeRevision = document.revision
             pressOptionDelete(into: view)
-            record("key-returned")
             caret = view.sourceSelectedRange.location
             let immediateRect = try #require(view.rect(forOffset: caret))
             let immediateY = clip.convert(immediateRect, from: view).minY - clip.bounds.minY
             #expect(abs(immediateY - screenY) < 1,
                     "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
             let deadline = ContinuousClock().now + .seconds(3)
-            var longestResume: Duration = .zero
-            var polls = 0
+            // Poll immutable snapshot identity and revision, not the entire
+            // megabyte buffer every 5ms. Exact source equality is checked below.
             while ContinuousClock().now < deadline,
-                  view.parsedDocument.text != controller.markdownDocument.text
+                  document.lastCompletedParseRevision.map({ $0 > beforeRevision }) != true
+                    || document.lastCompletedParseRevision != document.revision
+                    || view.parsedDocument !== document.parsed
                     || view.pendingResizeRequestForTesting != nil {
                 controller.markdownDocument.flushScheduledReparse()
-                polls += 1
-                let sleeping = ContinuousClock().now
                 try await Task.sleep(for: .milliseconds(5))
-                longestResume = max(longestResume, ContinuousClock().now - sleeping)
             }
             let converged = view.parsedDocument.text == controller.markdownDocument.text
-            record("poll-ended count=\(polls) longestResume=\(longestResume)")
-            #expect(converged, "the edit never reached its parsed presentation; \(events.joined(separator: " | "))")
+            #expect(converged,
+                    "the edit never reached its parsed presentation; source revision=\(document.revision.rawValue), parsed revision=\(String(describing: document.lastCompletedParseRevision)), snapshot matches=\(view.parsedDocument === document.parsed)")
             let settledRect = try #require(view.rect(forOffset: caret))
             let settledY = clip.convert(settledRect, from: view).minY - clip.bounds.minY
             #expect(abs(settledY - screenY) < 1,
                     "word deletion moved the caret line after parsing; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(settledRect.minY)/\(clip.bounds.minY)")
         }
-        print("EDIT_PARSE_PROBE sections=\(sectionCount) offset=\(offsetsDocument) \(events.joined(separator: " | "))")
         #expect(controller.markdownDocument.text != text)
     }
 

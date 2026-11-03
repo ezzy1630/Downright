@@ -64,8 +64,6 @@ jobs:
           SCRATCH: .build-ci-main
           RUN_DRBENCH: "1"
           CHECK_VERBOSE_BUILD: "1"
-          # Temporary convergence diagnostics; fixed before the test process starts.
-          DOWNRIGHT_TRACE_PARSE: "1"
           CI_CACHE_REQUESTED_KEY: ${{ steps.cache.outputs.cache-primary-key }}
           CI_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
           CI_CACHE_EXACT_HIT: ${{ steps.cache.outputs.cache-hit }}
