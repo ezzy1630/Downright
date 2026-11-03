@@ -83,7 +83,8 @@ final class ImageFragment: DownrightFragment {
             case .missing: status = "missing"
             case .blocked: status = "blocked"
             }
-            context?.traceImageLoad("draw range=\(payload.sourceRange) dim=\(targetPixelDimension) pending=\(loadPending) visible=\(String(describing: context?.textView?.visibleRect)) frame=\(super.layoutFragmentFrame) origin=\(String(describing: context?.textView?.textContainerOrigin)) point=\(rawPoint) rect=\(rect) shouldLoad=\(shouldLoad) \(status)")
+            let traceFrame = super.layoutFragmentFrame
+            context?.traceImageLoad("draw range=\(payload.sourceRange) dim=\(targetPixelDimension) pending=\(loadPending) visible=\(String(describing: context?.textView?.visibleRect)) frame=\(traceFrame) origin=\(String(describing: context?.textView?.textContainerOrigin)) point=\(rawPoint) rect=\(rect) shouldLoad=\(shouldLoad) \(status)")
         }
 #endif
         if case let .loaded(image) = result {

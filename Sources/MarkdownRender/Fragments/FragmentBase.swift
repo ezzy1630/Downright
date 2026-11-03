@@ -143,7 +143,18 @@ public final class FragmentContext {
         guard ProcessInfo.processInfo.environment["DOWNRIGHT_TRACE_IMAGE_LOAD"] == "1",
               imageTraceCount < 40 else { return }
         imageTraceCount += 1
-        print("IMAGE_PROBE \(message())")
+        let event = "IMAGE_PROBE \(message())"
+        print(event)
+        if let path = ProcessInfo.processInfo.environment["DOWNRIGHT_IMAGE_TRACE_PATH"] {
+            if !FileManager.default.fileExists(atPath: path) {
+                FileManager.default.createFile(atPath: path, contents: nil)
+            }
+            if let file = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+                defer { try? file.close() }
+                try? file.seekToEnd()
+                try? file.write(contentsOf: Data((event + "\n").utf8))
+            }
+        }
     }
 #endif
 
