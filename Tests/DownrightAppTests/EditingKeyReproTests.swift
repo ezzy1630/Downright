@@ -461,12 +461,6 @@ struct EditingKeyReproTests {
 
     @Test("word deletion keeps a wrapped caret line on screen", arguments: [50, 1_600], [false, true])
     func wordDeletionKeepsWrappedCaretLineFixed(sectionCount: Int, offsetsDocument: Bool) async throws {
-        let previousTrace = ProcessInfo.processInfo.environment["DOWNRIGHT_TRACE_PARSE"]
-        setenv("DOWNRIGHT_TRACE_PARSE", "1", 1)
-        defer {
-            if let previousTrace { setenv("DOWNRIGHT_TRACE_PARSE", previousTrace, 1) }
-            else { unsetenv("DOWNRIGHT_TRACE_PARSE") }
-        }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditingKeyReproWordCamera-\(UUID().uuidString).md")
         defer { try? FileManager.default.removeItem(at: url) }
