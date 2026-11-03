@@ -314,6 +314,10 @@ publication succeeded but deployment failed, re-run only the failed deployment
 jobs to reuse the original Pages artifact. Do not rebuild and republish the
 same commit; a replacement app requires a new, higher-build commit.
 
+Preflight runs only for manual `main` dispatches and uses `contents: write`
+because GitHub hides drafts from read-only identities. It only performs release
+lookups, and checkout does not persist that token.
+
 Before uploading release assets, the workflow retains the exact publication
 inputs as `release-publication-<sha>-<attempt>` for seven days, including
 `publication-inputs.sha256` and the signed appcast under `artifacts/pages`.

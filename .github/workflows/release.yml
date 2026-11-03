@@ -16,9 +16,16 @@ concurrency:
 
 jobs:
   request:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      # GitHub hides draft releases from read-only identities. This job only
+      # performs lookups, but needs push access to reject drafts before builds.
+      contents: write
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
       - name: Require an explicit release from main
         run: bash Scripts/validate-release-request.sh
       - name: Reject a commit that already has a release
