@@ -6,8 +6,9 @@ publication. A lightweight request gate rejects automatic events, other refs,
 and an existing release for that commit before production validation. API
 failures block publication rather than being treated as an absent release.
 The lookup includes drafts and repeats immediately before publication.
-The preflight job runs only for explicit `main` dispatches. Its token needs
-`contents: write` for GitHub to expose drafts; checkout does not persist it.
+The request job rejects invalid dispatches with a read-only token before the
+main-only release lookup can run. That lookup's token needs `contents: write`
+for GitHub to expose drafts; neither checkout persists credentials.
 Exact publication inputs and their checksums are retained for seven days so
 an interrupted upload can be recovered without rebuilding app artifacts.
 Its `validation` job calls the same-commit
