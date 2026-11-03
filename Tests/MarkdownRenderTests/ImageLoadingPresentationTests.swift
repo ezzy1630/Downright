@@ -7,12 +7,41 @@ import Testing
 struct ImageLoadingPresentationTests {
     private final class PendingImages: RemoteImageLoading {
         var requests = 0
-        func cachedImage(for url: URL, maxPixelDimension: Int) -> NSImage? { nil }
+        var image: NSImage?
+        var completions: [@MainActor (NSImage?) -> Void] = []
+        func cachedImage(for url: URL, maxPixelDimension: Int) -> NSImage? { image }
         func hasFailed(_ url: URL) -> Bool { false }
         func loadImage(for url: URL, maxPixelDimension: Int,
                        completion: @escaping @MainActor (NSImage?) -> Void) {
             requests += 1
+            completions.append(completion)
         }
+    }
+
+    @Test func arrivingImageSchedulesViewportRefreshWithoutChangingSource() throws {
+        let source = "![Picture](https://example.com/picture.png)\n"
+        let storage = NSTextStorage(string: source)
+        let view = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 400), storage: storage)
+        let loader = PendingImages()
+        view.remoteImageLoader = loader
+        view.mode = .read
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+        view.prepareForDisplay()
+        let manager = try #require(view.textLayoutManager)
+        let fragment = try #require(manager.textLayoutFragment(for: manager.documentRange.location) as? ImageFragment)
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 800, pixelsHigh: 600,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let graphics = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
+        fragment.drawObject(at: .zero, in: graphics.cgContext)
+        #expect(loader.completions.count == 1)
+        #expect(view.pendingResizeRequestForTesting == nil)
+        loader.image = NSImage(size: NSSize(width: 120, height: 80))
+        loader.completions.forEach { $0(loader.image) }
+        loader.completions.removeAll()
+        #expect(view.pendingResizeRequestForTesting == .viewport,
+                "a completed image must replace the native placeholder surface without requiring pointer input")
+        #expect(storage.string == source)
     }
 
     private func writePNG(to url: URL, size: Int = 4) throws {

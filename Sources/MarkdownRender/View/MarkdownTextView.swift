@@ -347,6 +347,16 @@ public final class MarkdownTextView: NSTextView {
         requestContentResize(.viewport, anchor: anchor, preservingReadingPosition: true)
     }
 
+    func imageLoadDidFinish(_ payload: FragmentPayload) {
+        guard preparePresentationRefresh(),
+              fragmentPayload(atSourceOffset: payload.sourceRange.location)?.payload === payload else { return }
+        let anchor = captureViewportAnchor()
+        invalidateFragments(in: payload.sourceRange)
+        // Layout invalidation alone can leave TextKit's placeholder rendering
+        // surface in place. Rebuild the visible surfaces at the coalesced pass.
+        requestContentResize(.viewport, anchor: anchor, preservingReadingPosition: true)
+    }
+
     private var installedRemoteImageLoader: RemoteImageLoading?
     public var remoteImageLoader: RemoteImageLoading? {
         get { installedRemoteImageLoader }

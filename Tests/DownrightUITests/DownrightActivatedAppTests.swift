@@ -69,12 +69,6 @@ final class DownrightActivatedAppTests: XCTestCase {
     override func tearDown() {
         app?.terminate()
         if let root {
-            if let trace = try? String(contentsOf: root.appendingPathComponent("image-load-trace.txt"), encoding: .utf8) {
-                let attachment = XCTAttachment(string: trace)
-                attachment.name = "Image load trace"
-                attachment.lifetime = .keepAlways
-                add(attachment)
-            }
             try? FileManager.default.removeItem(at: root)
         }
     }
@@ -144,8 +138,6 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     private func assertManyLocalImagesRemainVisibleAfterHover(separator: String) throws {
-        app.launchEnvironment["DOWNRIGHT_TRACE_IMAGE_LOAD"] = "1"
-        app.launchEnvironment["DOWNRIGHT_IMAGE_TRACE_PATH"] = root.appendingPathComponent("image-load-trace.txt").path
         let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { rect in
             NSColor(srgbRed: 1, green: 0.05, blue: 0.1, alpha: 1).setFill()
             rect.fill()

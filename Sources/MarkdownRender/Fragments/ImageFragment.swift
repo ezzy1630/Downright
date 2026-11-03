@@ -74,21 +74,6 @@ final class ImageFragment: DownrightFragment {
             shouldLoad = true
         }
         let result = loadResult(startLoad: shouldLoad)
-#if DEBUG
-        if payload.detail.hasSuffix("/1.png") {
-            let status: String
-            switch result {
-            case .loaded(let image):
-                let bitmap = image.representations.first as? NSBitmapImageRep
-                status = "hit size=\(image.size) pixels=\(image.representations.first?.pixelsWide ?? -1) alpha=\(String(describing: bitmap?.colorAt(x: 0, y: 0)?.alphaComponent))"
-            case .loading: status = "loading"
-            case .missing: status = "missing"
-            case .blocked: status = "blocked"
-            }
-            let traceFrame = super.layoutFragmentFrame
-            context?.traceImageLoad("draw range=\(payload.sourceRange) dim=\(targetPixelDimension) pending=\(loadPending) visible=\(String(describing: context?.textView?.visibleRect)) frame=\(traceFrame) origin=\(String(describing: context?.textView?.textContainerOrigin)) point=\(rawPoint) rect=\(rect) shouldLoad=\(shouldLoad) \(status)")
-        }
-#endif
         if case let .loaded(image) = result {
             cg.saveGState()
             cg.setShadow(offset: CGSize(width: 0, height: 2),
@@ -247,25 +232,16 @@ final class ImageFragment: DownrightFragment {
         guard !loadPending else { return }
         loadPending = true
         let wasFailed = MarkdownFragmentImageCaches.images.hasFailed(for: url, maxPixelDimension: dimension)
-#if DEBUG
-        if payload.detail.hasSuffix("/1.png") { context?.traceImageLoad("request dim=\(dimension) failedBefore=\(wasFailed)") }
-#endif
         let box = ImageLoadCompletionBox(view: context?.textView, payload: payload, fragment: self)
         MarkdownFragmentImageCaches.images.loadImageAsync(
             for: url, maxPixelDimension: dimension
         ) { image in
             box.fragment?.loadPending = false
-#if DEBUG
-            if box.payload.detail.hasSuffix("/1.png") {
-                box.view?.fragmentContext.traceImageLoad("complete dim=\(dimension) size=\(String(describing: image?.size)) pixels=\(image?.representations.first?.pixelsWide ?? -1) fragmentAlive=\(box.fragment != nil) payloadCurrent=\(box.view?.fragmentPayload(atSourceOffset: box.payload.sourceRange.location)?.payload === box.payload)")
-            }
-#endif
             // Publish the first failure as a missing image. A subsequent draw
             // may check for a repaired file, but an unchanged failure must not
             // invalidate itself forever.
-            guard image != nil || !wasFailed, let view = box.view,
-                  view.fragmentPayload(atSourceOffset: box.payload.sourceRange.location)?.payload === box.payload else { return }
-            view.invalidateFragments(in: box.payload.sourceRange)
+            guard image != nil || !wasFailed else { return }
+            box.view?.imageLoadDidFinish(box.payload)
         }
     }
 
@@ -313,9 +289,7 @@ final class ImageFragment: DownrightFragment {
         let box = ImageLoadCompletionBox(view: context?.textView, payload: payload, fragment: self)
         loader.loadImage(for: url, maxPixelDimension: dimension) { _ in
             box.fragment?.loadPending = false
-            guard let view = box.view,
-                  view.fragmentPayload(atSourceOffset: box.payload.sourceRange.location)?.payload === box.payload else { return }
-            view.invalidateFragments(in: box.payload.sourceRange)
+            box.view?.imageLoadDidFinish(box.payload)
         }
         return .loading
     }

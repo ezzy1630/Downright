@@ -247,6 +247,7 @@ struct AsyncParseTests {
     @Test @MainActor
     func burstKeepsOnlyLatestPendingSnapshot() async {
         let gate = ParseGate()
+        let committed = ParseSignal()
         let worker = MarkdownParseWorker { text, previous, revision in
             let parsed = MarkdownParser.parse(text)
             return await gate.hold(MarkdownParseResult(
@@ -256,6 +257,9 @@ struct AsyncParseTests {
         }
         let document = MarkdownDocument(parseWorker: worker)
         document.adopt(text: "zero\n", displayURL: nil)
+        document.onReparse = { parsed, _ in
+            if parsed.text == "four\n" { Task { await committed.signal() } }
+        }
 
         document.replace(
             NSRange(location: 0, length: document.storage.length),
@@ -274,12 +278,12 @@ struct AsyncParseTests {
             document.flushScheduledReparse()
         }
 
-        for _ in 0..<4 { await Task.yield() }
+        await document.waitForEnqueuedParseRequestsForTesting()
         #expect(await gate.requestCount == 1)
         await gate.releaseNext()
         await gate.waitForRequestCount(2)
         await gate.releaseNext()
-        for _ in 0..<6 { await Task.yield() }
+        await committed.wait()
         #expect(document.parsed.text == "four\n")
     }
 

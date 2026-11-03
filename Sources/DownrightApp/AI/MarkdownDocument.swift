@@ -1176,6 +1176,13 @@ final class MarkdownDocument: NSObject {
     /// Separate unstructured tasks have no ordering contract; this chain makes
     /// close → reopen → submit explicit and prevents a valid snapshot from
     /// reaching a coordinator that is still suspended.
+#if DEBUG
+    /// Acknowledges queued control messages without waiting for a held parse.
+    func waitForEnqueuedParseRequestsForTesting() async {
+        await parseControlTask?.value
+    }
+#endif
+
     private func enqueueParseControl(
         _ operation: @escaping @Sendable (MarkdownParseCoordinator) async -> Void
     ) {
