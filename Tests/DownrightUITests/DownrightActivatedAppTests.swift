@@ -139,7 +139,15 @@ final class DownrightActivatedAppTests: XCTestCase {
         let png = try XCTUnwrap(NSBitmapImageRep(cgImage: bitmap).representation(using: .png, properties: [:]))
         let images = root.appendingPathComponent("images/thread-local", isDirectory: true)
         try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
-        for index in 1...32 { try png.write(to: images.appendingPathComponent("\(index).png")) }
+        try png.write(to: images.appendingPathComponent("1.png"))
+        let laterImage = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { rect in
+            NSColor(srgbRed: 0.05, green: 0.1, blue: 1, alpha: 1).setFill()
+            rect.fill()
+            return true
+        }
+        let laterBitmap = try XCTUnwrap(laterImage.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let laterPNG = try XCTUnwrap(NSBitmapImageRep(cgImage: laterBitmap).representation(using: .png, properties: [:]))
+        for index in 2...32 { try laterPNG.write(to: images.appendingPathComponent("\(index).png")) }
         let source = "# Many local images\n\n"
             + (1...32).map { "![](./images/thread-local/\($0).png)" }.joined(separator: "\n\n") + "\n"
         let original = Data(source.utf8)
