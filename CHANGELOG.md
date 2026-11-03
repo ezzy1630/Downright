@@ -19,7 +19,9 @@ every release; Sparkle orders updates by it.
 - Documents with many local images load pictures when they are drawn instead
   of during offscreen layout. Hovering no longer starts repeated loads that
   can evict the visible picture. Image dimensions survive pixel-cache eviction,
-  and unreadable local pictures settle on a missing-image message.
+  and the cache accounts for downsampled pixels correctly. Adjacent image-only
+  lines keep independent image fragments. Unreadable local pictures settle on
+  a missing-image message.
 
 ## [1.0.21]
 

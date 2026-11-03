@@ -130,6 +130,14 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     func testManyLocalImagesRemainVisibleAfterHover() throws {
+        try assertManyLocalImagesRemainVisibleAfterHover(separator: "\n\n")
+    }
+
+    func testAdjacentLocalImageLinesRemainVisibleAfterHover() throws {
+        try assertManyLocalImagesRemainVisibleAfterHover(separator: "\n")
+    }
+
+    private func assertManyLocalImagesRemainVisibleAfterHover(separator: String) throws {
         let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { rect in
             NSColor(srgbRed: 1, green: 0.05, blue: 0.1, alpha: 1).setFill()
             rect.fill()
@@ -149,7 +157,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         let laterPNG = try XCTUnwrap(NSBitmapImageRep(cgImage: laterBitmap).representation(using: .png, properties: [:]))
         for index in 2...32 { try laterPNG.write(to: images.appendingPathComponent("\(index).png")) }
         let source = "# Many local images\n\n"
-            + (1...32).map { "![](./images/thread-local/\($0).png)" }.joined(separator: "\n\n") + "\n"
+            + (1...32).map { "![](./images/thread-local/\($0).png)" }.joined(separator: separator) + "\n"
         let original = Data(source.utf8)
         try original.write(to: fixture)
         app.launch()
@@ -182,7 +190,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: fixture), original)
         let capture = XCTAttachment(screenshot: window.screenshot())
-        capture.name = "First local image after hover in a 32-image document"
+        capture.name = separator == "\n" ? "First adjacent-line image after hover" : "First block image after hover"
         capture.lifetime = .keepAlways
         add(capture)
     }

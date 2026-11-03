@@ -310,10 +310,15 @@ final class ImageRenderCache {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        let image = NSImage(
-            cgImage: cgImage,
-            size: CGSize(width: sourceWidth ?? CGFloat(cgImage.width),
-                         height: sourceHeight ?? CGFloat(cgImage.height)))
+        let naturalSize = CGSize(width: sourceWidth ?? CGFloat(cgImage.width),
+                                 height: sourceHeight ?? CGFloat(cgImage.height))
+        // NSImage(cgImage:size:) reports the natural canvas as its snapshot
+        // representation's pixel size. Keep an explicit bitmap representation
+        // so the cache charges for the thumbnail while layout keeps the source size.
+        let representation = NSBitmapImageRep(cgImage: cgImage)
+        representation.size = naturalSize
+        let image = NSImage(size: naturalSize)
+        image.addRepresentation(representation)
         // The *source* is the authority on transparency: a thumbnail can be
         // handed back in a format that no longer advertises it.  Fragments
         // matte a transparent image rather than letting the page colour show

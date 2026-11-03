@@ -33,6 +33,7 @@ enum HardWrapReflow {
                 return
             }
             guard enabled, case .paragraph = block.content else { return }
+            guard BlockImageLines.images(in: block, text: text).isEmpty else { return }
             guard !excludedRanges.contains(where: {
                 NSIntersectionRange($0, block.range).length > 0
             }) else { return }

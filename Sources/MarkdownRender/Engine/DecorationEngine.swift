@@ -599,7 +599,7 @@ public final class DecorationEngine {
                 applyBlockMarker(block, context: context, state: &state)
                 applyInlinesIfLeaf(block, context: context, state: &state)
             }
-            emitInlineImageFragmentIfSolitary(block, state: &state)
+            emitBlockImageLines(block, state: &state)
             for childIndex in Self.intersectingChildIndices(block.children, target: state.target) {
                 walk(block.children[childIndex], context: context, state: &state)
             }
@@ -1224,16 +1224,13 @@ public final class DecorationEngine {
         return payload
     }
 
-    /// A paragraph that is nothing but an image renders as an object with a
-    /// caption (§11.3); an image sitting inside a sentence stays inline.
-    private func emitInlineImageFragmentIfSolitary(_ block: MDBlock, state: inout DecorateState) {
-        guard case .paragraph = block.content, block.inlines.count == 1,
-              case .image(let source, let alt) = block.inlines[0].kind else { return }
-        let payload = FragmentPayload(kind: .image, sourceRange: block.range,
-                                      blockIdentity: block.identity, detail: source)
-        payload.tableData = nil
-        apply([.drFragment: payload, .drLink: source, .drReference: alt], to: block.range, state: &state)
-        state.fragmentCount += 1
+    private func emitBlockImageLines(_ block: MDBlock, state: inout DecorateState) {
+        for image in BlockImageLines.images(in: block, text: state.document.text as NSString) {
+            let payload = FragmentPayload(kind: .image, sourceRange: image.range,
+                                          blockIdentity: block.identity, detail: image.source)
+            apply([.drFragment: payload, .drLink: image.source, .drReference: image.alt], to: image.range, state: &state)
+            state.fragmentCount += 1
+        }
     }
 
     // MARK: - Program cache
