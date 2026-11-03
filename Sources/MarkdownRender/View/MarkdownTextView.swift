@@ -351,7 +351,7 @@ public final class MarkdownTextView: NSTextView {
         guard preparePresentationRefresh(),
               fragmentPayload(atSourceOffset: payload.sourceRange.location)?.payload === payload else { return }
         let anchor = captureViewportAnchor()
-        invalidateFragments(in: payload.sourceRange)
+        invalidateFragments(in: payload.sourceRange, includingRendering: true)
         // Layout invalidation alone can leave TextKit's placeholder rendering
         // surface in place. Rebuild the visible surfaces at the coalesced pass.
         requestContentResize(.viewport, anchor: anchor, preservingReadingPosition: true)
@@ -1664,6 +1664,9 @@ public final class MarkdownTextView: NSTextView {
             } else if let viewportY {
                 self.interruptAnimatedScroll()
                 self.restoreViewport(y: viewportY)
+            }
+            if pending == .viewport {
+                self.synchronizeVisibleLayout()
             }
         }
         resizeWorkItem = workItem
@@ -3639,9 +3642,12 @@ public final class MarkdownTextView: NSTextView {
     /// Scoped layout invalidation.  Invalidating the document range on every
     /// caret move would throw away the layout of a 5k-line file to reveal two
     /// asterisks (§12).
-    func invalidateFragments(in sourceRange: NSRange?) {
+    func invalidateFragments(in sourceRange: NSRange?, includingRendering: Bool = false) {
         lastFragmentInvalidationRangeForTesting = sourceRange
         guard let sourceRange else {
+            if includingRendering {
+                markdownLayoutManager.invalidateRenderingAttributes(for: markdownLayoutManager.documentRange)
+            }
             markdownLayoutManager.invalidateLayout(for: markdownLayoutManager.documentRange)
             needsDisplay = true
             gutterRail?.needsDisplay = true
@@ -3653,10 +3659,14 @@ public final class MarkdownTextView: NSTextView {
         guard let start = contentStorage.location(origin, offsetBy: textKit.location),
               let end = contentStorage.location(origin, offsetBy: textKit.upperBound),
               let range = NSTextRange(location: start, end: end) else {
+            if includingRendering {
+                markdownLayoutManager.invalidateRenderingAttributes(for: markdownLayoutManager.documentRange)
+            }
             markdownLayoutManager.invalidateLayout(for: markdownLayoutManager.documentRange)
             needsDisplay = true
             return
         }
+        if includingRendering { markdownLayoutManager.invalidateRenderingAttributes(for: range) }
         markdownLayoutManager.invalidateLayout(for: range)
         needsDisplay = true
         gutterRail?.needsDisplay = true
