@@ -19,7 +19,7 @@ class PrePushTests(unittest.TestCase):
         self.git("init", "-q")
         (self.root / "Scripts").mkdir()
         check = self.root / "Scripts/check-fast.sh"
-        check.write_text('#!/bin/bash\nset -euo pipefail\ngit -C "$CHECK_ROOT" rev-parse --show-toplevel >/dev/null\ncat "$CHECK_ROOT/value" >> "$PUSH_TEST_LOG"\n'
+        check.write_text('#!/bin/bash\nset -euo pipefail\n[ "$(git -C "$CHECK_ROOT" rev-parse --show-toplevel)" = "$(cd "$CHECK_ROOT" && pwd -P)" ]\ncat "$CHECK_ROOT/value" >> "$PUSH_TEST_LOG"\n'
                          'if [ -e "$CHECK_ROOT/reject" ]; then exit 23; fi\n')
         check.chmod(0o755)
         self.environment["PUSH_TEST_LOG"] = str(self.root / "observed")
@@ -62,6 +62,17 @@ class PrePushTests(unittest.TestCase):
         result = self.push_input(f"(delete) {'0' * 40} refs/heads/old {revision}\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / "observed").exists())
+
+    def test_hook_git_environment_cannot_redirect_snapshot_initialization(self):
+        revision = self.commit("isolated")
+        git_directory = self.git("rev-parse", "--absolute-git-dir")
+        self.environment.update(GIT_DIR=git_directory, GIT_COMMON_DIR=git_directory,
+                                GIT_WORK_TREE=str(self.root))
+        result = self.push_input(f"refs/heads/feature {revision} refs/heads/feature {'0' * 40}\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "observed").read_text(), "isolated\n")
+        self.assertEqual(self.git("config", "--bool", "core.bare"), "false")
+        self.assertEqual(self.git("rev-parse", "--show-toplevel"), str(self.root.resolve()))
 
 
 if __name__ == "__main__":

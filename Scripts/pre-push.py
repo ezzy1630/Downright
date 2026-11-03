@@ -8,6 +8,13 @@ import tempfile
 
 
 def main():
+    # Hooks export repository-local Git variables. Clear them before creating
+    # or inspecting a foreign snapshot, or git init can modify the real repo.
+    local_git_variables = subprocess.check_output(
+        ["git", "rev-parse", "--local-env-vars"], text=True,
+    ).splitlines()
+    snapshot_environment = {key: value for key, value in os.environ.items()
+                            if key not in local_git_variables}
     seen = set()
     for line in sys.stdin:
         fields = line.split()
@@ -30,8 +37,8 @@ def main():
             # Actionlint resolves local actions/reusable workflows from a Git
             # project root. Metadata is disposable; proposed files stay exact.
             subprocess.run(["git", "init", "--quiet", directory], check=True,
-                           stdout=subprocess.DEVNULL)
-            environment = dict(os.environ, CHECK_ROOT=directory)
+                           stdout=subprocess.DEVNULL, env=snapshot_environment)
+            environment = dict(snapshot_environment, CHECK_ROOT=directory)
             environment["ACTIONLINT"] = environment.get("ACTIONLINT") or str(Path(__file__).resolve().parents[1] / ".build-tools/actionlint")
             result = subprocess.run([str(Path(directory) / "Scripts/check-fast.sh")],
                                     env=environment)

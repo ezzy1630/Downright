@@ -1,16 +1,11 @@
 name: Release
 
-# Every push to `main` triggers shared source/native/updater validation, then
-# signed, notarized, stapled universal build → Sparkle-signed appcast → GitHub
-# Release → GitHub Pages deployment. Feature branches can run CI manually;
-# a merge or push to `main` is the release event. All secrets live in the
-# `release` environment, and the newest verified build becomes the download
-# and updater channel.
+# Explicit dispatch on `main` validates that exact commit, then publishes the
+# signed, notarized, stapled universal app and signed Sparkle appcast. Merging
+# code does not publish it. All secrets live in the `release` environment.
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,7 +15,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - name: Require an explicit release from main
+        run: bash Scripts/validate-release-request.sh
+
+  unpublished:
+    needs: request
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      # GitHub hides draft releases from read-only identities. This job only
+      # performs lookups, but needs push access to reject drafts before builds.
+      contents: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - name: Reject a commit that already has a release
+        run: python3 Scripts/check-release-unpublished.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   validation:
+    needs: unpublished
     uses: ./.github/workflows/ci.yml
     with:
       production: true
@@ -61,10 +83,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "$GITHUB_REF_NAME" = "main" ] || {
-            echo "::error::release workflow only accepts pushes to main (got $GITHUB_REF_NAME)"
-            exit 1
-          }
           # shellcheck disable=SC1091
           source Config/version.env
           if ! echo "$MARKETING_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -93,12 +111,12 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "TAG=$TAG"
           echo "RELEASE_TAG=$RELEASE_TAG"
-          # The pushed commit must still be reachable from protected main.
+          # The selected commit must still be reachable from protected main.
           # Keep the full checkout history intact: build-number.sh derives
           # CURRENT_PROJECT_VERSION from the reachable commit count.
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::pushed commit is not reachable from origin/main"; exit 1
+            echo "::error::selected commit is not reachable from origin/main"; exit 1
           fi
           # Working tree must be clean (no generated-file drift).
           if [ -n "$(git status --porcelain)" ]; then
@@ -503,6 +521,32 @@ jobs:
           bash Scripts/download-count-badge.sh "$TOTAL" > artifacts/downloads.svg
 
       # --------------------------------------------------------------- publish
+      - name: Record exact publication input checksums
+        run: |
+          set -euo pipefail
+          {
+            shasum -a 256 "Downright-$TAG.zip" "Downright-$TAG.dmg" Downright.dmg
+            find artifacts -type f -exec shasum -a 256 {} +
+          } > publication-inputs.sha256
+
+      - name: Retain exact publication inputs for recovery
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-publication-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            Downright-${{ steps.release_identity.outputs.tag }}.zip
+            Downright-${{ steps.release_identity.outputs.tag }}.dmg
+            Downright.dmg
+            publication-inputs.sha256
+            artifacts/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Recheck release immutability before publication
+        run: python3 Scripts/check-release-unpublished.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -510,6 +554,7 @@ jobs:
           name: Downright ${{ env.MARKETING_VERSION }} (build ${{ env.BUILD }})
           target_commitish: ${{ github.sha }}
           make_latest: true
+          overwrite_files: false
           files: |
             Downright-${{ steps.release_identity.outputs.tag }}.zip
             Downright-${{ steps.release_identity.outputs.tag }}.dmg
