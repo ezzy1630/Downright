@@ -68,6 +68,8 @@ Use one motion system. Standard durations are 0.12 s, 0.20 s, and 0.32 s.
 Use spring motion for structural zoom and a short fade-up for first layout.
 Hover, copy, task, and change states need clear feedback. User scroll must
 interrupt animated scrolling. Reduce Motion disables non-essential movement.
+Use the shared `Motion` infrastructure rather than introducing another timing
+or spring system. Park idle animation drivers and release them on teardown.
 
 Do not move the caret when local editing reveals syntax. Do not change line height
 because the caret entered a span. A stable layout is more important than a

@@ -29,8 +29,9 @@ performance workflow.
 Open unfinished work as a draft. `cubic.yaml` enables a low-sensitivity initial
 review for non-draft PRs and disables automatic incremental reviews, automatic
 fixes and generated descriptions. Mark a draft ready when the implementation
-is ready for review. Assess findings against the actual code and invariants;
-batch confirmed fixes and request another review only for material new risk.
+is ready for review. Assess findings against reachable code paths and invariants;
+batch confirmed fixes. Request another review only to answer a specific unresolved
+concern or assess material new risk, rather than stacking reviewers after a pass.
 Cubic configuration is read from the default branch, so a feature-branch edit
 does not change live reviewer settings.
 
@@ -83,6 +84,65 @@ wall times, Swift execution time, skipped coverage, slowest suites, build-log
 compilation units, and requested/restored cache keys remain distinct fields.
 CI uploads source evidence and native `.xcresult` bundles even on failure.
 Artifacts are retained for seven days.
+
+### Acceptance record
+
+For a numbered audit or broad implementation plan, keep one task-local record
+alongside the evidence, for example `.build-ci-evidence/acceptance.md`. Keep it
+out of tracked product documentation. Start with the original requirements and
+reproductions; add later user corrections rather than replacing the original
+acceptance criteria with what the implementation happens to do.
+
+Record the checkout path, HEAD, source digest from `ci-report.py`, and the
+acceptance surfaces in scope. Use one row per requirement or correction:
+
+| Requirement | Original reproduction | Changed behavior | Exact artifact | Evidence | State and remaining limitation |
+|---|---|---|---|---|---|
+| Original item or later correction | Input, preconditions, action, and observed failure | Expected result and observed result | Relevant bundle/file identity or hosted commit | Log, test case, recording, or workflow/artifact reference | Proved, approved as changed, or blocked; name missing evidence |
+
+Populate the record from the existing mechanisms:
+
+- `Scripts/ci-report.py` supplies source identity, command exit status, executed
+  coverage, and retained logs. Passing source checks proves only their coverage.
+- `Scripts/check-pr-ci.py` reads hosted source/native checks for the current PR
+  head, including manual workflow checks missing from the review rollup.
+- `Scripts/check-app.sh` builds and exercises an exact host and retains its
+  `.xcresult`; `Scripts/verify-bundle.sh` checks packaged components. For native
+  interaction claims, also record the actual bundle path, version/build,
+  executable identity, running PID/process path, and relevant real-input evidence.
+  A structural bundle pass does not prove a pointer or visual journey.
+- `Scripts/verify-public-update.sh` checks the public release/update surface;
+  follow [RELEASE.md](RELEASE.md) for signed artifact and publication evidence.
+  Public availability does not prove a local installation updated.
+
+Link the original failing journey to its regression coverage and affected real
+path. A user rejection reopens that item's acceptance even when other tests pass.
+Invalidate affected evidence when the source or artifact changes. A copied result,
+reviewer opinion, or absence of errors cannot fill an unverified cell.
+
+### Scratch and process ownership
+
+Concurrent checks use distinct `SCRATCH`, `TEST_SCRATCH`,
+`APP_ACCEPTANCE_SCRATCH`, and `SPOTLIGHT_SCRATCH` locations. Under Xcode,
+source builds and tests share `SCRATCH` by default; CLT tests use
+`${SCRATCH}-test` for their distinct framework flags. `TEST_SCRATCH` explicitly
+overrides either default. Release benchmarks use `${SCRATCH}-bench` unless
+`BENCH_SCRATCH` overrides it.
+
+Record task-created scratch paths, fixtures, profiles, downloaded assets,
+preferences to restore, and process identities with the acceptance evidence;
+carry that ownership into handoffs. Use `ci-report.py` to retain per-invocation
+logs and forward termination to its command's process group. Its reporting
+directory is evidence, not automatic cleanup of every build or app it launches.
+
+Before removing owned temporary material, stop owned workloads and verify the
+exact paths/processes are idle. Preserve shared compiler/dependency caches,
+installed apps, other owners' resources, and minimal acceptance evidence.
+Record deferred cleanup and its active owner instead of using a global process
+kill or broad cache deletion. Extend the existing runner/cleanup mechanisms
+when they miss an owned resource; avoid a parallel ad hoc cleanup path.
+
+### Build caches
 
 Build caches include the runner OS/architecture, compiler/SDK identity and build
 inputs. Native cache keys also separate Debug, Release, development and

@@ -290,6 +290,15 @@ non-placeholder public key.
 
 ## Release checklist (workflow path)
 
+The task owner remains responsible through every publication stage requested by
+the user. A failed validation, archive, upload, or Pages job is unfinished work,
+not a completed release with a warning. Inspect the exact run and failure,
+repair defects within the authorized scope, and continue preparation that is
+independent of a blocker. Preserve the existing gates and immutable artifacts.
+If approval, credentials, or an owner-only action blocks progress, report the
+exact stage, target, evidence, and next action. A replacement release commit
+still requires explicit authorization for its own SHA.
+
 1. Bump `Config/version.env`; run `Scripts/sync-versions.sh fix`.
 2. `Scripts/check.sh` — all suites, version gates, and the Sparkle link-scope
    check pass.
@@ -304,6 +313,15 @@ non-placeholder public key.
    is public, the previous appcast stays active and re-running the deployment
    is safe.
 5. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
+
+Before reporting publication complete, reconcile the task's
+[acceptance record](CI.md#acceptance-record) with the selected main SHA,
+successful workflow, version/build, public GitHub Release, signed/notarized/
+stapled DMG and checksum, stable download URL, and signed appcast/enclosure.
+Use `Scripts/verify-public-update.sh` for the public-update checks. Verify the
+installed `/Applications` bundle separately only when installation is in scope.
+Issue replies and closure, when requested, follow verification of the release
+containing the fix; read back the posted replies and final issue states.
 
 An existing public or draft `auto-<sha>` release blocks a new release dispatch
 before production validation and is checked again immediately before
