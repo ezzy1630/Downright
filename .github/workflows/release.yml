@@ -21,6 +21,10 @@ jobs:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Require an explicit release from main
         run: bash Scripts/validate-release-request.sh
+      - name: Reject a commit that already has a release
+        run: python3 Scripts/check-release-unpublished.py
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   validation:
     needs: request
@@ -502,6 +506,11 @@ jobs:
           bash Scripts/download-count-badge.sh "$TOTAL" > artifacts/downloads.svg
 
       # --------------------------------------------------------------- publish
+      - name: Recheck release immutability before publication
+        run: python3 Scripts/check-release-unpublished.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -509,6 +518,7 @@ jobs:
           name: Downright ${{ env.MARKETING_VERSION }} (build ${{ env.BUILD }})
           target_commitish: ${{ github.sha }}
           make_latest: true
+          overwrite_files: false
           files: |
             Downright-${{ steps.release_identity.outputs.tag }}.zip
             Downright-${{ steps.release_identity.outputs.tag }}.dmg

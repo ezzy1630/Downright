@@ -6,7 +6,7 @@ for ordinary Markdown files that people and coding agents change together.
 
 ## Before opening an issue
 
-- Search existing issues and read [Docs/STATUS.md](Docs/STATUS.md).
+- Search existing issues and read [README.md](README.md).
 - For rendering problems, reduce the document to the smallest Markdown that
   still fails.
 - For external-write problems, describe the original file, the process that
@@ -53,9 +53,12 @@ architecture documentation.
 
 ## Releases
 
-The production channel is rolling and main-driven. Update
-`Config/version.env` only when the marketing version changes, run the full
-check, and merge or push the reviewed commit to `main`. Every push to `main`
-gets a monotonically increasing build number, a signed/notarized/stapled
-artifact, a GitHub Release, and a signed Sparkle appcast. Feature branches run
-CI but do not publish customer-facing builds. See [Docs/RELEASE.md](Docs/RELEASE.md).
+Merging or pushing to `main` does not publish. When preparing a release, move
+the pending `[Unreleased]` notes into the matching version section and update
+`Config/version.env` only when the marketing version changes. Obtain release
+authorization for the exact `main` commit, then explicitly dispatch
+`release.yml` on `main`. All source, performance, native and production checks
+must pass before signing and publication. Existing release tags and app artifacts
+are never overwritten; deployment recovery reuses the original artifacts.
+Feature branches can run CI manually without publishing customer-facing
+builds. See [Docs/CI.md](Docs/CI.md) and [Docs/RELEASE.md](Docs/RELEASE.md).

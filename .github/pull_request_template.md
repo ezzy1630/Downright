@@ -14,8 +14,9 @@
 - [ ] New behaviour has a test, or the reason it cannot have one is in the
       description.
 - [ ] No new compiler warnings.
-- [ ] User-visible changes appear in the matching version section of
-      `CHANGELOG.md` (see `Docs/RELEASE.md`).
+- [ ] User-visible changes appear under `[Unreleased]` in `CHANGELOG.md`, or
+      in the matching version section when preparing a release
+      (see `Docs/RELEASE.md`).
 
 <!-- Link final-revision hosted checks, or describe the documentation-only review. -->
 

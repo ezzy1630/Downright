@@ -2,8 +2,10 @@
 
 Merging or pushing to `main` does not publish or start full validation.
 Explicit dispatch of `release.yml` on `main` selects that ref's commit for
-publication. A lightweight request gate rejects automatic events and other
-refs before production validation. Its `validation` job calls the same-commit
+publication. A lightweight request gate rejects automatic events, other refs,
+and an existing release for that commit before production validation. API
+failures block publication rather than being treated as an absent release.
+Its `validation` job calls the same-commit
 `ci.yml` reusable workflow with production acceptance enabled. Source tests and
 release performance budgets, development native acceptance, and production
 updater acceptance run on separate macOS runners. The archive job depends on

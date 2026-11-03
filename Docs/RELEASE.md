@@ -49,8 +49,10 @@ Scripts/sync-versions.sh fix    # rewrite the consumers from version.env
 
 ## Release notes
 
-Keep customer-facing changes in the matching `## [X.Y.Z]` section of
-`CHANGELOG.md` before landing a release. `Scripts/release-notes.py` combines that
+Collect pending customer-facing changes under `## [Unreleased]` in
+`CHANGELOG.md`. Before publishing, move them into the matching `## [X.Y.Z]`
+section. The release workflow does not publish the `[Unreleased]` section.
+`Scripts/release-notes.py` combines the matching version section
 section with the actual version/build identity for both the GitHub Release and
 the signed Sparkle appcast's embedded notes. The README links to the changelog.
 Use absolute URLs in that section so links work in GitHub and the app as well
@@ -302,6 +304,14 @@ non-placeholder public key.
    is public, the previous appcast stays active and re-running the deployment
    is safe.
 5. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
+
+An existing `auto-<sha>` release blocks a new release dispatch before production
+validation and is checked again immediately before publication. API or network
+failures also block publication; only a confirmed missing release may proceed.
+The publish action additionally refuses to overwrite existing assets. If
+publication succeeded but deployment failed, re-run only the failed deployment
+jobs to reuse the original Pages artifact. Do not rebuild and republish the
+same commit; a replacement app requires a new, higher-build commit.
 
 Each main-channel build receives an immutable `auto-<full-commit-sha>` release
 tag and unique versioned asset names. The `latest` GitHub Release alias and
