@@ -13,6 +13,12 @@ native checks without publishing or requesting production secrets. Pull
 requests have no automatic CI or required review. There is no new UI performance
 workflow.
 
+Before reporting a PR ready, run `python3 Scripts/check-pr-ci.py --pr NUMBER`.
+It resolves the current head and reads its actual `swift` and `app-acceptance`
+check runs. Manual workflow checks can be absent from the PR review rollup;
+a reviewer pass alone is not validation. The helper exits nonzero for failed,
+cancelled, missing, or unfinished required checks and reports their exact state.
+
 ## Local entry points
 
 - `Scripts/check-fast.sh`: version consistency, contrast, shell/Python syntax,

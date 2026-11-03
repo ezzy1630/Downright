@@ -190,12 +190,29 @@ struct MarkdownParseWorker: Sendable {
     }
 
     private static let defaultOperation: Operation = { text, previous, revision in
+#if DEBUG
+        let traceStarted = ProcessInfo.processInfo.environment["DOWNRIGHT_TRACE_PARSE"] == "1"
+            ? ContinuousClock().now : nil
+        if traceStarted != nil {
+            print("PARSE_PROBE start revision=\(revision.rawValue) utf16=\(text.utf16.count)")
+        }
+#endif
         let document = MarkdownParser.parse(text)
+#if DEBUG
+        if let traceStarted {
+            print("PARSE_PROBE parsed revision=\(revision.rawValue) elapsed=\(ContinuousClock().now - traceStarted)")
+        }
+#endif
         // An empty previous tree means first paint / open — never try to
         // reconcile block-by-block against nothing.
         let dirty = previous.length == 0
             ? DirtySet.wholesale
             : ASTDiff.dirtySet(old: previous, new: document)
+#if DEBUG
+        if let traceStarted {
+            print("PARSE_PROBE finished revision=\(revision.rawValue) elapsed=\(ContinuousClock().now - traceStarted)")
+        }
+#endif
         return MarkdownParseResult(
             revision: revision, text: text, document: document, dirty: dirty
         )
