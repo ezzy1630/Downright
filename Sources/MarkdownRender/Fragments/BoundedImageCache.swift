@@ -263,7 +263,9 @@ final class ImageRenderCache {
         let changed = freshness[url] != current
         if changed {
             freshness[url] = current
-            failedLoads.remove(key)
+            // A repaired file invalidates failures at every render size,
+            // including another pane or a lightbox's larger decode.
+            failedLoads = failedLoads.filter { $0.url != url }
             sourceSizes.removeValue(forKey: url)
         }
         let isFailed = failedLoads.contains(key)

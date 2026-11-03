@@ -23,9 +23,9 @@ struct ImageLoadingPresentationTests {
         try #require(bitmap.representation(using: .png, properties: [:])).write(to: url)
     }
 
-    private func load(_ url: URL, cache: ImageRenderCache) async -> NSImage? {
+    private func load(_ url: URL, cache: ImageRenderCache, dimension: Int = 16) async -> NSImage? {
         await withCheckedContinuation { continuation in
-            cache.loadImageAsync(for: url, maxPixelDimension: 16) { image in
+            cache.loadImageAsync(for: url, maxPixelDimension: dimension) { image in
                 continuation.resume(returning: image)
             }
         }
@@ -52,11 +52,14 @@ struct ImageLoadingPresentationTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let cache = ImageRenderCache()
         #expect(await load(url, cache: cache) == nil)
+        #expect(await load(url, cache: cache, dimension: 32) == nil)
         #expect(cache.hasFailed(for: url, maxPixelDimension: 16))
         #expect(cache.cachedSize(for: url) == nil)
         try writePNG(to: url)
         #expect(await load(url, cache: cache) != nil)
+        #expect(await load(url, cache: cache, dimension: 32) != nil)
         #expect(!cache.hasFailed(for: url, maxPixelDimension: 16))
+        #expect(!cache.hasFailed(for: url, maxPixelDimension: 32))
         #expect(cache.cachedSize(for: url) == CGSize(width: 4, height: 4))
     }
 
