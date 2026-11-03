@@ -506,6 +506,27 @@ jobs:
           bash Scripts/download-count-badge.sh "$TOTAL" > artifacts/downloads.svg
 
       # --------------------------------------------------------------- publish
+      - name: Record exact publication input checksums
+        run: |
+          set -euo pipefail
+          {
+            shasum -a 256 "Downright-$TAG.zip" "Downright-$TAG.dmg" Downright.dmg
+            find artifacts -type f -exec shasum -a 256 {} +
+          } > publication-inputs.sha256
+
+      - name: Retain exact publication inputs for recovery
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-publication-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            Downright-${{ steps.release_identity.outputs.tag }}.zip
+            Downright-${{ steps.release_identity.outputs.tag }}.dmg
+            Downright.dmg
+            publication-inputs.sha256
+            artifacts/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Recheck release immutability before publication
         run: python3 Scripts/check-release-unpublished.py
         env:

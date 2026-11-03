@@ -1,4 +1,4 @@
-"""Only an authoritative missing-release response may allow publication."""
+"""Only a successful lookup with no matching public or draft release may publish."""
 import contextlib
 import importlib.util
 import io
@@ -22,26 +22,32 @@ class ReleasePublicationGuardTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def check(self, returncode, output):
-        result = subprocess.CompletedProcess([], returncode, stdout=output, stderr="")
+    def check(self, returncode, output, diagnostic=""):
+        result = subprocess.CompletedProcess([], returncode, stdout=output, stderr=diagnostic)
+        errors = io.StringIO()
         with mock.patch.object(GUARD.subprocess, "run", return_value=result) as request, \
-                contextlib.redirect_stderr(io.StringIO()):
+                contextlib.redirect_stderr(errors):
             status = GUARD.main()
-        self.assertEqual(request.call_args.args[0][-1],
-                         "repos/owner/project/releases/tags/auto-" + "a" * 40)
+        command = request.call_args.args[0]
+        self.assertIn("repos/owner/project/releases?per_page=100", command)
+        self.assertIn("--paginate", command)
+        self.assertIn('select(.tag_name == "auto-' + "a" * 40 + '")', command[-1])
+        self.errors = errors.getvalue()
         return status
 
     def test_missing_release_allows_publication(self):
-        self.assertEqual(self.check(1, "HTTP/2.0 404 Not Found\n\n{}"), 0)
+        self.assertEqual(self.check(0, ""), 0)
 
     def test_existing_release_blocks_publication(self):
-        self.assertNotEqual(self.check(0, "HTTP/2.0 200 OK\n\n{}"), 0)
+        self.assertNotEqual(self.check(0, "12345\n"), 0)
 
     def test_api_failures_never_mean_no_release(self):
-        for output in ("HTTP/2.0 401 Unauthorized\n", "HTTP/2.0 403 Forbidden\n",
-                       "HTTP/2.0 500 Internal Server Error\n", ""):
-            with self.subTest(output=output):
-                self.assertNotEqual(self.check(1, output), 0)
+        for diagnostic in ("HTTP 401 Unauthorized", "HTTP 403 Forbidden",
+                           "HTTP 404 Not Found", "HTTP 500 Internal Server Error",
+                           "could not connect to api.github.com"):
+            with self.subTest(diagnostic=diagnostic):
+                self.assertNotEqual(self.check(1, "", diagnostic), 0)
+                self.assertIn(diagnostic, self.errors)
 
     def test_network_failure_and_timeout_block_publication(self):
         for error in (OSError("network unavailable"), subprocess.TimeoutExpired("gh", 30)):

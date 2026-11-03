@@ -5,6 +5,9 @@ Explicit dispatch of `release.yml` on `main` selects that ref's commit for
 publication. A lightweight request gate rejects automatic events, other refs,
 and an existing release for that commit before production validation. API
 failures block publication rather than being treated as an absent release.
+The lookup includes drafts and repeats immediately before publication.
+Exact publication inputs and their checksums are retained for seven days so
+an interrupted upload can be recovered without rebuilding app artifacts.
 Its `validation` job calls the same-commit
 `ci.yml` reusable workflow with production acceptance enabled. Source tests and
 release performance budgets, development native acceptance, and production

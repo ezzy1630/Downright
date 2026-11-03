@@ -6,7 +6,8 @@ for ordinary Markdown files that people and coding agents change together.
 
 ## Before opening an issue
 
-- Search existing issues and read [README.md](README.md).
+- Search existing issues and read [README.md](README.md) and the known gaps
+  in [Docs/STATUS.md](Docs/STATUS.md).
 - For rendering problems, reduce the document to the smallest Markdown that
   still fails.
 - For external-write problems, describe the original file, the process that

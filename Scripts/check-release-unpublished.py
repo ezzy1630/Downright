@@ -16,24 +16,26 @@ def main():
     tag = "auto-" + revision
     try:
         result = subprocess.run(
-            ["gh", "api", "--include", f"repos/{repository}/releases/tags/{tag}"],
+            # The by-tag endpoint omits drafts. Include them so an interrupted
+            # upload cannot silently combine old assets with a rebuilt app.
+            ["gh", "api", "--paginate", f"repos/{repository}/releases?per_page=100",
+             "--jq", f'.[] | select(.tag_name == "{tag}") | .id'],
             capture_output=True, text=True, timeout=30,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        print("release: could not check the existing release", file=sys.stderr)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"release: could not check the existing release: {error}", file=sys.stderr)
         return 1
-    statuses = re.findall(r"^HTTP/\S+ ([0-9]{3})\b", result.stdout, re.MULTILINE)
-    status = statuses[-1] if statuses else None
-    if status == "404" and result.returncode == 1:
-        return 0
-    if status == "200" and result.returncode == 0:
+    if result.returncode != 0:
+        print("release: existing-release lookup failed", file=sys.stderr)
+        if result.stderr.strip():
+            print(result.stderr.strip(), file=sys.stderr)
+        return 1
+    if result.stdout.strip():
         print(f"release: {tag} already exists; do not rebuild or overwrite its app artifacts. "
-              "Recover deployment from the existing artifacts or release a new commit.",
+              "Recover from the retained publication inputs or release a new commit.",
               file=sys.stderr)
-    else:
-        print(f"release: existing-release check failed (HTTP {status or 'unavailable'})",
-              file=sys.stderr)
-    return 1
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

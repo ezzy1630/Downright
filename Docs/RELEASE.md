@@ -52,9 +52,9 @@ Scripts/sync-versions.sh fix    # rewrite the consumers from version.env
 Collect pending customer-facing changes under `## [Unreleased]` in
 `CHANGELOG.md`. Before publishing, move them into the matching `## [X.Y.Z]`
 section. The release workflow does not publish the `[Unreleased]` section.
-`Scripts/release-notes.py` combines that section with the actual version/build
-identity for both the GitHub Release and
-the signed Sparkle appcast's embedded notes. The README links to the changelog.
+`Scripts/release-notes.py` combines the matching version section with the
+actual version/build identity for both the GitHub Release and the signed
+Sparkle appcast's embedded notes. The README links to the changelog.
 Use absolute URLs in that section so links work in GitHub and the app as well
 as in the repository. Historical sections are not included. Empty or duplicate matching
 sections fail publication; a version without a section retains the existing
@@ -305,13 +305,35 @@ non-placeholder public key.
    is safe.
 5. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
 
-An existing `auto-<sha>` release blocks a new release dispatch before production
-validation and is checked again immediately before publication. API or network
-failures also block publication; only a confirmed missing release may proceed.
-The publish action additionally refuses to overwrite existing assets. If
+An existing public or draft `auto-<sha>` release blocks a new release dispatch
+before production validation and is checked again immediately before
+publication. API or network failures also block publication; only a successful
+lookup with no matching release may proceed. The publish action additionally
+refuses to overwrite existing assets. If
 publication succeeded but deployment failed, re-run only the failed deployment
 jobs to reuse the original Pages artifact. Do not rebuild and republish the
 same commit; a replacement app requires a new, higher-build commit.
+
+Before uploading release assets, the workflow retains the exact publication
+inputs as `release-publication-<sha>-<attempt>` for seven days, including
+`publication-inputs.sha256` and the signed appcast under `artifacts/pages`.
+If an upload fails, obtain authorization to recover that exact run, then:
+
+1. Download its retained publication inputs and verify every local file with
+   `shasum -a 256 -c publication-inputs.sha256` from the extracted directory.
+2. Inspect the existing draft or release and download each existing app
+   artifact. Require its SHA-256 to match the retained file of the same name;
+   stop on a mismatch. The mutable download-counter files are excluded from
+   this app-artifact comparison.
+3. Upload only missing assets from that verified directory, without
+   `--clobber`. Verify that all expected app artifacts are present and match
+   before publishing an existing draft. Stable releases are initially drafted
+   by the pinned publish action and become public after all uploads succeed.
+
+This recovery reuses already signed bytes and never runs archive or signing
+again. Retain the original signed Pages inputs for deployment recovery as
+well. If the original files are unavailable or disagree with uploaded app
+artifacts, stop and release a new, higher-build commit instead.
 
 Each main-channel build receives an immutable `auto-<full-commit-sha>` release
 tag and unique versioned asset names. The `latest` GitHub Release alias and
