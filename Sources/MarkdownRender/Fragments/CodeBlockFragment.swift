@@ -107,9 +107,44 @@ final class CodeBlockFragment: DownrightFragment {
             // one so the block always has a reachable copy (§7.1).
             drawCopyControl(in: band, style: style, language: "", in: cg)
         case .body:
+            // AppKit paints selection beneath each fragment surface. Leave
+            // those native segments transparent instead of covering them with
+            // the opaque code tint (including inactive-window selection).
+            cg.saveGState()
+            let background = CGMutablePath()
+            background.addRect(band)
+            for rect in selectionRects(at: point) {
+                let cutout = rect.intersection(band)
+                if !cutout.isNull { background.addRect(cutout) }
+            }
+            cg.addPath(background)
+            cg.clip(using: .evenOdd)
             cg.fillRect(band, color: style.codeBackground)
+            cg.restoreGState()
             drawRule(band, style: style, in: cg)
         }
+    }
+
+    private func selectionRects(at point: CGPoint) -> [CGRect] {
+        guard let view = context?.textView,
+              let manager = view.textLayoutManager,
+              let content = manager.textContentManager else { return [] }
+        var rects: [CGRect] = []
+        for selection in view.sourceSelectedRanges where selection.length > 0 {
+            let textKitRange = view.currentDisplayMap.textKitRange(forSource: selection)
+            let intersection = NSIntersectionRange(textKitRange, elementSourceRange)
+            guard intersection.length > 0,
+                  let start = content.location(content.documentRange.location, offsetBy: intersection.location),
+                  let end = content.location(start, offsetBy: intersection.length),
+                  let range = NSTextRange(location: start, end: end) else { continue }
+            manager.enumerateTextSegments(in: range, type: .selection, options: []) { _, frame, _, _ in
+                rects.append(frame.offsetBy(
+                    dx: point.x - self.layoutFragmentFrame.minX,
+                    dy: point.y - self.layoutFragmentFrame.minY))
+                return true
+            }
+        }
+        return rects
     }
 
     /// A one-pixel optical edge gives the tinted band depth against both paper

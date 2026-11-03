@@ -68,6 +68,8 @@ uses these qualities without copying their product models.
 
 - CommonMark and GFM Markdown with math, callouts, front matter, wikilinks,
   paths, Mermaid, tables, images, and footnotes.
+- Local PlantUML diagrams in the Mac document surface, with source retained
+  for editing and copying. Finder previews keep PlantUML as code.
 - One adaptive TextKit 2 surface with caret-local syntax, scoped Markdown
   editing, and transient full-document Source Focus.
 - Structural zoom, folding, task panel, density gutter with its hover outline,

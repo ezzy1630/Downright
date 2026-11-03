@@ -12,6 +12,36 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.21]
+
+### Added
+
+- A one-time GitHub star suggestion after five document opens and ten minutes
+  of foreground reading. It waits for idle input, leaves editing focus alone,
+  and keeps eligibility and dismissal state entirely on your Mac.
+- Local PlantUML rendering for `plantuml` and `puml` code fences in the Mac
+  app, alongside existing Mermaid diagrams. No Java installation, WebView,
+  or diagram server is required. Source Focus keeps the original diagram
+  text editable. External includes and downloaded libraries stay disabled;
+  Finder previews retain PlantUML fences as code.
+
+### Fixed
+
+- Code block backgrounds no longer cover text selection. Selected text uses
+  a contrasting foreground so syntax colours cannot disappear into the highlight.
+- Theme changes during an edit wait for the current parse, preventing a crash
+  from applying the previous document revision's ranges to the new text.
+
+### Maintenance
+
+- Updated Sparkle to 2.10.1 across SwiftPM, Xcode, and release signing tools,
+  with a consistency check that prevents partial dependency updates.
+- Updated the pinned GitHub Actions cache and artifact upload actions.
+- Shared release validation now runs source budgets, native acceptance, and
+  updater acceptance concurrently and requires all three before publication.
+  Added retained diagnostics, explicit skipped coverage, and fixed-seed source
+  and editing checks.
+
 ## [1.0.20]
 
 ### Fixed

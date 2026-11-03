@@ -96,6 +96,7 @@ public final class FragmentContext {
     public var localAssetAuthorizer: ((URL) -> Bool)?
     /// Host-owned, explicit opt-in. Quick Look leaves this nil.
     public var remoteImageLoader: RemoteImageLoading?
+    public var plantUMLRenderer: PlantUMLRendering?
     /// Paragraph structure of the current text, for line counts and collapse.
     var paragraphIndex: ParagraphIndex = .empty
     /// Zoom + fold + search visibility (§5.2, §7.1, §9.4).
@@ -267,7 +268,9 @@ public class DownrightFragment: NSTextLayoutFragment {
         return storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
     }
 
-    /// Source range of the paragraph this fragment covers.
+    /// The native element's UTF-16 range, or the payload's source range when
+    /// no element is attached. MarkdownContentStorage's source-length layout
+    /// keeps those positions aligned; these are not compact display offsets.
     var elementSourceRange: NSRange {
         guard let element = textElement, let range = element.elementRange,
               let manager = element.textContentManager else { return payload.sourceRange }

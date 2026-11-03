@@ -69,6 +69,8 @@ the default application, or contact a service.
 - Arrow keys scroll; `n`/`p` jump between headings.
 - Text is selectable and copyable. Most Quick Look previews are dead surfaces;
   this one isn't.
+- PlantUML fences remain readable code in Finder. Open the file in Downright
+  for local PlantUML rendering; the extension never starts diagram workers.
 - Appearance follows macOS by default. Choose **Settings → Appearance → Quick
   Look appearance** to pin previews to Light or Dark; the setting is shared with
   the sandboxed extension.

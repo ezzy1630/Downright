@@ -88,6 +88,10 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             guard !editing else { return plain() }
             return MermaidFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
 
+        case .plantUML:
+            guard !editing else { return plain() }
+            return PlantUMLFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
+
         case .image:
             guard !editing else { return plain() }
             return ImageFragment(textElement: textElement, range: elementRange, payload: payload, context: context)

@@ -202,7 +202,7 @@ extension NSAttributedString.Key {
 // MARK: - Fragments
 
 public enum FragmentKind: String, Sendable {
-    case codeBlock, collapsedCodeBlock, table, inlineMath, blockMath, mermaid, image, thematicBreak, frontMatter, callout, listOrnament
+    case codeBlock, collapsedCodeBlock, table, inlineMath, blockMath, mermaid, plantUML, image, thematicBreak, frontMatter, callout, listOrnament
 
     /// True when the fragment draws its own content instead of letting TextKit
     /// draw the element's glyphs.
@@ -214,7 +214,7 @@ public enum FragmentKind: String, Sendable {
     /// text in it, which is exactly what those stray shaded squares were.
     public var replacesGlyphs: Bool {
         switch self {
-        case .table, .collapsedCodeBlock, .blockMath, .mermaid, .image, .thematicBreak, .frontMatter:
+        case .table, .collapsedCodeBlock, .blockMath, .mermaid, .plantUML, .image, .thematicBreak, .frontMatter:
             return true
         // Code keeps its glyphs (that is the point of it), and a callout, a list
         // ornament and inline math are chrome drawn *around* real text.
@@ -235,6 +235,8 @@ public final class FragmentPayload: NSObject {
     /// Table geometry, populated by the table fragment.
     public var tableData: TableData?
     public var isCollapsed: Bool = false
+    /// Parser-computed identity for locating an unchanged diagram after edits.
+    var parsedBlockHash: UInt64?
 
     public init(kind: FragmentKind, sourceRange: NSRange, blockIdentity: BlockIdentity, detail: String) {
         self.kind = kind

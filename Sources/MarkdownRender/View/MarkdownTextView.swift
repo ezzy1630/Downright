@@ -94,6 +94,7 @@ public final class MarkdownTextView: NSTextView {
     public var keyEventHandler: ((NSEvent) -> Bool)?
 
     public private(set) var parsedDocument: ParsedDocument = .empty
+    private var pendingPresentationRefresh = false
 
     /// Instant, and preserves scroll position and selection (§3.2).
     public var mode: RenderMode = .live {
@@ -181,12 +182,9 @@ public final class MarkdownTextView: NSTextView {
 
     public var styleSheet: StyleSheet {
         didSet {
+            guard preparePresentationRefresh() else { return }
             let anchor = captureViewportAnchor()
-            engine.styleSheet = styleSheet
-            fragmentContext.styleSheet = styleSheet
-            fragmentContext.invalidateDerivedLayout()
-            applyMeasure()
-            applyModeChrome()
+            synchronizeStyleSheet()
             // Font / measure changes need a full geometry rebuild. Colour-only
             // theme swaps only need attributes and fragment restyles.
             let geometryChanged =
@@ -320,6 +318,35 @@ public final class MarkdownTextView: NSTextView {
     public var allowsAnimatedImages = true {
         didSet { if allowsAnimatedImages != oldValue { refreshInlineImages() } }
     }
+    private var installedPlantUMLRenderer: PlantUMLRendering?
+    public var plantUMLRenderer: PlantUMLRendering? {
+        get { installedPlantUMLRenderer }
+        set {
+            installedPlantUMLRenderer = newValue
+            fragmentContext.plantUMLRenderer = newValue
+            engine.rendersPlantUML = newValue != nil
+            rebuildEverything()
+        }
+    }
+    func plantUMLDidRender(in sourceRange: NSRange, source: String, dark: Bool, blockHash: UInt64?, generation: Int) {
+        guard preparePresentationRefresh() else { return }
+        var ranges = [sourceRange]
+        if generation != updateGeneration {
+            guard let blockHash, plantUMLRenderer?.cachedImage(source: source, dark: dark) != nil else { return }
+            // An unrelated edit may leave the original fragment's placeholder
+            // laid out. Match current blocks by exact source, never old offsets.
+            ranges = (plantUMLBlocksByHash[blockHash] ?? []).compactMap { block in
+                guard case .codeBlock(_, _, let contentRange) = block.content,
+                      parsedDocument.substring(contentRange).utf16.elementsEqual(source.utf16) else { return nil }
+                return block.range
+            }
+        }
+        guard !ranges.isEmpty else { return }
+        let anchor = captureViewportAnchor()
+        ranges.forEach { invalidateFragments(in: $0) }
+        requestContentResize(.viewport, anchor: anchor, preservingReadingPosition: true)
+    }
+
     private var installedRemoteImageLoader: RemoteImageLoading?
     public var remoteImageLoader: RemoteImageLoading? {
         get { installedRemoteImageLoader }
@@ -555,6 +582,7 @@ public final class MarkdownTextView: NSTextView {
     /// highlight had nothing to paint and a rule stands in for it.
     private var objectChangeMarks: [ChangeMark] = []
     private var fragmentAccessibilityElements: [NSAccessibilityElement] = []
+    private var plantUMLBlocksByHash: [UInt64: [MDBlock]] = [:]
     private var pathExistence: [PathToken: Bool] = [:]
     private var pathRefreshGeneration: UInt = 0
     private var codeCollapseOverrides: [Int: Bool] = [:]
@@ -780,6 +808,9 @@ public final class MarkdownTextView: NSTextView {
         localAssetAuthorizer = source.localAssetAuthorizer
         parsedDocument = source.parsedDocument
         installedRemoteImageLoader = source.remoteImageLoader
+        installedPlantUMLRenderer = source.plantUMLRenderer
+        fragmentContext.plantUMLRenderer = installedPlantUMLRenderer
+        engine.rendersPlantUML = installedPlantUMLRenderer != nil
         fragmentContext.remoteImageLoader = installedRemoteImageLoader
         engine.loadsRemoteImages = installedRemoteImageLoader != nil
         inlineImages.remoteImageLoader = installedRemoteImageLoader
@@ -900,8 +931,13 @@ public final class MarkdownTextView: NSTextView {
         let currentMode = mode
         let oldParagraphCount = paragraphIndex.starts.count
         let isWholesaleUpdate = isInitialUpdate || dirty.isWholesale
-        let dirtyScopes = isWholesaleUpdate ? [] : sourceScopes(for: dirty)
+        let refreshesPresentation = pendingPresentationRefresh
+        pendingPresentationRefresh = false
+        let isFullRefresh = isWholesaleUpdate || refreshesPresentation
+        let decorationDirty: DirtySet = isFullRefresh ? .wholesale : dirty
+        let dirtyScopes = isFullRefresh ? [] : sourceScopes(for: dirty)
         parsedDocument = document
+        if refreshesPresentation { synchronizeStyleSheet() }
         hoveredLinkRange = nil
         updateGeneration &+= 1
         if isWholesaleUpdate {
@@ -924,10 +960,10 @@ public final class MarkdownTextView: NSTextView {
         contentStorage.performEditingTransaction {
             rebuildParagraphIndex()
 
-            engine.decorate(storage, document: document, dirty: dirty)
-            applySourcePresentation(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+            engine.decorate(storage, document: document, dirty: decorationDirty)
+            applySourcePresentation(scopes: isFullRefresh ? nil : dirtyScopes)
             if configuration.showInvisibles || invisiblesApplied {
-                applyInvisibles(scopes: isWholesaleUpdate ? nil : dirtyScopes)
+                applyInvisibles(scopes: isFullRefresh ? nil : dirtyScopes)
             }
             autoreleasepool { rebuildBaseDisplayMap(document: document) }
             autoreleasepool { refreshElision(rebuildingMap: false) }
@@ -936,25 +972,25 @@ public final class MarkdownTextView: NSTextView {
             // and a narrower repair leaves the rest of those blocks claiming nothing
             // is hidden in them.  This is the path an external write takes, so it is
             // the one where it mattered most.
-            let decoratedScopes = isWholesaleUpdate
+            let decoratedScopes = isFullRefresh
                 ? []
                 : engine.decoratedBounds(for: dirty, in: document, length: storage.length)
             autoreleasepool {
                 rebuildDisplayMap(
-                    fullRefresh: isWholesaleUpdate,
+                    fullRefresh: isFullRefresh,
                     additionalScopes: decoratedScopes
                 )
             }
-            applyOverlays(scopes: isWholesaleUpdate ? nil : decoratedScopes)
-            applyPathExistence(scopes: isWholesaleUpdate ? nil : decoratedScopes)
-            if isWholesaleUpdate {
+            applyOverlays(scopes: isFullRefresh ? nil : decoratedScopes)
+            applyPathExistence(scopes: isFullRefresh ? nil : decoratedScopes)
+            if isFullRefresh {
                 invalidateAllFragments()
             }
         }
         gutterRail?.reload()
         refreshFragmentAccessibility()
         let resizeRequest: ContentResizeRequest
-        if isWholesaleUpdate {
+        if isFullRefresh {
             resizeRequest = .immediate
         } else if paragraphIndex.starts.count != oldParagraphCount {
             resizeRequest = .lineCount
@@ -1026,6 +1062,7 @@ public final class MarkdownTextView: NSTextView {
     /// source. These virtual nodes name the object while the text area keeps
     /// its normal editable range API.
     private func refreshFragmentAccessibility() {
+        plantUMLBlocksByHash.removeAll(keepingCapacity: true)
         guard mode != .source else {
             fragmentAccessibilityElements = []
             setAccessibilityChildren(nil)
@@ -1033,10 +1070,18 @@ public final class MarkdownTextView: NSTextView {
         }
         var elements: [NSAccessibilityElement] = []
         parsedDocument.root.walk { block in
+            // Reuse this existing parse-commit traversal. Completion callbacks
+            // inspect only hash candidates, never rescan unrelated blocks.
+            if case .codeBlock(let language, _, _) = block.content,
+               PlantUMLFence.accepts(language), plantUMLRenderer != nil {
+                plantUMLBlocksByHash[block.subtreeHash, default: []].append(block)
+            }
             let descriptor: (label: String, role: NSAccessibility.Role, help: String)? = switch block.content {
             case .table: ("Markdown table", .group, "Rendered markdown table")
             case .mathBlock: ("Display math", .group, "Rendered display math")
             case .mermaid: ("Mermaid diagram", .group, "Rendered mermaid diagram")
+            case .codeBlock(let language, _, _) where PlantUMLFence.accepts(language) && plantUMLRenderer != nil:
+                ("PlantUML diagram", .group, "Locally rendered PlantUML diagram")
             case .frontMatter: (
                 "Edit document metadata",
                 .button,
@@ -1620,7 +1665,28 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// Storage edits precede their asynchronous parse. Presentation changes
+    /// must wait rather than use the previous revision's source ranges.
+    private func preparePresentationRefresh() -> Bool {
+        guard let storage = textStorage,
+              storage.length == parsedDocument.length,
+              storage.string.utf16.elementsEqual(parsedDocument.text.utf16) else {
+            pendingPresentationRefresh = true
+            return false
+        }
+        return true
+    }
+
+    private func synchronizeStyleSheet() {
+        engine.styleSheet = styleSheet
+        fragmentContext.styleSheet = styleSheet
+        fragmentContext.invalidateDerivedLayout()
+        applyMeasure()
+        applyModeChrome()
+    }
+
     private func rebuildEverything() {
+        guard preparePresentationRefresh() else { return }
         guard let storage = textStorage else { return }
         // The content storage is reconfigured from the paragraph index below,
         // so it has to describe the text that is in the buffer right now.  A
@@ -1644,6 +1710,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Theme colour / accent swaps that do not change typography.
     private func restyleAttributesPreservingGeometry() {
+        guard preparePresentationRefresh() else { return }
         guard let storage = textStorage else { return }
         engine.decorate(storage, document: parsedDocument, dirty: .wholesale)
         applySourcePresentation()
@@ -3493,7 +3560,10 @@ public final class MarkdownTextView: NSTextView {
                          height: CGFloat.greatestFiniteMagnitude)
         backgroundColor = styleSheet.background
         insertionPointColor = mode.policy.showsInsertionPoint ? styleSheet.accent : styleSheet.text
-        selectedTextAttributes = [.backgroundColor: styleSheet.selection]
+        selectedTextAttributes = [
+            .backgroundColor: styleSheet.selection,
+            .foregroundColor: styleSheet.selectionText,
+        ]
     }
 
     func applyResponsiveMeasure(_ width: CGFloat) {

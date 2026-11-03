@@ -709,9 +709,29 @@ struct UpdateBuildContractTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let manifest = try String(contentsOf: root.appendingPathComponent("Package.swift"), encoding: .utf8)
-        #expect(manifest.contains("exact: \"2.10.0\""), "Sparkle must be pinned exactly to 2.10.0")
+        struct Resolution: Decodable {
+            struct Pin: Decodable {
+                struct State: Decodable { let version: String? }
+                let identity: String
+                let state: State
+            }
+            let pins: [Pin]
+        }
+        let resolution = try JSONDecoder().decode(Resolution.self, from: Data(contentsOf: root.appendingPathComponent("Package.resolved")))
+        let version = try #require(resolution.pins.first { $0.identity == "sparkle" }?.state.version)
+        #expect(manifest.contains("exact: \"\(version)\""), "SwiftPM must match its resolved Sparkle version")
         let project = try String(contentsOf: root.appendingPathComponent("project.yml"), encoding: .utf8)
-        #expect(project.contains("exactVersion: 2.10.0"), "Xcode must pin Sparkle exactly to 2.10.0")
+        #expect(project.contains("exactVersion: \(version)"), "Xcode must use the same Sparkle version")
+        let toolsURL = "https://github.com/sparkle-project/Sparkle/releases/download/\(version)/Sparkle-\(version).tar.xz"
+        let release = try String(contentsOf: root.appendingPathComponent(".github/workflows/release.yml"), encoding: .utf8)
+        let checksumLine = try #require(release.components(separatedBy: "\n").first { $0.contains("SPARKLE_SHA256=\"") })
+        let checksum = try #require(checksumLine.components(separatedBy: "\"").dropFirst().first)
+        #expect(checksum.count == 64)
+        for path in [".github/workflows/release.yml", "Scripts/generate-sparkle-keys.sh"] {
+            let source = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+            #expect(source.contains(toolsURL), "\(path) must use matching Sparkle signing tools")
+            #expect(source.contains(checksum), "\(path) must use the same verified signing-tools checksum")
+        }
         // The DownrightApp target block is the `...name: "DownrightApp"...}`
         // region; assert Sparkle is wired into it.
         guard let marker = manifest.range(of: "\"DownrightApp\"") else {

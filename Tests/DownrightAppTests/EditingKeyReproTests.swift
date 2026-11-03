@@ -501,7 +501,9 @@ struct EditingKeyReproTests {
         let screenY = clip.convert(referenceRect, from: view).minY - referenceClipY
         #expect(screenY >= 0 && screenY < clip.bounds.height)
 
+        let document = controller.markdownDocument
         for _ in 0..<3 {
+            let beforeRevision = document.revision
             pressOptionDelete(into: view)
             caret = view.sourceSelectedRange.location
             let immediateRect = try #require(view.rect(forOffset: caret))
@@ -509,14 +511,19 @@ struct EditingKeyReproTests {
             #expect(abs(immediateY - screenY) < 1,
                     "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
             let deadline = ContinuousClock().now + .seconds(3)
+            // Poll immutable snapshot identity and revision, not the entire
+            // megabyte buffer every 5ms. Exact source equality is checked below.
             while ContinuousClock().now < deadline,
-                  view.parsedDocument.text != controller.markdownDocument.text
+                  document.lastCompletedParseRevision.map({ $0 > beforeRevision }) != true
+                    || document.lastCompletedParseRevision != document.revision
+                    || view.parsedDocument !== document.parsed
                     || view.pendingResizeRequestForTesting != nil {
                 controller.markdownDocument.flushScheduledReparse()
                 try await Task.sleep(for: .milliseconds(5))
             }
             let converged = view.parsedDocument.text == controller.markdownDocument.text
-            #expect(converged, "the edit never reached its parsed presentation")
+            #expect(converged,
+                    "the edit never reached its parsed presentation; source revision=\(document.revision.rawValue), parsed revision=\(String(describing: document.lastCompletedParseRevision)), snapshot matches=\(view.parsedDocument === document.parsed)")
             let settledRect = try #require(view.rect(forOffset: caret))
             let settledY = clip.convert(settledRect, from: view).minY - clip.bounds.minY
             #expect(abs(settledY - screenY) < 1,

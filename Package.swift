@@ -82,9 +82,9 @@ let package = Package(
         .package(url: "https://github.com/lukilabs/beautiful-mermaid-swift.git", from: "1.0.0"),
         // Sparkle is a binary framework pinned exactly: update ordering, secure
         // download, validation, extraction, authorization, atomic replacement,
-        // and relaunch are all owned by Sparkle 2.10.0.  Only the host app links
+        // and relaunch are all owned by Sparkle 2.10.1.  Only the host app links
         // it — never MarkdownCore, MarkdownRender, the CLI, or Quick Look.
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.1"),
     ],
     targets: [
         .target(
@@ -95,6 +95,11 @@ let package = Package(
         // AppKit's native enumeration callback must not cross a Swift override
         // on macOS 26. MarkdownRender supplies its lazy elements to this adapter.
         .target(name: "MarkdownTextKitBridge"),
+        .target(
+            name: "PlantUMLRuntime",
+            resources: [.copy("Resources/PlantUML")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .target(
             name: "MarkdownRender",
             dependencies: [
@@ -153,7 +158,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "down",
-            dependencies: ["drdownright"],
+            dependencies: ["drdownright", "PlantUMLRuntime"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+exec python3 -B "$ROOT/Scripts/pre-push.py" "$@"

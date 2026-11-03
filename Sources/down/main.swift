@@ -1,8 +1,27 @@
 import AppKit
 import Foundation
 import drdownright
+import PlantUMLRuntime
 
 let arguments = Array(CommandLine.arguments.dropFirst())
+
+// Private worker protocol: bounded UTF-8 on stdin, SVG on stdout. No shell,
+// document paths, network APIs, or user configuration enter this execution.
+if arguments == ["--downright-render-plantuml"] || arguments == ["--downright-render-plantuml-dark"] {
+    do {
+        var input = Data()
+        while input.count <= PlantUMLRuntime.maximumSourceBytes {
+            let chunk = try FileHandle.standardInput.read(upToCount: PlantUMLRuntime.maximumSourceBytes + 1 - input.count) ?? Data()
+            if chunk.isEmpty { break }
+            input.append(chunk)
+        }
+        guard input.count <= PlantUMLRuntime.maximumSourceBytes,
+              let source = String(data: input, encoding: .utf8) else { exit(65) }
+        let svg = try PlantUMLRuntime.render(source: source, dark: arguments[0].hasSuffix("-dark"))
+        FileHandle.standardOutput.write(svg)
+        exit(0)
+    } catch { exit(65) }
+}
 
 func writeError(_ message: String, status: Int32) -> Never {
     FileHandle.standardError.write(Data("down: \(message)\n".utf8))

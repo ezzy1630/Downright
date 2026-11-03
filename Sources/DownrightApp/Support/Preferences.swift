@@ -88,6 +88,7 @@ final class Preferences {
         /// Set once the first-run setup panel has been answered, either way.
         /// "Not now" is an answer: the panel does not come back uninvited.
         var hasAnsweredSetup: Bool = false
+        var starPrompt = StarPromptUsage()
         /// Where the bundle was when LaunchServices and `pluginkit` were last
         /// told about it.  Both record an absolute path, so a moved or renamed
         /// app silently loses its Quick Look extensions until it re-registers.
@@ -134,6 +135,7 @@ final class Preferences {
             launchCount = get(.launchCount, 0)
             hasTakenTour = get(.hasTakenTour, false)
             hasAnsweredSetup = get(.hasAnsweredSetup, false)
+            starPrompt = get(.starPrompt, StarPromptUsage())
             lastRegisteredBundlePath = get(.lastRegisteredBundlePath, "")
         }
     }
@@ -154,6 +156,10 @@ final class Preferences {
         didSet {
             guard values != oldValue else { return }
             persist()
+            // Local engagement bookkeeping must not redecorate every document.
+            var previousSettings = oldValue
+            previousSettings.starPrompt = values.starPrompt
+            guard values != previousSettings else { return }
             NotificationCenter.default.post(name: Preferences.didChange, object: self)
         }
     }

@@ -30,6 +30,7 @@ public struct DecorationResult: Sendable {
 /// §14's warning is taken literally as well: nothing dynamic goes through
 /// `NSTextLayoutManager.addRenderingAttribute`.  Everything is on the storage.
 public final class DecorationEngine {
+    public var rendersPlantUML = false
 
     // MARK: Configuration
 
@@ -540,6 +541,11 @@ public final class DecorationEngine {
             return
 
         case .codeBlock(let language, _, let contentRange):
+            if rendersPlantUML, policy.rendersFragments, PlantUMLFence.accepts(language) {
+                applyBase(block, context: context, state: &state)
+                emitFragment(.plantUML, block: block, detail: state.document.substring(contentRange), state: &state)
+                return
+            }
             decorateCodeBlock(block, language: language, contentRange: contentRange, context: context, state: &state)
             return
 
@@ -1201,6 +1207,7 @@ public final class DecorationEngine {
         if kind == .listOrnament && !policy.rendersFragments { return nil }
         let payload = FragmentPayload(kind: kind, sourceRange: block.range,
                                       blockIdentity: block.identity, detail: detail)
+        if kind == .plantUML { payload.parsedBlockHash = block.subtreeHash }
         if kind == .listOrnament {
             // The provider reads paragraph prefixes. Extending this unique
             // payload across every label prevents Foundation from sharing

@@ -34,15 +34,18 @@ with open(os.environ["SWIFT_CALLS"], "a") as log:
 command = sys.argv[1]
 if command == "test" and os.environ.get("ZERO_TESTS") != "1":
     print("✔ Test example() passed after 0.001 seconds.")
-    print("✔ Test run with 1 test passed after 0.001 seconds.")
+    if os.environ.get("MISSING_TEST_SUMMARY") != "1":
+        print("✔ Test run with 1 test passed after 0.001 seconds.")
 elif command == "run":
     print("Typing response p95: 1 ms")
+elif command == "build" and "--show-bin-path" in sys.argv:
+    print(os.path.join(os.environ["TMPDIR"], "fake-bin"))
 sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
 ''')
         if ripgrep := shutil.which("rg"):
             (self.root / "bin/rg").symlink_to(ripgrep)
         self.environment = dict(os.environ)
-        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH"):
+        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH", "MISSING_TEST_SUMMARY"):
             self.environment.pop(key, None)
         self.environment.update(
             PATH=f"{self.root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -120,6 +123,11 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("NO TESTS RAN", result.stdout)
         self.assertFalse(any(call[0] == "run" for call in calls))
+
+    def test_success_without_a_completed_test_run_is_rejected(self):
+        result, _ = self.run_gate(MISSING_TEST_SUMMARY="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NO TESTS RAN", result.stdout)
 
     def test_release_budget_failure_is_rejected(self):
         result, _ = self.run_gate(RUN_DRBENCH="1", RUN_STATUS="1")

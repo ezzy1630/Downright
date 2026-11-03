@@ -1,5 +1,5 @@
 {
-  "originHash" : "b20551b2cefb4ae2c8a6f8a6d6902aa29fcb730b747079df4d821ca5eb3e0ea9",
+  "originHash" : "6706a2b910de0d110832943a46b6f93d086bab81faa8f89e54ac89b1f736fbd4",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sparkle-project/Sparkle.git",
       "state" : {
-        "revision" : "eef1a539a373c1f1a320624b1130fc5de7b2e100",
-        "version" : "2.10.0"
+        "revision" : "ab7d71291238df6e0492143b120c9b696a35f603",
+        "version" : "2.10.1"
       }
     },
     {
@@ -33,7 +33,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-cmark.git",
       "state" : {
-        "branch" : "gfm",
         "revision" : "7898f1b3e4befeecee56cb4a3bc8eebd2cb63219"
       }
     }

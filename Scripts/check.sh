@@ -40,6 +40,11 @@ fi
 LOG_TAG="$(printf '%s' "$SCRATCH" | tr -c 'A-Za-z0-9._-' '-')"
 LOG_DIR="${TMPDIR:-/tmp}"
 
+# CI retains compiler invocations to explain warm-cache rebuilds. Normal local
+# output stays compact; the flag never changes optimization or test selection.
+VERBOSE_FLAG=""
+if [ "${CHECK_VERBOSE_BUILD:-0}" = "1" ]; then VERBOSE_FLAG=--verbose; fi
+
 CLT_FRAMEWORKS="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 TEST_FLAGS=()
 SELECTED_DEVELOPER="$(xcode-select -p 2>/dev/null || true)"
@@ -73,7 +78,7 @@ then
 fi
 
 echo "==> Build"
-if ! swift build --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.log" 2>&1; then
+if ! swift build ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.log" 2>&1; then
     echo "    FAILED"
     grep "error:" "$LOG_DIR/downright-build-$LOG_TAG.log" | sort -u | head -40
     exit 1
@@ -81,7 +86,7 @@ fi
 echo "    ok"
 
 echo "==> Spotlight importer build"
-if ! swift build --scratch-path "$SCRATCH" --product DownrightSpotlightImporter \
+if ! swift build ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" --product DownrightSpotlightImporter \
     > "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" 2>&1; then
     echo "    FAILED"
     grep "error:" "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" | sort -u | head -40
@@ -90,12 +95,17 @@ fi
 echo "    ok"
 
 echo "==> Tests"
+if ! CLI_BIN_DIRECTORY="$(swift build --scratch-path "$SCRATCH" --show-bin-path)"; then
+    echo "    FAILED — cannot locate the built CLI for worker tests"
+    exit 1
+fi
+export DOWNRIGHT_TEST_CLI_EXECUTABLE="$CLI_BIN_DIRECTORY/down"
 TEST_LOG="$LOG_DIR/downright-test-$LOG_TAG.log"
 run_swift_tests() {
     if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
-        swift test --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}"
+        swift test ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}"
     else
-        swift test --no-parallel --scratch-path "$TEST_SCRATCH"
+        swift test ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --no-parallel --scratch-path "$TEST_SCRATCH"
     fi
 }
 if [ "${CI:-}" = "true" ]; then
@@ -164,7 +174,10 @@ echo "==> Sanity: the runner must actually have run something"
 # UTF-8 locale — with the default C locale the bracket expression never
 # matches and every correctly-run suite counts as "nothing ran".  Pin the
 # locale so the gate measures tests, not bytes.
-COUNT=$(LC_ALL=en_US.UTF-8 awk '/^[✔✘] Test / && $0 !~ /^[✔✘] Test run / { count++ } END { print count + 0 }' "$TEST_LOG")
+# Verbose Swift Testing also prints parameterized-case result lines. Sum
+# completed run summaries so those cases are not counted a second time and
+# a truncated stream of individual results cannot masquerade as a full run.
+COUNT=$(LC_ALL=en_US.UTF-8 awk '/^[✔✘] Test run with [0-9]+ tests?/ { count += $5 } END { print count + 0 }' "$TEST_LOG")
 # A missing or unreadable log leaves COUNT empty, and an empty COUNT must read
 # as "nothing ran", never as "the arithmetic test was malformed, carry on".
 case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
@@ -208,7 +221,7 @@ echo
 if [ "${RUN_DRBENCH:-0}" = "1" ]; then
     echo "==> Bench (release, budgets enforced)"
     BENCH_RELEASE_LOG="$LOG_DIR/downright-bench-release-$LOG_TAG.log"
-    if ! swift run -c release --scratch-path "${BENCH_SCRATCH:-${SCRATCH}-bench}" drbench > "$BENCH_RELEASE_LOG" 2>&1; then
+    if ! swift run ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} -c release --scratch-path "${BENCH_SCRATCH:-${SCRATCH}-bench}" drbench > "$BENCH_RELEASE_LOG" 2>&1; then
         echo "    FAILED — a performance budget was violated (or the build failed)"
         # Both halves are needed. SwiftPM compiles in parallel, so a build
         # failure's `error:` lines can be followed by enough output from other
@@ -224,7 +237,7 @@ if [ "${RUN_DRBENCH:-0}" = "1" ]; then
 else
     echo "==> Bench (debug, informational — exercises drbench and catches crashes)"
     BENCH_LOG="$LOG_DIR/downright-bench-$LOG_TAG.log"
-    if ! swift run --scratch-path "$SCRATCH" drbench > "$BENCH_LOG" 2>&1; then
+    if ! swift run ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" drbench > "$BENCH_LOG" 2>&1; then
         echo "    FAILED"
         tail -30 "$BENCH_LOG"
         exit 1
