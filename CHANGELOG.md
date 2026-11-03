@@ -12,6 +12,18 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.22]
+
+### Fixed
+
+- Completed image loads now refresh the visible text surface, replacing stuck
+  loading placeholders. Documents with many local images load pictures when
+  they are visible instead of during offscreen layout. Hovering no longer starts
+  repeated loads that can evict the visible picture. Image dimensions survive pixel-cache eviction,
+  and the cache accounts for downsampled pixels correctly. Adjacent image-only
+  lines keep independent image fragments. Unreadable local pictures settle on
+  a missing-image message.
+
 ## [1.0.21]
 
 ### Added

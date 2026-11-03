@@ -178,8 +178,11 @@ final class ImageRenderCache {
         let modified: Date?
     }
 
-    private let cache = BoundedImageCache<Key>(countLimit: 96, totalCostLimit: 32 * 1024 * 1024)
+    private let cache: BoundedImageCache<Key>
     private var freshness: [URL: Freshness] = [:]
+    // Geometry survives pixel eviction: measuring an offscreen image must not
+    // decode it again or collapse its height when the bitmap budget fills.
+    private var sourceSizes: [URL: CGSize] = [:]
     private var failedLoads: Set<Key> = []
     /// Decodes in flight, keyed by the same identity `cachedImage` looks up,
     /// so a page of repeated images (or a split view showing one document
@@ -187,6 +190,10 @@ final class ImageRenderCache {
     /// completion fires when the shared decode lands.
     private var inFlight: [Key: [(@Sendable @MainActor (NSImage?) -> Void)]] = [:]
     private let lock = NSLock()
+
+    init(countLimit: Int = 96, totalCostLimit: Int = 32 * 1024 * 1024) {
+        cache = BoundedImageCache(countLimit: countLimit, totalCostLimit: totalCostLimit)
+    }
 
     private func key(for url: URL, maxPixelDimension: Int) -> Key {
         Key(url: url.standardizedFileURL, maxPixelDimension: max(1, maxPixelDimension))
@@ -197,6 +204,18 @@ final class ImageRenderCache {
     /// uses; a miss means "schedule an async load", never "read it now".
     func cachedImage(for url: URL, maxPixelDimension: Int) -> NSImage? {
         cache.cached(key(for: url, maxPixelDimension: maxPixelDimension))
+    }
+
+    func cachedSize(for url: URL) -> CGSize? {
+        lock.lock()
+        defer { lock.unlock() }
+        return sourceSizes[url.standardizedFileURL]
+    }
+
+    func hasFailed(for url: URL, maxPixelDimension: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return failedLoads.contains(key(for: url, maxPixelDimension: maxPixelDimension))
     }
 
     /// Decodes `url` off the main thread, records it in the cache, then calls
@@ -244,7 +263,10 @@ final class ImageRenderCache {
         let changed = freshness[url] != current
         if changed {
             freshness[url] = current
-            failedLoads.remove(key)
+            // A repaired file invalidates failures at every render size,
+            // including another pane or a lightbox's larger decode.
+            failedLoads = failedLoads.filter { $0.url != url }
+            sourceSizes.removeValue(forKey: url)
         }
         let isFailed = failedLoads.contains(key)
         lock.unlock()
@@ -258,6 +280,7 @@ final class ImageRenderCache {
         }
         lock.lock()
         failedLoads.remove(key)
+        sourceSizes[url] = image.size
         lock.unlock()
         cache.store(image, for: key, keyCost: url.path.utf8.count)
         return image
@@ -287,10 +310,15 @@ final class ImageRenderCache {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        let image = NSImage(
-            cgImage: cgImage,
-            size: CGSize(width: sourceWidth ?? CGFloat(cgImage.width),
-                         height: sourceHeight ?? CGFloat(cgImage.height)))
+        let naturalSize = CGSize(width: sourceWidth ?? CGFloat(cgImage.width),
+                                 height: sourceHeight ?? CGFloat(cgImage.height))
+        // NSImage(cgImage:size:) reports the natural canvas as its snapshot
+        // representation's pixel size. Keep an explicit bitmap representation
+        // so the cache charges for the thumbnail while layout keeps the source size.
+        let representation = NSBitmapImageRep(cgImage: cgImage)
+        representation.size = naturalSize
+        let image = NSImage(size: naturalSize)
+        image.addRepresentation(representation)
         // The *source* is the authority on transparency: a thumbnail can be
         // handed back in a format that no longer advertises it.  Fragments
         // matte a transparent image rather than letting the page colour show

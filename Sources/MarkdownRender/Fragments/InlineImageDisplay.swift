@@ -92,9 +92,7 @@ enum InlineImageDisplay {
                 }
                 return
             }
-            // A paragraph that is only an image is the engine's block fragment.
-            if case .paragraph = block.content, block.inlines.count == 1,
-               case .image = block.inlines[0].kind { return }
+            if !BlockImageLines.images(in: block, text: text).isEmpty { return }
             for span in block.inlines { collect(span, link: nil, into: &result) }
         }
         return result.sorted { $0.range.location < $1.range.location }

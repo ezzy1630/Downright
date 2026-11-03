@@ -335,6 +335,20 @@ Inline images and linked badges use source-addressed display substitutions.
 Safe HTML paragraph joining and image dimensions affect only presentation;
 source bytes and source UTF-16 coordinates remain authoritative. Async arrivals
 coalesce a refresh that preserves selection and the semantic reading anchor.
+Physical lines containing only direct Markdown images keep independent image
+fragments even when adjacent lines form one Markdown paragraph. Those line
+breaks are not reflowed; prose images, linked badges and same-line rows stay inline.
+Block-image measurement never starts a load. Drawing requests pixels once per
+pending fragment; compact local-image dimensions survive bitmap-cache eviction
+so offscreen layout remains stable within the existing pixel budget. Once local
+dimensions are known, decoding targets the fitted picture rather than the full
+column width, including in wide documents. Offscreen TextKit rendering surfaces
+do not request pixels until their picture intersects the view's viewport. Local
+decode failures become missing-image presentations and can recover on a later
+draw after the file is repaired.
+Local raster images retain an explicit thumbnail bitmap representation alongside
+their natural layout size, so cache admission counts decoded pixels rather than
+the original source dimensions.
 
 The renderer never makes network requests. View > Load Remote Images installs
 a host-owned loader for the current Mac document; opening another file revokes
