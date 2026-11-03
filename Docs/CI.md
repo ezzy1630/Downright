@@ -1,17 +1,41 @@
 # CI and test evidence
 
-Main pushes enter `release.yml`. Its `validation` job calls the same-commit
+Merging or pushing to `main` does not publish or start full validation.
+Explicit dispatch of `release.yml` on `main` selects that ref's commit for
+publication. A lightweight request gate rejects automatic events and other
+refs before production validation. Its `validation` job calls the same-commit
 `ci.yml` reusable workflow with production acceptance enabled. Source tests and
 release performance budgets, development native acceptance, and production
 updater acceptance run on separate macOS runners. The archive job depends on
-the entire reusable workflow succeeding. There is one source gate per push;
-no archive or publication can bypass a failed native lane. Main release runs
+the entire reusable workflow succeeding. There is one source gate per release;
+no archive or publication can bypass a failed native lane. Release runs
 are never cancelled halfway through signing or publication.
 
 `ci.yml` also supports manual branch dispatch. It runs source and development
 native checks without publishing or requesting production secrets. Pull
-requests have no automatic CI or required review. There is no new UI performance
-workflow.
+requests have no automatic CI or required approval. There is no scheduled UI
+performance workflow.
+
+## Review and validation cadence
+
+Open unfinished work as a draft. `cubic.yaml` enables a low-sensitivity initial
+review for non-draft PRs and disables automatic incremental reviews, automatic
+fixes and generated descriptions. Mark a draft ready when the implementation
+is ready for review. Assess findings against the actual code and invariants;
+batch confirmed fixes and request another review only for material new risk.
+Cubic configuration is read from the default branch, so a feature-branch edit
+does not change live reviewer settings.
+
+Use focused checks during implementation, then dispatch full branch CI after
+review fixes settle. Superseded manual runs are cancelled deliberately. Run
+the affected checks again after subsequent changes. Pure prose changes need
+content, link and command review; executable scripts and workflow changes
+still need their relevant checks. Release dispatch always runs all source,
+budget, development native and production native checks on its selected SHA.
+
+Dependabot checks version updates monthly. GitHub Actions version updates are
+grouped into one maintenance PR. This version-update group and schedule do not
+delay security updates when those are enabled in repository settings.
 
 Before reporting a PR ready, run `python3 Scripts/check-pr-ci.py --pr NUMBER`.
 It resolves the current head and reads its actual `swift` and `app-acceptance`
@@ -58,8 +82,15 @@ An exact match, a fallback restore and a cold run are reported separately.
 Only successful validation saves new build graphs; signing keychains and
 shipping archives never enter those caches.
 
+GitHub restores caches from the current branch or the default branch, not from
+unrelated feature branches. A new cache generation populated only on a feature
+branch therefore starts cold on its first main run. Configuration-specific
+Release caches also require a successful production run to populate. Inspect
+the requested/restored keys and branch scope before changing cache boundaries;
+a cold first run alone is not a reason to remove coverage or broaden keys.
+
 `Scripts/audit-ci.py --workflow ci.yml --limit 30 --output .build-ci-audit.json`
-reads historical jobs and step durations through `gh`. For new main runs, use
+reads historical jobs and step durations through `gh`. For release runs, use
 `--workflow release.yml`. It reports successful-job median and p95 separately
 from failed/cancelled runs. Start delay includes dependencies and scheduling;
 it is not labelled pure runner queue time. Hosted before/after improvements

@@ -1,16 +1,11 @@
 name: Release
 
-# Every push to `main` triggers shared source/native/updater validation, then
-# signed, notarized, stapled universal build → Sparkle-signed appcast → GitHub
-# Release → GitHub Pages deployment. Feature branches can run CI manually;
-# a merge or push to `main` is the release event. All secrets live in the
-# `release` environment, and the newest verified build becomes the download
-# and updater channel.
+# Explicit dispatch on `main` validates that exact commit, then publishes the
+# signed, notarized, stapled universal app and signed Sparkle appcast. Merging
+# code does not publish it. All secrets live in the `release` environment.
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,7 +15,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Require an explicit release from main
+        run: bash Scripts/validate-release-request.sh
+
   validation:
+    needs: request
     uses: ./.github/workflows/ci.yml
     with:
       production: true
@@ -61,10 +64,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "$GITHUB_REF_NAME" = "main" ] || {
-            echo "::error::release workflow only accepts pushes to main (got $GITHUB_REF_NAME)"
-            exit 1
-          }
           # shellcheck disable=SC1091
           source Config/version.env
           if ! echo "$MARKETING_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -93,12 +92,12 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "TAG=$TAG"
           echo "RELEASE_TAG=$RELEASE_TAG"
-          # The pushed commit must still be reachable from protected main.
+          # The selected commit must still be reachable from protected main.
           # Keep the full checkout history intact: build-number.sh derives
           # CURRENT_PROJECT_VERSION from the reachable commit count.
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::pushed commit is not reachable from origin/main"; exit 1
+            echo "::error::selected commit is not reachable from origin/main"; exit 1
           fi
           # Working tree must be clean (no generated-file drift).
           if [ -n "$(git status --porcelain)" ]; then

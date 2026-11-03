@@ -84,12 +84,13 @@ commit-history fallback.
 
 ## Update latency
 
-Every push to `main` publishes a signed appcast, so the practical question is
-how long an already-running copy takes to notice. Three things decide it:
+An explicit release dispatch publishes a signed appcast; merging to `main`
+does not publish. Once a release is requested, three things decide how long
+an already-running copy takes to notice:
 
 | Stage | Cost |
 |---|---|
-| Push → signed appcast live on Pages | the release workflow's own run time |
+| Release dispatch → signed appcast live on Pages | the release workflow's own run time |
 | Appcast live → `ReleaseWatch` notices | ~90s frontmost, ~15 min backgrounded |
 | Noticed → pill offers it | one Sparkle background check |
 
@@ -159,8 +160,11 @@ notarise and staple the DMG. Credentials come from either a stored
 `notarytool` keychain profile or the App Store Connect API key variables.
 
 The GitHub Actions pipeline (`.github/workflows/release.yml`) is the supported
-path for the rolling production channel: every push to `main` first calls
-same-commit reusable CI. Source tests/release budgets, development native
+path for the production channel: explicitly dispatch `release.yml` on `main`.
+The dispatch selects the exact `main` commit to validate and publish; later
+merges do not change that run's SHA. Other refs and automatic events are
+rejected before production validation. The workflow first calls same-commit
+reusable CI. Source tests/release budgets, development native
 acceptance and production updater acceptance run concurrently. The archive job
 requires the whole validation workflow to pass; source validation is not repeated
 inside the signing job. Production updater intermediates have a separate
@@ -287,12 +291,17 @@ non-placeholder public key.
 1. Bump `Config/version.env`; run `Scripts/sync-versions.sh fix`.
 2. `Scripts/check.sh` — all suites, version gates, and the Sparkle link-scope
    check pass.
-3. Merge or push the reviewed commit to `main`. `release.yml` takes over:
-   gates → tests → universal signed/notarized build → zip + DMG → appcast →
-   GitHub Release → GitHub Pages. If Pages deployment fails after the Release
+3. Merge or push the reviewed commit to `main` with authorization. This does
+   not publish a release.
+4. Obtain release authorization for the exact `main` SHA. Dispatch **Release**
+   from GitHub Actions with branch **main**, or use
+   `gh workflow run release.yml --ref main`. Confirm the run's head SHA matches
+   the approved commit; do not dispatch while another change is moving `main`.
+   `release.yml` runs all gates → universal signed/notarized build → zip + DMG
+   → appcast → GitHub Release → GitHub Pages. If Pages deployment fails after the Release
    is public, the previous appcast stays active and re-running the deployment
    is safe.
-4. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
+5. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
 
 Each main-channel build receives an immutable `auto-<full-commit-sha>` release
 tag and unique versioned asset names. The `latest` GitHub Release alias and

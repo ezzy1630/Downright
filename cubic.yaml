@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://cubic.dev/schema/cubic-repository-config.schema.json
+version: 1
+reviews:
+  enabled: true
+  sensitivity: low
+  check_drafts: false
+  incremental_commits: false
+  architecture_diagrams: false
+  auto_approve_behavior: disabled
+  auto_approve: disabled
+  ultrareview: manual
+  auto_ultrareview: disabled
+  resolve_threads_when_addressed: true
+  custom_instructions: |
+    Focus on concrete correctness, data integrity, security, compatibility,
+    and meaningful performance defects. Explain the failing user path and
+    check repository invariants before proposing a change. Skip speculative
+    refactors, style preferences, wording nits, and duplicate findings.
+pr_descriptions:
+  generate: false
+issues:
+  auto_fix: "off"

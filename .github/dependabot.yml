@@ -6,7 +6,12 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      github-actions-maintenance:
+        applies-to: version-updates
+        patterns:
+          - "*"
     commit-message:
       prefix: ci
 
@@ -16,6 +21,6 @@ updates:
   - package-ecosystem: swift
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     commit-message:
       prefix: deps
