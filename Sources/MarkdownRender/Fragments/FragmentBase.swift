@@ -137,6 +137,16 @@ public final class FragmentContext {
 
     var storage: NSTextStorage? { textView?.textStorage }
 
+#if DEBUG
+    private var imageTraceCount = 0
+    func traceImageLoad(_ message: @autoclosure () -> String) {
+        guard ProcessInfo.processInfo.environment["DOWNRIGHT_TRACE_IMAGE_LOAD"] == "1",
+              imageTraceCount < 40 else { return }
+        imageTraceCount += 1
+        print("IMAGE_PROBE \(message())")
+    }
+#endif
+
     /// Strictly inside, not merely touching.
     ///
     /// `touches` is inclusive of both edges, so clicking just after a table or

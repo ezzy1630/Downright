@@ -138,6 +138,7 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     private func assertManyLocalImagesRemainVisibleAfterHover(separator: String) throws {
+        app.launchEnvironment["DOWNRIGHT_TRACE_IMAGE_LOAD"] = "1"
         let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { rect in
             NSColor(srgbRed: 1, green: 0.05, blue: 0.1, alpha: 1).setFill()
             rect.fill()
