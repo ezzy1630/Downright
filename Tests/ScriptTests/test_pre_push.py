@@ -19,7 +19,7 @@ class PrePushTests(unittest.TestCase):
         self.git("init", "-q")
         (self.root / "Scripts").mkdir()
         check = self.root / "Scripts/check-fast.sh"
-        check.write_text('#!/bin/bash\nset -euo pipefail\n[ "$(git -C "$CHECK_ROOT" rev-parse --show-toplevel)" = "$CHECK_ROOT" ]\ncat "$CHECK_ROOT/value" >> "$PUSH_TEST_LOG"\n'
+        check.write_text('#!/bin/bash\nset -euo pipefail\n[ "$(git -C "$CHECK_ROOT" rev-parse --show-toplevel)" = "$(cd "$CHECK_ROOT" && pwd -P)" ]\ncat "$CHECK_ROOT/value" >> "$PUSH_TEST_LOG"\n'
                          'if [ -e "$CHECK_ROOT/reject" ]; then exit 23; fi\n')
         check.chmod(0o755)
         self.environment["PUSH_TEST_LOG"] = str(self.root / "observed")
@@ -72,7 +72,7 @@ class PrePushTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / "observed").read_text(), "isolated\n")
         self.assertEqual(self.git("config", "--bool", "core.bare"), "false")
-        self.assertEqual(self.git("rev-parse", "--show-toplevel"), str(self.root))
+        self.assertEqual(self.git("rev-parse", "--show-toplevel"), str(self.root.resolve()))
 
 
 if __name__ == "__main__":
