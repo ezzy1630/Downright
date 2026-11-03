@@ -52,8 +52,8 @@ Scripts/sync-versions.sh fix    # rewrite the consumers from version.env
 Collect pending customer-facing changes under `## [Unreleased]` in
 `CHANGELOG.md`. Before publishing, move them into the matching `## [X.Y.Z]`
 section. The release workflow does not publish the `[Unreleased]` section.
-`Scripts/release-notes.py` combines the matching version section
-section with the actual version/build identity for both the GitHub Release and
+`Scripts/release-notes.py` combines that section with the actual version/build
+identity for both the GitHub Release and
 the signed Sparkle appcast's embedded notes. The README links to the changelog.
 Use absolute URLs in that section so links work in GitHub and the app as well
 as in the repository. Historical sections are not included. Empty or duplicate matching
