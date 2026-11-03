@@ -351,6 +351,10 @@ public final class MarkdownTextView: NSTextView {
         guard preparePresentationRefresh(),
               fragmentPayload(atSourceOffset: payload.sourceRange.location)?.payload === payload else { return }
         let anchor = captureViewportAnchor()
+        contentStorage.performEditingTransaction {
+            contentStorage.invalidateElements(in: payload.sourceRange)
+            textStorage?.edited(.editedAttributes, range: payload.sourceRange, changeInLength: 0)
+        }
         invalidateFragments(in: payload.sourceRange, includingRendering: true)
         // Layout invalidation alone can leave TextKit's placeholder rendering
         // surface in place. Rebuild the visible surfaces at the coalesced pass.

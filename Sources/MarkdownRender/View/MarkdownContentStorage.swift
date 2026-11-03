@@ -88,6 +88,18 @@ final class MarkdownContentStorage: DRTextContentStorage {
         sourceRanges = usesCustomLayout ? ranges : []
     }
 
+    /// External objects can change their rendering without a source edit.
+    /// Replace only their immutable paragraph elements; keep the surrounding
+    /// identities so layout above the viewport does not fall back to estimates.
+    func invalidateElements(in sourceRange: NSRange) {
+        guard sourceRange.length > 0 else { return }
+        var index = firstIndex(endingAfter: sourceRange.location)
+        while index < sourceRanges.count, sourceRanges[index].location < sourceRange.upperBound {
+            elementCache.removeValue(forKey: index)
+            index += 1
+        }
+    }
+
     /// True when `ranges` partition `[0, length)` with no gap and no overlap.
     private static func tiles(_ ranges: [NSRange], length: Int) -> Bool {
         guard length > 0, !ranges.isEmpty else { return false }

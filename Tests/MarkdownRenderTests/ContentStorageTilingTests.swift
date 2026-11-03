@@ -26,6 +26,31 @@ import Testing
 @MainActor
 struct ContentStorageTilingTests {
 
+    @Test func invalidatingOneVisualObjectKeepsOtherElementIdentities() throws {
+        let text = "First.\nImage.\nLast."
+        let (content, storage) = Self.makeStorage(text)
+        content.configure(paragraphIndex: ParagraphIndex(text: text as NSString),
+                          reflowRanges: [], displayMap: .identity)
+        func elements() -> [NSTextElement] {
+            var result: [NSTextElement] = []
+            _ = content.enumerateTextElements(from: nil) { element in
+                result.append(element)
+                return true
+            }
+            return result
+        }
+        let before = elements()
+        try #require(before.count == 3)
+        content.invalidateElements(in: (text as NSString).range(of: "Image."))
+        let after = elements()
+        try #require(after.count == 3)
+        #expect(after[0] === before[0])
+        #expect(after[1] !== before[1])
+        #expect(after[2] === before[2])
+        #expect(storage.string == text)
+        Self.expectTiles(Self.walkElements(content, length: storage.length), length: storage.length)
+    }
+
     @Test("paragraph content and separator partition the element", arguments: ["\n", "\r\n", "\r", "\u{0085}", "\u{2029}"])
     func paragraphMetadataPartitionsElement(separator: String) throws {
         let text = "First" + separator + separator + "Second"
