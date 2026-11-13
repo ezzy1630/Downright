@@ -12,6 +12,8 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-11-13
+
 ### Fixed
 
 - Permission prompts, such as "Read a file from outside this document's
