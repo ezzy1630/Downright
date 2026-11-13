@@ -21,6 +21,16 @@ every release; Sparkle orders updates by it.
   scrolling its explanation instead of squeezing the buttons together, and
   long file names are shortened in the middle so their extension stays
   readable. ([#56](https://github.com/ezzy1630/Downright/issues/56))
+- Math renders more of the LaTeX written for KaTeX, MathJax, Typora, and
+  Obsidian instead of showing the formula's source. Newly supported:
+  `\dfrac`, `\tfrac`, `\cfrac`, `\operatorname`, `\boldsymbol`, `\not=`,
+  `\iint`, `\big(`, `\middle|`, `\tag{1}`, `\label`, and `\&`; `align`,
+  `align*`, `equation`, `gather*`, `gathered`, `multline`, `array`, and
+  `smallmatrix` blocks; and symbols such as `\leqslant`, `\implies`,
+  `\therefore`, `\varnothing`, and `\checkmark`. Chinese, Japanese, and Korean
+  text inside `\text{}` now appears instead of disappearing, as do typed
+  symbols such as `α` and `≤`.
+  ([#55](https://github.com/ezzy1630/Downright/issues/55))
 
 ## [1.0.22] - 2026-11-03
 

@@ -257,7 +257,9 @@ public struct MTMathListBuilder {
                 if let fontStyle = MTMathAtomFactory.fontStyleWithName(command) {
                     let oldSpacesAllowed = spacesAllowed
                     // Text has special consideration where it allows spaces without escaping.
-                    spacesAllowed = command == "text"
+                    // Downright patch (see PATCHES.md): every text-mode command
+                    // (\textbf, \textit, ...) keeps its spaces, not just \text.
+                    spacesAllowed = command.hasPrefix("text")
                     let oldFontStyle = currentFontStyle
                     currentFontStyle = fontStyle
                     if let sublist = self.buildInternal(true) {
@@ -573,6 +575,17 @@ public struct MTMathListBuilder {
             let newInner = currentInnerAtom;
             currentInnerAtom = oldInner;
             return newInner;
+        } else if command == "operatorname" {
+            // Downright patch (see PATCHES.md), after upstream main:
+            // \operatorname{name} is an upright operator with operator
+            // spacing; a following \limits gives the starred form.
+            let content = self.buildInternal(true)
+            let name = content?.atoms.map(\.nucleus).joined() ?? ""
+            if name.isEmpty {
+                self.setError(.invalidCommand, message: "Missing operator name for \\operatorname")
+                return nil
+            }
+            return MTLargeOperator(value: name, limits: false)
         } else if command == "overline" {
             // The overline command has 1 arguments
             let over = MTOverLine()
@@ -965,7 +978,9 @@ public struct MTMathListBuilder {
     }
     
     mutating func readCommand() -> String {
-        let singleChars = "{}$#%_| ,>;!\\"
+        // Downright patch (see PATCHES.md): `&` added so `\&` reaches the
+        // symbol table's existing "&" entry.
+        let singleChars = "{}$#%_| ,>;!\\&"
         if self.hasCharacters {
             let char = self.getNextCharacter()
             if let _ = singleChars.firstIndex(of: char)  {

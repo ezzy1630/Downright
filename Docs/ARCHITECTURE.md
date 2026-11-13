@@ -75,6 +75,31 @@ are documented in [Vendor/PlantUML](../Vendor/PlantUML/README.md).
 Quick Look never installs the worker adapter and keeps these fences as code.
 Mermaid continues to use its existing native renderer on both surfaces.
 
+## Math
+
+`MathScanner` and math fences find formulas. `MathRenderer` is the only route
+into the vendored SwiftMath typesetter; fragments, inline math, HTML/PDF export,
+and Quick Look all go through it, so one formula is typeset once per cached
+style.
+
+`SwiftMathDialect` converts the LaTeX people write for KaTeX, MathJax, Typora,
+and Obsidian into the subset SwiftMath parses. Examples include `\dfrac`,
+`\not=`, `\tag`, `\label`, `\big`, `align*`, `equation`, `gathered`, and
+`array`. It changes only the string handed to SwiftMath, never the document.
+A rule either respells a construct or drops presentation SwiftMath cannot draw,
+such as delimiter sizes or a `\boxed` frame, while keeping every symbol. It
+also registers missing symbols with their TeX classes, once, before the first
+parse, because SwiftMath's symbol table is an unsynchronized static dictionary.
+A construct with no faithful spelling is left unchanged, so the formula falls
+back to dimmed source text rather than rendering something else. Current
+examples are `\overset`, `\underbrace`, `\xrightarrow`, and `aligned` with more
+than two columns.
+
+Non-ASCII characters are drawn, not dropped. A typed `α` or `≤` becomes its
+command's atom, and other text, such as CJK inside `\text{}`, uses Core Text
+font fallback. The vendored parser changes behind this are recorded in
+[Vendor/SwiftMath/PATCHES.md](../Vendor/SwiftMath/PATCHES.md).
+
 ## Document pipeline
 
 ```text
