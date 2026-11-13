@@ -43,7 +43,7 @@ protocol TaskPanelDelegate: AnyObject {
 /// section bar, the section headers, and the checkbox column all begin at the
 /// same x.  A worklist that lines up is the difference between a plan and a
 /// form.
-final class TaskPanelView: NSView, PanelSurface {
+final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
     weak var delegate: TaskPanelDelegate?
     var onClose: (() -> Void)?
     /// Fired after the row model changes. The floating owner refits directly

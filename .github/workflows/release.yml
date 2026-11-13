@@ -23,6 +23,16 @@ jobs:
           persist-credentials: false
       - name: Require an explicit release from main
         run: bash Scripts/validate-release-request.sh
+      - name: Require customer release notes for this version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source Config/version.env
+          # The same section becomes the GitHub Release text and the in-app
+          # update notes; fail here, before any build, when it is missing.
+          python3 Scripts/release-notes.py "$MARKETING_VERSION" "$CURRENT_PROJECT_VERSION" \
+            "${{ github.repository }}" > /dev/null
 
   unpublished:
     needs: request
@@ -405,12 +415,10 @@ jobs:
             "$DSYMS" "artifacts/Downright-$TAG-dSYMs.zip"
           shasum -a 256 "artifacts/Downright-$TAG-dSYMs.zip" \
             > "artifacts/Downright-$TAG-dSYMs.zip.sha256"
-          # Prefer the version's curated customer notes; versions without an
-          # entry retain the existing history fallback.
-          PREV_TAG="$(git tag --sort=-creatordate | grep -E '^(auto-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)$' | grep -v "^${RELEASE_TAG}$" | head -1 || true)"
+          # The version's curated customer notes; the request job already
+          # proved the section exists before any build started.
           python3 Scripts/release-notes.py "$MARKETING_VERSION" "$BUILD" \
-            "${{ github.repository }}" --previous-tag "$PREV_TAG" \
-            > artifacts/RELEASE-NOTES.md
+            "${{ github.repository }}" > artifacts/RELEASE-NOTES.md
           echo "APP_BASENAME=Downright-$TAG.zip" >> "$GITHUB_ENV"
 
       - name: Fetch Sparkle signing tools (pinned version)

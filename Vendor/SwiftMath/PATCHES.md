@@ -8,7 +8,10 @@
 | Licence | MIT — `LICENSE`, © 2023 Computer Inspirations. Unmodified. |
 | Copied from | `.build/checkouts/SwiftMath` at that tag, verbatim (minus `.git`) |
 
-Everything here is upstream source except the two items under **The patch**.
+Everything here is upstream source except the two items under **The patch**
+and the four under **Rendering patches**. Every patched line carries a
+`Downright patch` comment; `grep -rn 'Downright patch' Vendor/SwiftMath/Sources`
+lists them.
 
 ## Why it is vendored
 
@@ -92,6 +95,83 @@ an upstream update is a copy.
      }
 ```
 
+## Rendering patches
+
+Issue #55 asked for the LaTeX people write for KaTeX, MathJax, Typora and
+Obsidian. Most of that is a different spelling of something SwiftMath already
+draws, and `Sources/MarkdownRender/Fragments/SwiftMathDialect.swift` handles
+it outside the package: it rewrites the string handed to SwiftMath and
+registers missing symbols through the public
+`MTMathAtomFactory.add(latexSymbol:value:)`. The four changes below are what
+cannot be done from outside. Each is a parser-level bug or gap, and none
+touches layout or fonts.
+
+**3. Non-ASCII characters become atoms** (`MTMathAtomFactory.atom(forCharacter:)`).
+Upstream returns `nil` for any non-ASCII character outside a small accented
+Latin and Cyrillic list, and the builder then skips it *without an error*.
+`\text{中文}` therefore rendered as nothing, and a typed `α` or `≤` vanished
+from the formula. Now a character the symbol table knows (`α`, `≤`, `∑`)
+becomes the same atom as its command, and any other character becomes an
+ordinary atom. Core Text's line layout supplies a fallback font for glyphs the
+math font lacks, such as CJK and emoji. Upstream `main` (unreleased) accepts
+any character, but only inside `\text{}`; this patch also covers math mode and
+the typed symbols.
+
+**4. Every text-mode command keeps its spaces** (`buildInternal`). Upstream
+allows unescaped spaces only for `\text`, so `\textbf{two words}` rendered as
+"twowords".
+
+**5. `\operatorname{name}`** (`atomForCommand`). This is the same construct as
+upstream `main`: an upright large operator with operator spacing. The
+`\operatorname*` star is rewritten to a trailing `\limits` by
+`SwiftMathDialect`, because the 1.7.3 command reader only reads letters.
+
+**6. `\&`** (`readCommand`). The symbol table defines `&`, but the parser's
+single-character command list omitted it, so `\&` failed as "Invalid command".
+
+```diff
+--- a/Sources/SwiftMath/MathRender/MTMathAtomFactory.swift
++++ b/Sources/SwiftMath/MathRender/MTMathAtomFactory.swift
+@@ -623,4 +623,14 @@ public class MTMathAtomFactory {
+ 				return atom(fromAccentedCharacter: ch)
++            case _ where !ch.isASCII:
++                if let name = textToLatexSymbolName[chStr], let symbol = atom(forLatexSymbol: name) {
++                    return symbol
++                }
++                return MTMathAtom(type: .ordinary, value: chStr)
+             case _ where ch.utf32Char < 0x0021 || ch.utf32Char > 0x007E:
+
+--- a/Sources/SwiftMath/MathRender/MTMathListBuilder.swift
++++ b/Sources/SwiftMath/MathRender/MTMathListBuilder.swift
+@@ -258,5 +258,7 @@ public struct MTMathListBuilder {
+-                    spacesAllowed = command == "text"
++                    spacesAllowed = command.hasPrefix("text")
+@@ -574,4 +576,15 @@ public struct MTMathListBuilder {
+             return newInner;
++        } else if command == "operatorname" {
++            let content = self.buildInternal(true)
++            let name = content?.atoms.map(\.nucleus).joined() ?? ""
++            if name.isEmpty {
++                self.setError(.invalidCommand, message: "Missing operator name for \\operatorname")
++                return nil
++            }
++            return MTLargeOperator(value: name, limits: false)
+         } else if command == "overline" {
+@@ -966,5 +979,7 @@ public struct MTMathListBuilder {
+-        let singleChars = "{}$#%_| ,>;!\\"
++        let singleChars = "{}$#%_| ,>;!\\&"
+```
+
+(Comment lines omitted from the diff above; they are in the source.)
+
+`Tests/MarkdownRenderTests/MathDialectTests.swift` covers all four patches and
+the dialect. After an upstream update, a rendering patch that upstream now
+covers can be dropped if that suite still passes. `SwiftMathDialect` registers
+a symbol only when SwiftMath lacks it, so upstream definitions take precedence
+automatically, with one deliberate exception: `\square` is always replaced,
+because SwiftMath's own `\square` is a blue editing placeholder and a
+document needs the end-of-proof box. Keep that override after an update.
+
 ## Updating to a new upstream version
 
 1. `git clone --depth 1 --branch <tag> https://github.com/mgriebling/SwiftMath /tmp/SwiftMath`
@@ -101,7 +181,9 @@ an upstream update is a copy.
 3. `grep -rn 'Bundle.module' Vendor/SwiftMath/Sources` — replace every hit with
    `MathResourceBundle.resources`. If a hit resolves a resource *other than*
    `mathFonts.bundle`, stop and think: the resolver answers one question only.
-4. Update the version, commit, and diff in this file.
-5. `swift build && LC_ALL=en_US.UTF-8 Scripts/check.sh`, then
+4. Re-apply the **Rendering patches** whose behaviour upstream still lacks
+   (the `MathDialectTests` suite tells you which).
+5. Update the version, commit, and diff in this file.
+6. `swift build && LC_ALL=en_US.UTF-8 Scripts/check.sh`, then
    `Scripts/bundle-app.sh && Scripts/bundle-quicklook.sh` — `verify-bundle.sh`
    asserts the fonts land where the resolver looks in every bundle we ship.

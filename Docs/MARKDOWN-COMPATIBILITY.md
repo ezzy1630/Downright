@@ -12,6 +12,24 @@ source syntax, never a required proprietary dialect. Unsupported targets are
 reported with exact ranges and reversible proposals where a safe conversion is
 available; Downright does not silently normalize an extension away.
 
+## Math
+
+Math is typeset natively, with no WebView or network access. Inline math uses
+`$…$` or `\(…\)`; display math uses `$$…$$`, `\[…\]`, or a fenced block tagged
+`math`, `latex`, `tex`, or `katex`. A single `$` must sit flush against its
+content and is ignored around plain amounts, so prices and shell variables stay
+prose.
+
+Most LaTeX written for KaTeX, MathJax, Typora, and Obsidian renders, including
+`align`, `equation`, `gathered`, `cases`, matrix and `array` blocks, `\dfrac`,
+`\operatorname`, `\boldsymbol`, `\not`, and typed Unicode symbols. Text inside
+`\text{}` may use any script, including Chinese, Japanese, and Korean. A few
+decorations render approximately: `\big` delimiters keep their normal size,
+`\boxed` drops its frame, and `\tag{n}` appears as "(n)" at the end of the
+formula. `\overset`, `\underset`, `\stackrel`, `\xrightarrow`, `\overbrace`,
+`\underbrace`, `\phantom`, and `\hspace` are not supported yet; a formula that
+uses them shows its source text instead of rendering incorrectly.
+
 ## Raw HTML
 
 Document mode natively presents a conservative, non-executing subset commonly

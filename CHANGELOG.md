@@ -12,7 +12,29 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
-## [1.0.22]
+## [1.0.23] - 2026-11-13
+
+### Fixed
+
+- Permission prompts, such as "Read a file from outside this document's
+  folder?", respond to clicks again. Clicks inside the floating Tasks,
+  History, and Document panels no longer land beside the button you pressed.
+  In a short window the prompt keeps every choice visible and separate,
+  scrolling its explanation instead of squeezing the buttons together, and
+  long file names are shortened in the middle so their extension stays
+  readable. ([#56](https://github.com/ezzy1630/Downright/issues/56))
+- Math renders more of the LaTeX written for KaTeX, MathJax, Typora, and
+  Obsidian instead of showing the formula's source. Newly supported:
+  `\dfrac`, `\tfrac`, `\cfrac`, `\operatorname`, `\boldsymbol`, `\not=`,
+  `\iint`, `\big(`, `\middle|`, `\tag{1}`, `\label`, and `\&`; `align`,
+  `align*`, `equation`, `gather*`, `gathered`, `multline`, `array`, and
+  `smallmatrix` blocks; and symbols such as `\leqslant`, `\implies`,
+  `\therefore`, `\varnothing`, and `\checkmark`. Chinese, Japanese, and Korean
+  text inside `\text{}` now appears instead of disappearing, as do typed
+  symbols such as `α` and `≤`.
+  ([#55](https://github.com/ezzy1630/Downright/issues/55))
+
+## [1.0.22] - 2026-11-03
 
 ### Fixed
 
@@ -24,7 +46,7 @@ every release; Sparkle orders updates by it.
   lines keep independent image fragments. Unreadable local pictures settle on
   a missing-image message.
 
-## [1.0.21]
+## [1.0.21] - 2026-11-03
 
 ### Added
 
@@ -54,7 +76,7 @@ every release; Sparkle orders updates by it.
   Added retained diagnostics, explicit skipped coverage, and fixed-seed source
   and editing checks.
 
-## [1.0.20]
+## [1.0.20] - 2026-10-28
 
 ### Fixed
 
@@ -74,7 +96,7 @@ every release; Sparkle orders updates by it.
   restore stale positions after a newer edit or selection.
 - Scrolling keeps visible text aligned with caret placement and word deletion.
 
-## [1.0.18]
+## [1.0.18] - 2026-10-27
 
 ### Added
 

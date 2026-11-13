@@ -227,6 +227,11 @@ final class InspectorHostView: NSView {
 
     var hasContent: Bool { !views.isEmpty }
 
+    var selectedContentPrefersFullHeight: Bool {
+        guard let selectedSection else { return false }
+        return (views[selectedSection] as? FloatingContentMeasuring)?.prefersFullFloatingHeight ?? false
+    }
+
     func setContent(_ view: NSView, section: InspectorSection) {
         if let old = views[section], old !== view { old.removeFromSuperview() }
         views[section] = view
@@ -262,8 +267,8 @@ final class InspectorHostView: NSView {
         layoutSubtreeIfNeeded()
         content.layoutSubtreeIfNeeded()
         let contentHeight: CGFloat
-        if let task = views[.tasks] as? TaskPanelView, selectedSection == .tasks {
-            contentHeight = task.fittedContentHeight
+        if let section = selectedSection, let measured = views[section] as? FloatingContentMeasuring {
+            contentHeight = measured.fittedContentHeight
         } else if let section = selectedSection, let view = views[section] {
             let fitted = view.fittingSize.height
             contentHeight = fitted.isFinite && fitted > 0 ? fitted : view.frame.height

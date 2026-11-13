@@ -590,6 +590,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         (content as? PanelSurface)?.preferredWidth ?? PanelMetrics.detailWidth
     }
 
+    var prefersFullHeight: Bool {
+        (content as? InspectorHostView)?.selectedContentPrefersFullHeight ?? false
+    }
+
     /// The frame the surface is actually resting at — the single source of
     /// truth for where a morph flight should land. The floating host's
     /// re-derivation of this frame can drift a few points from it (minimum
@@ -794,12 +798,11 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         // AppKit supplies `point` in the receiver's superview coordinates.
-        // Convert once; treating it as bounds-local made the visible glass
-        // draw correctly while every pointer event fell through to the
-        // Markdown view underneath.
-        let localPoint = bounds.contains(point)
-            ? point
-            : (superview.map { convert(point, from: $0) } ?? point)
+        // Always convert: the surface sits inset by the shadow margin in its
+        // child window, so a superview point usually also lies inside
+        // `bounds`. Guessing "already local" from that shifted every click
+        // by the margin and missed the panel's buttons (issue #56).
+        let localPoint = superview.map { convert(point, from: $0) } ?? point
         guard visibleBodyBoundsForHitTesting.contains(localPoint) else { return nil }
         if let host = content as? InspectorHostView {
             if closeControlHitZoneContains(localPoint) { return host.closeButtonForTesting }

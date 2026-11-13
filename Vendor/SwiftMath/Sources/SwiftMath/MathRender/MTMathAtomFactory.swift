@@ -622,6 +622,16 @@ public class MTMathAtomFactory {
 			case _ where supportedAccentedCharacters.keys.contains(ch):
 				// support for áéíóúýàèìòùâêîôûäëïöüÿãñõçøåæœß'ÁÉÍÓÚÝÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÃÑÕÇØÅÆŒ
 				return atom(fromAccentedCharacter: ch)
+            case _ where !ch.isASCII:
+                // Downright patch (see PATCHES.md): a typed symbol such as
+                // "≤" or "α" becomes the atom its LaTeX command would, and any
+                // other character (CJK in \text{}, for one) an ordinary atom
+                // that Core Text draws with font fallback. Upstream returns
+                // nil here, which silently deletes the character.
+                if let name = textToLatexSymbolName[chStr], let symbol = atom(forLatexSymbol: name) {
+                    return symbol
+                }
+                return MTMathAtom(type: .ordinary, value: chStr)
             case _ where ch.utf32Char < 0x0021 || ch.utf32Char > 0x007E:
                 return nil
             case "$", "%", "#", "&", "~", "\'", "^", "_", "{", "}", "\\":

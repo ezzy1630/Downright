@@ -1,4 +1,4 @@
-"""Exercise the release-note command with real changelogs and Git history."""
+"""Exercise the release-note command with real changelogs."""
 from pathlib import Path
 import subprocess
 import sys
@@ -22,12 +22,12 @@ class ReleaseNotesTests(unittest.TestCase):
         )
         self.changelog = self.root / "CHANGELOG.md"
 
-    def generate(self, text, previous_tag=""):
+    def generate(self, text):
         if text is not None:
             self.changelog.write_text(text)
         return subprocess.run(
             [sys.executable, str(SCRIPT), "1.0.17", "343", "ezzy1630/Downright",
-             "--changelog", str(self.changelog), "--previous-tag", previous_tag],
+             "--changelog", str(self.changelog)],
             cwd=self.root, capture_output=True, text=True, timeout=10,
         )
 
@@ -54,38 +54,12 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("## Example\n```\n- Kept after example.", result.stdout)
         self.assertNotIn("Old.", result.stdout)
 
-    def test_unlisted_version_falls_back_to_real_commit_history(self):
+    def test_unlisted_version_is_rejected_instead_of_publishing_commit_subjects(self):
         result = self.generate("## [Unreleased]\nFuture.\n## [1.0.0]\nOld.\n")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("## What's new", result.stdout)
-        self.assertIn("Fixture maintenance change", result.stdout)
-        self.assertNotIn("Future.", result.stdout)
-        self.assertNotIn("Old.", result.stdout)
-
-    def test_history_fallback_excludes_the_previous_release(self):
-        subprocess.run(["git", "tag", "auto-baseline"], cwd=self.root, check=True)
-        subprocess.run(
-            ["git", "-c", "user.name=Release Test", "-c", "user.email=release@example.invalid",
-             "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Only the new fix"],
-            cwd=self.root, check=True,
-        )
-        result = self.generate("## [Unreleased]\nFuture.\n", previous_tag="auto-baseline")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Only the new fix", result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no ## [1.0.17] section", result.stderr)
+        self.assertNotIn("# Downright", result.stdout)
         self.assertNotIn("Fixture maintenance change", result.stdout)
-
-    def test_empty_history_is_rejected_instead_of_publishing_a_header(self):
-        subprocess.run(["git", "tag", "auto-current"], cwd=self.root, check=True)
-        result = self.generate("## [Unreleased]\nFuture.\n", previous_tag="auto-current")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no commits", result.stderr)
-        self.assertNotIn("# Downright", result.stdout)
-
-    def test_history_failure_is_not_published_as_successful_notes(self):
-        result = self.generate("## [Unreleased]\nFuture.\n", previous_tag="missing-tag")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("release-notes:", result.stderr)
-        self.assertNotIn("# Downright", result.stdout)
 
     def test_empty_version_is_an_error_instead_of_silent_history_fallback(self):
         result = self.generate("## [1.0.17]\n\n## [1.0.0]\nOld.\n")
