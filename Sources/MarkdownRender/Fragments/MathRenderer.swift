@@ -44,7 +44,7 @@ public enum MathRenderer {
             padding: (padding * 2).rounded())
         return MarkdownFragmentImageCaches.math.image(for: key, keyCost: key.source.utf8.count) {
             let renderer = MTMathImage(
-                latex: SwiftMathDialect.source(from: trimmed),
+                latex: SwiftMathDialect.source(from: trimmed, display: display),
                 fontSize: key.pointSize,
                 textColor: color,
                 labelMode: display ? .display : .text,

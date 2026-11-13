@@ -79,8 +79,11 @@ enum SwiftMathDialect {
     }()
 
     /// The SwiftMath spelling of `latex`.
-    static func source(from latex: String) -> String {
-        var rewriter = Rewriter(latex)
+    /// `display` is the formula's own style. A style switch has to be undone
+    /// explicitly afterwards, because SwiftMath flattens `{…}` into the
+    /// surrounding list and a `\displaystyle` inside braces would leak.
+    static func source(from latex: String, display: Bool) -> String {
+        var rewriter = Rewriter(latex, display: display)
         return rewriter.run()
     }
 
@@ -108,11 +111,11 @@ enum SwiftMathDialect {
         return names
     }()
 
-    /// `\frac`-like commands that force a style: the replacement fraction and
-    /// the style its numerator and denominator take.
-    private static let styledFractions: [String: (command: String, style: String)] = [
-        "dfrac": ("frac", "textstyle"), "cfrac": ("frac", "textstyle"), "tfrac": ("frac", "scriptstyle"),
-        "dbinom": ("binom", "textstyle"), "tbinom": ("binom", "scriptstyle"),
+    /// `\frac`-like commands that force a style: the plain command and
+    /// whether the forced style is display (`\dfrac`) or text (`\tfrac`).
+    private static let styledFractions: [String: (command: String, display: Bool)] = [
+        "dfrac": ("frac", true), "cfrac": ("frac", true), "tfrac": ("frac", false),
+        "dbinom": ("binom", true), "tbinom": ("binom", false),
     ]
 
     /// `\not` followed by a token, spelled as the negated symbol.
@@ -146,10 +149,18 @@ enum SwiftMathDialect {
 
     private struct Rewriter {
         private let chars: [Character]
+        private let display: Bool
         private var index = 0
         private var output = ""
 
-        init(_ latex: String) { chars = Array(latex) }
+        init(_ latex: String, display: Bool) {
+            chars = Array(latex)
+            self.display = display
+        }
+
+        private func source(from latex: String) -> String {
+            SwiftMathDialect.source(from: latex, display: display)
+        }
 
         mutating func run() -> String {
             while index < chars.count {
@@ -196,11 +207,18 @@ enum SwiftMathDialect {
                 let start = index
                 if readArgument() == nil { index = start; output += "\\label" }
             case "mathop", "boxed":
-                // Presentation wrappers SwiftMath cannot draw: keep the
-                // content as one group so scripts still attach to all of it.
                 let start = index
                 if let content = readArgument() {
-                    output += "{" + SwiftMathDialect.source(from: content) + "}"
+                    if name == "mathop", !content.isEmpty, content.allSatisfy(\.isLetter) {
+                        // A named operator (`\mathop{lim}`) is exactly what
+                        // `\operatorname` builds, and scripts attach to it.
+                        output += "\\operatorname{" + content + "}"
+                    } else {
+                        // Otherwise only the presentation is dropped: the
+                        // content stays visible, though a following script
+                        // attaches to its last atom rather than the whole.
+                        output += "{" + source(from: content) + "}"
+                    }
                 } else {
                     index = start
                     output += "\\" + name
@@ -209,7 +227,7 @@ enum SwiftMathDialect {
                 let starred = consume("*")
                 let start = index
                 if let content = readArgument() {
-                    output += "\\operatorname{" + SwiftMathDialect.source(from: content) + "}"
+                    output += "\\operatorname{" + source(from: content) + "}"
                     if starred { output += "\\limits" }
                 } else {
                     index = start
@@ -221,7 +239,7 @@ enum SwiftMathDialect {
                 let starred = consume("*")
                 let start = index
                 if let content = readArgument() {
-                    let text = "\\text{" + SwiftMathDialect.source(from: content) + "}"
+                    let text = "\\text{" + source(from: content) + "}"
                     output += starred ? "\\qquad " + text : "\\qquad (" + text + ")"
                 } else {
                     index = start
@@ -248,7 +266,7 @@ enum SwiftMathDialect {
             }
         }
 
-        private mutating func rewriteStyledFraction(_ name: String, as fraction: (command: String, style: String)) {
+        private mutating func rewriteStyledFraction(_ name: String, as fraction: (command: String, display: Bool)) {
             let start = index
             if name == "cfrac" { skipOptionalArgument() }
             guard let numerator = readArgument(), let denominator = readArgument() else {
@@ -256,9 +274,17 @@ enum SwiftMathDialect {
                 output += "\\" + name
                 return
             }
-            let style = "\\" + fraction.style + " "
-            output += "\\\(fraction.command){\(style)\(SwiftMathDialect.source(from: numerator))}"
-                + "{\(style)\(SwiftMathDialect.source(from: denominator))}"
+            let body = "\\\(fraction.command){\(source(from: numerator))}{\(source(from: denominator))}"
+            guard fraction.display != display else {
+                output += body
+                return
+            }
+            // TeX sets the numerator and denominator one style smaller by
+            // itself; only the fraction's own style needs forcing, and the
+            // formula's style is restored after it.
+            let forced = fraction.display ? "\\displaystyle " : "\\textstyle "
+            let restore = display ? "\\displaystyle " : "\\textstyle "
+            output += forced + body + restore
         }
 
         private mutating func rewriteNegation() {
@@ -381,6 +407,9 @@ enum SwiftMathDialect {
             while cursor < chars.count {
                 switch chars[cursor] {
                 case "\\": cursor += 1
+                case "%":
+                    // A comment's braces are not structure.
+                    while cursor + 1 < chars.count, !chars[cursor + 1].isNewline { cursor += 1 }
                 case "{": depth += 1
                 case "}":
                     depth -= 1

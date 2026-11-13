@@ -168,7 +168,9 @@ single-character command list omitted it, so `\&` failed as "Invalid command".
 the dialect. After an upstream update, a rendering patch that upstream now
 covers can be dropped if that suite still passes. `SwiftMathDialect` registers
 a symbol only when SwiftMath lacks it, so upstream definitions take precedence
-automatically.
+automatically, with one deliberate exception: `\square` is always replaced,
+because SwiftMath's own `\square` is a blue editing placeholder and a
+document needs the end-of-proof box. Keep that override after an update.
 
 ## Updating to a new upstream version
 

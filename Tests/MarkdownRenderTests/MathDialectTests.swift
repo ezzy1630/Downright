@@ -47,7 +47,29 @@ struct MathDialectTests {
     /// `\\` is a row break, never the start of a command: `\\label` is a break
     /// followed by the letters "label", which must survive the rewrite.
     @Test func escapedBackslashIsNotACommand() {
-        #expect(SwiftMathDialect.source(from: #"a \\label{x}"#) == #"a \\label{x}"#)
-        #expect(SwiftMathDialect.source(from: #"a \label{x} b"#) == #"a  b"#)
+        #expect(SwiftMathDialect.source(from: #"a \\label{x}"#, display: false) == #"a \\label{x}"#)
+        #expect(SwiftMathDialect.source(from: #"a \label{x} b"#, display: false) == #"a  b"#)
+    }
+
+    /// `\dfrac` forces display size inline and `\tfrac` text size in a display
+    /// formula; the formula's own style resumes after the fraction, because
+    /// SwiftMath's braces do not scope a style switch.
+    @Test @MainActor func styledFractionsForceTheirSizeAndRestoreTheFormulas() throws {
+        func height(_ latex: String, display: Bool) throws -> CGFloat {
+            try #require(MathRenderer.image(latex: latex, display: display, pointSize: 16, color: .labelColor)).size.height
+        }
+        #expect(try height(#"\dfrac{a}{b}"#, display: false) > height(#"\frac{a}{b}"#, display: false))
+        #expect(try height(#"\tfrac{a}{b}"#, display: true) < height(#"\frac{a}{b}"#, display: true))
+        #expect(SwiftMathDialect.source(from: #"\dfrac{a}{b} x"#, display: false)
+            == #"\displaystyle \frac{a}{b}\textstyle  x"#)
+        #expect(SwiftMathDialect.source(from: #"\dfrac{a}{b}"#, display: true) == #"\frac{a}{b}"#)
+    }
+
+    @Test func namedMathopBecomesAnOperatorThatTakesScripts() {
+        #expect(SwiftMathDialect.source(from: #"\mathop{lim}_{x}"#, display: true) == #"\operatorname{lim}_{x}"#)
+    }
+
+    @Test func commentBracesDoNotCloseAnArgument() {
+        #expect(SwiftMathDialect.source(from: "\\boxed{x % }\n+ 1} y", display: true) == "{x \n+ 1} y")
     }
 }
