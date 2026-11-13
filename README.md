@@ -61,7 +61,7 @@ performance, with the original Markdown remaining authoritative on disk.
 |---|---|
 | Native CommonMark and GFM rendering | Exact source remains authoritative |
 | Beautiful typography and six themes | Document and Source views share position and selection |
-| Math, Mermaid, PlantUML, tables, tasks, callouts, images, and footnotes | Safe external-change tracking and conflict protection |
+| LaTeX math, Mermaid, PlantUML, tables, tasks, callouts, images, and footnotes | Safe external-change tracking and conflict protection |
 | Quick Look previews and Finder thumbnails | Local snapshots and a version timeline |
 | Outline, structural zoom, and density navigation | Search sibling files without creating a vault |
 | HTML/PDF export, Services, and Spotlight metadata | `down` and `md` terminal commands |
@@ -72,7 +72,8 @@ and `.rmd`.
 CommonMark is the portable baseline and GitHub-flavored Markdown is the default
 interchange target. Downright also renders opt-in extensions without rewriting
 them into a proprietary format. See [Markdown compatibility](Docs/MARKDOWN-COMPATIBILITY.md)
-for the exact boundary, including safe raw-HTML behavior.
+for the exact boundary, including supported math syntax and safe raw-HTML
+behavior.
 
 ## Installation
 
