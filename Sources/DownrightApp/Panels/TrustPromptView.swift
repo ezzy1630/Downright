@@ -23,7 +23,7 @@ protocol TrustPromptViewDelegate: AnyObject {
 /// most dangerous one (§11.4).  Allow keeps a plain bezel so it never looks
 /// like the recommended answer.
 @MainActor
-final class TrustPromptView: NSView, PanelSurface {
+final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
     weak var delegate: TrustPromptViewDelegate?
 
     var request: TrustRequest? {
@@ -37,6 +37,13 @@ final class TrustPromptView: NSView, PanelSurface {
     var preferredWidth: CGFloat { PanelMetrics.detailWidth }
 
     private let backdrop: PanelBackdrop
+    /// The explanation scrolls; the decisions never do. A height-capped
+    /// prompt used to compress its buttons into one unclickable strip
+    /// (issue #56), so they live in a footer at their natural height and only
+    /// the text above them gives way.
+    private let body = TrustPromptBody()
+    private let scrollView: NSScrollView
+    private let buttons = NSStackView()
     private let titleLabel = NSTextField(wrappingLabelWithString: "Permission Needed")
     private let targetLabel = NSTextField(wrappingLabelWithString: "")
     private let consequenceLabel = NSTextField(wrappingLabelWithString: "")
@@ -52,28 +59,24 @@ final class TrustPromptView: NSView, PanelSurface {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         self.backdrop = PanelBackdrop(styleSheet: styleSheet)
+        self.scrollView = PanelList.makeScrollView(documentView: body)
         super.init(frame: .zero)
         installBackdrop(backdrop)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
 
         titleLabel.font = PanelFont.system(13, weight: .semibold)
         titleLabel.maximumNumberOfLines = 3
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
-
         targetLabel.font = PanelFont.monospaced(11)
         targetLabel.maximumNumberOfLines = 4
-        targetLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(targetLabel)
-
         consequenceLabel.font = PanelFont.secondary
         consequenceLabel.maximumNumberOfLines = 4
-        consequenceLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(consequenceLabel)
-
         askedByLabel.font = PanelFont.secondary
         askedByLabel.maximumNumberOfLines = 2
-        askedByLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(askedByLabel)
+        for label in labels {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            body.addSubview(label)
+        }
 
         // Deny is the default and also the Esc key.  Both keys agree, and both
         // agree with the safe answer.
@@ -85,19 +88,28 @@ final class TrustPromptView: NSView, PanelSurface {
         configure(revokeButton, action: #selector(revoke(_:)), label: "Revoke matching trust")
         revokeButton.hasDestructiveAction = true
 
-        let buttons = NSStackView(views: [
-            denyButton, allowOnceButton, allowFileButton, allowFolderButton, revokeButton,
-        ])
+        for button in allButtons { buttons.addArrangedSubview(button) }
         buttons.orientation = .vertical
         buttons.alignment = .leading
         buttons.spacing = 5
+        buttons.setClippingResistancePriority(.required, for: .vertical)
+        buttons.setHuggingPriority(.required, for: .vertical)
         buttons.translatesAutoresizingMaskIntoConstraints = false
         addSubview(buttons)
 
+        let clip = scrollView.contentView
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -Self.footerGap),
+            body.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            body.topAnchor.constraint(equalTo: clip.topAnchor),
+            body.widthAnchor.constraint(equalTo: clip.widthAnchor),
+
+            titleLabel.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: PanelMetrics.inset),
+            titleLabel.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -PanelMetrics.inset),
+            titleLabel.topAnchor.constraint(equalTo: body.topAnchor, constant: PanelMetrics.headerTopPadding),
             targetLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             targetLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             targetLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
@@ -107,10 +119,10 @@ final class TrustPromptView: NSView, PanelSurface {
             askedByLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             askedByLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             askedByLabel.topAnchor.constraint(equalTo: consequenceLabel.bottomAnchor, constant: 4),
-            buttons.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            buttons.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            buttons.topAnchor.constraint(equalTo: askedByLabel.bottomAnchor, constant: 14),
-            buttons.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PanelMetrics.inset),
+            askedByLabel.bottomAnchor.constraint(equalTo: body.bottomAnchor),
+            buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            buttons.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
+            buttons.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -PanelMetrics.inset),
         ])
 
         setAccessibilityRole(.group)
@@ -126,8 +138,42 @@ final class TrustPromptView: NSView, PanelSurface {
         button.action = action
         button.bezelStyle = .rounded
         button.controlSize = .small
+        // A long file or folder name truncates in the middle, keeping its
+        // extension, instead of widening the panel; height never gives way.
+        button.lineBreakMode = .byTruncatingMiddle
         button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .vertical)
         button.setAccessibilityLabel(label)
+    }
+
+    private var labels: [NSTextField] { [titleLabel, targetLabel, consequenceLabel, askedByLabel] }
+
+    /// Wrapping labels measure against an explicit width; without one,
+    /// `fittingSize` reports a single long line and the panel is sized too
+    /// short for the wrapped text.
+    private func updateWrapWidth(_ width: CGFloat) {
+        let wrap = max(0, width - 2 * PanelMetrics.inset)
+        for label in labels where label.preferredMaxLayoutWidth != wrap {
+            label.preferredMaxLayoutWidth = wrap
+        }
+    }
+
+    override func layout() {
+        updateWrapWidth(bounds.width)
+        super.layout()
+    }
+
+    private static let footerGap: CGFloat = 14
+
+    var prefersFullFloatingHeight: Bool { true }
+
+    /// The whole prompt at the current width. The floating inspector fits to
+    /// this; when its cap is lower, only the explanation scrolls.
+    var fittedContentHeight: CGFloat {
+        updateWrapWidth(bounds.width > 0 ? bounds.width : preferredWidth)
+        body.layoutSubtreeIfNeeded()
+        return body.fittingSize.height + Self.footerGap
+            + buttons.fittingSize.height + PanelMetrics.inset
     }
 
     // MARK: - Copy
@@ -231,6 +277,8 @@ final class TrustPromptView: NSView, PanelSurface {
         choose(decision)
     }
 
+    var decisionButtonsForTesting: [NSButton] { allButtons }
+
     override var acceptsFirstResponder: Bool { true }
 
     /// Esc denies, matching the default button rather than fighting it.
@@ -259,4 +307,9 @@ final class TrustPromptView: NSView, PanelSurface {
             button.contentTintColor = styleSheet.textSecondary
         }
     }
+}
+
+/// Flipped so the prompt reads from the top when it scrolls.
+private final class TrustPromptBody: NSView {
+    override var isFlipped: Bool { true }
 }

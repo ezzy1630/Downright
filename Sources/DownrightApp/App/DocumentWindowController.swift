@@ -1633,7 +1633,7 @@ final class DocumentWindowController: NSWindowController {
             surface.preferredWidth,
             max(200, target.bounds.width - 2 * PanelMetrics.floatingMargin)
         )
-        let cap = floatingHeightCap(in: target)
+        let cap = floatingHeightCap(in: target, for: surface)
         let frame = floatingFrame(for: surface, in: target, width: width, cap: cap)
         let resting = screenFrame(frame, in: target, window: window)
         let sliver = NSRect(
@@ -1844,7 +1844,7 @@ final class DocumentWindowController: NSWindowController {
                 for: surface,
                 in: target,
                 width: width,
-                cap: floatingHeightCap(in: target)
+                cap: floatingHeightCap(in: target, for: surface)
             )
             floatingSurfaceFrame = screenFrame(frame, in: target, window: window)
             return target.convert(frame, to: nil)
@@ -1890,12 +1890,13 @@ final class DocumentWindowController: NSWindowController {
     /// so a resize moves the ceiling and the body re-clamps (and the list
     /// scrolls instead of overrunning it).  During a flight the retarget path
     /// handles the re-aiming; this is the parked case.
-    private func floatingHeightCap(in target: NSView) -> CGFloat {
+    private func floatingHeightCap(in target: NSView, for surface: FloatingPanelSurface) -> CGFloat {
         let availableHeight = max(0, target.bounds.height - target.safeAreaInsets.top)
+        let fraction = surface.prefersFullHeight ? 1 : FloatingPanelSurface.Top.windowHeightFraction
         return max(
             40,
             min(
-                FloatingPanelSurface.Top.windowHeightFraction * availableHeight,
+                fraction * availableHeight,
                 availableHeight
             ) - 2 * PanelMetrics.floatingMargin
         )
@@ -1946,7 +1947,7 @@ final class DocumentWindowController: NSWindowController {
             for: surface,
             in: target,
             width: width,
-            cap: floatingHeightCap(in: target)
+            cap: floatingHeightCap(in: target, for: surface)
         )
         let resting = screenFrame(frame, in: target, window: window)
         let sliver = NSRect(

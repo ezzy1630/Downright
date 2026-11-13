@@ -62,3 +62,38 @@ jobs:
           gh release upload "$TAG" \
             "$RUNNER_TEMP/download-counter/downloads.json" \
             "$RUNNER_TEMP/download-counter/downloads.svg" --clobber
+
+      - name: Publish the README badges
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(gh release list --limit 1)" ]; then
+            echo "no published release yet; no badges to publish"
+            exit 0
+          fi
+          # Release assets download as application/octet-stream, which
+          # GitHub's README image proxy refuses, and Shields blocks github.com
+          # endpoints. raw.githubusercontent.com serves SVG as an image and is
+          # an allowed Shields endpoint host, so the badges live on a
+          # one-commit orphan branch that is replaced on every refresh.
+          NAME="$(gh release view --json name --jq .name)"
+          VERSION="$(sed -nE 's/^Downright ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' <<<"$NAME")"
+          if [ -z "$VERSION" ]; then
+            echo "cannot read a version from the latest release name: $NAME" >&2
+            exit 1
+          fi
+          BADGES="$RUNNER_TEMP/badges"
+          mkdir -p "$BADGES"
+          cp "$RUNNER_TEMP/download-counter/downloads.json" \
+            "$RUNNER_TEMP/download-counter/downloads.svg" "$BADGES/"
+          jq -n --arg version "v$VERSION" \
+            '{schemaVersion: 1, label: "release", message: $version, color: "307afe"}' \
+            > "$BADGES/release.json"
+          gh auth setup-git
+          git -C "$BADGES" init -q -b metrics
+          git -C "$BADGES" add downloads.json downloads.svg release.json
+          git -C "$BADGES" -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Refresh README badges"
+          git -C "$BADGES" push --force "https://github.com/${GITHUB_REPOSITORY}.git" metrics

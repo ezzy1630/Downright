@@ -32,8 +32,8 @@
 
 <p align="center">
   <a href="https://github.com/ezzy1630/Downright/actions/workflows/ci.yml"><img src="https://github.com/ezzy1630/Downright/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://github.com/ezzy1630/Downright/releases"><img src="https://img.shields.io/github/v/release/ezzy1630/Downright?display_name=tag&amp;sort=semver" alt="Latest release"></a>
-  <a href="https://downright.cc/download/"><img src="https://github.com/ezzy1630/Downright/releases/latest/download/downloads.svg" alt="Total downloads"></a>
+  <a href="https://github.com/ezzy1630/Downright/releases/latest"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fezzy1630%2FDownright%2Fmetrics%2Frelease.json" alt="Latest release"></a>
+  <a href="https://downright.cc/download/"><img src="https://raw.githubusercontent.com/ezzy1630/Downright/metrics/downloads.svg" alt="Total downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-307afe" alt="MIT license"></a>
 </p>
 
@@ -155,9 +155,12 @@ window**, **Quit Downright**, and **Do nothing**. The default remains Show start
 window; closing a document with unsaved changes still offers the normal save
 choices.
 
-See the [1.0.18 changelog](CHANGELOG.md#1018) for images, reading width, and
-performance improvements, and [1.0.17](CHANGELOG.md#1017) for navigation,
-split-view, save-state, and Find fixes.
+## What's new
+
+Every release's changes are listed in the [changelog](CHANGELOG.md) and on the
+[releases page](https://github.com/ezzy1630/Downright/releases). The app shows
+the same notes before you install an update, so you can see what pressing
+**Update Now** will change.
 
 ## Everyday commands
 

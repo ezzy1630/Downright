@@ -49,16 +49,17 @@ Scripts/sync-versions.sh fix    # rewrite the consumers from version.env
 
 ## Release notes
 
-Collect pending customer-facing changes under `## [Unreleased]` in
-`CHANGELOG.md`. Before publishing, move them into the matching `## [X.Y.Z]`
-section. The release workflow does not publish the `[Unreleased]` section.
-`Scripts/release-notes.py` combines the matching version section with the
-actual version/build identity for both the GitHub Release and the signed
-Sparkle appcast's embedded notes. The README links to the changelog.
+Every pull request that changes customer-facing behavior adds a plain-language
+entry under `## [Unreleased]` in `CHANGELOG.md` and updates the documentation
+it affects. Before publishing, move those entries into the matching
+`## [X.Y.Z]` section. The release workflow does not publish the `[Unreleased]`
+section. `Scripts/release-notes.py` combines the matching version section with
+the actual version/build identity for both the GitHub Release and the signed
+Sparkle appcast's embedded notes, which the app shows before someone installs
+the update. Write them for that reader: what changed for them, not how.
 Use absolute URLs in that section so links work in GitHub and the app as well
-as in the repository. Historical sections are not included. Empty or duplicate matching
-sections fail publication; a version without a section retains the existing
-commit-history fallback.
+as in the repository. Historical sections are not included. A missing, empty,
+or duplicate matching section fails the release request before any build.
 
 ## Updater architecture
 
@@ -219,15 +220,21 @@ and the npm launcher. Do not add the Sparkle ZIP count to it: those archives are
 update downloads from existing installations. GitHub's counter is an
 asset-request count, not a unique-person or completed-install count.
 
-The README's total-downloads badge is backed by
+The README's total-downloads and release badges are backed by
 `.github/workflows/download-count.yml`. It refreshes daily, after each push to
-`main`, after a successful release, or on manual dispatch, and publishes the
-`downloads.svg` badge and Shields-compatible `downloads.json` data on the latest
-production release. `Scripts/download-count-badge.sh` renders the SVG from the
-same count. The README loads it directly from GitHub Releases: Shields' custom
-endpoint blocks the `github.com` domain. Only these metrics assets are mutable;
-signed app archives and appcasts remain immutable. This avoids extra branches
-and scheduled commits to `main`.
+`main`, after a successful release, or on manual dispatch. It attaches the
+`downloads.svg` badge and Shields-compatible `downloads.json` data to the latest
+production release, and force-pushes those files plus `release.json` (the
+latest release's version) as a single commit on the orphan `metrics` branch.
+`Scripts/download-count-badge.sh` renders the SVG from the same count.
+
+The README reads the badges from `raw.githubusercontent.com/.../metrics/`.
+GitHub serves release assets as `application/octet-stream` attachments, which
+the README image proxy refuses to render, and Shields' custom endpoint blocks
+the `github.com` domain; the raw host serves SVG as an image and is an allowed
+Shields endpoint. The `metrics` branch holds only these files and never
+touches `main`. Only these metrics files are mutable; signed app archives and
+appcasts remain immutable.
 
 ## DMG packaging
 
@@ -299,7 +306,9 @@ If approval, credentials, or an owner-only action blocks progress, report the
 exact stage, target, evidence, and next action. A replacement release commit
 still requires explicit authorization for its own SHA.
 
-1. Bump `Config/version.env`; run `Scripts/sync-versions.sh fix`.
+1. Bump `Config/version.env`; run `Scripts/sync-versions.sh fix`. Move the
+   `[Unreleased]` changelog entries into `## [X.Y.Z]` and confirm the README,
+   contracts, and help text describe the shipped behavior.
 2. `Scripts/check.sh` — all suites, version gates, and the Sparkle link-scope
    check pass.
 3. Merge or push the reviewed commit to `main` with authorization. This does
@@ -313,6 +322,14 @@ still requires explicit authorization for its own SHA.
    is public, the previous appcast stays active and re-running the deployment
    is safe.
 5. Set Pages → Source: **GitHub Actions** in the repository settings (one-time).
+
+6. After the release is public, refresh the website's app payload from the
+   released commit and deploy it, so its changelog and version facts match
+   what users are offered:
+   `DOWNRIGHT_APP_REF=<released main SHA> npm run generate:release` in
+   `/Volumes/Neural/downright-website`, then push its `main` (Vercel deploys
+   production from it). Confirm https://downright.cc/changelog/ shows the
+   new version.
 
 Before reporting publication complete, reconcile the task's
 [acceptance record](CI.md#acceptance-record) with the selected main SHA,

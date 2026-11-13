@@ -147,6 +147,21 @@ protocol PanelSurface: NSView {
     var preferredWidth: CGFloat { get }
 }
 
+/// A panel whose natural height is not its `fittingSize` — a scrolling list
+/// or a prompt whose text wraps at the panel's width. The floating inspector
+/// fits to this height and lets the panel scroll past its cap.
+@MainActor
+protocol FloatingContentMeasuring: NSView {
+    var fittedContentHeight: CGFloat { get }
+    /// A pending decision may cover more of the document than a browsing
+    /// panel; the usual cap keeps the document readable beside a list.
+    var prefersFullFloatingHeight: Bool { get }
+}
+
+extension FloatingContentMeasuring {
+    var prefersFullFloatingHeight: Bool { false }
+}
+
 // MARK: - Type
 
 /// Panels are chrome, not the document, so their labels use the system face at

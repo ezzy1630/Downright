@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Use a version's curated changelog, with Git history for unlisted versions."""
+"""Print a version's curated changelog section as its release notes.
+
+These notes are the GitHub Release text and the update notes the app shows
+before someone installs an update, so a version without its own changelog
+section is an error rather than a fallback to commit subjects.
+"""
 import argparse
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 
@@ -46,7 +50,6 @@ def main():
     parser.add_argument("build")
     parser.add_argument("repository", help="GitHub owner/name")
     parser.add_argument("--changelog", type=Path, default=Path(__file__).resolve().parents[1] / "CHANGELOG.md")
-    parser.add_argument("--previous-tag", default="")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         parser.error("version must be X.Y.Z")
@@ -57,15 +60,13 @@ def main():
     try:
         notes = version_notes(args.changelog.read_text(encoding="utf-8"), args.version)
         if notes is None:
-            command = ["git", "log", "--oneline", "--no-merges"]
-            command += ["--end-of-options", args.previous_tag + "..HEAD"] if args.previous_tag else ["-30", "HEAD"]
-            commits = subprocess.run(command + ["--"], check=True, capture_output=True, text=True).stdout
-            if not commits.strip():
-                raise ValueError("no commits since the previous release")
-            notes = "## What's new\n\n" + "\n".join("- " + line for line in commits.splitlines())
+            raise ValueError(
+                f"{args.changelog.name} has no ## [{args.version}] section; move the "
+                "[Unreleased] notes into it before releasing"
+            )
         print(f"# Downright {args.version} (build {args.build})\n\n{notes}\n")
         print(f"_Full history: https://github.com/{args.repository}/releases_")
-    except (OSError, UnicodeError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, UnicodeError, ValueError) as error:
         print(f"release-notes: {error}", file=sys.stderr)
         return 1
     return 0

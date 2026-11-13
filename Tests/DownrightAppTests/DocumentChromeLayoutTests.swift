@@ -379,7 +379,7 @@ struct FloatingTaskPanelTests {
         controller.window?.layoutIfNeeded()
         let close = try #require(controller.inspectorHost?.closeButtonForTesting)
         let localPoint = NSPoint(x: surface.bounds.maxX - 28, y: surface.bounds.maxY - 28)
-        #expect(surface.hitTest(localPoint) === close)
+        #expect(surface.hitTest(surface.convert(localPoint, to: surface.superview)) === close)
         #expect(surface.closeControlHitZoneContains(localPoint))
         let closeInWindow = close.convert(
             NSPoint(x: close.bounds.midX, y: close.bounds.midY),
@@ -764,6 +764,54 @@ struct FloatingTaskPanelTests {
         #expect(surface.visibleBodyHeightForTesting == surface.bounds.height)
         controller.closeTaskPanel()
         #expect(controller.floatingSurface == nil)
+    }
+
+    /// Issue #56: two faults made the prompt's buttons unclickable. The
+    /// floating surface treated AppKit's superview-space hit point as local,
+    /// shifting every click by the shadow margin; and in a short window the
+    /// height cap compressed the decision buttons into one overlapping strip.
+    @Test("Trust prompt buttons keep their own clickable space",
+          arguments: [false, true], [800.0, 460.0, 400.0])
+    func trustPromptButtonsStayClickable(sharesInspectorWithTasks: Bool, windowHeight: Double) throws {
+        let (file, cleanup, controller) = try makeDocument(windowHeight: windowHeight)
+        defer { cleanup(); controller.close() }
+
+        if sharesInspectorWithTasks {
+            controller.toggleTaskPanel()
+            controller.window?.layoutIfNeeded()
+        }
+        let name = String(repeating: "长文件名截图", count: 6) + "1350190005.png"
+        let target = "/Users/reader/Pictures/截图 2026 年/" + name
+        controller.presentTrustPrompt(TrustRequest(
+            effect: .readLocalAsset,
+            target: TrustTarget(displayName: target, canonicalPath: target),
+            documentURL: file
+        ))
+        controller.window?.layoutIfNeeded()
+        let surface = try #require(controller.floatingSurface)
+        surface.settleForTesting()
+        surface.layoutSubtreeIfNeeded()
+        controller.window?.layoutIfNeeded()
+
+        let prompt = try #require(controller.inspectorHost?.content(for: .context) as? TrustPromptView)
+        let buttons = prompt.decisionButtonsForTesting.filter { !$0.isHidden }
+        #expect(buttons.count == 5)
+        let body = surface.visibleBodyBoundsForHitTesting
+        let frames = buttons.map { surface.convert($0.bounds, from: $0) }
+        // AppKit's own walk: the panel window's root view receives the click
+        // in window coordinates.
+        let panelContent = try #require(surface.window?.contentView)
+        for (button, frame) in zip(buttons, frames) {
+            #expect(frame.height >= button.intrinsicContentSize.height - 0.5, "\(button.title) is crushed")
+            #expect(body.contains(frame), "\(button.title) is outside the visible panel")
+            let center = surface.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+            #expect(panelContent.hitTest(center) === button, "\(button.title) does not receive its own click")
+        }
+        for (index, frame) in frames.enumerated() {
+            for other in frames[(index + 1)...] {
+                #expect(!frame.insetBy(dx: 0, dy: 0.5).intersects(other))
+            }
+        }
     }
 }
 
