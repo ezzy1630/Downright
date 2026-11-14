@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="145" height="20" role="img" aria-label="total downloads: 3837">
+  <title>total downloads: 3837</title>
+  <clipPath id="r"><rect width="145" height="20" rx="3"/></clipPath>
+  <g clip-path="url(#r)">
+    <path fill="#555" d="M0 0h97v20H0z"/>
+    <path fill="#307afe" d="M97 0h48v20H97z"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+    <text x="48.5" y="14">total downloads</text>
+    <text x="121" y="14" font-family="DejaVu Sans Mono,monospace">3837</text>
+  </g>
+</svg>
