@@ -40,12 +40,14 @@
 ---
 
 <p align="center">
-  <a href="https://downright.cc/assets/downright-one-journey-master.mp4">
-    <img src="Docs/downright-readme-demo.gif" alt="Downright opens a Markdown file from Finder, renders it as a native Mac document, switches to exact source, and reviews an external rewrite." width="800">
+  <a href="https://downright.cc/assets/downright-launch-film.mp4">
+    <img src="Docs/downright-readme-demo.gif" alt="Downright on a MacBook switches a Markdown file from source to a rendered document, shows an agent's edit landing live, opens READMEs, agent guides, math, meeting notes, architecture diagrams and changelogs, and previews a file with Quick Look in Finder." width="800">
   </a>
 </p>
 
-<p align="center"><a href="https://downright.cc/assets/downright-one-journey-master.mp4">Watch the 23-second product film</a></p>
+<p align="center"><a href="https://downright.cc/assets/downright-launch-film.mp4">Watch the 33-second launch film (with sound)</a></p>
+
+<p align="center">If Downright is useful to you, a ⭐ helps other people find it.</p>
 
 ## Markdown, treated like a Mac document
 
