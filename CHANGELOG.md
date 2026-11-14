@@ -12,6 +12,13 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+### Fixed
+
+- When an update has downloaded in the background, resting the pointer on
+  the title bar's "Update Now" button shows that update's release notes
+  instead of "No release notes for this build." The fix takes effect for
+  updates offered after you install this version.
+
 ## [1.0.23] - 2026-11-13
 
 ### Fixed

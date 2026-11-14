@@ -192,11 +192,11 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// engine and driver itself.
     init(engine: (any UpdateEngine)?) {
         self.engine = engine
-        engine?.onBackgroundDownloadCompleted = { [weak self] version in
+        engine?.onBackgroundDownloadCompleted = { [weak self] update in
             if Thread.isMainThread {
-                MainActor.assumeIsolated { self?.backgroundDownloadCompleted(version) }
+                MainActor.assumeIsolated { self?.backgroundDownloadCompleted(update) }
             } else {
-                Task { @MainActor [weak self] in self?.backgroundDownloadCompleted(version) }
+                Task { @MainActor [weak self] in self?.backgroundDownloadCompleted(update) }
             }
         }
     }
@@ -224,11 +224,11 @@ final class UpdateCoordinator: UpdateDriverHost {
             return
         }
         self.engine = engine
-        engine.onBackgroundDownloadCompleted = { [weak self] displayVersion in
+        engine.onBackgroundDownloadCompleted = { [weak self] update in
             if Thread.isMainThread {
-                MainActor.assumeIsolated { self?.backgroundDownloadCompleted(displayVersion) }
+                MainActor.assumeIsolated { self?.backgroundDownloadCompleted(update) }
             } else {
-                Task { @MainActor [weak self] in self?.backgroundDownloadCompleted(displayVersion) }
+                Task { @MainActor [weak self] in self?.backgroundDownloadCompleted(update) }
             }
         }
         do {
@@ -719,24 +719,12 @@ final class UpdateCoordinator: UpdateDriverHost {
 
     // MARK: - Background downloads
 
-    private func backgroundDownloadCompleted(_ displayVersion: String) {
+    private func backgroundDownloadCompleted(_ update: UpdateMetadata) {
         // The machine stays idle; remember the download so the pill can offer
         // "Restart to Update" until the update is installed or dismissed.
-        if downloadedUpdate?.displayVersionString != displayVersion {
-            downloadedUpdate = UpdateMetadata(
-                versionString: displayVersion,
-                displayVersionString: displayVersion,
-                title: nil,
-                itemDescription: nil,
-                releaseNotesURL: nil,
-                infoURL: nil,
-                contentLength: 0,
-                isInformationOnly: false,
-                isMajorUpgrade: false,
-                isCritical: false,
-                minimumSystemVersion: nil
-            )
-        }
+        // Keep the whole appcast item: the pill's hover notes and the panel
+        // read their release notes from it.
+        downloadedUpdate = update
         notifyStateChanged()
     }
 
