@@ -31,8 +31,9 @@ protocol UpdateEngine: AnyObject {
     var lastUpdateCheckDate: Date? { get }
 
     // Delegate callbacks the coordinator needs to surface.
-    /// A background (automatic) download finished.  Argument is the display version.
-    var onBackgroundDownloadCompleted: ((String) -> Void)? { get set }
+    /// A background (automatic) download finished.  Carries the full appcast
+    /// item so the "Restart to Update" pill can show its release notes.
+    var onBackgroundDownloadCompleted: ((UpdateMetadata) -> Void)? { get set }
 }
 
 // MARK: - Production
@@ -55,7 +56,7 @@ final class SparkleUpdateEngine: UpdateEngine {
     private let notifier = BackgroundDownloadNotifier()
     private(set) var isRunning = false
 
-    var onBackgroundDownloadCompleted: ((String) -> Void)? {
+    var onBackgroundDownloadCompleted: ((UpdateMetadata) -> Void)? {
         get { notifier.handler }
         set { notifier.handler = newValue }
     }
@@ -123,10 +124,10 @@ final class SparkleUpdateEngine: UpdateEngine {
 /// so the coordinator can raise the "Restart to Update" pill on every surface.
 @MainActor
 final class BackgroundDownloadNotifier: NSObject, SPUUpdaterDelegate {
-    var handler: ((String) -> Void)?
+    var handler: ((UpdateMetadata) -> Void)?
 
     func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
-        handler?(item.displayVersionString)
+        handler?(UpdateMetadata(appcastItem: item))
     }
 }
 
@@ -144,7 +145,7 @@ final class FakeUpdateEngine: UpdateEngine {
     private(set) var isRunning = false
     var startThrows = false
 
-    var onBackgroundDownloadCompleted: ((String) -> Void)?
+    var onBackgroundDownloadCompleted: ((UpdateMetadata) -> Void)?
 
     var _canCheckForUpdates = true
     var canCheckForUpdates: Bool { _canCheckForUpdates }
@@ -175,7 +176,7 @@ final class FakeUpdateEngine: UpdateEngine {
 
     // Test scripting helpers.
 
-    func completeBackgroundDownload(displayVersion: String) {
-        onBackgroundDownloadCompleted?(displayVersion)
+    func completeBackgroundDownload(_ update: UpdateMetadata) {
+        onBackgroundDownloadCompleted?(update)
     }
 }

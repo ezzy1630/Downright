@@ -492,12 +492,21 @@ struct UpdateCoordinatorFlowTests {
     @Test func backgroundDownloadDrivesUpdateNowPill() {
         let (coordinator, engine) = makeCoordinator()
         #expect(coordinator.pillModel == nil)
-        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        engine.completeBackgroundDownload(sampleMetadata)
         #expect(coordinator.pillModel == .updateNow(version: "1.1.0", isReady: true))
         #expect(coordinator.downloadedUpdate != nil)
         coordinator.driverDidDismiss()
         #expect(coordinator.downloadedUpdate == nil)
         #expect(coordinator.pillModel == nil)
+    }
+
+    /// A silent background download is how most installs meet an update, and
+    /// the pill's hover notes read it: the appcast's notes must survive it.
+    @Test func backgroundDownloadKeepsTheAppcastReleaseNotes() {
+        let (coordinator, engine) = makeCoordinator()
+        engine.completeBackgroundDownload(sampleMetadata)
+        #expect(coordinator.pendingUpdate?.itemDescription == sampleMetadata.itemDescription)
+        #expect(coordinator.pendingUpdate?.infoURL == sampleMetadata.infoURL)
     }
 
     // MARK: Error handling
@@ -964,7 +973,7 @@ struct UpdateNowPressTests {
     /// re-enter Sparkle — and that cycle must stay as silent as the press.
     @Test func pressOnABackgroundDownloadReentersSparkleSilently() {
         let (coordinator, engine) = makeCoordinator()
-        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        engine.completeBackgroundDownload(sampleMetadata)
         coordinator.userDidPressUpdateNow()
         #expect(engine.foregroundCheckCount == 1)
         #expect(coordinator.isExpeditedInstall)
@@ -982,7 +991,7 @@ struct UpdateNowPressTests {
 
     @Test func anExpeditedReadyToRelaunchInstallsImmediately() {
         let (coordinator, engine) = makeCoordinator()
-        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        engine.completeBackgroundDownload(sampleMetadata)
         coordinator.userDidPressUpdateNow()
         coordinator.driverDidBeginUserCheck { }
         coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded, userInitiated: true) { _ in }
@@ -999,7 +1008,7 @@ struct UpdateNowPressTests {
     /// path deliberately drops back to the ordinary panel.
     @Test func anExpeditedFailureFallsBackToThePanel() {
         let (coordinator, engine) = makeCoordinator()
-        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        engine.completeBackgroundDownload(sampleMetadata)
         coordinator.userDidPressUpdateNow()
         coordinator.driverDidBeginUserCheck { }
         coordinator.driverDidEncounterError(
@@ -1069,7 +1078,7 @@ struct ReleaseWatchTriggerTests {
 
     @Test func anAlreadyWaitingUpdateIsNotRechecked() {
         let (coordinator, engine) = makeCoordinator()
-        engine.completeBackgroundDownload(displayVersion: "1.1.0")
+        engine.completeBackgroundDownload(sampleMetadata)
         coordinator.releaseFeedDidChange()
         #expect(engine.backgroundCheckCount == 0)
     }
