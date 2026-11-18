@@ -1144,6 +1144,7 @@ public final class DecorationEngine {
         let payload = emitFragment(collapses ? .collapsedCodeBlock : .codeBlock,
                                    block: block, detail: language ?? "", state: &state)
         payload?.isCollapsed = collapses
+        payload?.codeContentRange = contentRange
 
         // Fences stay in the text (see `MarkerPolicy.blockMarkersAreHidden`);
         // the fragment absorbs them as the band's chrome, so they are styled

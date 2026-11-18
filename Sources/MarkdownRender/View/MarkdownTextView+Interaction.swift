@@ -583,27 +583,23 @@ extension MarkdownTextView {
     /// bottom row on the end of the last one.  Source mode and a revealed
     /// source-focus scope both show the fences, so there the click is honest
     /// and stands.
-    private func redirectedCodeFenceCaret(at point: NSPoint) -> Int? {
+    func redirectedCodeFenceCaret(at point: NSPoint) -> Int? {
         guard mode != .source, let storage = textStorage, storage.length > 0 else { return nil }
-        guard let hit = fragmentPayload(at: point), hit.payload.kind == .codeBlock else { return nil }
-        let block = NSIntersectionRange(
-            hit.payload.sourceRange, NSRange(location: 0, length: storage.length)
-        )
-        guard block.length > 0 else { return nil }
+        let offset = sourceOffset(at: point)
+        guard let payload = fragmentPayload(atSourceOffset: offset)?.payload,
+              payload.kind == .codeBlock, let body = payload.codeContentRange,
+              body.length > 0, body.upperBound <= storage.length else { return nil }
+        let block = payload.sourceRange
         if let focus = sourceFocus.range, NSIntersectionRange(focus, block).length > 0 { return nil }
 
-        let text = storage.string as NSString
-        let opening = text.lineRange(for: NSRange(location: block.location, length: 0))
-        let closing = text.lineRange(for: NSRange(location: block.upperBound - 1, length: 0))
-        // A block whose fences share a line has no code row to redirect to.
-        guard opening.location != closing.location else { return nil }
-
-        let offset = sourceOffset(at: point)
-        if offset < opening.upperBound {
-            return min(opening.upperBound, block.upperBound)
+        if body.location > block.location, offset < body.location {
+            return body.location
         }
-        if offset >= closing.location {
-            return max(block.location, closing.location - 1)
+        // An unclosed or indented block has no closing chrome.
+        if body.upperBound < block.upperBound, offset >= body.upperBound {
+            let text = storage.string as NSString
+            let lastLine = text.lineRange(for: NSRange(location: body.upperBound - 1, length: 0))
+            return max(body.location, RangeSet.contentEnd(ofParagraph: lastLine, text: text))
         }
         return nil
     }
@@ -655,7 +651,7 @@ extension MarkdownTextView {
         return copyCodeBlock(payload)
     }
 
-    func copyCodeBlockForAccessibility() -> Bool {
+    func copyCodeBlockForAccessibility(pasteboard: NSPasteboard = .general) -> Bool {
         let payload: FragmentPayload?
         if let range = fragmentContext.hoveredFragmentRange,
            let storage = textStorage, range.location >= 0, range.location < storage.length,
@@ -670,14 +666,14 @@ extension MarkdownTextView {
         }
         guard let payload,
               payload.kind == .codeBlock || payload.kind == .collapsedCodeBlock else { return false }
-        return copyCodeBlock(payload)
+        return copyCodeBlock(payload, pasteboard: pasteboard)
     }
 
-    private func copyCodeBlock(_ payload: FragmentPayload) -> Bool {
+    private func copyCodeBlock(_ payload: FragmentPayload, pasteboard: NSPasteboard = .general) -> Bool {
         let code = codeText(of: payload)
         guard !code.isEmpty else { return false }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
+        pasteboard.clearContents()
+        pasteboard.setString(code, forType: .string)
         fragmentContext.copiedCodeRange = payload.sourceRange
         copiedCodeFeedbackWorkItem?.cancel()
         needsDisplay = true
@@ -693,26 +689,18 @@ extension MarkdownTextView {
     }
 
     private func codeText(of payload: FragmentPayload) -> String {
-        guard let storage = textStorage else { return "" }
-        var range = payload.sourceRange
-        range.location = max(0, range.location)
-        range.length = min(range.length, storage.length - range.location)
+        guard let storage = textStorage, let body = payload.codeContentRange else { return "" }
+        let range = NSIntersectionRange(body, NSRange(location: 0, length: storage.length))
         guard range.length > 0 else { return "" }
-        // Strip the fences: what you want on the pasteboard is the code.
-        let lines = storage.attributedSubstring(from: range).string
-            .components(separatedBy: "\n")
-        var body = lines
-        // Tilde fences are as valid as backtick fences and the parser accepts
-        // both, so the pasteboard has to recognise both.
-        func isFence(_ line: String?) -> Bool {
-            guard let trimmed = line?.trimmingCharacters(in: .whitespaces),
-                  let marker = trimmed.first, marker == "`" || marker == "~" else { return false }
-            return trimmed.prefix(while: { $0 == marker }).count >= 3
+        let text = storage.string as NSString
+        var end = range.upperBound
+        // Drop the separator before the closing fence while keeping any
+        // intentional blank lines and the actual line endings within the body.
+        if end < payload.sourceRange.upperBound {
+            if text.character(at: end - 1) == 0x0A { end -= 1 }
+            if end > range.location, text.character(at: end - 1) == 0x0D { end -= 1 }
         }
-        if isFence(body.first) { body.removeFirst() }
-        if isFence(body.last) { body.removeLast() }
-        if body.last?.isEmpty == true { body.removeLast() }
-        return body.joined(separator: "\n")
+        return text.substring(with: NSRange(location: range.location, length: end - range.location))
     }
 
     // MARK: - Context menus (§7.1)

@@ -158,6 +158,20 @@ struct CodeBlockGeometryTests {
         }
     }
 
+    @Test func lastLineOfUnclosedFenceAcceptsCaret() throws {
+        let text = "```text\nfirst line\nclick this line"
+        let container = Self.makeContainer(text)
+        let view = container.textView
+        view.mode = .live
+        view.prepareForDisplay()
+
+        let target = (text as NSString).range(of: "this line").location
+        let rect = try #require(view.rect(forOffset: target))
+        let point = NSPoint(x: rect.minX + 1, y: rect.midY)
+        #expect(view.sourceOffset(at: point) == target)
+        #expect(view.redirectedCodeFenceCaret(at: point) == nil)
+    }
+
     @Test("deeper list nesting keeps the band on the item's content edge")
     func deepNestingKeepsBandOnContentEdge() {
         let text = "- One\n  - Two\n\n    ```python\n    def deep():\n        pass\n    ```\n"
