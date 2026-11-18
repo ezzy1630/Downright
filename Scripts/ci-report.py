@@ -34,7 +34,10 @@ def coverage(text):
         r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text
     )
     if runs:
-        executed = sum(int(count) for count, _ in runs)
+        # Swift Testing's "Test run with N tests" total includes skipped tests;
+        # XCTest skips ("Test Case '-[…]' skipped") are not part of that total.
+        swift_skips = [name for name in skipped if not name.startswith("Case '")]
+        executed = sum(int(count) for count, _ in runs) - len(swift_skips)
         execution_seconds = sum(float(duration) for _, duration in runs)
         skipped_count = len(skipped)
     elif xcode:
