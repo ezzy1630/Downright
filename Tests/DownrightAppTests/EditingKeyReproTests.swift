@@ -291,6 +291,109 @@ struct EditingKeyReproTests {
         #expect(controller.markdownDocument.text.contains("xBody text."))
     }
 
+    @Test(arguments: [
+        ("- item|\n", "- item\n- |\n"),
+        ("* item|\n", "* item\n* |\n"),
+        ("+ item|\n", "+ item\n+ |\n"),
+        ("3) item|\n", "3) item\n4) |\n"),
+        ("1. first\n2. second|\n", "1. first\n2. second\n3. |\n"),
+        ("- [x] done|\n", "- [x] done\n- [ ] |\n"),
+        ("- [ ] |\n", "|\n"),
+        ("- top\n  * nested|\n", "- top\n  * nested\n  * |\n"),
+        ("- - nested|\n", "- - nested\n  - |\n"),
+        ("> - quoted|\n", "> - quoted\n> - |\n"),
+        ("- first\n- |\n", "- first\n|\n"),
+        ("- parent\n  - child\n  - |\n", "- parent\n  - child\n- |\n"),
+        ("> - first\n> - |\n", "> - first\n> |\n"),
+        ("- ```\n  sample|\n  ```\n", "- ```\n  sample\n|\n  ```\n"),
+        ("prose|\n", "prose\n|\n"),
+        ("- first\n|\n", "- first\n\n|\n"),
+    ])
+    func returnContinuesListInOneUndoStep(input: String, expected: String) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = input.replacingOccurrences(of: "|", with: "")
+        let caret = (input as NSString).range(of: "|").location
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+
+        view.insertNewline(nil)
+
+        let document = controller.markdownDocument
+        #expect(document.text == expected.replacingOccurrences(of: "|", with: ""))
+        #expect(view.sourceSelectedRange == NSRange(location: (expected as NSString).range(of: "|").location, length: 0))
+        document.undoManager.undo()
+        #expect(document.text == source)
+        #expect(!document.undoManager.canUndo)
+    }
+
+    @Test func returnUsesCurrentSourceAndLeavesMarkedTextToAppKit() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-ime-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try makeController(text: "- ", file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        view.setSourceSelectedRanges([NSRange(location: 2, length: 0)])
+        view.insertText("item", replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.insertNewline(nil)
+        #expect(controller.markdownDocument.text == "- item\n- ")
+
+        view.setMarkedText("変換", selectedRange: NSRange(location: 2, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(view.hasMarkedText())
+        view.insertNewline(nil)
+        #expect(controller.markdownDocument.text.components(separatedBy: "\n- ").count == 2)
+        view.unmarkText()
+    }
+
+    @Test(arguments: [false, true])
+    func undoBeforeTableRestoresRenderedTableWithoutChangingMode(continuesList: Bool) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("table-undo-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "- List item\n\n| Name | Value |\n| --- | --- |\n| Hello | World |\n\nDone.\n"
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        let document = controller.markdownDocument
+        let body = "| Hello | World |"
+        let layout = try #require(view.textLayoutManager)
+
+        func rendersTable(at offset: Int) -> Bool {
+            let textKit = view.currentDisplayMap.textKitOffset(forSource: offset)
+            guard let location = layout.location(layout.documentRange.location, offsetBy: textKit) else { return false }
+            layout.ensureLayout(for: NSTextRange(location: location))
+            guard let row = layout.textLayoutFragment(for: location) as? TableRowFragment else { return false }
+            return row.overrideHeight.map { $0 > 0 } == true
+        }
+
+        let originalRow = (source as NSString).range(of: body).location
+        #expect(rendersTable(at: originalRow))
+        view.setSourceSelectedRanges([NSRange(location: "- List item".utf16.count, length: 0)])
+        if continuesList {
+            view.insertNewline(nil)
+        } else {
+            // Exercise the original bare-newline journey independently of the list fix.
+            try #require(view.performSourceEdit(range: view.sourceSelectedRange, replacement: "\n"))
+        }
+        let edited = document.text
+        let shiftedRow = (edited as NSString).range(of: body).location
+        try document.save()
+        if !continuesList { document.ensureParsedCurrent() }
+        #expect(rendersTable(at: shiftedRow))
+
+        document.undoManager.undo()
+        try document.save()
+
+        #expect(try Data(contentsOf: url) == Data(source.utf8))
+        #expect(rendersTable(at: originalRow))
+
+        document.undoManager.redo()
+        #expect(document.text == edited)
+        #expect(rendersTable(at: shiftedRow))
+    }
+
     @Test func typingAtHeadingStartExtendsVisibleTitle() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("EditingKeyReproHeading-\(UUID().uuidString).md")

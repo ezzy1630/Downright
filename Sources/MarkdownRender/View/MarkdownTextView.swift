@@ -991,7 +991,8 @@ public final class MarkdownTextView: NSTextView {
             autoreleasepool {
                 rebuildDisplayMap(
                     fullRefresh: isFullRefresh,
-                    additionalScopes: decoratedScopes
+                    additionalScopes: decoratedScopes,
+                    shiftedLayoutStart: dirty.shiftedLayoutStart
                 )
             }
             applyOverlays(scopes: isFullRefresh ? nil : decoratedScopes)
@@ -2098,7 +2099,8 @@ public final class MarkdownTextView: NSTextView {
     /// the caret's paragraph and the one it just left.
     private func rebuildDisplayMap(
         fullRefresh: Bool = false,
-        additionalScopes: [NSRange] = []
+        additionalScopes: [NSRange] = [],
+        shiftedLayoutStart: Int? = nil
     ) {
         let previousMap = displayMap
         let caret = suppressesCaretReveal ? nil : primarySourceCaret
@@ -2216,7 +2218,7 @@ public final class MarkdownTextView: NSTextView {
         // when the caret only moved to a neighbouring paragraph, so the common
         // case costs exactly what it did before.
         let paragraphs = isFullRefresh ? [] : [revealParagraph, current].compactMap { $0 }
-        if !isFullRefresh, additionalScopes.isEmpty,
+        if !isFullRefresh, additionalScopes.isEmpty, shiftedLayoutStart == nil,
            let current,
            baseDisplayMap.substitutions(inParagraphContaining: current.location).isEmpty,
            revealParagraph.map({
@@ -2225,7 +2227,7 @@ public final class MarkdownTextView: NSTextView {
             revealParagraph = current
             return
         }
-        if !isFullRefresh, additionalScopes.isEmpty,
+        if !isFullRefresh, additionalScopes.isEmpty, shiftedLayoutStart == nil,
            displayMap.hasSameSubstitutions(as: previousMap) {
             // Moving through plain prose changes the caret paragraph but not
             // its presentation. Reconfiguring and invalidating those elements
@@ -2245,11 +2247,16 @@ public final class MarkdownTextView: NSTextView {
         }
         revealParagraph = current
         let invalidatedScopes = RangeSet.normalized(additionalScopes + touched)
+        let shiftedLayout: [NSRange] = shiftedLayoutStart.map { offset in
+            let start = paragraphIndex.paragraphRange(containing: offset).location
+            return [NSRange(location: start, length: paragraphIndex.length - start)]
+        } ?? []
+        let layoutScopes = RangeSet.normalized(invalidatedScopes + shiftedLayout)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: hardWrapRanges,
             displayMap: displayMap,
-            invalidating: isFullRefresh ? nil : invalidatedScopes
+            invalidating: isFullRefresh ? nil : layoutScopes
         )
         if isFullRefresh {
             applyHiddenAttribute(hidden, scope: nil, excluding: revealedForAttributes)
@@ -2257,6 +2264,8 @@ public final class MarkdownTextView: NSTextView {
         } else {
             for scope in invalidatedScopes {
                 applyHiddenAttribute(hidden, scope: scope, excluding: revealedForAttributes)
+            }
+            for scope in layoutScopes {
                 invalidateFragments(in: scope)
             }
         }

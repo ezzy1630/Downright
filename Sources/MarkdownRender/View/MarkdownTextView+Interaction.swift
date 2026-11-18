@@ -1027,8 +1027,29 @@ extension MarkdownTextView {
 
     public override func insertNewline(_ sender: Any?) {
         guard isEditable else { return }
-        if hasMarkedText() || composingParagraph != nil { super.insertNewline(sender); return }
-        performSourceEdit(range: sourceSelectedRange, replacement: "\n")
+        if hasMarkedText() || composingParagraph != nil {
+            let undo = undoManager
+            let openedUndoGroup = undo?.groupingLevel == 0
+            if openedUndoGroup { undo?.beginUndoGrouping() }
+            defer { if openedUndoGroup { undo?.endUndoGrouping() } }
+            super.insertNewline(sender)
+            return
+        }
+
+        let selection = sourceSelectedRange
+        if selection.length == 0, let source = textStorage?.string {
+            // A second Return can arrive before the async parse of the first.
+            // Plan against the live source, including a newly inserted marker.
+            let document = parsedDocument.text.utf16.elementsEqual(source.utf16)
+                ? parsedDocument : MarkdownParser.parse(source)
+            if let continuation = ListEditing.continuation(document, at: selection.location) {
+                breakUndoCoalescing()
+                performSourceEdit(range: continuation.replaceRange, replacement: continuation.insertion)
+                breakUndoCoalescing()
+                return
+            }
+        }
+        performSourceEdit(range: selection, replacement: "\n")
     }
 
     public override func insertTab(_ sender: Any?) {
