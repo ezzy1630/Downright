@@ -12,11 +12,49 @@ struct MarkdownCLITests {
         }
         let urls = parsedPaths.map { URL(fileURLWithPath: $0) }
         let request = CommandLineOpenRequest(urls: urls, options: options)
-        let decoded = try #require(CommandLineOpenRequest(url: request.url))
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let delivered = try request.handoffURL(directory: directory)
+        #expect(!delivered.absoluteString.contains("tmp"), "the delivered URL carries no paths")
+        let decoded = try #require(CommandLineOpenRequest.receive(delivered, directory: directory))
         #expect(decoded.urls.map(\.path) == paths)
         #expect(decoded.line == 100)
         #expect(decoded.review)
         #expect(decoded.edit)
+        #expect(CommandLineOpenRequest.receive(delivered, directory: directory) == nil, "one shot")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test func openRequestFromAnythingButTheCLIIsIgnored() throws {
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // A web page or another app can form any URL but cannot create the
+        // owner-only handoff file: path-carrying and unknown IDs do nothing.
+        for forged in [
+            "downright-cli://open?file=/etc/hosts&edit=1",
+            "downright-cli://open?request=\(UUID().uuidString)",
+            "downright-cli://open?request=../../etc/hosts",
+            "downright-cli://open?request=\(UUID().uuidString.lowercased())",
+        ] {
+            #expect(CommandLineOpenRequest.receive(try #require(URL(string: forged)), directory: directory) == nil)
+        }
+
+        // A handoff readable by others, or one left over from long ago, is refused and consumed.
+        let request = CommandLineOpenRequest(urls: [URL(fileURLWithPath: "/tmp/a.md")], options: .init())
+        let exposed = try request.handoffURL(directory: directory)
+        let exposedFile = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: exposedFile.path)
+        #expect(CommandLineOpenRequest.receive(exposed, directory: directory) == nil)
+        let stale = try request.handoffURL(directory: directory)
+        #expect(CommandLineOpenRequest.receive(stale, directory: directory, now: Date().addingTimeInterval(600)) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    private func handoffDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-cli-handoff-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 
     @Test(arguments: [
@@ -28,7 +66,7 @@ struct MarkdownCLITests {
     ])
     func openRequestRejectsAnythingOutsideLocalPresentation(url: String) throws {
         let url = try #require(URL(string: url))
-        #expect(CommandLineOpenRequest(url: url) == nil)
+        #expect(CommandLineOpenRequest(payloadURL: url) == nil)
     }
 
     @Test func defaultActionIsOpen() throws {

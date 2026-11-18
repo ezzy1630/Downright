@@ -402,10 +402,11 @@ struct AgentWatcherPlanTests {
         let report = target.appendingPathComponent("report.markdown")
         try Data("# Report\n".utf8).write(to: report, options: .atomic)
 
+        let deadline = ContinuousClock.now + .seconds(5)
         let observed = await withTaskGroup(of: URL?.self) { group in
             group.addTask { await events.first { $0.lastPathComponent == "report.markdown" } }
             group.addTask {
-                try? await Task.sleep(for: .seconds(5))
+                try? await ContinuousClock().sleep(until: deadline)
                 return nil
             }
             let first = await group.next() ?? nil

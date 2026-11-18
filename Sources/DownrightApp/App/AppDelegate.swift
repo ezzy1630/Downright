@@ -296,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openDeliveredURL(_ url: URL) {
         if url.isFileURL {
             open(url)
-        } else if let request = CommandLineOpenRequest(url: url) {
+        } else if let request = CommandLineOpenRequest.receive(url) {
             openFromCommandLine(request)
         }
     }

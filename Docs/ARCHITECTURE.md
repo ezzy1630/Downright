@@ -308,10 +308,14 @@ only after a successful open and restore semantic reading anchors across files.
 If a history destination is already open in a different tab, that tab receives
 the saved anchor and both history cursors stay with their own documents.
 
-The CLI sends `--edit`, `--line`, and `--review` in an open-only
-`downright-cli:` URL addressed to the selected app bundle. Launch Services
-delivers the same request on cold and warm opens. The handler accepts local
-file paths and presentation options and uses the ordinary open registry.
+The CLI delivers `--edit`, `--line`, and `--review` to the selected app bundle
+through a `downright-cli:` URL, which Launch Services delivers on cold and warm
+opens. Any app or web page can open such a URL, so it carries only a random
+handoff ID. The request itself (local file paths and presentation options) is
+written by the CLI to a one-shot, owner-only file in the per-user temporary
+directory. The app consumes that file, refuses it if it is not a private
+regular file owned by the user or is older than two minutes, and then uses the
+ordinary open registry. A URL without a valid handoff file does nothing.
 Go to Line and the app's command-line line handler use the parsed source's
 one-based line index, which recognizes LF, CRLF, and lone CR even within the
 same document.

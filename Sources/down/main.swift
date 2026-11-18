@@ -179,9 +179,13 @@ func launch(_ app: URL, request: CommandLineOpenRequest, options: MarkdownCLI.Op
     }
     // Keep the CLI alive for the Launch Services handoff, or until the exact
     // receiver terminates when --wait was given.
+    let handoff: URL
+    do { handoff = try request.handoffURL() } catch {
+        writeError("Could not prepare the request for Downright: \(error.localizedDescription)", status: 1)
+    }
     Task { @MainActor in
         do {
-            let runningApp = try await NSWorkspace.shared.open([request.url], withApplicationAt: app, configuration: configuration)
+            let runningApp = try await NSWorkspace.shared.open([handoff], withApplicationAt: app, configuration: configuration)
             guard runningApp.bundleURL?.resolvingSymlinksInPath().path == app.resolvingSymlinksInPath().path else {
                 writeError("Launch Services did not open \(app.path)", status: 1)
             }
@@ -198,6 +202,7 @@ func launch(_ app: URL, request: CommandLineOpenRequest, options: MarkdownCLI.Op
             }
             exit(0)
         } catch {
+            CommandLineOpenRequest.discardHandoff(handoff)
             writeError(error.localizedDescription, status: 1)
         }
     }
