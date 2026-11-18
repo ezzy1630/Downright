@@ -92,20 +92,15 @@ final class CodeBlockFragment: DownrightFragment {
                         corners: [.topLeft, .topRight])
             drawHorizontalEdge(band, atTop: true, style: style, in: cg)
             drawRule(band, style: style, in: cg)
-            drawChip(band, style: style, in: cg)
+            drawLanguageChip(band, style: style, in: cg)
         case .closeChrome:
             // Mirror image: square top against the last code line, rounded
-            // bottom edge.  The copy control is allowed to be taller than this
-            // thin band, but the *fill* never leaves the frame.
+            // bottom edge. The fill never leaves the frame.
             cg.fillRect(band, color: style.codeBackground,
                         radius: RenderMetrics.codeCornerRadius,
                         corners: [.bottomLeft, .bottomRight])
             drawHorizontalEdge(band, atTop: false, style: style, in: cg)
             drawRule(band, style: style, in: cg)
-            // A long block scrolls its opening chrome off the top, taking the
-            // only copy control with it.  The closing fence carries a second
-            // one so the block always has a reachable copy (§7.1).
-            drawCopyControl(in: band, style: style, language: "", in: cg)
         case .body:
             // AppKit paints selection beneath each fragment surface. Leave
             // those native segments transparent instead of covering them with
@@ -184,19 +179,24 @@ final class CodeBlockFragment: DownrightFragment {
         )
     }
 
-    private func drawChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
-        let isHovered = context?.hoveredFragmentRange == payload.sourceRange
-        if !language.isEmpty, !isHovered {
-            let chip = Self.chipRect(in: band, style: style, language: language)
-            cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
-            cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
-        }
-        drawCopyControl(in: band, style: style, language: language, in: cg)
+    private func drawLanguageChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
+        guard !language.isEmpty else { return }
+        let chip = Self.chipRect(in: band, style: style, language: language)
+        cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
+        cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
     }
 
-    private func drawCopyControl(in band: CGRect, style: StyleSheet, language: String, in cg: CGContext) {
-        guard context?.hoveredFragmentRange == payload.sourceRange else { return }
-        let copy = Self.copyButtonRect(in: band, style: style, language: language)
+    /// TextKit can reuse the fence's rendered surface as the pointer moves.
+    /// Paint transient hover and copied feedback in the viewport overlay.
+    func drawCopyControl(at origin: CGPoint, in dirtyRect: CGRect, context cg: CGContext) {
+        guard let style = styleSheet, let button = copyButtonInTextContainer else { return }
+        let copy = button.offsetBy(dx: origin.x, dy: origin.y)
+        if role == .openChrome, !language.isEmpty {
+            let band = bandInTextContainer.offsetBy(dx: origin.x, dy: origin.y)
+            let chip = Self.chipRect(in: band, style: style, language: language)
+            if dirtyRect.intersects(chip) { cg.fillRect(chip.insetBy(dx: -1, dy: -1), color: style.codeBackground) }
+        }
+        guard dirtyRect.intersects(copy) else { return }
         let copied = context?.copiedCodeRange == payload.sourceRange
         let bgColor = copied
             ? style.accent.withAlphaComponent(0.20)
@@ -204,11 +204,14 @@ final class CodeBlockFragment: DownrightFragment {
         cg.fillRect(copy, color: bgColor, radius: 6)
         let symbol = copied ? "checkmark" : "doc.on.doc"
         let description = copied ? "Copied" : "Copy code"
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: copied ? .bold : .medium)) {
+        let iconSide = min(12, max(0, copy.width - 4))
+        if iconSide > 0,
+           let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+            .withSymbolConfiguration(.init(pointSize: iconSide, weight: copied ? .bold : .medium)) {
             let iconColor = copied ? style.accent : style.textSecondary
             let tinted = image.tinted(iconColor)
-            draw(image: tinted, in: copy.insetBy(dx: 8, dy: 8), in: cg)
+            let inset = (copy.width - iconSide) / 2
+            draw(image: tinted, in: copy.insetBy(dx: inset, dy: inset), in: cg)
         }
     }
 
@@ -252,6 +255,8 @@ final class CodeBlockFragment: DownrightFragment {
                       height: max(1, frame.height - gap.top - gap.bottom))
     }
 
+    var bandInTextContainer: CGRect { bandRect(at: layoutFragmentFrame.origin) }
+
     // MARK: Hit-test geometry, shared with the view (§7.1)
 
     static func chipText(_ string: String, style: StyleSheet) -> NSAttributedString {
@@ -272,6 +277,11 @@ final class CodeBlockFragment: DownrightFragment {
     /// A 28pt square: the smallest pointer target that does not need aiming.
     /// The old 24x17 was a decoration you had to hunt for.
     static let copyControlSide: CGFloat = 28
+
+    var copyButtonInTextContainer: CGRect? {
+        guard let styleSheet, role == .openChrome || role == .closeChrome else { return nil }
+        return Self.copyButtonRect(in: bandInTextContainer, style: styleSheet, language: language)
+    }
 
     static func copyButtonRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
         // Clamp to the band: the header's 36pt row keeps the full 28pt target,

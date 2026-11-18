@@ -83,6 +83,36 @@ struct CodeBlockGeometryTests {
         }
     }
 
+    @Test(arguments: [
+        ("Intro\n\n```swift\nlet sample = 1\n```\n\nAfter.\n", "let sample = 1"),
+        ("- Intro\n\n  ```swift\n  let sample = 1\n  ```\n\nAfter.\n", "  let sample = 1"),
+    ])
+    func codeCopyIsReachableAtOpeningAndClosingFences(text: String, expected: String) throws {
+        let container = Self.makeContainer(text)
+        let view = container.textView
+        let layout = try #require(view.textLayoutManager)
+        layout.ensureLayout(for: layout.documentRange)
+        var controls: [(CodeBlockFragment.Role, NSRange, CGPoint)] = []
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: []) { fragment in
+            guard let code = fragment as? CodeBlockFragment, let button = code.copyButtonInTextContainer else { return true }
+            let origin = view.textContainerOrigin
+            controls.append((code.role, code.payload.sourceRange,
+                             CGPoint(x: button.midX + origin.x, y: button.midY + origin.y)))
+            return true
+        }
+        #expect(controls.map(\.0) == [.openChrome, .closeChrome])
+        for (role, range, point) in controls {
+            view.updateHover(at: point)
+            #expect(view.fragmentContext.hoveredFragmentRange == range, "\(role)")
+            let pasteboard = NSPasteboard.withUniqueName()
+            let copied = view.handleCodeBlockChrome(at: point, pasteboard: pasteboard)
+            #expect(copied, "\(role)")
+            #expect(pasteboard.string(forType: .string) == expected, "\(role)")
+            view.clearHoverState()
+            #expect(view.fragmentContext.hoveredFragmentRange == nil)
+        }
+    }
+
     /// Prose does *not* get the lane: a paragraph beside a code block still
     /// wraps at the reading measure, which is what the tail indent is for.
     @Test("prose keeps the reading measure while code takes the lane")
@@ -156,6 +186,20 @@ struct CodeBlockGeometryTests {
             let fragment = fragments.first { $0.role == role }
             #expect(fragment != nil, "missing \(role) fragment inside a blockquote")
         }
+    }
+
+    @Test func lastLineOfUnclosedFenceAcceptsCaret() throws {
+        let text = "```text\nfirst line\nclick this line"
+        let container = Self.makeContainer(text)
+        let view = container.textView
+        view.mode = .live
+        view.prepareForDisplay()
+
+        let target = (text as NSString).range(of: "this line").location
+        let rect = try #require(view.rect(forOffset: target))
+        let point = NSPoint(x: rect.minX + 1, y: rect.midY)
+        #expect(view.sourceOffset(at: point) == target)
+        #expect(view.redirectedCodeFenceCaret(at: point) == nil)
     }
 
     @Test("deeper list nesting keeps the band on the item's content edge")

@@ -166,6 +166,20 @@ import Testing
         #expect(doc.substring(block.trailingMarkerRange!) == "```")
     }
 
+    @Test func fenceCanOpenOnTheSameLineAsAListItem() throws {
+        let doc = MarkdownParser.parse("- ```swift\n  let x = 1\n  ```\n")
+        let block = try #require(doc.root.children.first?.children.first?.children.first)
+        guard case .codeBlock(let language, let isFenced, let content) = block.content else {
+            Issue.record("expected a code block, got \(block.content)")
+            return
+        }
+        #expect(language == "swift")
+        #expect(isFenced)
+        #expect(doc.substring(content) == "  let x = 1\n")
+        #expect(block.markerRange.map(doc.substring) == "```swift\n")
+        #expect(block.trailingMarkerRange.map(doc.substring) == "  ```")
+    }
+
     /// CommonMark: a closing fence "may be followed only by spaces or tabs,
     /// which are ignored".  The recovery used to reject a closer carrying
     /// trailing whitespace, swallow it into the content, and render it inside

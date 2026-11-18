@@ -170,6 +170,11 @@ extension MarkdownTextView {
 
     // MARK: - Hover (§7.1)
 
+    public override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
     public override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
         updateHover(at: convert(event.locationInWindow, from: nil))
@@ -189,7 +194,7 @@ extension MarkdownTextView {
         clearHoverState()
     }
 
-    private func updateHover(at point: NSPoint) {
+    func updateHover(at point: NSPoint) {
         var needsRedraw = false
         // One TextKit hit test answers every question this method asks.
         let offset = sourceOffset(at: point)
@@ -198,13 +203,11 @@ extension MarkdownTextView {
 
         // Code blocks reveal a copy button; images reveal that they open; tables
         // zebra the row under the pointer (§7.1, §11.3).
-        let hoveredFragment: NSRange?
-        switch payload?.kind {
-        case .codeBlock, .collapsedCodeBlock, .image, .frontMatter: hoveredFragment = payload?.sourceRange
-        default: hoveredFragment = nil
-        }
+        let code = codeFragment(at: point, sourceOffset: offset)?.payload.sourceRange
+        let hoveredFragment = code ?? (payload?.kind == .image || payload?.kind == .frontMatter ? payload?.sourceRange : nil)
         if fragmentContext.hoveredFragmentRange != hoveredFragment {
             fragmentContext.hoveredFragmentRange = hoveredFragment
+            foregroundInvalidationHandler?(nil)
             needsRedraw = true
         }
 
@@ -274,6 +277,7 @@ extension MarkdownTextView {
 
     func clearHoverState() {
         fragmentContext.hoveredFragmentRange = nil
+        foregroundInvalidationHandler?(nil)
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
         hoveredLinkRange = nil
@@ -290,6 +294,8 @@ extension MarkdownTextView {
         // its own hit test; every remaining question shares one.
         if semanticCheckbox(at: point) != nil { return true }
         let offset = sourceOffset(at: point)
+        if let code = codeFragment(at: point, sourceOffset: offset),
+           code.role == .collapsedChip || copyControlContains(point, in: code) { return true }
         if mode == .live {
             // Rendered targets are actionable on a normal click. Option-click
             // still falls through to the editor for caret placement.
@@ -583,79 +589,90 @@ extension MarkdownTextView {
     /// bottom row on the end of the last one.  Source mode and a revealed
     /// source-focus scope both show the fences, so there the click is honest
     /// and stands.
-    private func redirectedCodeFenceCaret(at point: NSPoint) -> Int? {
+    func redirectedCodeFenceCaret(at point: NSPoint) -> Int? {
         guard mode != .source, let storage = textStorage, storage.length > 0 else { return nil }
-        guard let hit = fragmentPayload(at: point), hit.payload.kind == .codeBlock else { return nil }
-        let block = NSIntersectionRange(
-            hit.payload.sourceRange, NSRange(location: 0, length: storage.length)
-        )
-        guard block.length > 0 else { return nil }
+        let offset = sourceOffset(at: point)
+        guard let payload = fragmentPayload(atSourceOffset: offset)?.payload,
+              payload.kind == .codeBlock, let body = payload.codeContentRange,
+              body.length > 0, body.upperBound <= storage.length else { return nil }
+        let block = payload.sourceRange
         if let focus = sourceFocus.range, NSIntersectionRange(focus, block).length > 0 { return nil }
 
-        let text = storage.string as NSString
-        let opening = text.lineRange(for: NSRange(location: block.location, length: 0))
-        let closing = text.lineRange(for: NSRange(location: block.upperBound - 1, length: 0))
-        // A block whose fences share a line has no code row to redirect to.
-        guard opening.location != closing.location else { return nil }
-
-        let offset = sourceOffset(at: point)
-        if offset < opening.upperBound {
-            return min(opening.upperBound, block.upperBound)
+        if body.location > block.location, offset < body.location {
+            return body.location
         }
-        if offset >= closing.location {
-            return max(block.location, closing.location - 1)
+        // An unclosed or indented block has no closing chrome.
+        if body.upperBound < block.upperBound, offset >= body.upperBound {
+            let text = storage.string as NSString
+            let lastLine = text.lineRange(for: NSRange(location: body.upperBound - 1, length: 0))
+            return max(body.location, RangeSet.contentEnd(ofParagraph: lastLine, text: text))
         }
         return nil
     }
 
     /// Copy button and collapsed-chip expansion, both hit-tested against the
     /// same geometry the fragment draws with.
-    private func handleCodeBlockChrome(at point: NSPoint) -> Bool {
-        guard let hit = fragmentPayload(at: point) else { return false }
-        let payload = hit.payload
-        guard payload.kind == .codeBlock || payload.kind == .collapsedCodeBlock else { return false }
-
-        let collapsed = isCollapsed(payload)
-        guard let chrome = rect(forOffset: payload.sourceRange.location) else { return false }
-
-        if collapsed {
+    func handleCodeBlockChrome(at point: NSPoint, pasteboard: NSPasteboard = .general) -> Bool {
+        guard let code = codeFragment(at: point, sourceOffset: sourceOffset(at: point)) else { return false }
+        if code.role == .collapsedChip {
             // §5.1: click the chip to expand.
-            setCodeBlockCollapsed(false, at: payload.sourceRange.location)
+            setCodeBlockCollapsed(false, at: code.payload.sourceRange.location)
             return true
         }
-
-        // `payload.sourceRange` can point past the end of the storage in the
-        // window between an edit and the async parse committing — a large
-        // deletion shrinks the buffer before the parse lands, and `attribute(at:)`
-        // beyond the storage raises an uncatchable NSRangeException.  Every
-        // other consumer of this storage clamps; do the same here.
-        guard let storage = textStorage, storage.length > 0 else { return false }
-        var styleLocation = payload.sourceRange.location
-        styleLocation = min(max(0, styleLocation), storage.length - 1)
-        // `firstLineHeadIndent`, matching `CodeBlockFragment.bandRect`: a
-        // wrapped code row hangs by a continuation indent, and `headIndent`
-        // would pull this reconstructed band — and the copy target inside it —
-        // two columns left of the one on screen.
-        let indent = max(
-            0,
-            ((storage.attribute(.paragraphStyle, at: styleLocation, effectiveRange: nil)
-                as? NSParagraphStyle)?.firstLineHeadIndent ?? RenderMetrics.codeInsetX)
-                - RenderMetrics.codeInsetX
-        )
-        let band = CGRect(
-            x: indent,
-            y: chrome.minY,
-            width: max(1, columnWidth - indent),
-            height: chrome.height
-        )
-        let copy = CodeBlockFragment.copyButtonRect(in: band, style: styleSheet, language: payload.detail)
-        let local = CGPoint(x: point.x - textContainerOrigin.x, y: point.y)
-        guard copy.insetBy(dx: -3, dy: -3).contains(local) else { return false }
-
-        return copyCodeBlock(payload)
+        guard copyControlContains(point, in: code) else { return false }
+        return copyCodeBlock(code.payload, pasteboard: pasteboard)
     }
 
-    func copyCodeBlockForAccessibility() -> Bool {
+    private func copyControlContains(_ point: CGPoint, in code: CodeBlockFragment) -> Bool {
+        let origin = textContainerOrigin
+        let local = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        return code.copyButtonInTextContainer?.contains(local) == true
+    }
+
+    private func codeFragment(at point: CGPoint, sourceOffset: Int) -> CodeBlockFragment? {
+        guard mode != .source, let layout = textLayoutManager else { return nil }
+        let origin = textContainerOrigin
+        let local = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        guard local.x >= 0, local.x <= columnWidth else { return nil }
+        if let code = layout.textLayoutFragment(for: local) as? CodeBlockFragment,
+           code.bandInTextContainer.contains(local) { return code }
+
+        // At the right edge, the native frame or insertion hit can end at the
+        // last glyph. Probe both sides of that boundary, then use the band the
+        // fragment actually paints to decide whether this is a code hit.
+        guard let hit = fragmentPayload(atSourceOffset: sourceOffset)?.payload,
+              hit.kind == .codeBlock || hit.kind == .collapsedCodeBlock else { return nil }
+        for candidate in [sourceOffset, sourceOffset - 1] where candidate >= 0 {
+            let offset = currentDisplayMap.textKitOffset(forSource: candidate)
+            guard let location = layout.location(layout.documentRange.location, offsetBy: offset),
+                  let code = layout.textLayoutFragment(for: location) as? CodeBlockFragment,
+                  code.bandInTextContainer.contains(local) else { continue }
+            return code
+        }
+        return nil
+    }
+
+    func drawHoveredCodeControls(in rect: CGRect) {
+        guard mode != .source, let range = fragmentContext.hoveredFragmentRange,
+              let layout = textLayoutManager,
+              let viewport = layout.textViewportLayoutController.viewportRange,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let first = range.location
+        let last = max(first, range.upperBound - 1)
+        let origin = textContainerOrigin
+        for offset in [first, last] {
+            let textKit = currentDisplayMap.textKitOffset(forSource: offset)
+            guard let location = layout.location(layout.documentRange.location, offsetBy: textKit),
+                  viewport.contains(location),
+                  let code = layout.textLayoutFragment(for: location) as? CodeBlockFragment,
+                  code.payload.sourceRange == range else { continue }
+            if offset == last && offset != first && code.role != .closeChrome { continue }
+            code.drawCopyControl(at: origin, in: rect, context: context)
+            if first == last { break }
+        }
+    }
+
+    func copyCodeBlockForAccessibility(pasteboard: NSPasteboard = .general) -> Bool {
         let payload: FragmentPayload?
         if let range = fragmentContext.hoveredFragmentRange,
            let storage = textStorage, range.location >= 0, range.location < storage.length,
@@ -670,22 +687,22 @@ extension MarkdownTextView {
         }
         guard let payload,
               payload.kind == .codeBlock || payload.kind == .collapsedCodeBlock else { return false }
-        return copyCodeBlock(payload)
+        return copyCodeBlock(payload, pasteboard: pasteboard)
     }
 
-    private func copyCodeBlock(_ payload: FragmentPayload) -> Bool {
+    private func copyCodeBlock(_ payload: FragmentPayload, pasteboard: NSPasteboard = .general) -> Bool {
         let code = codeText(of: payload)
         guard !code.isEmpty else { return false }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
+        pasteboard.clearContents()
+        pasteboard.setString(code, forType: .string)
         fragmentContext.copiedCodeRange = payload.sourceRange
         copiedCodeFeedbackWorkItem?.cancel()
-        needsDisplay = true
+        foregroundInvalidationHandler?(nil)
         let copiedRange = payload.sourceRange
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.fragmentContext.copiedCodeRange == copiedRange else { return }
             self.fragmentContext.copiedCodeRange = nil
-            self.needsDisplay = true
+            self.foregroundInvalidationHandler?(nil)
         }
         copiedCodeFeedbackWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
@@ -693,26 +710,18 @@ extension MarkdownTextView {
     }
 
     private func codeText(of payload: FragmentPayload) -> String {
-        guard let storage = textStorage else { return "" }
-        var range = payload.sourceRange
-        range.location = max(0, range.location)
-        range.length = min(range.length, storage.length - range.location)
+        guard let storage = textStorage, let body = payload.codeContentRange else { return "" }
+        let range = NSIntersectionRange(body, NSRange(location: 0, length: storage.length))
         guard range.length > 0 else { return "" }
-        // Strip the fences: what you want on the pasteboard is the code.
-        let lines = storage.attributedSubstring(from: range).string
-            .components(separatedBy: "\n")
-        var body = lines
-        // Tilde fences are as valid as backtick fences and the parser accepts
-        // both, so the pasteboard has to recognise both.
-        func isFence(_ line: String?) -> Bool {
-            guard let trimmed = line?.trimmingCharacters(in: .whitespaces),
-                  let marker = trimmed.first, marker == "`" || marker == "~" else { return false }
-            return trimmed.prefix(while: { $0 == marker }).count >= 3
+        let text = storage.string as NSString
+        var end = range.upperBound
+        // Drop the separator before the closing fence while keeping any
+        // intentional blank lines and the actual line endings within the body.
+        if end < payload.sourceRange.upperBound {
+            if text.character(at: end - 1) == 0x0A { end -= 1 }
+            if end > range.location, text.character(at: end - 1) == 0x0D { end -= 1 }
         }
-        if isFence(body.first) { body.removeFirst() }
-        if isFence(body.last) { body.removeLast() }
-        if body.last?.isEmpty == true { body.removeLast() }
-        return body.joined(separator: "\n")
+        return text.substring(with: NSRange(location: range.location, length: end - range.location))
     }
 
     // MARK: - Context menus (§7.1)
@@ -877,8 +886,9 @@ extension MarkdownTextView {
     private func adjustScopedSourceFocus(forEdit edit: NSRange, insertedLength: Int) {
         guard case .scoped(let focus) = sourceFocus else { return }
         let delta = insertedLength - edit.length
+        let storageLength = textStorage?.length ?? 0
         let start: Int
-        if edit.upperBound <= focus.location {
+        if edit.location < focus.location, edit.upperBound <= focus.location {
             start = focus.location + delta
         } else if edit.location < focus.location {
             start = edit.location
@@ -887,7 +897,9 @@ extension MarkdownTextView {
         }
 
         let end: Int
-        if edit.location >= focus.upperBound {
+        let insertsAtFocusedEOF = edit.length == 0 && edit.location == focus.upperBound
+            && edit.location == storageLength - delta
+        if edit.location >= focus.upperBound, !insertsAtFocusedEOF {
             end = focus.upperBound
         } else if edit.upperBound <= focus.upperBound {
             end = focus.upperBound + delta
@@ -895,7 +907,6 @@ extension MarkdownTextView {
             end = edit.location + insertedLength
         }
 
-        let storageLength = textStorage?.length ?? max(start, end)
         let lower = max(0, min(start, storageLength))
         let upper = max(lower, min(end, storageLength))
         let first = paragraphIndex.paragraphRange(containing: lower)
@@ -1037,8 +1048,29 @@ extension MarkdownTextView {
 
     public override func insertNewline(_ sender: Any?) {
         guard isEditable else { return }
-        if hasMarkedText() || composingParagraph != nil { super.insertNewline(sender); return }
-        performSourceEdit(range: sourceSelectedRange, replacement: "\n")
+        if hasMarkedText() || composingParagraph != nil {
+            let undo = undoManager
+            let openedUndoGroup = undo?.groupingLevel == 0
+            if openedUndoGroup { undo?.beginUndoGrouping() }
+            defer { if openedUndoGroup { undo?.endUndoGrouping() } }
+            super.insertNewline(sender)
+            return
+        }
+
+        let selection = sourceSelectedRange
+        if selection.length == 0, let source = textStorage?.string {
+            // A second Return can arrive before the async parse of the first.
+            // Plan against the live source, including a newly inserted marker.
+            let document = parsedDocument.text.utf16.elementsEqual(source.utf16)
+                ? parsedDocument : MarkdownParser.parse(source)
+            if let continuation = ListEditing.continuation(document, at: selection.location) {
+                breakUndoCoalescing()
+                performSourceEdit(range: continuation.replaceRange, replacement: continuation.insertion)
+                breakUndoCoalescing()
+                return
+            }
+        }
+        performSourceEdit(range: selection, replacement: "\n")
     }
 
     public override func insertTab(_ sender: Any?) {
@@ -1211,79 +1243,93 @@ extension MarkdownTextView {
     /// private alternate flavour, so a round-trip within Downright keeps the
     /// source while every other app receives exactly what the user selected.
     public override func copy(_ sender: Any?) {
-        let range = sourceSelectedRange
-        guard range.length > 0, let storage = textStorage else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        let visible = exportableAttributedString(range: range)
-        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
-        let markdown = storage.attributedSubstring(from: markdownRange).string
-        pasteboard.declareTypes([.string, .rtf, .html, .downrightMarkdown], owner: nil)
-        pasteboard.setString(visible.string, forType: .string)
-        pasteboard.setString(markdown, forType: .downrightMarkdown)
-        pasteboard.setString(ClipboardSemanticHTML.render(markdown: markdown), forType: .html)
-        if let data = visible.rtf(
-            from: NSRange(location: 0, length: visible.length),
-            documentAttributes: [:]
-        ) {
-            pasteboard.setData(data, forType: .rtf)
-        }
+        _ = writeSelection(to: .general, types: [])
     }
 
     public override func cut(_ sender: Any?) {
+        cutSelection(to: .general)
+    }
+
+    func cutSelection(to pasteboard: NSPasteboard) {
         let range = sourceSelectedRange
-        guard range.length > 0 else { return }
-        copy(sender)
-        performSourceEdit(range: range, replacement: "")
+        guard isEditable, range.length > 0 else { return }
+        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
+        guard writeSelection(range, markdownRange: markdownRange, to: pasteboard) else { return }
+        performSourceEdit(range: markdownRange, replacement: "")
     }
 
     public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         let range = sourceSelectedRange
+        guard range.length > 0 else { return false }
+        return writeSelection(range, markdownRange: losslessMarkdownRange(forVisibleSourceRange: range), to: pboard)
+    }
+
+    private func writeSelection(_ range: NSRange, markdownRange: NSRange, to pboard: NSPasteboard) -> Bool {
         guard range.length > 0, let storage = textStorage else { return false }
+        let markdown = storage.attributedSubstring(from: markdownRange).string
         pboard.declareTypes([.string, .rtf, .html, .downrightMarkdown], owner: nil)
         let rich = exportableAttributedString(range: range)
         pboard.setString(rich.string, forType: .string)
-        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
-        pboard.setString(
-            storage.attributedSubstring(from: markdownRange).string,
-            forType: .downrightMarkdown
-        )
-        pboard.setString(
-            ClipboardSemanticHTML.render(
-                markdown: storage.attributedSubstring(from: markdownRange).string
-            ),
-            forType: .html
-        )
+        pboard.setString(markdown, forType: .downrightMarkdown)
+        pboard.setString(ClipboardSemanticHTML.render(markdown: markdown), forType: .html)
         if let data = rich.rtf(from: NSRange(location: 0, length: rich.length), documentAttributes: [:]) {
             pboard.setData(data, forType: .rtf)
         }
         return true
     }
 
-    /// Hidden substitutions at both edges belong to a fully selected visible
-    /// span. Include them in Downright's private flavour without changing the
-    /// standard visible-text selection exported to other apps.
+    /// Only a complete selected construct owns its hidden edge markers. An
+    /// adjacent delimiter might open the next word or close the preceding one.
     private func losslessMarkdownRange(forVisibleSourceRange range: NSRange) -> NSRange {
+        let map = currentDisplayMap
+        guard map.substitutionEnding(at: range.location)?.isHidden == true
+                || map.substitutionStarting(at: range.upperBound)?.isHidden == true,
+              let storage = textStorage,
+              storage.string.utf16.elementsEqual(parsedDocument.text.utf16)
+        else { return range }
+
         var result = range
-        var changed = true
-        while changed {
-            changed = false
-            if let leading = currentDisplayMap.substitutions.last(where: {
-                $0.isHidden && $0.sourceRange.upperBound == result.location
-            }) {
-                result = NSRange(
-                    location: leading.sourceRange.location,
-                    length: result.upperBound - leading.sourceRange.location
-                )
-                changed = true
+
+        func includeMarkers(content: NSRange, leading: NSRange?, trailing: NSRange?) {
+            guard content.length > 0, content.location >= result.location,
+                  content.upperBound <= result.upperBound else { return }
+            if let leading, leading.upperBound == result.location,
+               let substitution = map.substitutionEnding(at: result.location),
+               substitution.isHidden, substitution.sourceRange == leading {
+                result = result.union(leading)
             }
-            if let trailing = currentDisplayMap.substitutions.first(where: {
-                $0.isHidden && $0.sourceRange.location == result.upperBound
-            }) {
-                result.length = trailing.sourceRange.upperBound - result.location
-                changed = true
+            if let trailing, trailing.location == result.upperBound,
+               let substitution = map.substitutionStarting(at: result.upperBound),
+               substitution.isHidden, substitution.sourceRange == trailing {
+                result = result.union(trailing)
             }
         }
+
+        func reachesEdge(_ candidate: NSRange) -> Bool {
+            candidate.touches(offset: range.location) || candidate.touches(offset: range.upperBound)
+        }
+
+        func includeInline(_ span: InlineSpan) {
+            guard reachesEdge(span.range) else { return }
+            span.children.forEach(includeInline)
+            includeMarkers(content: span.contentRange, leading: span.leadingMarkerRange, trailing: span.trailingMarkerRange)
+        }
+
+        func includeBlock(_ block: MDBlock) {
+            guard reachesEdge(block.range) else { return }
+            block.children.forEach(includeBlock)
+            block.inlines.forEach(includeInline)
+            if case .table(let table) = block.content {
+                for row in table.rows where reachesEdge(row.range) {
+                    for cell in row.cells where reachesEdge(cell.range) {
+                        cell.inlines.forEach(includeInline)
+                    }
+                }
+            }
+            includeMarkers(content: block.contentRange, leading: block.markerRange, trailing: block.trailingMarkerRange)
+        }
+
+        includeBlock(parsedDocument.root)
         return result
     }
 

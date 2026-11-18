@@ -52,6 +52,7 @@ final class MarkdownUndoManager: UndoManager {
     private(set) var isApplyingUndoRedo = false
 
     override func undo() {
+        guard canUndo else { return }
         onWillApplyUndoRedo?()
         isApplyingUndoRedo = true
         defer {
@@ -62,6 +63,7 @@ final class MarkdownUndoManager: UndoManager {
     }
 
     override func redo() {
+        guard canRedo else { return }
         onWillApplyUndoRedo?()
         isApplyingUndoRedo = true
         defer {
@@ -194,6 +196,9 @@ final class MarkdownDocument: NSObject {
     let changes = ChangeTracker()
     var state: DocumentState
     let undoManager = MarkdownUndoManager()
+    private var undoRedoEditedRanges: [NSRange] = []
+    private var undoRedoShiftStart: Int?
+    private var isReplacingSource = false
 
     /// Fires after every reparse with the set of blocks needing re-decoration.
     var onReparse: ((ParsedDocument, DirtySet) -> Void)?
@@ -897,9 +902,11 @@ final class MarkdownDocument: NSObject {
         // happens to redecorate it (stale code-block copies, image loads
         // invalidating the wrong range).
         projectFragmentPayloads(across: range, insertedLength: (replacement as NSString).length)
+        isReplacingSource = true
         storage.beginEditing()
         storage.replaceCharacters(in: range, with: replacement)
         storage.endEditing()
+        isReplacingSource = false
 
         let delta = (replacement as NSString).length - range.length
         changes.adjust(forEditIn: range, delta: delta)
@@ -1072,7 +1079,7 @@ final class MarkdownDocument: NSObject {
 
     private func finishUndoRedo() {
         refreshDirtyState()
-        guard !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
+        guard !undoRedoEditedRanges.isEmpty || !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
         // A grouped undo/redo can invoke several inverse closures. Keep the
         // renderer suspended for the whole transaction, then publish exactly
         // one parsed/display-map repair after AppKit has finished mutating the
@@ -1095,9 +1102,21 @@ final class MarkdownDocument: NSObject {
             let fresh = MarkdownParser.parse(storage.string)
             // Finish the comparison before replacing the model, so the caller
             // does not pin the old tree throughout fresh decoration/layout.
-            let dirty: DirtySet? = notifying
+            var dirty: DirtySet? = notifying
                 ? (wholesale ? .wholesale : ASTDiff.dirtySet(old: parsed, new: fresh))
                 : nil
+            if notifying, !undoRedoEditedRanges.isEmpty {
+                if dirty?.isWholesale == false, storage.length > 0 {
+                    dirty?.ranges += undoRedoEditedRanges.map { edited in
+                        let start = min(edited.location, storage.length - 1)
+                        let end = min(storage.length, max(start + 1, edited.upperBound))
+                        return NSRange(location: start, length: end - start)
+                    }
+                    dirty?.shiftedLayoutStart = undoRedoShiftStart
+                }
+                undoRedoEditedRanges.removeAll(keepingCapacity: true)
+                undoRedoShiftStart = nil
+            }
             parsed = fresh
             lastCompletedParseRevision = revision
             if let dirty { onReparse?(fresh, dirty) }
@@ -1736,9 +1755,37 @@ extension MarkdownDocument: NSTextStorageDelegate {
         // edit, so reading `storage.string` in the task would lose the
         // transaction boundary and consume the wrong suppression token.
         let callbackText = textStorage.string
+        MainActor.assumeIsolated {
+            recordUndoRedoEdit(editedRange, delta: delta)
+        }
         Task { @MainActor [weak self] in
             self?.handleTextStorageEdit(callbackText: callbackText)
         }
+    }
+
+    private func recordUndoRedoEdit(_ edited: NSRange, delta: Int) {
+        guard undoManager.isApplyingUndoRedo else { return }
+        let before = NSRange(location: edited.location, length: edited.length - delta)
+        if delta != 0 {
+            if !isReplacingSource && !isApplyingExternalChange {
+                // AppKit's own typing undo mutates storage directly. The
+                // attached runs already moved, but their payload offsets did not.
+                projectFragmentPayloads(across: before, insertedLength: edited.length)
+            }
+            undoRedoShiftStart = min(undoRedoShiftStart ?? edited.location, edited.location)
+        }
+        if delta != 0 {
+            undoRedoEditedRanges = undoRedoEditedRanges.map { previous in
+                if previous.upperBound <= before.location { return previous }
+                if previous.location >= before.upperBound {
+                    return NSRange(location: previous.location + delta, length: previous.length)
+                }
+                let start = min(previous.location, edited.location)
+                let end = max(edited.upperBound, previous.upperBound + delta)
+                return NSRange(location: start, length: end - start)
+            }
+        }
+        undoRedoEditedRanges.append(edited)
     }
 
     private func handleTextStorageEdit(callbackText: String) {

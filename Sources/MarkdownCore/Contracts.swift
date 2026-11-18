@@ -60,6 +60,9 @@ public struct DirtySet: Sendable {
     /// Set when the structure changed so much that block-level diffing is not
     /// worth it — the caller should redecorate everything.
     public var isWholesale: Bool
+    /// Earliest shifted source position when the caller could not invalidate
+    /// layout during the edit. This suffix needs new layout, not new styling.
+    public var shiftedLayoutStart: Int? = nil
 
     public init(ranges: [NSRange], isWholesale: Bool) {
         self.ranges = ranges
@@ -68,7 +71,7 @@ public struct DirtySet: Sendable {
 
     public static let wholesale = DirtySet(ranges: [], isWholesale: true)
     public static let none = DirtySet(ranges: [], isWholesale: false)
-    public var isEmpty: Bool { !isWholesale && ranges.isEmpty }
+    public var isEmpty: Bool { !isWholesale && ranges.isEmpty && shiftedLayoutStart == nil }
 }
 
 // MARK: - Text diff (§8.1)

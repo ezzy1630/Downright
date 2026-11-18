@@ -6,6 +6,20 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct CodeSelectionTests {
+    @Test(arguments: [
+        ("````markdown\nexample\n```", "example\n```"),
+        ("~~~markdown\nexample\n```", "example\n```"),
+        ("```swift\r\nlet x = 1\r\n```\r\n", "let x = 1"),
+    ])
+    func copyCodePreservesFenceLikeContent(source: String, expected: String) {
+        let view = MarkdownTextView(frame: .zero, storage: NSTextStorage(string: source))
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+        view.setSourceSelectedRanges([NSRange(location: 0, length: 0)])
+        let pasteboard = NSPasteboard.withUniqueName()
+        #expect(view.copyCodeBlockForAccessibility(pasteboard: pasteboard))
+        #expect(pasteboard.string(forType: .string) == expected)
+    }
+
     @Test func codeBackgroundDoesNotCoverNativeSelection() throws {
         let source = "```swift\nlet greeting = \"Hello\"\n```\n"
         let storage = NSTextStorage(string: source)

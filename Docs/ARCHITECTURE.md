@@ -191,6 +191,10 @@ primary caret. IME composition suspends hiding in the composing paragraph.
 After a source edit, retain its exact source caret while its native projection
 is unchanged: hidden markers make a source-to-display round trip lossy. A new
 native selection retires that edit position and resolves against visible text.
+Selections requested in source coordinates also retain their endpoints when
+the native projection omits part or all of the selected syntax.
+Multiline insertion at the opening boundary of a scoped source editor or at
+its end at EOF keeps the inserted lines in that source scope.
 A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
@@ -216,10 +220,26 @@ before sizing the new presentation. Its shrink must not capture a reading anchor
 from the old camera; ordinary edits and mode changes continue preserving anchors.
 
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
-is a separate explicit command.
+is a separate explicit command. AppKit's typing undo and redo mutate the shared
+storage directly. The document projects surviving fragment payloads across those
+edits. The synchronous parse commit invalidates shifted layout in every pane
+while keeping decoration scoped to the edited and semantically changed ranges.
+Standard Copy and Cut carry visible text for other apps and exact Markdown for
+paste in Downright. Hidden delimiters at a selection edge travel with a
+complete selected construct. Cut removes the same source that it puts on the
+clipboard. Copy Code reads the parsed body, including any fence-like lines
+that belong to the example. The rendered fence bands supply the hover and click
+geometry for Copy Code at both ends of a block. The viewport overlay draws hover
+and copy feedback independently of TextKit's cached fence surfaces.
+Code fences can open on a list item's first line. Only actual opening and
+closing fence rows redirect a click into the code body.
 
 Document commands apply source edits, reparse, and decorate inside one undo
-group. List indentation and ordered-list repair use this sequence:
+group. Return uses the current source to continue a list in one undo step. It
+keeps the bullet, quote prefix, and nesting, increments the new ordered marker,
+and starts a new task unchecked. On an empty item, Return exits the list or
+outdents one level. AppKit handles Return during marked-text composition.
+List indentation and ordered-list repair use this sequence:
 
 ```text
 apply edit -> reparse -> plan tidy rules -> apply tidy edit

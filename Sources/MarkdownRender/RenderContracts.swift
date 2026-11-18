@@ -234,6 +234,8 @@ public final class FragmentPayload: NSObject {
     public let detail: String
     /// Table geometry, populated by the table fragment.
     public var tableData: TableData?
+    /// Literal source inside a parsed code block, excluding its fences.
+    var codeContentRange: NSRange?
     public var isCollapsed: Bool = false
     /// Parser-computed identity for locating an unchanged diagram after edits.
     var parsedBlockHash: UInt64?
@@ -260,6 +262,9 @@ public final class FragmentPayload: NSObject {
     /// aligned with the runs they ride on.
     public func projectSourceRanges(across edit: NSRange, insertedLength: Int) {
         sourceRange = Self.project(sourceRange, across: edit, insertedLength: insertedLength)
+        if let codeContentRange {
+            self.codeContentRange = Self.project(codeContentRange, across: edit, insertedLength: insertedLength)
+        }
         guard var tableData else { return }
         tableData.delimiterRange = Self.project(
             tableData.delimiterRange, across: edit, insertedLength: insertedLength
