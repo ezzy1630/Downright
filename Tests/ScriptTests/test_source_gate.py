@@ -53,7 +53,7 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
             (self.root / "bin/rg").symlink_to(ripgrep)
         self.environment = dict(os.environ)
         for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH", "MISSING_TEST_SUMMARY",
-                    "ABANDONED_SECOND_RUN"):
+                    "ABANDONED_SECOND_RUN", "CHECK_VERBOSE_BUILD"):
             self.environment.pop(key, None)
         self.environment.update(
             PATH=f"{self.root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
