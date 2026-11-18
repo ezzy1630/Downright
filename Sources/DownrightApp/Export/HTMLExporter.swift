@@ -414,14 +414,31 @@ struct HTMLExporter {
 
     // MARK: - Stylesheet
 
+    /// A quoted CSS string.  Font family names come from the user's machine,
+    /// so a quote, backslash or line break must not end the declaration.
+    private func cssString(_ value: String) -> String {
+        var out = "'"
+        for scalar in value.unicodeScalars {
+            switch scalar {
+            case "'", "\\": out += "\\" + String(scalar)
+            case "\n", "\r", "\u{0C}", "<", ">": out += String(format: "\\%X ", scalar.value)
+            default: out.unicodeScalars.append(scalar)
+            }
+        }
+        return out + "'"
+    }
+
     private func stylesheet() -> String {
         let palette = theme.palette
         let typography = theme.typography
         let measure = TypographyConfig.clampedMeasureCharacters(typography.measureCharacters)
         let measureCSS = measure == TypographyConfig.fullWidthMeasure ? "none" : "\(Int(measure))ch"
-        let bodyFamily = typography.preset == .reading
+        let presetFamily = typography.preset == .reading
             ? "'New York', 'Iowan Old Style', Georgia, serif"
             : "-apple-system, 'SF Pro Text', system-ui, sans-serif"
+        // A chosen family leads, with the preset's stack behind it for readers
+        // who do not have that family installed.
+        let bodyFamily = typography.customBodyFamily.map { "\(cssString($0)), \(presetFamily)" } ?? presetFamily
         let scale = typography.scaleRatio
 
         func hex(_ color: ThemeColor) -> String {

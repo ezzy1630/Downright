@@ -245,6 +245,31 @@ enum PreferenceRow {
     }
 }
 
+/// The body font popup: Preset Default first, then installed families.
+/// Pure, so the index mapping is testable without a window.
+enum BodyFontChoices {
+    static let presetDefaultTitle = "Preset Default"
+
+    /// Installed families in the order a reader scans a list: alphabetical,
+    /// ignoring case and treating digits as numbers.
+    static func families(installed: [String] = NSFontManager.shared.availableFontFamilies) -> [String] {
+        installed.filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    static func selection(for family: String?, families: [String]) -> PreferenceRow.ChoiceSelection {
+        guard let family else { return .index(0) }
+        return families.firstIndex(of: family).map { .index($0 + 1) } ?? .missing(family)
+    }
+
+    /// The stored value for a popup index: `.some(nil)` for Preset Default,
+    /// nil for an index outside the list.
+    static func family(at index: Int, families: [String]) -> String?? {
+        if index == 0 { return .some(nil) }
+        guard families.indices.contains(index - 1) else { return nil }
+        return .some(families[index - 1])
+    }
+}
+
 /// Pure filtering, so the search behaviour is testable without a window.
 enum PreferenceRowFilter {
     /// Keeps rows matching every word of the query, then drops section headers
@@ -539,6 +564,10 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
                 popup.lastItem?.isEnabled = false
                 popup.select(popup.lastItem)
             }
+            // The row label sits beside the popup, not on it; without this
+            // VoiceOver announces only the selected item.
+            popup.setAccessibilityLabel(title)
+            if let help { popup.setAccessibilityHelp(help) }
             let handler = ActionHandler { set(popup.indexOfSelectedItem) }
             popup.target = handler
             popup.action = #selector(ActionHandler.run)
@@ -861,7 +890,7 @@ enum PreferencesForms {
     static func typography() -> [PreferenceRow] {
         [
             .section("Body"),
-            .choice("Preset", help: "Reading is set in New York, Working in SF Pro Text.",
+            .choice("Preset", help: "Reading is set in New York, Working in SF Pro Text. A font family chosen below replaces the preset’s face.",
                     options: TypographyConfig.BodyPreset.allCases.map(\.title),
                     get: {
                         let presets = TypographyConfig.BodyPreset.allCases
@@ -873,6 +902,20 @@ enum PreferencesForms {
                         Preferences.shared.update {
                             $0.typography.preset = TypographyConfig.BodyPreset.allCases[index]
                         }
+                    }),
+            .choice("Font family",
+                    help: "Sets body text and headings. Preset Default uses the preset’s face; code keeps the monospace family below.",
+                    options: [BodyFontChoices.presetDefaultTitle] + BodyFontChoices.families(),
+                    get: {
+                        BodyFontChoices.selection(
+                            for: Preferences.shared.values.typography.customBodyFamily,
+                            families: BodyFontChoices.families()
+                        )
+                    },
+                    set: { index in
+                        let families = BodyFontChoices.families()
+                        guard let family = BodyFontChoices.family(at: index, families: families) else { return }
+                        Preferences.shared.update { $0.typography.bodyFamily = family }
                     }),
             .stepper("Size", help: nil, range: 11...24, step: 1,
                      get: { Double(Preferences.shared.values.typography.bodySize) },

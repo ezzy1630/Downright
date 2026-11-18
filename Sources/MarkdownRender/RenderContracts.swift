@@ -433,7 +433,20 @@ public struct TypographyConfig: Codable, Sendable, Equatable {
         public var title: String { self == .reading ? "Reading" : "Working" }
     }
 
+    /// The chosen body family, or nil when the preset's face applies.  An
+    /// empty or whitespace-only name means no choice was made.
+    public var customBodyFamily: String? {
+        guard let family = bodyFamily?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !family.isEmpty else { return nil }
+        return family
+    }
+
     public var preset: BodyPreset
+    /// An installed font family for body text and headings, replacing the
+    /// preset's face.  `nil` keeps the preset's face, and is what every
+    /// settings file and theme written before this field existed decodes to.
+    /// A family that is no longer installed resolves to the preset's face.
+    public var bodyFamily: String?
     public var bodySize: CGFloat
     /// 1.2 / 1.25 / 1.333 — one ratio drives every heading size (§11.1).
     public var scaleRatio: CGFloat
