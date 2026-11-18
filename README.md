@@ -194,6 +194,8 @@ machine-readable support report without modifying the machine; use
 `down doctor --app path/to/Downright.app` to inspect a development bundle. Run
 `down --help` for every command.
 `--edit`, `--line`, and `--review` also apply when Downright is already running.
+If a request using these options exceeds 256 KiB after encoding, `down` exits
+with an error. Open fewer files at a time.
 `down watch` includes Markdown descendants of a folder argument and only the
 named file for each file argument.
 
