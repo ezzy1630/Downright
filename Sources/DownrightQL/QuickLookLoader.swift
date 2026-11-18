@@ -92,7 +92,9 @@ enum QuickLookLoader {
         }
 
         if encoding == .utf8 {
-            return decodeUTF8(body, nextByte: nextByte).map(normalizeLineEndings)
+            // The BOM settles the encoding, so a scalar torn at the end of the
+            // file (not only at the cap) is trimmed rather than failing.
+            return decodeUTF8(body, nextByte: nextByte, encodingIsKnown: true).map(normalizeLineEndings)
         }
         if let decoded = String(data: body, encoding: encoding) {
             return normalizeLineEndings(decoded)
@@ -105,9 +107,11 @@ enum QuickLookLoader {
         return String(data: body.dropLast(2), encoding: encoding).map(normalizeLineEndings)
     }
 
-    private static func decodeUTF8(_ data: Data, nextByte: UInt8?) -> String? {
+    private static func decodeUTF8(_ data: Data, nextByte: UInt8?, encodingIsKnown: Bool = false) -> String? {
         if let text = String(data: data, encoding: .utf8) { return text }
-        guard let nextByte, (0x80...0xBF).contains(nextByte) else { return nil }
+        // Without a BOM, trim only at a known cut: the sentinel continues the
+        // torn scalar.  Otherwise the bytes may simply be Latin-1.
+        guard encodingIsKnown || nextByte.map({ (0x80...0xBF).contains($0) }) == true else { return nil }
         for count in 1...min(3, data.count) {
             let suffix = data.suffix(count)
             guard let lead = suffix.first, (0xC2...0xF4).contains(lead),

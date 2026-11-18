@@ -92,6 +92,18 @@ struct QuickLookPolicyTests {
         #expect(QuickLookLoader.load(contentsOf: url, hintedByteCount: utf32.count) == .full("# UTF-32\n"))
     }
 
+    @Test("A BOM-marked UTF-8 file that ends partway through a character still previews")
+    func bomUTF8TornAtEndOfFile() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("torn.md")
+        // A partially written file: the BOM declares UTF-8 and the last
+        // scalar (the first two bytes of 🌊) is incomplete at EOF.
+        let data = Data([0xEF, 0xBB, 0xBF]) + Data("# Café\n".utf8) + Data([0xF0, 0x9F])
+        try data.write(to: url)
+        #expect(QuickLookLoader.load(contentsOf: url, hintedByteCount: data.count) == .full("# Café\n"))
+    }
+
     @Test("Bounded loader normalizes a pure CRLF document")
     func boundedLoaderNormalizesCRLF() throws {
         let directory = try temporaryDirectory()
