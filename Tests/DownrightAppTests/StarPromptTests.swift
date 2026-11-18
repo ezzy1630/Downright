@@ -123,9 +123,9 @@ struct StarPromptNoticeTests {
         controller.onDocumentOpen = { opens += 1 }
         try controller.open(file, mode: .live)
         #expect(opens == 0)
-        #expect(controller.openInPlace(destination))
+        #expect(controller.openInPlace(destination) === controller)
         #expect(opens == 1)
-        #expect(!controller.openInPlace(folder.appendingPathComponent("Missing.md")))
+        #expect(controller.openInPlace(folder.appendingPathComponent("Missing.md")) == nil)
         #expect(controller.markdownDocument.url == destination)
         #expect(opens == 1)
     }

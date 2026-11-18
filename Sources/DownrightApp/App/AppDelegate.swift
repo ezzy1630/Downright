@@ -338,13 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) -> DocumentWindowController? {
         // One window per file: reopening a file you already have open should
         // raise it, not give you two buffers over the same bytes.
-        if let existing = windowControllers.first(where: {
-            guard let open = $0.markdownDocument.url else { return false }
-            return FileIdentity.sameFile(open, url)
-        }) {
-            existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            dismissStartWindow()
+        if let existing = focusOpenDocument(at: url) {
             existing.applyCommandLineOpen(line: line, review: review)
             return existing
         }
@@ -386,6 +380,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controller
     }
 
+    private func focusOpenDocument(at url: URL) -> DocumentWindowController? {
+        guard let existing = windowControllers.first(where: {
+            guard let open = $0.markdownDocument.url else { return false }
+            return FileIdentity.sameFile(open, url)
+        }) else { return nil }
+        existing.showWindow(nil)
+        if let window = existing.window {
+            window.tabGroup?.selectedWindow = window
+            window.makeKeyAndOrderFront(nil)
+        }
+        dismissStartWindow()
+        return existing
+    }
+
     private func documentWindow(owning window: NSWindow) -> NSWindow? {
         var candidate: NSWindow? = window
         while let current = candidate {
@@ -406,6 +414,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func adopt(_ controller: DocumentWindowController) {
         windowControllers.append(controller)
+        controller.focusOpenDocument = { [weak self] url in
+            self?.focusOpenDocument(at: url)
+        }
         controller.onDocumentOpen = { [weak self, weak controller] in
             guard let url = controller?.markdownDocument.url else { return }
             self?.starPrompt.recordOpen(origin: WelcomeDocument.isTour(url) ? .tour : .user)

@@ -7,17 +7,27 @@ private final class PresentationSnapshotLayer: CALayer {}
 /// Small actions the context menus and delegates reach for.
 extension DocumentWindowController {
 
-    /// Follows a link to another markdown file in this same window (§7.1 —
-    /// ⌘-click is what opens a new one).  Persists the current document's
-    /// state first so its reading position survives the hop.
+    /// Follows a link in this window or focuses the window already editing the
+    /// destination. Callers apply any follow-up selection to the returned window.
     @discardableResult
-    func openInPlace(_ url: URL, fragment: String? = nil, recordingHistory: Bool = true) -> Bool {
+    func openInPlace(
+        _ url: URL, fragment: String? = nil, recordingHistory: Bool = true
+    ) -> DocumentWindowController? {
         if let current = markdownDocument.url, FileIdentity.sameFile(current, url) {
             if let fragment { revealLinkedHeading(fragment) }
-            return true
+            return self
+        }
+        if let existing = focusOpenDocument?(url) {
+            if let fragment { existing.revealLinkedHeading(fragment) }
+            return existing
         }
         let previousPosition = readingHistoryEntry(label: "Reading position")
-        guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return false }
+        guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return nil }
+        // The save/discard sheet can dispatch another open while it is up.
+        if let existing = focusOpenDocument?(url) {
+            if let fragment { existing.revealLinkedHeading(fragment) }
+            return existing
+        }
         let previousURL = markdownDocument.url
         resetTransientChrome()
         markdownDocument.close()
@@ -41,7 +51,7 @@ extension DocumentWindowController {
                 ))
             }
             if reachedTarget { onDocumentOpen?() }
-            return true
+            return self
         } catch {
             // The hop died mid-flight (the target vanished between the click
             // and the read).  The document is closed and watcherless now; put
@@ -51,13 +61,13 @@ extension DocumentWindowController {
                 do {
                     try open(previousURL, mode: mode)
                     resetWorkspaceState(for: previousURL)
-                    return false
+                    return nil
                 } catch {
                     // The previous file is gone too; fall through to the beep.
                 }
             }
             NSSound.beep()
-            return false
+            return nil
         }
     }
 
