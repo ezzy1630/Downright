@@ -235,13 +235,12 @@ private final class WorkspaceSignal {
 
 private final class WorkspaceReadGate: @unchecked Sendable {
     private let condition = NSCondition()
-    private var blocked = false
+    private let blocked = TestSignal()
     private var released = false
 
     func wait() {
         condition.lock()
-        blocked = true
-        condition.broadcast()
+        blocked.signal()
         let deadline = Date().addingTimeInterval(5)
         while !released && condition.wait(until: deadline) {
             // The condition may wake spuriously; re-check the release flag.
@@ -250,15 +249,7 @@ private final class WorkspaceReadGate: @unchecked Sendable {
     }
 
     func waitUntilBlocked() async -> Bool {
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            condition.lock()
-            let ready = blocked
-            condition.unlock()
-            if ready { return true }
-            try? await Task.sleep(for: .milliseconds(1))
-        }
-        return false
+        await blocked.wait()
     }
 
     func release() {

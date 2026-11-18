@@ -524,8 +524,12 @@ final class DownrightActivatedAppTests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
-        RunLoop.current.run(until: Date().addingTimeInterval(11))
-        XCTAssertFalse(dismiss.exists, "an answered suggestion returned after relaunch")
+        let returned = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"), object: dismiss
+        )
+        returned.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 11), .completed,
+                       "an answered suggestion returned after relaunch")
         try assertStarSuggestionRetired()
     }
 
@@ -749,12 +753,11 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if FileManager.default.fileExists(atPath: url.path) { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-        return false
+        let created = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: url.path) },
+            object: nil
+        )
+        return XCTWaiter.wait(for: [created], timeout: timeout) == .completed
     }
 
     private func waitForButton(
@@ -762,14 +765,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         titles: [String],
         timeout: TimeInterval
     ) -> XCUIElement? {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            for title in titles {
-                let button = window.buttons[title]
-                if button.exists { return button }
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        } while Date() < deadline
-        return nil
+        let action = window.buttons.matching(NSPredicate(format: "label IN %@", titles)).firstMatch
+        return action.waitForExistence(timeout: timeout) ? action : nil
     }
 }

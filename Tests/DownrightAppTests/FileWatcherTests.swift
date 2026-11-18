@@ -16,10 +16,9 @@ struct FileWatcherTests {
         watcher.suppressOwnWrite(for: 0.05)
         try fixture.atomicReplace(own)
         watcher.acknowledgeOwnWrite(contents: own)
-        try await settle()
         watcher.checkNowForTesting()
-        try await settle()
-
+        #expect(await !events.waitForEvent(after: 0, timeout: .milliseconds(350)),
+                "an acknowledged own write must remain silent across reconciliation")
         #expect(events.count == 0)
     }
 
@@ -37,11 +36,11 @@ struct FileWatcherTests {
         try fixture.atomicReplace(own)
         try fixture.atomicReplace(external)
         watcher.acknowledgeOwnWrite(contents: own)
-        try await settle()
         watcher.checkNowForTesting()
         try await expectEventCount(events, 1)
         watcher.checkNowForTesting()
-        try await settle()
+        #expect(await !events.waitForEvent(after: 1, timeout: .milliseconds(350)),
+                "the repeated probe must not deliver a duplicate event")
 
         #expect(events.count == 1)
         #expect(events.isChanged(at: 0))
@@ -62,7 +61,6 @@ struct FileWatcherTests {
         watcher.checkNowForTesting()
         try fixture.atomicReplace(own)
         watcher.acknowledgeOwnWrite(contents: own)
-        try await settle()
         watcher.checkNowForTesting()
         try await expectEventCount(events, 1)
 
@@ -84,7 +82,8 @@ struct FileWatcherTests {
         watcher.checkNowForTesting()
         try await expectEventCount(events, 1)
         watcher.checkNowForTesting()
-        try await settle()
+        #expect(await !events.waitForEvent(after: 1, timeout: .milliseconds(350)),
+                "the repeated probe must not deliver a duplicate event")
 
         #expect(events.count == 1)
         #expect(events.isChanged(at: 0))
@@ -220,10 +219,6 @@ struct FileWatcherTests {
         #expect(events.isRemoved(at: 0))
     }
 
-    private func settle() async throws {
-        try await Task.sleep(nanoseconds: 350_000_000)
-    }
-
     /// A save on a slow volume can stay in flight far longer than any fixed
     /// suppression window. Suppression is a state now, so the observation
     /// made while the write is still unacknowledged — and the acknowledged
@@ -241,15 +236,18 @@ struct FileWatcherTests {
         watcher.suppressOwnWrite(for: 0.05)
         try fixture.atomicReplace(own)
 
-        // Outlive the caller's whole interval and the legacy 0.6 s window.
-        try await Task.sleep(nanoseconds: 700_000_000)
+        // Check both during and after the legacy 0.6 s suppression window.
         watcher.checkNowForTesting()
-        try await settle()
+        try #require(await !events.waitForEvent(after: 0, timeout: .milliseconds(700)),
+                     "the watcher reported an own write before it was acknowledged")
+        watcher.checkNowForTesting()
+        await drainTestMainQueue()
         #expect(events.count == 0, "an in-flight own write must not arrive as an external change")
 
         watcher.acknowledgeOwnWrite(contents: own)
         watcher.checkNowForTesting()
-        try await settle()
+        #expect(await !events.waitForEvent(after: 0, timeout: .milliseconds(350)),
+                "an acknowledged own write must remain silent across reconciliation")
         #expect(events.count == 0, "the acknowledged bytes stay silent too")
 
         let external = Data("genuinely external".utf8)
@@ -308,7 +306,8 @@ struct FileWatcherTests {
         watcher.suppressOwnWrite(for: 5)
         try Data("second\n".utf8).write(to: sibling)
         watcher.deliverDirectoryEventForTesting(paths: [sibling.path])
-        try await settle()
+        #expect(await !events.waitForEvent(after: 0, timeout: .milliseconds(350)),
+                "suppressed directory events must not reach the coalesced delivery callback")
         #expect(events.count == 0, "our own write into the folder stays silent")
 
         watcher.cancelOwnWriteSuppression()
@@ -318,17 +317,27 @@ struct FileWatcherTests {
     }
 
     private func expectEventCount(_ events: EventCollector, _ count: Int) async throws {
-        for _ in 0..<100 {
-            if events.count >= count { return }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        Issue.record("Timed out waiting for (count) file-watcher event(s); got (events.count)")
+        try #require(await events.waitForEvent(after: count - 1),
+                     "Expected \(count) file-watcher event(s), got \(events.count)")
     }
 }
 
 private final class EventCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [FileWatcher.Event] = []
+    private var eventArrived: TestSignal?
+
+    func waitForEvent(after count: Int, timeout: Duration = .seconds(5)) async -> Bool {
+        let signal = TestSignal()
+        let alreadyArrived = lock.withLock {
+            if values.count > count { return true }
+            eventArrived = signal
+            return false
+        }
+        if alreadyArrived { return true }
+        defer { lock.withLock { eventArrived = nil } }
+        return await signal.wait(timeout: timeout)
+    }
 
     var count: Int {
         lock.lock(); defer { lock.unlock() }
@@ -338,6 +347,7 @@ private final class EventCollector: @unchecked Sendable {
     func append(_ event: FileWatcher.Event) {
         lock.lock(); defer { lock.unlock() }
         values.append(event)
+        eventArrived?.signal()
     }
 
     func isChanged(at index: Int) -> Bool {
@@ -377,14 +387,14 @@ private final class Fixture {
 
     init(contents: String) throws {
         directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("downright-filewatcher-(UUID().uuidString)")
+            .appendingPathComponent("downright-filewatcher-\(UUID().uuidString)")
         url = directory.appendingPathComponent("document.md")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data(contents.utf8).write(to: url)
     }
 
     func atomicReplace(_ data: Data) throws {
-        let temporary = directory.appendingPathComponent(".tmp-(UUID().uuidString)")
+        let temporary = directory.appendingPathComponent(".tmp-\(UUID().uuidString)")
         try data.write(to: temporary)
         _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
     }

@@ -197,14 +197,21 @@ struct DocumentTrustTests {
             group.leave()
         }
         #expect(persistence.firstSaveStarted.wait(timeout: .now() + 1) == .success)
+        let secondCallerStarted = DispatchSemaphore(value: 0)
         group.enter()
         DispatchQueue.global().async {
+            secondCallerStarted.signal()
             _ = store.grant(scope: .file, path: second, effects: [.launchPathOrEditor])
             group.leave()
         }
+        #expect(secondCallerStarted.wait(timeout: .now() + 2) == .success)
+        #expect(persistence.secondSaveStarted.wait(timeout: .now() + 0.2) == .timedOut,
+                "a second snapshot reached persistence before the first was committed")
+        persistence.finishFirstSave.signal()
         #expect(group.wait(timeout: .now() + 2) == .success)
 
         #expect(Set(persistence.persisted()) == Set(store.grants()))
+        #expect(store.grants().count == 2)
     }
 
     @Test
@@ -277,11 +284,13 @@ private final class FailingLoadTrustPersistence: TrustStorePersistence {
     func save(_ grants: [TrustGrant]) throws { Issue.record("save must not follow a failed load") }
 }
 
-/// Delays the first save long enough for a second caller to expose reversed
-/// persistence. Without TrustStore's ordered mutation/save boundary, the
-/// older snapshot lands last and silently drops the second grant.
+/// Holds the first save while a second caller attempts to persist. Without
+/// TrustStore's ordered mutation/save boundary, the older snapshot lands last
+/// and silently drops the second grant.
 private final class DelayedFirstSaveTrustPersistence: TrustStorePersistence, @unchecked Sendable {
     let firstSaveStarted = DispatchSemaphore(value: 0)
+    let secondSaveStarted = DispatchSemaphore(value: 0)
+    let finishFirstSave = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private var saveCount = 0
     private var stored: [TrustGrant] = []
@@ -295,7 +304,11 @@ private final class DelayedFirstSaveTrustPersistence: TrustStorePersistence, @un
         }
         if call == 1 {
             firstSaveStarted.signal()
-            Thread.sleep(forTimeInterval: 0.2)
+            guard finishFirstSave.wait(timeout: .now() + 5) == .success else {
+                throw TrustPersistenceFailure.unavailable
+            }
+        } else {
+            secondSaveStarted.signal()
         }
         lock.withLock { stored = grants }
     }

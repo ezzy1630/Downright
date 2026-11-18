@@ -633,10 +633,7 @@ struct UpdatePanelFooterTests {
 @Suite(.serialized)
 @MainActor
 struct UpdatePanelTransitionTests {
-    /// Every Sparkle callback can rebuild the panel. Keep this smoke test on
-    /// the real AppKit view tree so a future state-specific layout regression
-    /// fails in CI before a release can ship it.
-    @Test func rendersEveryUpdaterPhaseWithoutThrowing() {
+    @Test func rendersTheActionsForEachUpdaterPhase() {
         _ = NSApplication.shared
         let engine = FakeUpdateEngine()
         let coordinator = UpdateCoordinator(engine: engine)
@@ -644,42 +641,49 @@ struct UpdatePanelTransitionTests {
         try? engine.start()
 
         let panel = UpdatePanelView(coordinator: coordinator)
-        let render = { panel.refresh() }
+        func buttons(in view: NSView) -> [String] {
+            if let button = view as? NSButton { return [button.accessibilityLabel() ?? button.title] }
+            return view.subviews.flatMap(buttons(in:))
+        }
+        func expectActions(_ expected: Set<String>, sourceLocation: SourceLocation = #_sourceLocation) {
+            panel.refresh()
+            #expect(Set(buttons(in: panel)) == expected, sourceLocation: sourceLocation)
+        }
 
         coordinator.driverDidBeginUserCheck(cancellation: {})
-        render()
+        expectActions(["Cancel"])
 
         coordinator.driverDidFindUpdate(sampleMetadata, stage: .notDownloaded) { _ in }
-        render()
+        expectActions(["Skip This Version", "Later", "Update"])
 
         coordinator.driverDidBeginDownload(cancellation: {})
         coordinator.driverDidReceiveExpectedLength(1_000)
         coordinator.driverDidReceiveData(250)
-        render()
+        expectActions(["Cancel Download"])
 
         coordinator.driverDidBeginExtraction()
         coordinator.driverDidReceiveExtractionProgress(0.5)
-        render()
+        expectActions([])
 
         coordinator.driverDidBecomeReadyToRelaunch { _ in }
-        render()
+        expectActions(["Later", "Update & Relaunch"])
 
         coordinator.driverDidBeginInstallation(applicationTerminated: false) { }
-        render()
+        expectActions(["Later", "Retry Quit"])
 
         coordinator.driverDidBeginInstallation(applicationTerminated: true) { }
-        render()
+        expectActions([])
 
         coordinator.driverDidBeginUserCheck(cancellation: {})
         coordinator.driverDidFindNoUpdate(userInitiated: true) { }
-        render()
+        expectActions(["OK"])
 
         coordinator.driverDidBeginUserCheck(cancellation: {})
         coordinator.driverDidEncounterError(NSError(domain: "sparkle", code: 2001)) { }
-        render()
+        expectActions(["Later", "Retry", "Show technical details", "Copy diagnostics"])
 
         coordinator.driverDidFindUpdate(informationalMetadata, stage: .notDownloaded) { _ in }
-        render()
+        expectActions(["Skip This Version", "Later", "Learn More"])
     }
 }
 
