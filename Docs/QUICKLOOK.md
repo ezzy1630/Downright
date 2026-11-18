@@ -61,11 +61,11 @@ the default application, or contact a service.
 ## What the preview does
 
 - Read-mode rendering with the app's full typography.
-- The leading-edge density gutter, when the panel is wide enough (≥ 520pt).
-  Hover shows the current section and reading metrics; click or drag scrubs the
-  document; dwelling opens the outline. In compact Finder panels the hover card
-  becomes a small translucent overlay rather than disappearing or covering the
-  whole page.
+- The preview starts at 720 × 800 points. The leading-edge document map is
+  available at widths of 520 points and up. Hover shows the targeted section
+  and its reading metrics. Click to jump or drag to scrub. When the margin is
+  tight, a compact translucent card opens over the page beside the map and lets
+  pointer events pass through. The map's entire hit area stays clear.
 - Arrow keys scroll; `n`/`p` jump between headings.
 - Text is selectable and copyable. Most Quick Look previews are dead surfaces;
   this one isn't.
@@ -73,7 +73,7 @@ the default application, or contact a service.
   for local PlantUML rendering; the extension never starts diagram workers.
 - Appearance follows macOS by default. Choose **Settings → Appearance → Quick
   Look appearance** to pin previews to Light or Dark; the setting is shared with
-  the sandboxed extension.
+  the sandboxed extension. The page and document map update together.
 
 ## Memory discipline
 
@@ -82,9 +82,11 @@ outright** if it exceeds it. The preview therefore:
 
 - Polls `malloc_zone_statistics` and falls back to plain text above **60MB** —
   well under the kill threshold.
-- Renders only the first 60 blocks of files over **2MB**, with an
-  "Open in Downright" affordance.
+- Renders up to the first 60 blocks of files over **2MB**, with a separate byte
+  cap for large blocks and an "Open in Downright" button.
 - Renders math, mermaid, and images lazily, only for fragments in the viewport.
+  Relative image paths resolve beside the Markdown file, subject to sandbox
+  access. Remote images stay blocked and animated images stay still.
 
 A `WKWebView` carrying KaTeX and Mermaid.js would not reliably fit in that
 budget. Native rendering is the only way the Quick Look experience matches the
@@ -93,8 +95,9 @@ app's.
 ## Thumbnails
 
 `DownrightThumb` gives `.md` files real Finder icons showing the document's
-**first heading**, its opening line, and — when the document is a plan — a
-progress bar for its task completion.
+**first heading**, its opening prose, and a progress bar for task lists. The
+subtitle skips image-only badges and displays readable text from the opening
+paragraph.
 
 On a folder full of agent output this is transformative: twelve files called
 `plan.md`, `output.md`, and `summary.md` become twelve distinguishable
