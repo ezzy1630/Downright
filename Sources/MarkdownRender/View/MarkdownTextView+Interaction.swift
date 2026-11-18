@@ -865,8 +865,9 @@ extension MarkdownTextView {
     private func adjustScopedSourceFocus(forEdit edit: NSRange, insertedLength: Int) {
         guard case .scoped(let focus) = sourceFocus else { return }
         let delta = insertedLength - edit.length
+        let storageLength = textStorage?.length ?? 0
         let start: Int
-        if edit.upperBound <= focus.location {
+        if edit.location < focus.location, edit.upperBound <= focus.location {
             start = focus.location + delta
         } else if edit.location < focus.location {
             start = edit.location
@@ -875,7 +876,9 @@ extension MarkdownTextView {
         }
 
         let end: Int
-        if edit.location >= focus.upperBound {
+        let insertsAtFocusedEOF = edit.length == 0 && edit.location == focus.upperBound
+            && edit.location == storageLength - delta
+        if edit.location >= focus.upperBound, !insertsAtFocusedEOF {
             end = focus.upperBound
         } else if edit.upperBound <= focus.upperBound {
             end = focus.upperBound + delta
@@ -883,7 +886,6 @@ extension MarkdownTextView {
             end = edit.location + insertedLength
         }
 
-        let storageLength = textStorage?.length ?? max(start, end)
         let lower = max(0, min(start, storageLength))
         let upper = max(lower, min(end, storageLength))
         let first = paragraphIndex.paragraphRange(containing: lower)
@@ -1199,79 +1201,93 @@ extension MarkdownTextView {
     /// private alternate flavour, so a round-trip within Downright keeps the
     /// source while every other app receives exactly what the user selected.
     public override func copy(_ sender: Any?) {
-        let range = sourceSelectedRange
-        guard range.length > 0, let storage = textStorage else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        let visible = exportableAttributedString(range: range)
-        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
-        let markdown = storage.attributedSubstring(from: markdownRange).string
-        pasteboard.declareTypes([.string, .rtf, .html, .downrightMarkdown], owner: nil)
-        pasteboard.setString(visible.string, forType: .string)
-        pasteboard.setString(markdown, forType: .downrightMarkdown)
-        pasteboard.setString(ClipboardSemanticHTML.render(markdown: markdown), forType: .html)
-        if let data = visible.rtf(
-            from: NSRange(location: 0, length: visible.length),
-            documentAttributes: [:]
-        ) {
-            pasteboard.setData(data, forType: .rtf)
-        }
+        _ = writeSelection(to: .general, types: [])
     }
 
     public override func cut(_ sender: Any?) {
+        cutSelection(to: .general)
+    }
+
+    func cutSelection(to pasteboard: NSPasteboard) {
         let range = sourceSelectedRange
-        guard range.length > 0 else { return }
-        copy(sender)
-        performSourceEdit(range: range, replacement: "")
+        guard isEditable, range.length > 0 else { return }
+        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
+        guard writeSelection(range, markdownRange: markdownRange, to: pasteboard) else { return }
+        performSourceEdit(range: markdownRange, replacement: "")
     }
 
     public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         let range = sourceSelectedRange
+        guard range.length > 0 else { return false }
+        return writeSelection(range, markdownRange: losslessMarkdownRange(forVisibleSourceRange: range), to: pboard)
+    }
+
+    private func writeSelection(_ range: NSRange, markdownRange: NSRange, to pboard: NSPasteboard) -> Bool {
         guard range.length > 0, let storage = textStorage else { return false }
+        let markdown = storage.attributedSubstring(from: markdownRange).string
         pboard.declareTypes([.string, .rtf, .html, .downrightMarkdown], owner: nil)
         let rich = exportableAttributedString(range: range)
         pboard.setString(rich.string, forType: .string)
-        let markdownRange = losslessMarkdownRange(forVisibleSourceRange: range)
-        pboard.setString(
-            storage.attributedSubstring(from: markdownRange).string,
-            forType: .downrightMarkdown
-        )
-        pboard.setString(
-            ClipboardSemanticHTML.render(
-                markdown: storage.attributedSubstring(from: markdownRange).string
-            ),
-            forType: .html
-        )
+        pboard.setString(markdown, forType: .downrightMarkdown)
+        pboard.setString(ClipboardSemanticHTML.render(markdown: markdown), forType: .html)
         if let data = rich.rtf(from: NSRange(location: 0, length: rich.length), documentAttributes: [:]) {
             pboard.setData(data, forType: .rtf)
         }
         return true
     }
 
-    /// Hidden substitutions at both edges belong to a fully selected visible
-    /// span. Include them in Downright's private flavour without changing the
-    /// standard visible-text selection exported to other apps.
+    /// Only a complete selected construct owns its hidden edge markers. An
+    /// adjacent delimiter might open the next word or close the preceding one.
     private func losslessMarkdownRange(forVisibleSourceRange range: NSRange) -> NSRange {
+        let map = currentDisplayMap
+        guard map.substitutionEnding(at: range.location)?.isHidden == true
+                || map.substitutionStarting(at: range.upperBound)?.isHidden == true,
+              let storage = textStorage,
+              storage.string.utf16.elementsEqual(parsedDocument.text.utf16)
+        else { return range }
+
         var result = range
-        var changed = true
-        while changed {
-            changed = false
-            if let leading = currentDisplayMap.substitutions.last(where: {
-                $0.isHidden && $0.sourceRange.upperBound == result.location
-            }) {
-                result = NSRange(
-                    location: leading.sourceRange.location,
-                    length: result.upperBound - leading.sourceRange.location
-                )
-                changed = true
+
+        func includeMarkers(content: NSRange, leading: NSRange?, trailing: NSRange?) {
+            guard content.length > 0, content.location >= result.location,
+                  content.upperBound <= result.upperBound else { return }
+            if let leading, leading.upperBound == result.location,
+               let substitution = map.substitutionEnding(at: result.location),
+               substitution.isHidden, substitution.sourceRange == leading {
+                result = result.union(leading)
             }
-            if let trailing = currentDisplayMap.substitutions.first(where: {
-                $0.isHidden && $0.sourceRange.location == result.upperBound
-            }) {
-                result.length = trailing.sourceRange.upperBound - result.location
-                changed = true
+            if let trailing, trailing.location == result.upperBound,
+               let substitution = map.substitutionStarting(at: result.upperBound),
+               substitution.isHidden, substitution.sourceRange == trailing {
+                result = result.union(trailing)
             }
         }
+
+        func reachesEdge(_ candidate: NSRange) -> Bool {
+            candidate.touches(offset: range.location) || candidate.touches(offset: range.upperBound)
+        }
+
+        func includeInline(_ span: InlineSpan) {
+            guard reachesEdge(span.range) else { return }
+            span.children.forEach(includeInline)
+            includeMarkers(content: span.contentRange, leading: span.leadingMarkerRange, trailing: span.trailingMarkerRange)
+        }
+
+        func includeBlock(_ block: MDBlock) {
+            guard reachesEdge(block.range) else { return }
+            block.children.forEach(includeBlock)
+            block.inlines.forEach(includeInline)
+            if case .table(let table) = block.content {
+                for row in table.rows where reachesEdge(row.range) {
+                    for cell in row.cells where reachesEdge(cell.range) {
+                        cell.inlines.forEach(includeInline)
+                    }
+                }
+            }
+            includeMarkers(content: block.contentRange, leading: block.markerRange, trailing: block.trailingMarkerRange)
+        }
+
+        includeBlock(parsedDocument.root)
         return result
     }
 

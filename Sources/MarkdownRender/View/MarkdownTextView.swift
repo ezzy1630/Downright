@@ -556,10 +556,9 @@ public final class MarkdownTextView: NSTextView {
     private var elision: ElisionPlan = .none
     private var expandedElisionRanges: [NSRange] = []
 
-    // Hidden runs make source→TextKit→source lossy. After a source edit,
-    // retain its exact caret while the native projection is unchanged. Normal
-    // navigation still resolves to visible text; a native gesture retires this
-    // edit intent in setSelectedRanges.
+    // Hidden runs make source→TextKit→source lossy. Retain exact source
+    // selections and edit carets while their native projection is unchanged.
+    // A native gesture retires them in setSelectedRanges.
     private var explicitSourceSelection: (source: [NSRange], textKit: [NSValue])?
     private var isApplyingSelection = false
     private var isPerformingSourceEdit = false
@@ -2791,7 +2790,13 @@ public final class MarkdownTextView: NSTextView {
             return NSRange(location: location, length: min(max(0, range.length), storage.length - location))
         }
         let converted = bounded.map { NSValue(range: displayMap.textKitRange(forSource: $0)) }
-        explicitSourceSelection = preservingEditCaret ? (source: bounded, textKit: converted) : nil
+        // A non-empty range can start or end in hidden syntax, or project
+        // entirely to one insertion point. Keep the source endpoints until
+        // the user makes a new native selection, as we do for an edit caret.
+        let needsExactRange = zip(bounded, converted).contains { source, textKit in
+            source.length > 0 && displayMap.sourceRange(forTextKit: textKit.rangeValue) != source
+        }
+        explicitSourceSelection = preservingEditCaret || needsExactRange ? (source: bounded, textKit: converted) : nil
         guard converted != selectedRanges else { return }
         isApplyingSelection = true
         super.setSelectedRanges(converted, affinity: .downstream, stillSelecting: false)
