@@ -36,6 +36,9 @@ every release; Sparkle orders updates by it.
 - Finder thumbnails show a document's opening text instead of a badge.
 - Copying or cutting formatted text no longer picks up stray Markdown
   markers, and pasting it back no longer doubles them.
+- Double-clicking a bold or italic word selects the word instead of a
+  formatting marker. In Document mode, Option-double-click selects a word
+  inside a link.
 - Tables stay visible after you undo an edit above them.
 - Copy Code appears when you hover either end of a code block, including
   after you scroll past its top.
