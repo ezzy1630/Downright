@@ -618,6 +618,16 @@ struct AppLayerTests {
     }
 
     @Test
+    func monospacePopupAlwaysOffersTheDefaultCodeFace() {
+        // SF Mono is the default code face but is often not an installed
+        // named family; the default popup must select it, not "(not available)".
+        let families = MonoFontChoices.families(installed: ["Menlo", "PT Mono", ".Hidden"])
+        #expect(families == ["SF Mono", "Menlo", "PT Mono"])
+        #expect(families.firstIndex(of: TypographyConfig.default.monoFamily) == 0)
+        #expect(MonoFontChoices.families(installed: ["SF Mono", "Menlo"]) == ["SF Mono", "Menlo"], "no duplicate row")
+    }
+
+    @Test
     func legacyPreferencesRestoreSystemAppearanceFollowing() throws {
         let legacy = Data(#"{"followsSystemAppearance":false}"#.utf8)
         let decoded = try JSONDecoder().decode(Preferences.Values.self, from: legacy)

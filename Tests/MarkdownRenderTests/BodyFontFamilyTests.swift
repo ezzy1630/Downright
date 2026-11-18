@@ -29,6 +29,15 @@ struct BodyFontFamilyTests {
         font.fontDescriptor.symbolicTraits
     }
 
+    @Test func defaultCodeFaceIsSFMonoEvenWhenItIsNotANamedFamily() {
+        // DESIGN.md: code is SF Mono.  Where SF Mono is not installed by name,
+        // macOS still provides it as the system monospaced face; the chain must
+        // reach that before any other installed monospace font.
+        let name = sheet(family: nil).monoFont().fontName
+        let system = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular).fontName
+        #expect(name == "SFMono-Regular" || name == system, "resolved \(name)")
+    }
+
     // MARK: Persistence
 
     @Test func typographyWrittenBeforeTheFieldDecodesToThePreset() throws {

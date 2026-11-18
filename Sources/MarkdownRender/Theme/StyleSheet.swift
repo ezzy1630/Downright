@@ -317,10 +317,12 @@ public struct StyleSheet {
     }
 
     private static func monoFont(family: String, size: CGFloat, ligatures: Bool) -> NSFont {
-        // SF Mono is not installed on every machine and is not exposed under a
-        // single stable name, so the chain degrades: configured face, SF Mono
-        // under both of its names, Menlo, then the system monospace face.
-        let candidates = [family, "SF Mono", "SFMono-Regular", "Menlo"]
+        // SF Mono is often not installed as a named family; macOS exposes it
+        // only as the system monospaced face.  The chain is: configured face,
+        // SF Mono under both of its names, then the system monospaced face
+        // (which is SF Mono).  Menlo is never reached by name, so the default
+        // renders in SF Mono everywhere, as DESIGN.md specifies.
+        let candidates = [family, "SF Mono", "SFMono-Regular"]
         var resolved: NSFont?
         for name in candidates where !name.isEmpty {
             if let font = NSFont(name: name, size: size) { resolved = font; break }

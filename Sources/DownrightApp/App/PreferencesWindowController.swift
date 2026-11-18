@@ -270,6 +270,18 @@ enum BodyFontChoices {
     }
 }
 
+/// The monospace popup: SF Mono first, then installed families.  SF Mono is
+/// the default code face but is often not installed as a named family — the
+/// renderer reaches it as the system monospaced font — so it is always listed
+/// rather than shown as "not available".
+enum MonoFontChoices {
+    static let systemMonospace = "SF Mono"
+
+    static func families(installed: [String] = NSFontManager.shared.availableFontFamilies) -> [String] {
+        [systemMonospace] + BodyFontChoices.families(installed: installed).filter { $0 != systemMonospace }
+    }
+}
+
 /// Pure filtering, so the search behaviour is testable without a window.
 enum PreferenceRowFilter {
     /// Keeps rows matching every word of the query, then drops section headers
@@ -954,14 +966,14 @@ enum PreferencesForms {
 
             .section("Code"),
             .choice("Monospace family", help: nil,
-                    options: NSFontManager.shared.availableFontFamilies.sorted(),
+                    options: MonoFontChoices.families(),
                     get: {
-                        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+                        let fonts = MonoFontChoices.families()
                         let current = Preferences.shared.values.typography.monoFamily
                         return fonts.firstIndex(of: current).map { .index($0) } ?? .missing(current)
                     },
                     set: { index in
-                        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+                        let fonts = MonoFontChoices.families()
                         guard fonts.indices.contains(index) else { return }
                         Preferences.shared.update { $0.typography.monoFamily = fonts[index] }
                     }),
