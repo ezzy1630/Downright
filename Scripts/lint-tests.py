@@ -14,6 +14,7 @@ MESSAGES = {
     "assertion-retry": "Wait on the condition, then assert once. Keep independent cases as separate iterations.",
     "known-issue": "Give withKnownIssue a literal reason and a link to the tracked issue.",
     "test-double": "Exercise the real implementation. Observe calls with a recorder or use the real boundary.",
+    "missing-interpolation": "Write \\(…) so the value is interpolated; as written every run shares one literal path.",
 }
 
 # Mask comments and literals without changing offsets. Keep literal spans so
@@ -29,6 +30,9 @@ NESTED_COMMENT = re.compile(r"/\*|\*/")
 ISSUE_URL = re.compile(r"https?://[^\s\"<>/]+/[^\s\"<>]+")
 DOUBLE_NAME = r"(?:(?:Fake|Mock|Stub)[A-Z]\w*|\w+(?:Fake|Mock|Stub)|Fake|Mock|Stub)"
 SWIFT_DOUBLE = re.compile(rf"\b(?:class|struct|actor)\s+{DOUBLE_NAME}\s*:\s*[^{{]*?{{")
+# `"fixture-(UUID().uuidString)"` lost its backslash: every run then shares one
+# literal path and concurrent runs delete each other's fixtures.
+UNINTERPOLATED = re.compile(r"(?<![\\#])\((?:UUID|NSUUID|Date|ProcessInfo)\b")
 ASSERTION = re.compile(r"\b(?:XCTAssert\w*|XCTFail)\s*\(|#(?:expect|require)\s*\(|\bIssue\.record\s*\(")
 
 
@@ -83,6 +87,10 @@ def swift_violations(source):
         for match in pattern.finditer(code):
             if not re.search(r"\bfunc\s+$", code[max(0, match.start() - 32):match.start()]):
                 yield source.count("\n", 0, match.start()) + 1, rule
+
+    for start, _, value in literals:
+        if UNINTERPOLATED.search(value):
+            yield source.count("\n", 0, start) + 1, "missing-interpolation"
 
     for match in re.finditer(r"\bwithKnownIssue\s*\(", code):
         reason = next((value for start, _, value in literals

@@ -38,6 +38,16 @@ class TestHonestyLintTests(unittest.TestCase):
         ''')
         self.assertEqual(findings, [(line, "fixed-wait") for line in range(9, 15)])
 
+    def test_uninterpolated_values_in_fixture_paths(self):
+        findings = self.violations("swift", '''
+            let shared = temp.appendingPathComponent("fixture-(UUID().uuidString)")
+            let unique = temp.appendingPathComponent("fixture-\\(UUID().uuidString)")
+            let raw = #"stamp-\\#(Date().timeIntervalSince1970)"#
+            let prose = "Call it (later) when ready"
+            // "fixture-(UUID().uuidString)" in a comment is not code
+        ''')
+        self.assertEqual(findings, [(1, "missing-interpolation")])
+
     def test_known_issue_needs_reason_and_tracking_link(self):
         findings = self.violations("swift", '''
             withKnownIssue("Dependency draws only on screen — https://example.org/issues/47") {}
