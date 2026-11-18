@@ -66,10 +66,10 @@ struct NativeUIDriverTests {
             for _ in 0..<3 { try ui.press(.right) }
             ui.check(ui.selectedSourceRange == NSRange(location: 7, length: 0), "The caret did not land at the list item's end")
             try ui.press(.return)
-            let continued = "- alpha\n\n"
+            let continued = "- alpha\n- \n"
             ui.check(ui.source == continued && ui.isDirty, "Return produced \(ui.source.debugDescription)")
             try ui.type("b")
-            let edited = "- alpha\nb\n"
+            let edited = "- alpha\n- b\n"
             let document = ui.controller.markdownDocument
             try await ui.wait(until: {
                 document.lastCompletedParseRevision == document.revision &&
@@ -250,7 +250,7 @@ struct NativeUIDriverTests {
         }
     }
 
-    @Test(.disabled("Lane L4 a8a9afe: cutting the visible word leaves delimiters behind and paste duplicates them."))
+    @Test
     func cuttingAWholeFormattedWordRoundTripsItsDelimiters() async throws {
         let source = "# Title\n\nBefore **café** after.\n"
         try await UIDriver.withDocument(source) { ui in
