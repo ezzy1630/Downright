@@ -148,8 +148,17 @@ public final class ThemeStore {
             }
     }
 
+    /// Honors `DOWNRIGHT_SUPPORT_DIRECTORY` exactly like the app's `AppPaths`,
+    /// so isolated launches and the test gate never read or write the user's
+    /// real themes (a running Downright hot-reloads that folder).
     public static var userThemesDirectory: URL? {
-        FileManager.default
+        if let override = ProcessInfo.processInfo.environment["DOWNRIGHT_SUPPORT_DIRECTORY"],
+           !override.isEmpty
+        {
+            return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+                .appendingPathComponent("Themes", isDirectory: true)
+        }
+        return FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Downright/Themes", isDirectory: true)
     }

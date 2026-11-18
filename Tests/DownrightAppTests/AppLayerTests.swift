@@ -618,6 +618,20 @@ struct AppLayerTests {
     }
 
     @Test
+    func themeStoreUsesTheSameIsolatedThemesFolderAsTheApp() throws {
+        // The test gate and isolated launches set DOWNRIGHT_SUPPORT_DIRECTORY;
+        // theme import/hot reload must stay inside it, never touching the
+        // user's real Application Support folder.
+        let override = try #require(
+            ProcessInfo.processInfo.environment["DOWNRIGHT_SUPPORT_DIRECTORY"],
+            "run through Scripts/check.sh, which isolates Application Support"
+        )
+        let themes = try #require(ThemeStore.userThemesDirectory)
+        #expect(themes.standardizedFileURL == AppPaths.themesDirectory.standardizedFileURL)
+        #expect(themes.path.hasPrefix(URL(fileURLWithPath: override).standardizedFileURL.path))
+    }
+
+    @Test
     func monospacePopupAlwaysOffersTheDefaultCodeFace() {
         // SF Mono is the default code face but is often not an installed
         // named family; the default popup must select it, not "(not available)".
