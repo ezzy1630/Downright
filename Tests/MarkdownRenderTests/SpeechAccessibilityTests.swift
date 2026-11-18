@@ -108,11 +108,29 @@ struct SpeechAccessibilityTests {
         #expect(action.accessibilityPerformPress())
         #expect(delegate.activations == 1)
     }
+
+    @Test("front matter in a read-only host is not offered as an edit action")
+    func readOnlyFrontMatterIsNotAnEditAction() throws {
+        let source = "---\ntitle: Draft\n---\n\n# Body\n"
+        let view = MarkdownTextView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            storage: NSTextStorage(string: source)
+        )
+        view.update(document: MarkdownParser.parse(source), dirty: .wholesale)
+
+        let elements = (view.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityElement }
+        #expect(!elements.contains { $0.accessibilityLabel() == "Edit document metadata" })
+        let metadata = try #require(elements.first { $0.accessibilityLabel() == "Document metadata" })
+        #expect(metadata.accessibilityRole() == .group)
+        #expect(!metadata.accessibilityPerformPress())
+    }
 }
 
 @MainActor
 private final class FrontMatterActivationProbe: MarkdownTextViewDelegate {
     var activations = 0
+
+    func markdownTextViewCanEditFrontMatter(_ view: MarkdownTextView) -> Bool { true }
 
     func markdownTextView(_ view: MarkdownTextView, didActivateFrontMatterAt range: NSRange) {
         activations += 1

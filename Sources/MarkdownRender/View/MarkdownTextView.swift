@@ -1101,11 +1101,12 @@ public final class MarkdownTextView: NSTextView {
             case .mermaid: ("Mermaid diagram", .group, "Rendered mermaid diagram")
             case .codeBlock(let language, _, _) where PlantUMLFence.accepts(language) && plantUMLRenderer != nil:
                 ("PlantUML diagram", .group, "Locally rendered PlantUML diagram")
-            case .frontMatter: (
+            case .frontMatter where canEditFrontMatter: (
                 "Edit document metadata",
                 .button,
                 "Edit title, author, tags, status, and other front matter"
             )
+            case .frontMatter: ("Document metadata", .group, "Rendered front matter")
             default: nil
             }
             guard let descriptor else { return }
