@@ -101,9 +101,12 @@ struct PlantUMLWorkerTests {
             ("component Client\ncomponent Server\nClient --> Server", ["Client", "Server"]),
         ]
         #expect(FileManager.default.isExecutableFile(atPath: executable.path))
+        // This checks the engine's output, not the 5 s display budget (a
+        // timeout there is retried).  A cold JVM in a loaded parallel run can
+        // exceed that budget, so give the worker room here.
         for (body, labels) in examples {
             let source = "@startuml\n\(body)\n@enduml"
-            let data = try #require(LocalPlantUMLRenderer.renderSVG(source: source, dark: false, executable: executable))
+            let data = try #require(LocalPlantUMLRenderer.renderSVG(source: source, dark: false, executable: executable, timeout: 60))
             let svg = try #require(String(data: data, encoding: .utf8))
             #expect(svg.hasPrefix("<svg"))
             #expect(!svg.contains("An error has occurred"))
