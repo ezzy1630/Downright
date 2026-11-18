@@ -69,7 +69,7 @@ import Testing
     let origin = view.textContainerOrigin
     let renderedCenter = NSPoint(x: origin.x + frame.minX + rendered.contentWidth / 2,
                                  y: origin.y + frame.midY)
-    #expect(view.renderedMathSourceOffset(at: renderedCenter) == content.location)
+    #expect(view.renderedMathSelection(at: renderedCenter, clickCount: 1) == NSRange(location: content.location, length: 0))
 
     select(NSRange(location: content.location, length: 0))
     for offset in lineOffsets {

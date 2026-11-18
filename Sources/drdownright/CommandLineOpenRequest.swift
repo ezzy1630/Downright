@@ -14,6 +14,14 @@ public struct CommandLineOpenRequest {
     private static let handoffLifetime: TimeInterval = 120
     private static let maximumPayloadBytes = 256 * 1024
 
+    enum HandoffError: LocalizedError {
+        case payloadTooLarge
+
+        var errorDescription: String? {
+            "The open request exceeds \(CommandLineOpenRequest.maximumPayloadBytes / 1024) KiB after encoding. Open fewer files at a time."
+        }
+    }
+
     public let urls: [URL]
     public let line: Int?
     public let edit: Bool
@@ -40,13 +48,14 @@ public struct CommandLineOpenRequest {
     /// Writes the request to a new owner-only file and returns the URL to
     /// deliver.  Call `discardHandoff(_:)` if delivery fails.
     public func handoffURL(directory: URL = handoffDirectory) throws -> URL {
+        let payload = Array(payloadURL.absoluteString.utf8)
+        guard payload.count <= Self.maximumPayloadBytes else { throw HandoffError.payloadTooLarge }
         let id = UUID().uuidString
         let file = Self.handoffFile(id: id, in: directory)
         // O_EXCL + O_NOFOLLOW: never reuse or follow something already there.
         let descriptor = Darwin.open(file.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { close(descriptor) }
-        let payload = Array(payloadURL.absoluteString.utf8)
         var written = 0
         while written < payload.count {
             let result = payload[written...].withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }

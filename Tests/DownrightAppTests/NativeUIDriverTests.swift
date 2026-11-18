@@ -349,6 +349,27 @@ struct NativeUIDriverTests {
         }
     }
 
+    @Test(arguments: [2, 3])
+    func multiClickCenteredDisplayMathSelectsRevealedLatex(clickCount: Int) async throws {
+        let source = "# Title\n$$f(x)$$\n\nAfter\n"
+        try await UIDriver.withDocument(source) { ui in
+            let formula = try ui.range(of: "$$f(x)$$")
+            let latex = try ui.range(of: "f(x)")
+            let fragment = try #require(try layoutFragment(at: formula.location, in: ui.textView) as? MathFragment)
+            let frame = fragment.layoutFragmentFrame
+            let origin = ui.textView.textContainerOrigin
+            let center = NSPoint(x: origin.x + frame.minX + fragment.contentWidth / 2, y: origin.y + frame.midY)
+
+            try ui.input.click(at: ui.textView.convert(center, to: nil), count: clickCount)
+
+            ui.check(ui.selectedSourceRange == latex,
+                     "\(clickCount) clicks selected \(ui.selectedSourceRange) instead of \(latex)")
+            let revealed = try layoutFragment(at: latex.location, in: ui.textView)
+            ui.check(!(revealed is MathFragment), "Selecting the formula should keep its LaTeX visible")
+            ui.check(ui.source == source && !ui.isDirty, "Selecting the formula changed its source")
+        }
+    }
+
     private func layoutFragment(at sourceOffset: Int, in textView: MarkdownTextView) throws -> NSTextLayoutFragment {
         let layout = try #require(textView.textLayoutManager)
         let storage = try #require(layout.textContentManager)
