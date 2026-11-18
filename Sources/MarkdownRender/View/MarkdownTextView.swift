@@ -877,6 +877,7 @@ public final class MarkdownTextView: NSTextView {
         fragmentContext.paragraphIndex = paragraphIndex
         fragmentContext.sourceFocusRange = sourceFocus.range
         fragmentContext.caret = source.fragmentContext.caret
+        fragmentContext.mathSourcePayload = source.fragmentContext.mathSourcePayload
         fragmentContext.elision = source.fragmentContext.elision
         fragmentContext.cueElision = source.fragmentContext.cueElision
         fragmentContext.collapseOverrides = codeCollapseOverrides
@@ -2126,7 +2127,28 @@ public final class MarkdownTextView: NSTextView {
         caretPresentation: CaretPresentation? = nil
     ) {
         let previousMap = displayMap
+        // A multi-click replays the first click's presentation (see
+        // `rememberMouseSelectionPresentation`); otherwise use the live caret.
         let caret = caretPresentation.map(\.caret) ?? (suppressesCaretReveal ? nil : primarySourceCaret)
+        let selection = caretPresentation.map(\.selections.first)
+            ?? (suppressesCaretReveal ? nil : sourceSelectedRanges.first)
+        let previousMathSource = fragmentContext.mathSourcePayload
+        fragmentContext.mathSourcePayload = mode == .live ? mathPayload(for: selection, kind: .blockMath) : nil
+        let currentMathSource = fragmentContext.mathSourcePayload
+        defer {
+            // Math fragments change even when the display map is identical.
+            // Invalidate the whole formula so multiline fences switch together.
+            if !fullRefresh, previousMathSource !== currentMathSource {
+                for payload in [previousMathSource, currentMathSource].compactMap({ $0 }) {
+                    guard let range = clampToStorage(payload.sourceRange) else { continue }
+                    contentStorage.performEditingTransaction {
+                        contentStorage.invalidateElements(in: range)
+                        textStorage?.edited(.editedAttributes, range: range, changeInLength: 0)
+                    }
+                    invalidateFragments(in: range, includingRendering: true)
+                }
+            }
+        }
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
         var requiresFullHiddenRefresh = false
@@ -2135,6 +2157,11 @@ public final class MarkdownTextView: NSTextView {
         /// to match, or the sweep erases markers it has no data to restore.
         var hiddenIsParagraphScoped = false
         var logicalDisplayMap = baseDisplayMap
+        let inlineMathSelection = effectivePolicy.revealsAtCaret && (selection?.length ?? 0) > 0
+            ? mathPayload(for: selection, kind: .inlineMath)?.sourceRange : nil
+        let current = (caret ?? inlineMathSelection?.location).map {
+            paragraphIndex.paragraphRange(containing: $0)
+        }
         // Both maps are derived from the cached bases by the *same* subsetting.
         // A reveal only ever drops entries, and `baseLayoutMap` already holds
         // every surviving entry in layout form, so nothing here has to rebuild
@@ -2164,20 +2191,19 @@ public final class MarkdownTextView: NSTextView {
                 caret: caret, selections: selections)
             let revealedMath = caret.map {
                 InlineMathDisplay.ranges(in: parsedDocument, touching: $0)
-            } ?? []
+            } ?? [inlineMathSelection].compactMap { $0 }
             let revealedDisplayObjects = revealed + revealedMath
-            let paragraph = caret.map { paragraphIndex.paragraphRange(containing: $0) }
             // The fast path holds when the reveal is confined to the caret's
             // own paragraph, which is every ordinary keystroke.  A span
             // straddling a soft line break, or a multi-paragraph selection,
             // falls back to a full rebuild — rare, and driven by a gesture
             // rather than by typing.
-            let singleCaret = paragraph.map { paragraph in
-                selections.count <= 1 && revealed.allSatisfy {
+            let isParagraphLocal = current.map { paragraph in
+                selections.count <= 1 && revealedDisplayObjects.allSatisfy {
                     $0.location >= paragraph.location && $0.upperBound <= paragraph.upperBound
                 }
             } ?? false
-            if let paragraph, singleCaret {
+            if let paragraph = current, isParagraphLocal {
                 if !revealedDisplayObjects.isEmpty {
                     logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
                                                                            excluding: revealedDisplayObjects)
@@ -2204,7 +2230,7 @@ public final class MarkdownTextView: NSTextView {
                     })
                     hiddenIsParagraphScoped = true
                 }
-            } else if !revealed.isEmpty {
+            } else if !revealedDisplayObjects.isEmpty {
                 hidden = subtract(revealed, from: hidden)
                 func unrevealed(in map: DisplayMap) -> [DisplaySubstitution] {
                     map.substitutions.filter { entry in
@@ -2225,7 +2251,6 @@ public final class MarkdownTextView: NSTextView {
         substitution.displayMap = logicalDisplayMap
         displayMap = layoutMap
 
-        let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
         let isFullRefresh = fullRefresh || (requiresFullHiddenRefresh && additionalScopes.isEmpty)
         // The caret's paragraph and the one it just left are two *discrete*
         // paragraphs.  Covering them with the single range that spans them —
@@ -2293,6 +2318,18 @@ public final class MarkdownTextView: NSTextView {
                 invalidateFragments(in: scope)
             }
         }
+    }
+
+    private func mathPayload(for selection: NSRange?, kind: FragmentKind) -> FragmentPayload? {
+        guard let storage = textStorage, let selection, selection.location < storage.length,
+              let payload = storage.attribute(.drFragment, at: selection.location,
+                                              effectiveRange: nil) as? FragmentPayload,
+              payload.kind == kind else { return nil }
+        let math = payload.sourceRange
+        if selection.length == 0 {
+            return selection.location > math.location && selection.location < math.upperBound ? payload : nil
+        }
+        return selection.location >= math.location && selection.upperBound <= math.upperBound ? payload : nil
     }
 
     /// `drHidden` mirrors the map so anything reading the storage (rich-text
@@ -2926,6 +2963,28 @@ public final class MarkdownTextView: NSTextView {
             from: documentLocation,
             to: range.location
         )
+    }
+
+    func renderedMathSourceOffset(at point: NSPoint) -> Int? {
+        guard mode == .live else { return nil }
+        let origin = textContainerOrigin
+        let localPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        // TextKit locates the fragment by the suppressed glyphs at the left.
+        // The formula draws across the measure, beyond that narrow frame.
+        let linePoint = NSPoint(x: 0, y: localPoint.y)
+        guard let fragment = markdownLayoutManager.textLayoutFragment(for: linePoint) as? MathFragment else {
+            return nil
+        }
+        var frame = fragment.layoutFragmentFrame
+        frame.size.width = fragment.contentWidth
+        guard frame.contains(localPoint) else { return nil }
+        let range = fragment.payload.sourceRange
+        guard let block = parsedDocument.root.block(at: range.location), block.range == range,
+              case .mathBlock(let latex) = block.content,
+              let storage = textStorage, latex.upperBound <= storage.length else { return nil }
+        let firstSymbol = (storage.string as NSString).rangeOfCharacter(
+            from: CharacterSet.whitespacesAndNewlines.inverted, range: latex)
+        return firstSymbol.location == NSNotFound ? latex.location : firstSymbol.location
     }
 
     /// The caret moved, so the reveal set may have.  Order matters: capture the

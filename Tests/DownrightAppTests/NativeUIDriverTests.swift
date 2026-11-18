@@ -326,7 +326,7 @@ struct NativeUIDriverTests {
         }
     }
 
-    @Test(.disabled("Downright #63: a click on centered display math resolves past its source after a heading."))
+    @Test
     func renderedMathImmediatelyAfterHeadingAllowsExactSourceSelection() async throws {
         let source = "# Title\n$$f(x)$$\n\nAfter\n"
         try await UIDriver.withDocument(source) { ui in

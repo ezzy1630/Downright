@@ -20,6 +20,10 @@ Math is typeset natively, with no WebView or network access. Inline math uses
 content and is ignored around plain amounts, so prices and shell variables stay
 prose.
 
+Click a display formula in the editable Document view to reveal its LaTeX.
+Drag or extend the selection with Shift and the arrow keys to select the raw
+text. Source view shows all Markdown and LaTeX at once.
+
 Most LaTeX written for KaTeX, MathJax, Typora, and Obsidian renders, including
 `align`, `equation`, `gathered`, `cases`, matrix and `array` blocks, `\dfrac`,
 `\operatorname`, `\boldsymbol`, `\not`, and typed Unicode symbols. Text inside

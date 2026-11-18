@@ -82,6 +82,12 @@ into the vendored SwiftMath typesetter; fragments, inline math, HTML/PDF export,
 and Quick Look all go through it, so one formula is typeset once per cached
 style.
 
+In Live mode, a plain click on a rendered display formula places the caret at
+its LaTeX source. A selection inside a formula keeps its raw text visible. The
+view invalidates all paragraphs of a display formula when it switches between
+typeset and source, even when the `DisplayMap` is unchanged. Inline math uses
+the paragraph-local map to keep the selected LaTeX visible.
+
 `SwiftMathDialect` converts the LaTeX people write for KaTeX, MathJax, Typora,
 and Obsidian into the subset SwiftMath parses. Examples include `\dfrac`,
 `\not=`, `\tag`, `\label`, `\big`, `align*`, `equation`, `gathered`, and
