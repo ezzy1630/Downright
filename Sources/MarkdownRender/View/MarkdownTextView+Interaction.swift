@@ -494,6 +494,8 @@ extension MarkdownTextView {
             return
         }
 
+        let mathCaret = event.clickCount == 1 && modifiers.isEmpty ? renderedMathSourceOffset(at: point) : nil
+
         // `super` owns the whole click/drag gesture.  Make the target first
         // responder explicitly; relying on the window's default mouse routing
         // leaves a split-pane click visually correct but sends the next key to
@@ -506,6 +508,13 @@ extension MarkdownTextView {
         super.mouseDown(with: event)
         isTrackingMouseSelection = false
         suppressesCaretReveal = false
+
+        // The formula is drawn in the center of the fragment. TextKit's
+        // invisible source glyphs sit at the left and a centered click can
+        // resolve outside the block. Use its LaTeX start for a plain click.
+        if let mathCaret, sourceSelectedRange.length == 0 {
+            setSourceSelectedRanges([NSRange(location: mathCaret, length: 0)])
+        }
 
         if case .scoped(let focus) = sourceFocus {
             let selection = sourceSelectedRange

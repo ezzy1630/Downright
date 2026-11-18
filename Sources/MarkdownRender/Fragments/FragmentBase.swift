@@ -86,6 +86,8 @@ public final class FragmentContext {
     public var checkboxPulses: [CheckboxPulse] = []
     /// Primary caret in source coordinates, or `nil` in Read mode.
     public var caret: Int?
+    /// Display math whose source is visible for the current Live selection.
+    var mathSourcePayload: FragmentPayload?
     /// Width of the text column, for objects that fill the measure.
     public var contentWidth: CGFloat = 640
     /// Directory images and diagrams resolve against (§3.4 — unsandboxed, so
