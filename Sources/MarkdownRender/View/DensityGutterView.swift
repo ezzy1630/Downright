@@ -1601,7 +1601,8 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             preview.hide()
             return
         }
-        let anchor = window.convertPoint(toScreen: convert(NSPoint(x: bounds.width, y: point.y), to: nil))
+        let rail = window.convertToScreen(convert(bounds, to: nil))
+        let pointer = window.convertPoint(toScreen: convert(point, to: nil))
         let maximumTrailingX: CGFloat? = {
             guard let container = superview as? MarkdownContainerView,
                   container.leadingAccessory === self else { return nil }
@@ -1618,7 +1619,8 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
             title: content.title,
             snippet: showsSnippet ? content.snippet : "",
             footer: content.context.isEmpty ? metricsSummary : content.context,
-            rightOf: anchor,
+            beside: rail,
+            pointerY: pointer.y,
             over: window,
             maximumTrailingX: maximumTrailingX,
             reduceMotion: styleSheet.reduceMotion,
@@ -1633,10 +1635,10 @@ public final class DensityGutterView: Motion.SpringSurfaceView {
     func containerGeometryDidChange() {
         guard preview.isVisible else { return }
         guard let point = pointerLocation, bounds.contains(point), hoveredBandIndex != nil else {
-            preview.hide()
+            preview.hide(immediately: true)
             return
         }
-        showPreview(at: point, showsSnippet: true)
+        showPreview(at: point, showsSnippet: true, interactive: mouseDownLocation == nil)
     }
 
     public override func viewDidMoveToWindow() {
