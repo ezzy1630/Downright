@@ -91,7 +91,7 @@ enum PresentationMaps {
             : []
 
         let plan: HardWrapReflow.Plan
-        let reflowsMarkdown = reflowHardWrappedParagraphs
+        let reflowsMarkdown = policy.rendersFragments && reflowHardWrappedParagraphs
             && Self.containsHardWrappedParagraph(in: document, text: source)
         // Safe HTML rows join for reading without changing physical source lines.
         let joinsHTML = joinsHTMLParagraphs && policy.rendersFragments

@@ -16,7 +16,7 @@ public final class GutterRailView: NSView {
 
     private var markers: [(offset: Int, text: String, level: Int)] = []
     private var changeBars: [(kind: ChangeKind, range: NSRange)] = []
-    private var lineStarts: [Int] = [0]
+    private var lineStarts: ArraySlice<Int> = [0]
     private var headingMenuAction: HeadingMenuAction?
     private var trackingArea: NSTrackingArea?
 
@@ -78,15 +78,10 @@ public final class GutterRailView: NSView {
         guard let textView else { return }
         markers = textView.engine.gutterMarkers(document: textView.parsedDocument)
         changeBars = textView.changeMarks.map { ($0.kind, $0.range) }
-        lineStarts = [0]
-        let source = textView.textStorage?.string as NSString? ?? "" as NSString
-        var cursor = 0
-        while cursor < source.length {
-            let range = source.lineRange(for: NSRange(location: cursor, length: 0))
-            guard range.upperBound > cursor else { break }
-            cursor = range.upperBound
-            if cursor < source.length { lineStarts.append(cursor) }
-        }
+        let document = textView.parsedDocument
+        let starts = document.lineStarts
+        // A terminal separator has no following source text to label.
+        lineStarts = starts.count > 1 && starts.last == document.length ? starts.dropLast() : starts[...]
         needsDisplay = true
     }
 

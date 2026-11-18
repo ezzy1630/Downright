@@ -218,6 +218,10 @@ from the old camera; ordinary edits and mode changes continue preserving anchors
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
 is a separate explicit command.
 
+Source mode lays out physical lines without joining hard-wrapped prose. Its
+gutter and Go to Line use the parser's UTF-16 line starts, including LF, lone
+CR, and CRLF. The layout keeps the original separators in storage and on disk.
+
 Document commands apply source edits, reparse, and decorate inside one undo
 group. List indentation and ordered-list repair use this sequence:
 
