@@ -24,6 +24,10 @@ if ! TEST_SUPPORT_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/downright-test-support
 fi
 export DOWNRIGHT_SUPPORT_DIRECTORY="$TEST_SUPPORT_DIRECTORY"
 trap 'find "$TEST_SUPPORT_DIRECTORY" -depth -delete' EXIT
+# UI driver failure snapshots land with the run's evidence, which CI uploads.
+if [ -n "${CHECK_EVIDENCE_DIRECTORY:-}" ] && [ -z "${DOWNRIGHT_UI_TEST_ARTIFACTS:-}" ]; then
+    export DOWNRIGHT_UI_TEST_ARTIFACTS="$CHECK_EVIDENCE_DIRECTORY/ui-failures"
+fi
 
 LOG_TAG="$(printf '%s' "$SCRATCH" | tr -c 'A-Za-z0-9._-' '-')"
 LOG_DIR="${TMPDIR:-/tmp}"
