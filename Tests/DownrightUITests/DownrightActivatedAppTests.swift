@@ -355,6 +355,43 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(XCTAttachment(screenshot: window.screenshot()))
     }
 
+    func testNewDocumentCanBeNamedAfterChangingDirectory() throws {
+        let folder = root.appendingPathComponent("New documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let destination = folder.appendingPathComponent("Test.md")
+        app.launchArguments.removeFirst() // Start with the welcome window, without an open file.
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+
+        app.typeKey("n", modifierFlags: .command)
+        let panel = app.dialogs["save-panel"]
+        let create = panel.buttons["OKButton"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10), "New Document did not open a save panel")
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(folder.path)
+        app.typeKey(.return, modifierFlags: [])
+
+        let name = panel.textFields["saveAsNameTextField"]
+        let nameReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"),
+            object: name
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [nameReady], timeout: 10), .completed,
+                       "The name field did not accept input after changing folders")
+        name.click()
+        name.typeKey("a", modifierFlags: .command)
+        name.typeText("Test.md")
+        XCTAssertEqual(name.value as? String, "Test.md")
+        create.click()
+
+        XCTAssertTrue(waitForFile(destination, timeout: 15))
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "# Test\n\n")
+        XCTAssertTrue(app.textViews["Document editor"].waitForExistence(timeout: 10),
+                      "Downright did not open the new document")
+    }
+
     func testHTMLExportThroughSavePanelPreservesEditedMarkdown() throws {
         let original = try Data(contentsOf: fixture)
         let edited = "# Export acceptance current buffer\n\n[Next section](sibling.md#details)\n"
