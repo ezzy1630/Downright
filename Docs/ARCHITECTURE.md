@@ -229,7 +229,8 @@ paste in Downright. Hidden delimiters at a selection edge travel with a
 complete selected construct. Cut removes the same source that it puts on the
 clipboard. Copy Code reads the parsed body, including any fence-like lines
 that belong to the example. The rendered fence bands supply the hover and click
-geometry for Copy Code at both ends of a block.
+geometry for Copy Code at both ends of a block. Document windows accept mouse
+movement events so the text view can track the pointer between blocks.
 Code fences can open on a list item's first line. Only actual opening and
 closing fence rows redirect a click into the code body.
 
