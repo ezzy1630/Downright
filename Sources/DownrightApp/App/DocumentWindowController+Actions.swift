@@ -23,7 +23,8 @@ extension DocumentWindowController {
         }
         let previousPosition = readingHistoryEntry(label: "Reading position")
         guard confirmPendingChangesBeforeClose(markDiscardForWindowClose: false) else { return nil }
-        // The save/discard sheet can dispatch another open while it is up.
+        // The prompt can dispatch another open while it is up. A Discard
+        // decision has already reset the origin if this hop reuses a tab.
         if let existing = focusOpenDocument?(url) {
             if let fragment { existing.revealLinkedHeading(fragment) }
             return existing

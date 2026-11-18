@@ -136,6 +136,7 @@ extension DocumentWindowController {
         alert.addButton(withTitle: "Cancel")
         alert.buttons[0].toolTip = "Write your Markdown to a different path"
         alert.buttons[1].toolTip = "Explicitly create or replace the original path"
+        alert.buttons[1].isEnabled = (error as? SaveError)?.recreationIntent != nil
         alert.buttons[2].toolTip = "Stop trying to save these local edits"
         alert.buttons[3].toolTip = "Keep editing without writing anything"
         saveRecoveryAlert = alert
@@ -147,7 +148,7 @@ extension DocumentWindowController {
             case .alertFirstButtonReturn:
                 self.saveAs()
             case .alertSecondButtonReturn:
-                _ = self.markdownDocument.recreateMissingFile()
+                _ = self.markdownDocument.recreateMissingFile(authorizedBy: error)
             case .alertThirdButtonReturn:
                 self.markdownDocument.discardUnsavedChanges()
             default:
