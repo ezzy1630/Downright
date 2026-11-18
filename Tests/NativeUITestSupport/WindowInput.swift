@@ -36,8 +36,6 @@ public final class WindowInput {
 
     public let window: NSWindow
     private var eventNumber = 0
-    private var resignedKey = false
-    private nonisolated(unsafe) var resignObserver: NSObjectProtocol?
 
     public init(_ window: NSWindow) {
         self.window = window
@@ -52,17 +50,7 @@ public final class WindowInput {
         // input. This calls the local responder callback, skipping the
         // WindowServer focus request made by makeKey / makeKeyAndOrderFront.
         window.becomeKey()
-        // Run-loop turns can resign that local key state when the host
-        // activates or deactivates the test process; the next mouse-down
-        // would then be swallowed as a first click. Restore it per gesture.
-        resignObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification, object: window, queue: nil
-        ) { [weak self] _ in MainActor.assumeIsolated { self?.resignedKey = true } }
         window.layoutIfNeeded()
-    }
-
-    deinit {
-        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
     }
 
     public func press(_ key: Key, modifiers: NSEvent.ModifierFlags = []) throws {
@@ -104,11 +92,6 @@ public final class WindowInput {
         from start: NSPoint, to end: NSPoint, clickCount: Int, modifiers: NSEvent.ModifierFlags
     ) throws {
         eventNumber += 1
-        if resignedKey {
-            print("WindowInput: \(window.title) resigned key; restoring it before a mouse gesture")
-            resignedKey = false
-            window.becomeKey()
-        }
         let down = try mouse(.leftMouseDown, at: start, count: clickCount, modifiers: modifiers)
         let up = try mouse(.leftMouseUp, at: end, count: clickCount, modifiers: modifiers)
         let drag = start == end ? nil : try mouse(.leftMouseDragged, at: end, count: clickCount, modifiers: modifiers)
