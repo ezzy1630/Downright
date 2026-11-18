@@ -1,4 +1,5 @@
 import CoreServices
+import Darwin
 import Foundation
 
 /// A directory watcher for `down watch` — the fallback path for agents that have
@@ -92,8 +93,8 @@ public final class AgentWatcher {
     /// a directory contributes itself and allows everything beneath it.
     struct WatchPlan {
         var directories: [String]
-        /// Only explicit directory roots permit recursive events. A file root's
-        /// parent is watched to track replacements, with no sibling access.
+        /// Only explicit directory roots permit recursive events. Watching a
+        /// file's parent supplies replacement events for that one file.
         var recursivePrefixes: [String]
         var allowedFiles: Set<String>
     }
@@ -106,14 +107,17 @@ public final class AgentWatcher {
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory)
             if exists, isDirectory.boolValue {
-                directories.append(root.path)
-                recursivePrefixes.append(root.path == "/" ? "/" : root.path + "/")
+                let path = physicalDirectoryPath(root.path)
+                directories.append(path)
+                recursivePrefixes.append(path == "/" ? "/" : path + "/")
             } else {
                 // A file that does not exist yet is still a legitimate target —
                 // agents create files as well as rewrite them — so this does not
                 // require existence, only that the parent directory is real.
-                directories.append(root.deletingLastPathComponent().path)
-                allowedFiles.insert(root.path)
+                let parent = physicalDirectoryPath(root.deletingLastPathComponent().path)
+                directories.append(parent)
+                allowedFiles.insert(URL(fileURLWithPath: parent, isDirectory: true)
+                    .appendingPathComponent(root.lastPathComponent).path)
             }
         }
         var seen = Set<String>()
@@ -123,6 +127,14 @@ public final class AgentWatcher {
             !recursivePrefixes.contains { file.hasPrefix($0) }
         }
         return WatchPlan(directories: directories, recursivePrefixes: recursivePrefixes, allowedFiles: allowedFiles)
+    }
+
+    /// FSEvents supplies physical paths, including /private/var when the
+    /// command was given /var. Resolve directories before matching events.
+    private static func physicalDirectoryPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// True when an event path should be reported, given a plan.
