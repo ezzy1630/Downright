@@ -1,4 +1,5 @@
 import AppKit
+import CoreFoundation
 import NativeUITestSupport
 import Testing
 
@@ -90,15 +91,7 @@ struct NativeUIDriverTests {
     @Test func checkboxDoubleClickTogglesOnlyOnce() async throws {
         let initial = "- [ ] First task\n- [x] Second task\n"
         try await UIDriver.withDocument(initial) { ui in
-            let task = try #require(ui.textView.parsedDocument.tasks.first)
-            let line = try #require(ui.textView.rect(forOffset: task.contentRange.location))
-            let style = ui.textView.styleSheet
-            let checkbox = ListOrnamentFragment.taskBoxRect(
-                textEdge: line.minX, centreY: line.minY + min(style.lineHeight, line.height) * 0.44,
-                bodySize: style.bodyFont().pointSize
-            )
-            let point = ui.textView.convert(NSPoint(x: checkbox.midX, y: checkbox.midY), to: nil)
-            try ui.input.click(at: point, count: 2)
+            try ui.input.click(at: firstCheckboxPoint(in: ui), count: 2)
             let expected = "- [x] First task\n- [x] Second task\n"
             ui.check(ui.source == expected && !ui.isDirty,
                      "Double-click left \(ui.source.debugDescription), dirty \(ui.isDirty)")
@@ -107,6 +100,90 @@ struct NativeUIDriverTests {
             try ui.doubleClick(onText: "Second")
             ui.check(ui.selectedSourceText == "Second", "Double-click selected \(ui.selectedSourceRange) in the task label")
         }
+    }
+
+    @Test func discardAppliesWhenLinkDestinationOpensDuringSavePrompt() async throws {
+        let original = "[Open sibling](B.md)\n\n- [ ] First task\n\nOriginal prose.\n"
+        let sibling = "# B\n"
+        try await UIDriver.withDocument(original, files: ["B.md": Data(sibling.utf8)]) { ui in
+            let app = AppDelegate()
+            let other = DocumentWindowController()
+            app.adopt(ui.controller)
+            defer {
+                other.window?.orderOut(nil)
+                other.documentWillClose()
+                other.close()
+                ui.controller.onClose = nil
+                other.onClose = nil
+            }
+            try ui.click(onText: "Original prose")
+            try ui.type("declined ")
+            try #require(ui.isDirty)
+            ui.controller.markdownDocument.ensureParsedCurrent()
+            ui.layout()
+            let destination = ui.root.appendingPathComponent("B.md")
+            var openedDuringPrompt = false
+            var awaitingPrompt = true
+            defer { awaitingPrompt = false }
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), RunLoop.Mode.modalPanel.rawValue as CFString) {
+                MainActor.assumeIsolated {
+                    guard awaitingPrompt else { return }
+                    defer { NSApp.stopModal(withCode: .alertSecondButtonReturn) }
+                    do {
+                        try other.open(destination, mode: .live)
+                        other.window?.alphaValue = 0
+                        other.window?.ignoresMouseEvents = true
+                        app.adopt(other)
+                        openedDuringPrompt = true
+                    } catch {
+                        Issue.record("Could not open the sibling during the save prompt: \(error)")
+                    }
+                }
+            }
+
+            try ui.click(onText: "Open sibling")
+            try #require(openedDuringPrompt, "The sibling must open inside the save prompt")
+            #expect(other.window?.isVisible == true, "The link must bring the existing destination forward")
+            #expect(ui.controller.markdownDocument.url == ui.fixture.resolvingSymlinksInPath())
+            #expect(ui.source == original)
+            #expect(!ui.isDirty)
+            #expect(!ui.controller.markdownDocument.undoManager.canUndo)
+
+            try ui.input.click(at: firstCheckboxPoint(in: ui))
+            let expected = original.replacingOccurrences(of: "- [ ]", with: "- [x]")
+            #expect(ui.source == expected)
+            #expect(try Data(contentsOf: ui.fixture) == Data(expected.utf8))
+        }
+    }
+
+    @Test func checkboxLeavesExistingUnsavedEditsInMemory() async throws {
+        let original = "- [ ] First task\n\nOriginal prose.\n"
+        try await UIDriver.withDocument(original) { ui in
+            defer { ui.controller.markdownDocument.discardUnsavedChanges() }
+            try ui.click(onText: "Original prose")
+            try ui.type("unsaved ")
+            let edited = ui.source
+            try #require(ui.isDirty)
+            ui.controller.markdownDocument.ensureParsedCurrent()
+            ui.layout()
+
+            try ui.input.click(at: firstCheckboxPoint(in: ui))
+
+            #expect(ui.source == edited.replacingOccurrences(of: "- [ ]", with: "- [x]"))
+            #expect(ui.isDirty)
+            #expect(try Data(contentsOf: ui.fixture) == Data(original.utf8))
+        }
+    }
+
+    private func firstCheckboxPoint(in ui: UIDriver) throws -> NSPoint {
+        let task = try #require(ui.textView.parsedDocument.tasks.first)
+        let line = try #require(ui.textView.rect(forOffset: task.contentRange.location))
+        let style = ui.textView.styleSheet
+        let checkbox = ListOrnamentFragment.taskBoxRect(
+            textEdge: line.minX, centreY: line.minY + min(style.lineHeight, line.height) * 0.44,
+            bodySize: style.bodyFont().pointSize
+        )
+        return ui.textView.convert(NSPoint(x: checkbox.midX, y: checkbox.midY), to: nil)
     }
 
     @Test func encodedHeadingLinkAndHistoryRestoreTheReadingPosition() async throws {

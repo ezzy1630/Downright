@@ -277,13 +277,17 @@ to that text by deletion or undo clears the edited state without writing the
 file; pending external conflicts remain independent and cannot be overwritten.
 Keep Mine writes the visible buffer even after undo returns it to the last saved
 text. If a different external edit arrives before that save, the app presents
-the newer conflict. Recreate File creates an absent path exclusively or replaces
-the exact bytes it could read but could not decode. If the bytes cannot be read,
-the buffer remains available for Save a Copy.
+the newer conflict. A successful save retires watcher preparation from before
+that commit. Recreate File uses the state that triggered its recovery prompt.
+It creates an absent path exclusively or replaces the exact undecodable bytes
+inspected for that prompt. A changed path requires a fresh decision. If the
+bytes could not be read, the buffer remains available for Save a Copy.
 
 Autosave is opt-in. Actual local source edits reset its idle deadline even when
-the buffer is already dirty. Discard suppresses implicit saves until a fresh
-source edit; parser and presentation updates cannot re-arm saving.
+the buffer is already dirty. A checkbox toggle saves immediately from a clean
+file-backed buffer. In a dirty buffer it follows the normal save policy with
+the other edits. Discard suppresses implicit saves until a fresh source edit;
+parser and presentation updates cannot re-arm saving.
 
 Snapshots deduplicate by content hash. Retention applies the configured age,
 per-document, and global byte caps without rewriting unchanged indexes; a
@@ -303,7 +307,9 @@ filesystem paths. The text surface routes native link activation through the app
 so Launch Services cannot independently open the same click. In-place navigation
 checks the same file-identity registry as ordinary opens. An already-open
 destination selects its existing tab or window and resolves a linked heading
-there. Each tab keeps its own Back/Forward trail. In-place history hops commit
+there. Discard in a navigation prompt drops the origin's unsaved edits and undo
+history, including when the destination opens in another tab during the prompt.
+Each tab keeps its own Back/Forward trail. In-place history hops commit
 only after a successful open and restore semantic reading anchors across files.
 If a history destination is already open in a different tab, that tab receives
 the saved anchor and both history cursors stay with their own documents.

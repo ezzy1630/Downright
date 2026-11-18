@@ -2788,6 +2788,10 @@ final class DocumentWindowController: NSWindowController {
         case .alertSecondButtonReturn:
             discardChangesOnClose = markDiscardForWindowClose
             implicitSaveSuppressed = true
+            if !markDiscardForWindowClose {
+                markdownDocument.discardUnsavedChanges()
+                if pendingConflict != nil { dismissConflictBar() }
+            }
             return true
         default:
             return false
