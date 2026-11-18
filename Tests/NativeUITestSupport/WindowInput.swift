@@ -83,6 +83,11 @@ public final class WindowInput {
         try gesture(from: start, to: end, clickCount: 1, modifiers: modifiers)
     }
 
+    public func doubleClickAndDrag(from start: NSPoint, to end: NSPoint) throws {
+        try gesture(from: start, to: start, clickCount: 1, modifiers: [])
+        try gesture(from: start, to: end, clickCount: 2, modifiers: [])
+    }
+
     private func gesture(
         from start: NSPoint, to end: NSPoint, clickCount: Int, modifiers: NSEvent.ModifierFlags
     ) throws {

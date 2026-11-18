@@ -188,6 +188,11 @@ without overlap, including empty paragraphs and two-unit CRLF separators.
 
 Block markers live in the gutter. Inline markers reveal per span near the
 primary caret. IME composition suspends hiding in the composing paragraph.
+Single clicks reveal nearby inline markers as soon as AppKit places the caret.
+When AppKit reports another click in that sequence, the text view restores the
+first mouse-down's caret reveal and viewport anchor before AppKit tracks the
+word or paragraph selection. This also keeps native word dragging on the
+original layout. In Document mode, Option-double-click selects link text.
 After a source edit, retain its exact source caret while its native projection
 is unchanged: hidden markers make a source-to-display round trip lossy. A new
 native selection retires that edit position and resolves against visible text.
