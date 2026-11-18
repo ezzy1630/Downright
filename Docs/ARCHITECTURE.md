@@ -83,7 +83,9 @@ and Quick Look all go through it, so one formula is typeset once per cached
 style.
 
 In Live mode, a plain click on a rendered display formula places the caret at
-its LaTeX source. A selection inside a formula keeps its raw text visible. The
+its LaTeX source. Double-clicking the rendered formula selects its LaTeX, and
+triple-clicking selects the first LaTeX source line inside the formula. A
+selection inside a formula keeps its raw text visible. The
 view invalidates all paragraphs of a display formula when it switches between
 typeset and source, even when the `DisplayMap` is unchanged. Inline math uses
 the paragraph-local map to keep the selected LaTeX visible.
@@ -254,6 +256,9 @@ group. Return uses the current source to continue a list in one undo step. It
 keeps the bullet, quote prefix, and nesting, increments the new ordered marker,
 and starts a new task unchecked. On an empty item, Return exits the list or
 outdents one level. AppKit handles Return during marked-text composition.
+Return reuses the parsed list structure when current. With pending edits, it
+plans from a bounded window of live source starting at an unchanged block
+boundary. If the context falls outside that window, it inserts a plain newline.
 List indentation and ordered-list repair use this sequence:
 
 ```text
@@ -313,9 +318,11 @@ through a `downright-cli:` URL, which Launch Services delivers on cold and warm
 opens. Any app or web page can open such a URL, so it carries only a random
 handoff ID. The request itself (local file paths and presentation options) is
 written by the CLI to a one-shot, owner-only file in the per-user temporary
-directory. The app consumes that file, refuses it if it is not a private
-regular file owned by the user or is older than two minutes, and then uses the
-ordinary open registry. A URL without a valid handoff file does nothing.
+directory. The CLI fails before writing a request larger than 256 KiB after
+encoding. The app consumes the file and uses the ordinary open registry for
+valid requests up to the same limit. It accepts only private regular files
+owned by the user and no more than two minutes old. A URL without a valid
+handoff file does nothing.
 Go to Line and the app's command-line line handler use the parsed source's
 one-based line index, which recognizes LF, CRLF, and lone CR even within the
 same document.

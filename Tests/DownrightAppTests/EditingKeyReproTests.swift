@@ -348,6 +348,64 @@ struct EditingKeyReproTests {
         view.unmarkText()
     }
 
+    @Test(arguments: [
+        ("> - parent\n>   * ", "nested", "> - parent\n>   * nested\n>   * "),
+        ("- ```\n  ", "- still code", "- ```\n  - still code\n"),
+        ("", "7. new list", "7. new list\n8. "),
+    ])
+    func returnUsesLiveListContextWithPendingParse(source: String, typed: String, expected: String) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-pending-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        view.setSourceSelectedRanges([NSRange(location: source.utf16.count, length: 0)])
+        view.insertText(typed, replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(view.parsedDocument.text != controller.markdownDocument.text)
+
+        view.insertNewline(nil)
+
+        #expect(controller.markdownDocument.text == expected)
+    }
+
+    @Test func returnInLargePlainParagraphDoesNotSynchronouslyParse() throws {
+        let source = "Plain paragraph.\n\n" + String(repeating: "**Bold** and *italic* with `code`.\n\n", count: 4_000)
+        let caret = NSRange(location: "Plain paragraph.".utf16.count, length: 0)
+
+        // Measure both paths with pending edits on the main thread. Subtract
+        // normal storage/layout work and calibrate against this machine's cost
+        // of a full parse of the same fixture.
+        func newlineCPUTime(usingReturn: Bool) throws -> UInt64 {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-large-\(UUID()).md")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let controller = try makeController(text: source, file: url)
+            defer { controller.close() }
+            let view = controller.primaryContainer.textView
+            view.setSourceSelectedRanges([caret])
+            view.insertText("!", replacementRange: NSRange(location: NSNotFound, length: 0))
+            try #require(view.parsedDocument.text != controller.markdownDocument.text)
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            if usingReturn {
+                view.insertNewline(nil)
+            } else {
+                view.performSourceEdit(range: view.sourceSelectedRange, replacement: "\n")
+            }
+            let elapsed = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
+            #expect(controller.markdownDocument.text == source.replacingOccurrences(of: "Plain paragraph.", with: "Plain paragraph.!\n"))
+            return elapsed
+        }
+
+        let parseStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let parsed = MarkdownParser.parse(source)
+        let parseTime = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - parseStart
+        try #require(parsed.root.children.count == 4_001)
+        let newlineTime = try newlineCPUTime(usingReturn: false)
+        let returnTime = try newlineCPUTime(usingReturn: true)
+        print("RETURN_CPU_NS return=\(returnTime) newline=\(newlineTime) fullParse=\(parseTime)")
+        #expect(returnTime < newlineTime + parseTime / 2,
+                "Return used \(returnTime) ns of main-thread CPU, plain newline \(newlineTime) ns, full parse \(parseTime) ns")
+    }
+
     @Test(arguments: [false, true])
     func undoBeforeTableRestoresRenderedTableWithoutChangingMode(continuesList: Bool) throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("table-undo-\(UUID()).md")

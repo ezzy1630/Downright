@@ -387,9 +387,12 @@ extension MarkdownTextView {
         let continuesTextSelection = restoreMouseSelectionPresentation(for: event)
         let point = convert(event.locationInWindow, from: nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let selectionModifiers: NSEvent.ModifierFlags = [.command, .option, .shift, .control]
+        let mathSelection = modifiers.intersection(selectionModifiers).isEmpty
+            ? renderedMathSelection(at: point, clickCount: event.clickCount) : nil
         if continuesTextSelection {
             let trackingEvent = attribute(.drLink, at: point) == nil ? event : linkSelectionEvent(event, modifiers: modifiers)
-            trackTextMouseSelection(with: trackingEvent)
+            trackTextMouseSelection(with: trackingEvent, mathSelection: mathSelection)
             return
         }
         var activateAfterTracking: (() -> Void)?
@@ -510,16 +513,13 @@ extension MarkdownTextView {
         if activateAfterTracking == nil {
             rememberMouseSelectionPresentation(for: event, at: point)
         }
-        let selectionModifiers: NSEvent.ModifierFlags = [.command, .option, .shift, .control]
-        let mathCaret = event.clickCount == 1 && modifiers.intersection(selectionModifiers).isEmpty
-            ? renderedMathSourceOffset(at: point) : nil
         let trackingEvent = link == nil ? event : linkSelectionEvent(event, modifiers: modifiers)
         trackTextMouseSelection(
-            with: trackingEvent, mathCaret: mathCaret, activateAfterTracking: activateAfterTracking)
+            with: trackingEvent, mathSelection: mathSelection, activateAfterTracking: activateAfterTracking)
     }
 
     private func trackTextMouseSelection(
-        with event: NSEvent, mathCaret: Int? = nil, activateAfterTracking: (() -> Void)? = nil
+        with event: NSEvent, mathSelection: NSRange?, activateAfterTracking: (() -> Void)? = nil
     ) {
         // `super` owns the whole click/drag gesture.  Make the target first
         // responder explicitly; relying on the window's default mouse routing
@@ -536,9 +536,10 @@ extension MarkdownTextView {
 
         // The formula is drawn in the center of the fragment. TextKit's
         // invisible source glyphs sit at the left and a centered click can
-        // resolve outside the block. Use its LaTeX start for a plain click.
-        if let mathCaret, sourceSelectedRange.length == 0 {
-            setSourceSelectedRanges([NSRange(location: mathCaret, length: 0)])
+        // resolve outside the block. Align a caret or multi-click selection
+        // to the formula source after AppKit finishes tracking the gesture.
+        if let mathSelection, event.clickCount > 1 || sourceSelectedRange.length == 0 {
+            setSourceSelectedRanges([mathSelection])
         }
 
         if case .scoped(let focus) = sourceFocus {
@@ -1105,19 +1106,77 @@ extension MarkdownTextView {
         }
 
         let selection = sourceSelectedRange
-        if selection.length == 0, let source = textStorage?.string {
-            // A second Return can arrive before the async parse of the first.
-            // Plan against the live source, including a newly inserted marker.
-            let document = parsedDocument.text.utf16.elementsEqual(source.utf16)
-                ? parsedDocument : MarkdownParser.parse(source)
-            if let continuation = ListEditing.continuation(document, at: selection.location) {
-                breakUndoCoalescing()
-                performSourceEdit(range: continuation.replaceRange, replacement: continuation.insertion)
-                breakUndoCoalescing()
-                return
-            }
+        if selection.length == 0, let storage = textStorage,
+           let continuation = listContinuation(at: selection.location, in: storage) {
+            breakUndoCoalescing()
+            performSourceEdit(range: continuation.replaceRange, replacement: continuation.insertion)
+            breakUndoCoalescing()
+            return
         }
         performSourceEdit(range: selection, replacement: "\n")
+    }
+
+    private func listContinuation(at offset: Int, in storage: NSTextStorage) -> ListContinuation? {
+        let document = parsedDocument
+        let blocks = document.root.children
+        guard let firstEdit = firstUnparsedSourceEdit else {
+            // Skip the list walk for ordinary prose. The last block on this
+            // line still counts if cmark stopped before trailing spaces.
+            guard let block = lastBlockStarting(in: blocks, atOrBefore: offset),
+                  document.line(at: offset) <= document.line(at: max(block.range.location, block.range.upperBound - 1))
+            else { return nil }
+            switch block.content {
+            case .list, .blockQuote, .callout, .footnoteDefinition:
+                return ListEditing.continuation(document, at: offset)
+            default:
+                return nil
+            }
+        }
+
+        // A rapid Return may see a new marker or a now-empty item. Recover
+        // context from an unchanged block boundary, including an opening
+        // fence or quote prefix when the line lives inside one. A later item
+        // in a top-level list can start its own local parse at its marker.
+        let prefixEnd = max(0, min(firstEdit, offset) - 1)
+        let block = lastBlockStarting(in: blocks, atOrBefore: prefixEnd)
+        let anchor: MDBlock?
+        if let block, block.content.isList {
+            anchor = lastBlockStarting(in: block.children, atOrBefore: prefixEnd) ?? block
+        } else {
+            anchor = block
+        }
+        let start = document.lineStarts[document.line(at: anchor?.range.location ?? 0) - 1]
+
+        let contextLimit = 4_096
+        let lineEnd = paragraphRange(containing: offset).upperBound
+        let limit = min(storage.length, offset + contextLimit)
+        let end = limit == storage.length ? limit : paragraphRange(containing: limit).location
+        guard offset - start <= contextLimit, lineEnd <= end, offset < end || end == storage.length else { return nil }
+
+        let text = (storage.string as NSString).substring(with: NSRange(location: start, length: end - start))
+        var options = ParseOptions.default
+        options.detectFrontMatter = start == 0
+        let local = MarkdownParser.parse(text, options: options)
+        guard var continuation = ListEditing.continuation(local, at: offset - start) else { return nil }
+        if continuation.replaceRange.length > 0, end < storage.length {
+            // A clipped tail made only of whitespace cannot prove the item
+            // is empty. Preserve its marker until its parse catches up.
+            let tail = (text as NSString).substring(from: lineEnd - start)
+            guard !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        }
+        continuation.replaceRange.location += start
+        return continuation
+    }
+
+    private func lastBlockStarting(in blocks: [MDBlock], atOrBefore offset: Int) -> MDBlock? {
+        var lower = 0
+        var upper = blocks.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if blocks[middle].range.location <= offset { lower = middle + 1 }
+            else { upper = middle }
+        }
+        return lower > 0 ? blocks[lower - 1] : nil
     }
 
     public override func insertTab(_ sender: Any?) {

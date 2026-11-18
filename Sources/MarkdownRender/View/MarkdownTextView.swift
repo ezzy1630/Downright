@@ -99,6 +99,9 @@ public final class MarkdownTextView: NSTextView {
     public var keyEventHandler: ((NSEvent) -> Bool)?
 
     public private(set) var parsedDocument: ParsedDocument = .empty
+    // The unchanged prefix of the parsed snapshot is safe to use as a
+    // structural starting point while storage is ahead of the parser.
+    private(set) var firstUnparsedSourceEdit: Int? = 0
     private var pendingPresentationRefresh = false
 
     /// Instant, and preserves scroll position and selection (§3.2).
@@ -745,6 +748,7 @@ public final class MarkdownTextView: NSTextView {
         contentStorage.delegate = substitution
 
         super.init(frame: frame, textContainer: container)
+        observeSourceEdits(in: storage)
 
         fragmentProvider = FragmentProvider(context: fragmentContext)
         markdownLayoutManager.delegate = fragmentProvider
@@ -827,9 +831,26 @@ public final class MarkdownTextView: NSTextView {
         isApplyingSelection = true
         defer { isApplyingSelection = wasApplyingSelection }
         contentStorage.performEditingTransaction {
+            if let previous = textStorage {
+                NotificationCenter.default.removeObserver(self, name: NSTextStorage.willProcessEditingNotification, object: previous)
+            }
             contentStorage.textStorage = storage
+            observeSourceEdits(in: storage)
             adoptSharedPresentation(from: source)
         }
+    }
+
+    private func observeSourceEdits(in storage: NSTextStorage) {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceWillProcessEditing(_:)),
+            name: NSTextStorage.willProcessEditingNotification, object: storage
+        )
+    }
+
+    @objc private func sourceWillProcessEditing(_ note: Notification) {
+        guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+        let start = storage.editedRange.location
+        firstUnparsedSourceEdit = min(firstUnparsedSourceEdit ?? start, start)
     }
 
     public func adoptSharedPresentation(from source: MarkdownTextView) {
@@ -839,6 +860,7 @@ public final class MarkdownTextView: NSTextView {
         documentURL = source.documentURL
         localAssetAuthorizer = source.localAssetAuthorizer
         parsedDocument = source.parsedDocument
+        firstUnparsedSourceEdit = source.firstUnparsedSourceEdit
         installedRemoteImageLoader = source.remoteImageLoader
         installedPlantUMLRenderer = source.plantUMLRenderer
         fragmentContext.plantUMLRenderer = installedPlantUMLRenderer
@@ -971,6 +993,7 @@ public final class MarkdownTextView: NSTextView {
         let decorationDirty: DirtySet = isFullRefresh ? .wholesale : dirty
         let dirtyScopes = isFullRefresh ? [] : sourceScopes(for: dirty)
         parsedDocument = document
+        firstUnparsedSourceEdit = nil
         if refreshesPresentation { synchronizeStyleSheet() }
         hoveredLinkRange = nil
         updateGeneration &+= 1
@@ -2965,7 +2988,7 @@ public final class MarkdownTextView: NSTextView {
         )
     }
 
-    func renderedMathSourceOffset(at point: NSPoint) -> Int? {
+    func renderedMathSelection(at point: NSPoint, clickCount: Int) -> NSRange? {
         guard mode == .live else { return nil }
         let origin = textContainerOrigin
         let localPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
@@ -2982,9 +3005,14 @@ public final class MarkdownTextView: NSTextView {
         guard let block = parsedDocument.root.block(at: range.location), block.range == range,
               case .mathBlock(let latex) = block.content,
               let storage = textStorage, latex.upperBound <= storage.length else { return nil }
+        if clickCount == 2 { return latex }
         let firstSymbol = (storage.string as NSString).rangeOfCharacter(
             from: CharacterSet.whitespacesAndNewlines.inverted, range: latex)
-        return firstSymbol.location == NSNotFound ? latex.location : firstSymbol.location
+        let start = firstSymbol.location == NSNotFound ? latex.location : firstSymbol.location
+        if clickCount >= 3 {
+            return latex.intersection(paragraphRange(containing: start))
+        }
+        return NSRange(location: start, length: 0)
     }
 
     /// The caret moved, so the reveal set may have.  Order matters: capture the
