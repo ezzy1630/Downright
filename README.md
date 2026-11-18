@@ -177,6 +177,7 @@ down read --json README.md                # inspect without launching the app
 down outline --json README.md             # emit document structure
 down export --format html -o out.html README.md
 down check --target github Docs/sample.md # validate a render target
+down watch Docs Notes/plan.md            # watch a folder and one separate file
 down doctor                               # diagnose app, CLI, Quick Look, and updater setup
 ```
 
@@ -184,6 +185,8 @@ down doctor                               # diagnose app, CLI, Quick Look, and u
 machine-readable support report without modifying the machine; use
 `down doctor --app path/to/Downright.app` to inspect a development bundle. Run
 `down --help` for every command.
+`down watch` includes Markdown descendants of a folder argument and only the
+named file for each file argument.
 
 ## Keyboard essentials
 

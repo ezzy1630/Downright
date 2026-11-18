@@ -363,11 +363,27 @@ struct AgentWatcherPlanTests {
         #expect(AgentWatcher.accepts(directory.appendingPathComponent("other.md").path, plan: plan))
     }
 
+    @Test func directoryRootDoesNotBroadenASeparateFileWatch() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("project")
+        let other = root.appendingPathComponent("project-private")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: false)
+        let file = other.appendingPathComponent("watch.md")
+
+        let plan = AgentWatcher.plan(for: [directory, file])
+
+        #expect(AgentWatcher.accepts(directory.appendingPathComponent("deep/changed.markdown").path, plan: plan))
+        #expect(AgentWatcher.accepts(file.path, plan: plan))
+        #expect(!AgentWatcher.accepts(other.appendingPathComponent("unwatched.md").path, plan: plan))
+    }
+
     /// A folder of agent output churns constantly with lockfiles, build
     /// artefacts and `.DS_Store`; only Markdown should wake the app.
     @Test("Only Markdown paths are accepted")
     func rejectsNonMarkdown() {
-        let plan = AgentWatcher.WatchPlan(directories: ["/w"], allowedFiles: [])
+        let plan = AgentWatcher.WatchPlan(directories: ["/w"], recursivePrefixes: ["/w/"], allowedFiles: [])
         #expect(AgentWatcher.accepts("/w/notes.md", plan: plan))
         #expect(AgentWatcher.accepts("/w/deep/nested/spec.mdx", plan: plan))
         #expect(!AgentWatcher.accepts("/w/.DS_Store", plan: plan))
@@ -377,7 +393,7 @@ struct AgentWatcherPlanTests {
 
     @Test("A file allow-list rejects siblings in the same directory")
     func allowListRejectsSiblings() {
-        let plan = AgentWatcher.WatchPlan(directories: ["/w"], allowedFiles: ["/w/notes.md"])
+        let plan = AgentWatcher.WatchPlan(directories: ["/w"], recursivePrefixes: [], allowedFiles: ["/w/notes.md"])
         #expect(AgentWatcher.accepts("/w/notes.md", plan: plan))
         #expect(!AgentWatcher.accepts("/w/other.md", plan: plan))
     }

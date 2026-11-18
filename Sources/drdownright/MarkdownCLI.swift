@@ -166,6 +166,7 @@ public enum MarkdownCLI {
                      stdin.  Always exits 0 so a hook never blocks the agent.
           watch      Open Markdown files in the background as they change.  The
                      fallback for agents that have no hook system.
+                     Folder paths include descendants. File paths watch one file.
           hook       Print or install the agent configuration that runs `notify`
 
         CHECK TARGETS
@@ -641,11 +642,11 @@ public enum MarkdownCLI {
               !hasURLScheme(removingURLLineBreaks(source))
         else { return false }
         let decoded = source.removingPercentEncoding ?? source
-        let path = decoded
-            .split(separator: "#", maxSplits: 1)[0]
-            .split(separator: "?", maxSplits: 1)[0]
-            .replacingOccurrences(of: "\\", with: "/")
-        return !path.split(separator: "/", omittingEmptySubsequences: false).contains("..")
+        guard let path = decoded.split(maxSplits: 1, omittingEmptySubsequences: false, whereSeparator: {
+            $0 == "#" || $0 == "?"
+        }).first, !path.isEmpty else { return false }
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        return !normalized.split(separator: "/", omittingEmptySubsequences: false).contains("..")
     }
 
     private static func hasURLScheme(_ source: String) -> Bool {

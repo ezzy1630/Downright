@@ -150,6 +150,18 @@ struct MarkdownCLITests {
         #expect(html.components(separatedBy: "class=\"missing-image\"").count - 1 == 7)
     }
 
+    @Test func htmlExportHandlesImageDestinationsWithoutAPath() {
+        let html = MarkdownCLI.html(for: """
+        ![Fragment](#)
+        ![Query](?size=small)
+        ![Local](photo.png?size=small#preview)
+        """)
+
+        #expect(html.contains("class=\"missing-image\" title=\"#\">Fragment</span>"))
+        #expect(html.contains("class=\"missing-image\" title=\"?size=small\">Query</span>"))
+        #expect(html.contains("src=\"photo.png?size=small#preview\""))
+    }
+
     @Test func settingsLoaderDistinguishesAbsentFromInvalidFiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("down-settings-\(UUID().uuidString)", isDirectory: true)
