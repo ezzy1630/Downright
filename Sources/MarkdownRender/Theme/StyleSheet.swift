@@ -371,6 +371,19 @@ public struct StyleSheet {
         return result
     }
 
+    /// Whether `font` reads as italic: an italic face, or an upright face that
+    /// `oblique` slanted because its family has no italic.
+    static func isItalic(_ font: NSFont) -> Bool {
+        font.fontDescriptor.symbolicTraits.contains(.italic) || CTFontGetMatrix(font as CTFont).c != 0
+    }
+
+    /// `font` at `size`.  `withSize` returns a slanted face upright, so the
+    /// slant is reapplied at the new size.
+    static func resized(_ font: NSFont, to size: CGFloat) -> NSFont {
+        let resized = font.withSize(size)
+        return CTFontGetMatrix(font as CTFont).c != 0 ? oblique(resized) : resized
+    }
+
     /// A slanted rendering of an upright face, for families with no italic.
     /// The skew matches the common 12° oblique.  A font matrix carries the
     /// point size, so the transform is scaled by it; a later `withSize` keeps

@@ -159,6 +159,20 @@ struct BodyFontFamilyTests {
         #expect(CTFontGetMatrix(both as CTFont).c > 0)
     }
 
+    @Test func slantedItalicSurvivesTableResizing() throws {
+        // Table headers and scaled cells resize each font run.  `withSize`
+        // returned the slanted Papyrus italic upright, and the header pass
+        // did not recognize it as italic at all.
+        try requireInstalled("Papyrus")
+        let italic = sheet(family: "Papyrus").emphasisFont(bold: false, italic: true)
+        #expect(StyleSheet.isItalic(italic))
+        #expect(!StyleSheet.isItalic(sheet(family: "Papyrus").bodyFont()))
+        let smaller = StyleSheet.resized(italic, to: italic.pointSize * 0.85)
+        #expect(abs(smaller.pointSize - italic.pointSize * 0.85) < 0.01)
+        #expect(CTFontGetMatrix(smaller as CTFont).c > 0, "the slant must survive resizing")
+        #expect(abs(smaller.ascender - italic.ascender * 0.85) < 0.05, "resizing must not rescale twice")
+    }
+
     @Test func theCacheTokenChangesWithTheFace() throws {
         try requireInstalled("Georgia")
         #expect(StyleToken.of(sheet(family: nil)) != StyleToken.of(sheet(family: "Georgia")))

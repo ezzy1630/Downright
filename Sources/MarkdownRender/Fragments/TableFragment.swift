@@ -665,10 +665,9 @@ final class TableRowFragment: DownrightFragment {
             let font = value as? NSFont ?? style.bodyFont()
             let label = font.isFixedPitch
                 ? style.monoFont(size: size)
-                : style.emphasisFont(
-                    bold: true,
-                    italic: font.fontDescriptor.symbolicTraits.contains(.italic)
-                ).withSize(size)
+                : StyleSheet.resized(
+                    style.emphasisFont(bold: true, italic: StyleSheet.isItalic(font)), to: size
+                )
             text.addAttribute(.font, value: label, range: range)
         }
     }
@@ -684,7 +683,7 @@ final class TableRowFragment: DownrightFragment {
         let whole = NSRange(location: 0, length: text.length)
         text.enumerateAttribute(.font, in: whole) { value, range, _ in
             let font = value as? NSFont ?? style.bodyFont()
-            text.addAttribute(.font, value: font.withSize(font.pointSize * scale), range: range)
+            text.addAttribute(.font, value: StyleSheet.resized(font, to: font.pointSize * scale), range: range)
         }
     }
 
