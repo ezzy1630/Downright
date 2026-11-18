@@ -34,6 +34,10 @@ every release; Sparkle orders updates by it.
   Very large files no longer show broken characters where the preview stops,
   and the metadata card no longer offers an Edit button that can't work there.
 - Finder thumbnails show a document's opening text instead of a badge.
+- Clicking a display formula, including one right after a heading, reveals
+  its LaTeX and keeps it visible while you select it, so you can select and
+  edit the source again. Multiline and inline formulas work the same way.
+  ([#63](https://github.com/ezzy1630/Downright/issues/63))
 - Copying or cutting formatted text no longer picks up stray Markdown
   markers, and pasting it back no longer doubles them.
 - Double-clicking a bold or italic word selects the word instead of a
