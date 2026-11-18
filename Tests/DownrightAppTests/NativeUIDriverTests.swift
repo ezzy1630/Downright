@@ -135,7 +135,12 @@ struct NativeUIDriverTests {
         }
     }
 
-    @Test func scrollWheelMovesTheRenderedViewport() async throws {
+    // Observed 2026-11-18: while the main display sleeps, wheel events reach
+    // the scroll view but the viewport never moves (identical before and after
+    // unrelated merges), and the test passes with the display awake. Skip
+    // visibly rather than fail the local gate; hosted runners keep it enabled.
+    @Test(.enabled(if: CGDisplayIsAsleep(CGMainDisplayID()) == 0, "Requires an awake main display"))
+    func scrollWheelMovesTheRenderedViewport() async throws {
         let source = "# Start\n\n" + (1...60).map { "Line \($0) in the document.\n\n" }.joined()
         try await UIDriver.withDocument(source) { ui in
             let clip = ui.controller.primaryContainer.scrollView.contentView
