@@ -66,6 +66,8 @@ every release; Sparkle orders updates by it.
   those changes, even if the linked document opens in another tab.
 - Go to Line lands on the right line in files with mixed line endings, and
   Source mode keeps each line on its own numbered row in those files.
+- Switching from Document to Source and back without scrolling returns to
+  exactly the same place instead of shifting by part of a line.
 - Clicking a link to a document that's already open switches to its tab or
   window instead of opening a second copy of the same file.
 - `down --line`, `--review`, and `--edit` now work when Downright is already

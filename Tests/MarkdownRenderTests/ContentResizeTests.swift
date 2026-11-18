@@ -796,7 +796,9 @@ func waitForRenderState(
     timeout: Duration = .seconds(5),
     _ condition: @escaping @MainActor () -> Bool
 ) async -> Bool {
-    if condition() { return true }
+    // Check first from a main-queue turn, never inline: viewport repairs are
+    // plain main-queue blocks that no pending-request flag tracks, so the
+    // caller must let already-queued work run before deciding.
     let deadline = ContinuousClock.now + timeout
     return await withCheckedContinuation { continuation in
         let timer = DispatchSource.makeTimerSource(queue: .main)

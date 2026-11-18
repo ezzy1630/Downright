@@ -109,7 +109,15 @@ public final class MarkdownTextView: NSTextView {
         didSet {
             guard mode != oldValue else { return }
             mouseSelectionPresentation = nil
-            let anchor = captureViewportAnchor()
+            // Recapturing after a switch can land on a blank line whose height
+            // differs between modes, so an unscrolled round trip drifted by
+            // most of a line.  Reuse the last switch's anchor while the camera
+            // is still where that switch left it.
+            let clipY = enclosingScrollView?.contentView.bounds.origin.y
+            let anchor = modeSwitchAnchor.flatMap { saved in
+                clipY.map { abs($0 - saved.clipY) <= 0.5 } == true ? saved.anchor : nil
+            } ?? captureViewportAnchor()
+            modeSwitchAnchor = (anchor, clipY ?? 0)
             let selection = sourceSelectedRanges
             if mode == .source {
                 sourceFocus = .document
@@ -641,6 +649,9 @@ public final class MarkdownTextView: NSTextView {
     /// Chrome repairs may survive edits, but never a different source buffer.
     private var documentPresentationGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
+    /// The anchor the last mode switch restored, and where restoring it last
+    /// left the camera.
+    private var modeSwitchAnchor: (anchor: ViewportAnchor, clipY: CGFloat)?
     private var pendingResizeViewportY: CGFloat?
     /// One-shot camera lock for semantic controls such as checkboxes. Their
     /// edit changes source bytes but is not a navigation request.
@@ -851,6 +862,8 @@ public final class MarkdownTextView: NSTextView {
         guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
         let start = storage.editedRange.location
         firstUnparsedSourceEdit = min(firstUnparsedSourceEdit ?? start, start)
+        // A saved mode-switch anchor names a source offset; an edit can move it.
+        modeSwitchAnchor = nil
     }
 
     public func adoptSharedPresentation(from source: MarkdownTextView) {
@@ -1303,7 +1316,7 @@ public final class MarkdownTextView: NSTextView {
     /// line's top edge makes the restore exact: content above the anchor may
     /// change height freely, and the line under the reader's eye does not move
     /// at all.
-    struct ViewportAnchor {
+    struct ViewportAnchor: Equatable {
         var offset: Int
         /// Signed distance from the anchor line's top edge down to the
         /// viewport's top edge, in document coordinates.
@@ -1357,6 +1370,9 @@ public final class MarkdownTextView: NSTextView {
         let offset = min(max(0, anchor.offset), parsedDocument.length)
         guard let rect = rect(forOffset: offset) else { return }
         let clip = scrollView.contentView
+        defer {
+            if modeSwitchAnchor?.anchor == anchor { modeSwitchAnchor?.clipY = clip.bounds.origin.y }
+        }
         // Preserve the current clip extent when the document frame is
         // transiently stale; otherwise a chrome transition can clamp a valid
         // deep viewport to zero before the next layout pass repairs it.
