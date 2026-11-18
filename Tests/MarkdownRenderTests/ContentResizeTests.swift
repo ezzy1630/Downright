@@ -33,7 +33,7 @@ struct ContentResizeTests {
             return centered ? rect.midY - clip.bounds.midY : rect.minY - clip.bounds.minY - RenderMetrics.verticalInset
         }
         #expect(abs(try targetError()) < 0.5)
-        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        #expect(await waitForRenderState { view.pendingResizeRequestForTesting == nil })
         #expect(abs(try targetError()) < 0.5)
     }
 
@@ -80,7 +80,9 @@ struct ContentResizeTests {
         #expect(view.performSourceEdit(range: NSRange(location: caret, length: 0), replacement: replacement))
         view.update(document: MarkdownParser.parse(storage.string), dirty: DirtySet(
             ranges: [NSRange(location: caret, length: (replacement as NSString).length)], isWholesale: false))
-        try await Task.sleep(for: .milliseconds(150))
+        try #require(await waitForRenderState {
+            view.pendingResizeRequestForTesting == nil
+        }, "The deferred viewport repair never finished")
         let afterCaretY = try #require(view.rect(forOffset: view.sourceSelectedRange.location)).minY - clip.bounds.minY
         #expect(afterCaretY > beforeCaretY + view.styleSheet.lineHeight)
         #expect(abs(clip.bounds.minY - beforeY) < 0.5)
@@ -133,24 +135,6 @@ struct ContentResizeTests {
         #expect(view.string == text)
     }
 
-    @discardableResult
-    private func pumpMainQueue(
-        until condition: () -> Bool,
-        timeout: Duration = .seconds(1)
-    ) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        while !condition() && clock.now < deadline {
-            await withCheckedContinuation { continuation in
-                DispatchQueue.main.async { continuation.resume() }
-            }
-            if !condition() {
-                try? await Task.sleep(for: .milliseconds(5))
-            }
-        }
-        return condition()
-    }
-
     @Test("idle requests merge without losing structural urgency")
     func requestMerging() {
         #expect(ContentResizePolicy.merge(nil, with: .semantic) == .semantic)
@@ -181,7 +165,7 @@ struct ContentResizeTests {
                             isWholesale: false))
         #expect(view.pendingResizeRequestForTesting == .semantic)
 
-        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        #expect(await waitForRenderState { view.pendingResizeRequestForTesting == nil })
     }
 
     @Test("line-count changes use the coalesced structural path")
@@ -231,7 +215,7 @@ struct ContentResizeTests {
                 dirty: DirtySet(
                     ranges: [NSRange(location: (text as NSString).length - 1, length: 1)],
                     isWholesale: false))
-            #expect(await pumpMainQueue {
+            #expect(await waitForRenderState {
                 container.textView.pendingResizeRequestForTesting == nil
             })
         }
@@ -284,7 +268,7 @@ struct ContentResizeTests {
             editOffset += 1
         }
 
-        #expect(await pumpMainQueue {
+        #expect(await waitForRenderState {
             container.textView.pendingResizeRequestForTesting == nil
         })
         #expect(abs(try anchorScreenY() - screenYBeforeEdit) < 0.5)
@@ -313,7 +297,9 @@ struct ContentResizeTests {
             range: NSRange(location: paragraph, length: source.length - paragraph)).location
         view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
         view.scroll(toOffset: caret, position: .center, animated: false)
-        try await Task.sleep(for: .milliseconds(150))
+        try #require(await waitForRenderState {
+            view.pendingResizeRequestForTesting == nil
+        }, "The deferred viewport repair never finished")
         let clip = container.scrollView.contentView
         let initialY = clip.bounds.minY
         var observedY: [CGFloat] = []
@@ -328,9 +314,15 @@ struct ContentResizeTests {
             view.update(document: MarkdownParser.parse(storage.string),
                         dirty: DirtySet(ranges: [NSRange(location: caret, length: 1)], isWholesale: false))
             caret += 1
-            try await Task.sleep(for: .milliseconds(30))
+            // Let immediate AppKit callbacks run without waiting out the
+            // debounce. Subsequent keys can still supersede the queued repair.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
         }
-        try await Task.sleep(for: .milliseconds(150))
+        try #require(await waitForRenderState {
+            view.pendingResizeRequestForTesting == nil
+        }, "Typing did not finish its deferred viewport repair")
         #expect(abs(clip.bounds.minY - initialY) < 0.5)
         #expect(observedY.allSatisfy { abs($0 - initialY) < 0.5 },
                 "typing exposed intermediate camera positions: \(observedY)")
@@ -439,7 +431,7 @@ struct ContentResizeTests {
         )
         #expect(abs(try screenY() - before) < 0.5, "the commit moved the page")
 
-        #expect(await pumpMainQueue {
+        #expect(await waitForRenderState {
             container.textView.pendingResizeRequestForTesting == nil
         })
         #expect(abs(try screenY() - before) < 0.5, "the deferred resize moved the page")
@@ -484,7 +476,7 @@ struct ContentResizeTests {
             "the shared-storage edit moved the page"
         )
 
-        #expect(await pumpMainQueue {
+        #expect(await waitForRenderState {
             container.textView.pendingResizeRequestForTesting == nil
         })
         #expect(
@@ -524,7 +516,7 @@ struct ContentResizeTests {
         // Simulate NSTextView's late make-caret-visible correction.
         clip.scroll(to: .zero)
         container.scrollView.reflectScrolledClipView(clip)
-        #expect(await pumpMainQueue {
+        #expect(await waitForRenderState {
             guard let rect = container.textView.rect(forOffset: anchor) else { return false }
             return abs(rect.minY - clip.bounds.origin.y - before) < 0.5
         })
@@ -562,7 +554,9 @@ struct ContentResizeTests {
         let currentOffset = anchor.offset - 80
         let clip = container.scrollView.contentView
         let screenY = try #require(view.rect(forOffset: currentOffset)).minY - clip.bounds.minY
-        try await Task.sleep(for: .milliseconds(150))
+        try #require(await waitForRenderState {
+            view.pendingResizeRequestForTesting == nil
+        }, "The deferred viewport repair never finished")
         let settledY = try #require(view.rect(forOffset: currentOffset)).minY - clip.bounds.minY
         #expect(abs(settledY - screenY) < 0.5, "an older parse repair overrode the newer edit's camera")
     }
@@ -593,10 +587,10 @@ struct ContentResizeTests {
         // height pass must both preserve the command-boundary pixel camera.
         clip.scroll(to: .zero)
         container.scrollView.reflectScrolledClipView(clip)
-        #expect(await pumpMainQueue { abs(clip.bounds.origin.y - 703) < 0.5 })
+        #expect(await waitForRenderState { abs(clip.bounds.origin.y - 703) < 0.5 })
 
         #expect(abs(clip.bounds.origin.y - 703) < 0.5)
-        #expect(await pumpMainQueue { abs(clip.bounds.origin.y - 703) < 0.5 })
+        #expect(await waitForRenderState { abs(clip.bounds.origin.y - 703) < 0.5 })
     }
 
     /// A stale over-tall frame (from an earlier estimate or a shrunk document)
@@ -714,7 +708,7 @@ struct ContentResizeTests {
         view.scroll(toOffset: anchor.offset, position: .visible, animated: false)
         // AppKit can make a late caret correction before the queued repair.
         clip.scroll(to: .zero)
-        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        #expect(await waitForRenderState { view.pendingResizeRequestForTesting == nil })
         let rect = try #require(view.rect(forOffset: anchor.offset))
         #expect(abs(clip.bounds.minY - rect.minY - anchor.gap) < 1)
     }
@@ -734,7 +728,7 @@ struct ContentResizeTests {
         // on-screen window or display link and must not create one.
         view.startAnimatedScroll(to: 1_800, in: clip)
         view.mode = .source
-        #expect(await pumpMainQueue { view.pendingResizeRequestForTesting == nil })
+        #expect(await waitForRenderState { view.pendingResizeRequestForTesting == nil })
         let repairedY = clip.bounds.minY
         _ = view.documentMotionTick(dt: 1)
         view.documentMotionApply()
@@ -775,7 +769,7 @@ struct ContentResizeTests {
         let before = try #require(view.rect(forOffset: anchor)).minY - clip.bounds.origin.y
 
         view.mode = .source
-        #expect(await pumpMainQueue {
+        #expect(await waitForRenderState {
             guard let rect = view.rect(forOffset: anchor) else { return false }
             return abs(rect.minY - clip.bounds.origin.y - before) < 1
         })
@@ -783,7 +777,7 @@ struct ContentResizeTests {
         #expect(abs(sourceAfter - before) < 1, "Source mode moved the reading position")
 
         view.mode = .live
-        #expect(await pumpMainQueue {
+        #expect(await waitForRenderState {
             guard let rect = view.rect(forOffset: anchor) else { return false }
             return abs(rect.minY - clip.bounds.origin.y - before) < 2
         })
@@ -792,5 +786,30 @@ struct ContentResizeTests {
         // baseline difference; the source anchor must remain in the same
         // reading band, not land at a new page position.
         #expect(abs(documentAfter - before) < 2, "Document mode moved the reading position")
+    }
+}
+
+// MarkdownRenderTests owns this condition waiter. AppKit doesn't expose a
+// completion for deferred TextKit viewport repairs.
+@MainActor
+func waitForRenderState(
+    timeout: Duration = .seconds(5),
+    _ condition: @escaping @MainActor () -> Bool
+) async -> Bool {
+    if condition() { return true }
+    let deadline = ContinuousClock.now + timeout
+    return await withCheckedContinuation { continuation in
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(5))
+        timer.setEventHandler {
+            MainActor.assumeIsolated {
+                let ready = condition()
+                if ready || ContinuousClock.now >= deadline {
+                    timer.cancel()
+                    continuation.resume(returning: ready)
+                }
+            }
+        }
+        timer.resume()
     }
 }

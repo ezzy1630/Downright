@@ -511,12 +511,8 @@ private func drainSiblingSearchQueue(_ controller: DocumentWindowController) asy
 
 @MainActor
 private func eventually(
-    timeout: Duration = .seconds(2),
-    _ condition: @MainActor () -> Bool
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: @escaping @MainActor () -> Bool
 ) async -> Bool {
-    let deadline = ContinuousClock.now + timeout
-    while !condition(), ContinuousClock.now < deadline {
-        try? await Task.sleep(for: .milliseconds(5))
-    }
-    return condition()
+    await waitForAppKitState("sibling search presentation", sourceLocation: sourceLocation, condition)
 }

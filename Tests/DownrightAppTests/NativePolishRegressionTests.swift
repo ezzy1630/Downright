@@ -117,18 +117,25 @@ struct NativePolishRegressionTests {
         let controller = DocumentWindowController()
         try controller.open(url, mode: .live)
         defer { controller.close() }
-        controller.markdownDocument.replace(NSRange(location: 0, length: 6), with: "first", actionName: "Edit")
-        try await Task.sleep(for: .seconds(1.2))
-        controller.markdownDocument.replace(NSRange(location: 0, length: 5), with: "second", actionName: "Edit")
-        try await Task.sleep(for: .seconds(1.1))
-        #expect(try String(contentsOf: url, encoding: .utf8) == "before\n")
-        // The no-save assertion above straddles the superseded deadline.
-        // After that, wait for the actual write rather than assuming the main
-        // queue must execute the idle timer within a 200ms CI scheduling margin.
-        let deadline = ContinuousClock.now + .seconds(5)
-        while try String(contentsOf: url, encoding: .utf8) != "second\n", ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        let document = controller.markdownDocument
+        var saved = TestSignal()
+        let existingObserver = document.onDirtyChanged
+        defer { document.onDirtyChanged = existingObserver }
+        document.onDirtyChanged = { dirty in
+            existingObserver?(dirty)
+            if !dirty { saved.signal() }
         }
+
+        try #require(document.replace(NSRange(location: 0, length: 6), with: "first", actionName: "Edit"))
+        try #require(await !saved.wait(timeout: .seconds(1.2)), "Autosave fired before the first idle deadline")
+        saved = TestSignal()
+        try #require(document.replace(NSRange(location: 0, length: 5), with: "second", actionName: "Edit"))
+        // This window crosses the superseded deadline and ends before the
+        // latest one. Any save here breaks the debounce contract.
+        try #require(await !saved.wait(timeout: .seconds(1.1)), "A superseded autosave deadline saved the document")
+        #expect(try String(contentsOf: url, encoding: .utf8) == "before\n")
+        saved = TestSignal()
+        try #require(await saved.wait(), "Autosave never cleared the document's dirty state")
         #expect(try String(contentsOf: url, encoding: .utf8) == "second\n")
     }
 

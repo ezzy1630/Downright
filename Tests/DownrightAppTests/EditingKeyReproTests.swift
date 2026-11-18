@@ -485,7 +485,9 @@ struct EditingKeyReproTests {
         view.resizeToFitContent()
         view.scroll(toOffset: caret, position: .center, animated: false)
         view.prepareForDisplay()
-        try await Task.sleep(for: .milliseconds(150))
+        try #require(await waitForAppKitState("initial document layout repair") {
+            view.pendingResizeRequestForTesting == nil
+        })
         let clip = controller.primaryContainer.scrollView.contentView
         // Deep lazy layout can refine its estimate after the first reveal.
         // Establish a visible editing caret before measuring deletion.
@@ -510,17 +512,13 @@ struct EditingKeyReproTests {
             let immediateY = clip.convert(immediateRect, from: view).minY - clip.bounds.minY
             #expect(abs(immediateY - screenY) < 1,
                     "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
-            let deadline = ContinuousClock().now + .seconds(3)
-            // Poll immutable snapshot identity and revision, not the entire
-            // megabyte buffer every 5ms. Exact source equality is checked below.
-            while ContinuousClock().now < deadline,
-                  document.lastCompletedParseRevision.map({ $0 > beforeRevision }) != true
-                    || document.lastCompletedParseRevision != document.revision
-                    || view.parsedDocument !== document.parsed
-                    || view.pendingResizeRequestForTesting != nil {
-                controller.markdownDocument.flushScheduledReparse()
-                try await Task.sleep(for: .milliseconds(5))
-            }
+            document.flushScheduledReparse()
+            try #require(await waitForAppKitState("word deletion to commit and finish viewport repair") {
+                document.lastCompletedParseRevision.map { $0 > beforeRevision } == true
+                    && document.lastCompletedParseRevision == document.revision
+                    && view.parsedDocument === document.parsed
+                    && view.pendingResizeRequestForTesting == nil
+            })
             let converged = view.parsedDocument.text == controller.markdownDocument.text
             #expect(converged,
                     "the edit never reached its parsed presentation; source revision=\(document.revision.rawValue), parsed revision=\(String(describing: document.lastCompletedParseRevision)), snapshot matches=\(view.parsedDocument === document.parsed)")

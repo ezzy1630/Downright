@@ -17,19 +17,6 @@ import MarkdownCore
 @Suite(.serialized)
 struct ReviewBaselineTests {
 
-    @MainActor
-    private func waitForExternalText(
-        _ text: String,
-        in document: MarkdownDocument,
-        timeout: TimeInterval = 2
-    ) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while document.text != text, Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return document.text == text
-    }
-
     // MARK: - Fixtures
 
     private static func makeSandbox() throws -> URL {
@@ -93,9 +80,8 @@ struct ReviewBaselineTests {
         // cover, and the one that used to lose writes 1 and 2.
         for write in Self.writes {
             try Data(write.utf8).write(to: url)
-            document.handleExternalWrite()
-            document.flushPendingExternalWrite()
-            #expect(await waitForExternalText(write, in: document))
+            try await completeExternalWrite(document) { document.handleExternalWrite() }
+            #expect(document.text == write)
         }
 
         #expect(document.text == Self.writes[2])
@@ -135,12 +121,12 @@ struct ReviewBaselineTests {
             if case .applied = event { appliedEvents += 1 }
         }
 
-        for write in Self.writes {
-            try Data(write.utf8).write(to: url)
-            document.handleExternalWrite()
+        try await completeExternalWrite(document) {
+            for write in Self.writes {
+                try Data(write.utf8).write(to: url)
+                document.handleExternalWrite()
+            }
         }
-        document.flushPendingExternalWrite()
-        #expect(await waitForExternalText(Self.writes[2], in: document))
 
         #expect(appliedEvents == 1, "a burst must rebuild the document once, not once per write")
         #expect(document.text == Self.writes[2])
@@ -159,9 +145,8 @@ struct ReviewBaselineTests {
         let first = MarkdownDocument()
         try first.open(url)
         try Data(Self.writes[2].utf8).write(to: url)
-        first.handleExternalWrite()
-        first.flushPendingExternalWrite()
-        #expect(await waitForExternalText(Self.writes[2], in: first))
+        try await completeExternalWrite(first) { first.handleExternalWrite() }
+        #expect(first.text == Self.writes[2])
 
         let markCount = first.changes.count
         #expect(markCount == 3)
@@ -449,9 +434,8 @@ struct ReviewBaselineTests {
         }
 
         try Data(Self.writes[2].utf8).write(to: url)
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        #expect(await waitForExternalText(Self.writes[2], in: document))
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
+        #expect(document.text == Self.writes[2])
         #expect(document.text == Self.writes[2])
         #expect(document.isDirty == false)
 
@@ -480,9 +464,8 @@ struct ReviewBaselineTests {
 
         for write in Self.writes {
             try Data(write.utf8).write(to: url)
-            document.handleExternalWrite()
-            document.flushPendingExternalWrite()
-            #expect(await waitForExternalText(write, in: document))
+            try await completeExternalWrite(document) { document.handleExternalWrite() }
+            #expect(document.text == write)
         }
 
         for expected in Self.writes.dropLast().reversed() {
@@ -505,9 +488,8 @@ struct ReviewBaselineTests {
         defer { document.close() }
 
         try Data(Self.writes[2].utf8).write(to: url)
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        #expect(await waitForExternalText(Self.writes[2], in: document))
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
+        #expect(document.text == Self.writes[2])
 
         document.undoManager.undo()
         #expect(document.text == Self.original)

@@ -330,14 +330,7 @@ struct DocumentTrustStateTests {
         ))
         let incoming = Data((changesContent ? "header\nab\r\n" : "header\na\r\n").utf8)
         try incoming.write(to: fixture.url, options: .atomic)
-        var finished = false
-        document.onExternalWriteActivity = { if !$0 { finished = true } }
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where !finished {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(finished)
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
         #expect(document.text == "header\na")
         #expect((document.pendingConflict != nil) == changesContent)
         if changesContent {
@@ -369,11 +362,7 @@ struct DocumentTrustStateTests {
         try document.open(fixture.url)
         defer { document.close() }
         try Data("body".utf8).write(to: fixture.url, options: .atomic)
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where document.text != "body" {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
         #expect(document.text == "body")
         #expect(!document.isDirty)
         document.replace(NSRange(location: 0, length: 4), with: "changed", actionName: "Typing")
@@ -389,14 +378,7 @@ struct DocumentTrustStateTests {
         try document.open(fixture.url)
         defer { document.close() }
         document.replace(NSRange(location: 4, length: 1), with: "", actionName: "Delete")
-        var finished = false
-        document.onExternalWriteActivity = { active in if !active { finished = true } }
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where !finished {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(finished)
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
         #expect(document.text == "body")
         #expect(document.isDirty)
         #expect(document.pendingConflict == nil)
@@ -436,11 +418,7 @@ struct DocumentTrustStateTests {
         #expect(document.presentationState.phase == .changedOnDisk)
         #expect(document.presentationState.detail == "File missing")
 
-        document.handleWatchEvent(.restored)
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where document.presentationState.phase != .neutral {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try await completeExternalWrite(document) { document.handleWatchEvent(.restored) }
         #expect(document.presentationState == .neutral)
         document.close()
     }
@@ -465,9 +443,13 @@ struct DocumentTrustStateTests {
         let original = "# One\n\nBody.\n"
         let incoming = "# One\n\n" + String(repeating: "A longer external paragraph.\n\n", count: 2_000)
         document.adopt(text: original, displayURL: nil)
+        let reparsed = TestSignal()
         var incomingCommits = 0
         document.onReparse = { parsed, _ in
-            if parsed.text == incoming { incomingCommits += 1 }
+            if parsed.text == incoming {
+                incomingCommits += 1
+                reparsed.signal()
+            }
         }
 
         document.applyExternalText(
@@ -477,9 +459,7 @@ struct DocumentTrustStateTests {
         #expect(document.text == incoming)
         #expect(document.parsed.text != incoming, "the main actor must not synchronously parse a wholesale rewrite")
 
-        for _ in 0..<200 where document.parsed.text != incoming {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await reparsed.wait(), "The external rewrite never committed")
         #expect(document.parsed.text == incoming)
         #expect(incomingCommits == 1)
         document.close()
@@ -491,6 +471,10 @@ struct DocumentTrustStateTests {
         let original = "# One\n\nBody.\n"
         let incoming = "# External\n\nBody.\n"
         document.adopt(text: original, displayURL: nil)
+        let reparsed = TestSignal()
+        document.onReparse = { parsed, _ in
+            if parsed.text.hasSuffix("Local tail.\n") { reparsed.signal() }
+        }
         document.applyExternalText(
             incoming,
             hunks: TextDiff.hunks(old: original, new: incoming)
@@ -501,15 +485,27 @@ struct DocumentTrustStateTests {
             actionName: "Paste"
         ))
 
-        for _ in 0..<200 where document.parsed.text != document.text {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await reparsed.wait(), "The latest local revision never committed")
         #expect(document.parsed.text == document.text)
         #expect(document.text.hasSuffix("Local tail.\n"))
         #expect(document.isDirty)
         #expect(document.presentationState.provenance == "Paste")
         document.close()
     }
+}
+
+@MainActor
+func completeExternalWrite(_ document: MarkdownDocument, trigger: () throws -> Void) async throws {
+    let finished = TestSignal()
+    let existingObserver = document.onExternalWriteActivity
+    defer { document.onExternalWriteActivity = existingObserver }
+    document.onExternalWriteActivity = { active in
+        existingObserver?(active)
+        if !active { finished.signal() }
+    }
+    try trigger()
+    document.flushPendingExternalWrite()
+    try #require(await finished.wait(), "External write reconciliation never finished")
 }
 
 private struct Fixture {

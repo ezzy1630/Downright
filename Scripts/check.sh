@@ -1,220 +1,107 @@
 #!/bin/bash
-# Build everything and run every test suite.
-#
-# The `-F` flag is load-bearing on a machine with only the Command Line Tools.
-# SwiftPM generates the test runner with `#if canImport(Testing)` around the
-# swift-testing entry point, and swift-testing ships with the CLT *outside*
-# SwiftPM's default framework search path.  Without the flag that `canImport`
-# is false, the branch compiles out, and `swift test` exits 0 having run
-# nothing at all — the worst possible failure mode.  Always run tests through
-# this script, or pass the flag yourself.
+# Build everything and run every source suite. CI splits out the unchanged
+# release benchmark so its independent toolchain graph can run in parallel.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-SCRATCH="${SCRATCH:-.build-main}"
-
-# Model and app-layer tests exercise snapshot/state persistence, including
-# destructive pruning. Never let the authoritative gate inherit the user's
-# real Application Support directory. Callers that provide an explicit
-# isolated directory keep ownership of it; otherwise this script creates and
-# removes a per-run sandbox.
-if [ -z "${DOWNRIGHT_SUPPORT_DIRECTORY:-}" ]; then
-    if ! TEST_SUPPORT_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/downright-check-support.XXXXXX")" \
-        || [ -z "$TEST_SUPPORT_DIRECTORY" ] \
-        || [ ! -d "$TEST_SUPPORT_DIRECTORY" ]; then
-        echo "check: could not create an isolated Application Support directory" >&2
-        exit 1
-    fi
-    export DOWNRIGHT_SUPPORT_DIRECTORY="$TEST_SUPPORT_DIRECTORY"
-    cleanup_test_support() {
-        find "$TEST_SUPPORT_DIRECTORY" -depth -delete
-    }
-    trap cleanup_test_support EXIT
-fi
-
-# Logs are named after the scratch path, not fixed under /tmp.  Two runs with
-# different SCRATCH values are a deliberately supported thing (CI uses its own,
-# and running a second check while one is in flight is normal), but with fixed
-# names they silently overwrote each other's logs — so a failure reported the
-# *other* run's errors, or none at all.
+export SCRATCH="${SCRATCH:-.build-main}"
 LOG_TAG="$(printf '%s' "$SCRATCH" | tr -c 'A-Za-z0-9._-' '-')"
 LOG_DIR="${TMPDIR:-/tmp}"
-
-# CI retains compiler invocations to explain warm-cache rebuilds. Normal local
-# output stays compact; the flag never changes optimization or test selection.
 VERBOSE_FLAG=""
 if [ "${CHECK_VERBOSE_BUILD:-0}" = "1" ]; then VERBOSE_FLAG=--verbose; fi
 
-CLT_FRAMEWORKS="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
-TEST_FLAGS=()
-SELECTED_DEVELOPER="$(xcode-select -p 2>/dev/null || true)"
-if [[ "$SELECTED_DEVELOPER" == /Library/Developer/CommandLineTools* ]] \
-    && [ -d "$CLT_FRAMEWORKS/Testing.framework" ]; then
-    TEST_FLAGS=(-Xswiftc -F -Xswiftc "$CLT_FRAMEWORKS")
-fi
-# Xcode builds and tests use identical compiler flags, so reuse their modules.
-# Only CLT needs a separate graph: its generated test runner needs an extra -F,
-# and alternating those flags in one scratch path recompiles every target.
-if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
-    TEST_SCRATCH="${TEST_SCRATCH:-${SCRATCH}-test}"
-else
-    TEST_SCRATCH="${TEST_SCRATCH:-$SCRATCH}"
+case "${1:-}" in
+    "") ;;
+    --source-only) ;;
+    --bench-only) RUN_DRBENCH=1 ;;
+    *) echo "Usage: Scripts/check.sh [--source-only | --bench-only]" >&2; exit 2 ;;
+esac
+if [ "$#" -gt 1 ]; then
+    echo "Usage: Scripts/check.sh [--source-only | --bench-only]" >&2
+    exit 2
 fi
 
-echo "==> Release verifier regression tests"
-if ! python3 -B - <<'PY'
+if [ "${1:-}" != "--bench-only" ]; then
+    run_source() {
+        echo "==> Test honesty"
+        python3 -B Scripts/lint-tests.py || exit 1
+
+        echo "==> Python script regression tests"
+        if ! python3 -B - <<'PY'
 import sys
 import unittest
 
 suite = unittest.defaultTestLoader.discover("Tests/ScriptTests", pattern="test_*.py")
 if suite.countTestCases() == 0:
-    sys.exit("Release verifier regression suite discovered no tests")
+    sys.exit("Python script regression suite discovered no tests")
 result = unittest.TextTestRunner().run(suite)
 sys.exit(0 if result.wasSuccessful() and result.testsRun > 0 else 1)
 PY
-then
-    echo "    FAILED"
-    exit 1
-fi
+        then
+            echo "    FAILED"
+            exit 1
+        fi
 
-echo "==> Build"
-if ! swift build ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.log" 2>&1; then
-    echo "    FAILED"
-    grep "error:" "$LOG_DIR/downright-build-$LOG_TAG.log" | sort -u | head -40
-    exit 1
-fi
-echo "    ok"
+        echo "==> Build"
+        if ! swift build ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" > "$LOG_DIR/downright-build-$LOG_TAG.log" 2>&1; then
+            echo "    FAILED"
+            grep "error:" "$LOG_DIR/downright-build-$LOG_TAG.log" | sort -u | head -40
+            exit 1
+        fi
+        echo "    ok"
 
-echo "==> Spotlight importer build"
-if ! swift build ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" --product DownrightSpotlightImporter \
-    > "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" 2>&1; then
-    echo "    FAILED"
-    grep "error:" "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" | sort -u | head -40
-    exit 1
-fi
-echo "    ok"
+        echo "==> Spotlight importer build"
+        if ! swift build ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --scratch-path "$SCRATCH" --product DownrightSpotlightImporter \
+            > "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" 2>&1; then
+            echo "    FAILED"
+            grep "error:" "$LOG_DIR/downright-spotlight-build-$LOG_TAG.log" | sort -u | head -40
+            exit 1
+        fi
+        echo "    ok"
 
-echo "==> Tests"
-if ! CLI_BIN_DIRECTORY="$(swift build --scratch-path "$SCRATCH" --show-bin-path)"; then
-    echo "    FAILED — cannot locate the built CLI for worker tests"
-    exit 1
-fi
-export DOWNRIGHT_TEST_CLI_EXECUTABLE="$CLI_BIN_DIRECTORY/down"
-TEST_LOG="$LOG_DIR/downright-test-$LOG_TAG.log"
-run_swift_tests() {
-    if [ "${#TEST_FLAGS[@]}" -gt 0 ]; then
-        swift test ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --no-parallel --scratch-path "$TEST_SCRATCH" "${TEST_FLAGS[@]}"
-    else
-        swift test ${VERBOSE_FLAG:+"$VERBOSE_FLAG"} --no-parallel --scratch-path "$TEST_SCRATCH"
-    fi
-}
-if [ "${CI:-}" = "true" ]; then
-    # Preserve progress and stack evidence if the runner cancels a hung test.
-    # pipefail keeps a successful tee from masking swift test's failure.
-    python3 -u "$ROOT/Scripts/sample-test-processes.py" \
-        --parent-pid "$$" --output-prefix "$LOG_DIR/downright-test-$LOG_TAG" &
-    TEST_DIAGNOSTICS_PID=$!
-    NSUnbufferedIO=YES run_swift_tests 2>&1 | tee "$TEST_LOG"
-    TEST_STATUS=$?
-    kill "$TEST_DIAGNOSTICS_PID" 2>/dev/null || true
-    wait "$TEST_DIAGNOSTICS_PID" 2>/dev/null || true
-else
-    run_swift_tests > "$TEST_LOG" 2>&1
-    TEST_STATUS=$?
-fi
-grep -aE "Test run|✘|Suite .* (passed|failed)|error:|failed after" "$TEST_LOG" | tail -40
-if [ "$TEST_STATUS" -ne 0 ]; then
-    echo
-    echo "    Failure details"
-    # Suite summaries can push the actual assertion diagnostics out of the
-    # tail above once the test graph is large. Always preserve the actionable
-    # lines in CI output; the runner's temporary full log disappears with it.
-    grep -aE "✘|Expectation failed|Issue recorded|error:|failed after" "$TEST_LOG" \
-        | head -120
-fi
+        echo "==> Tests"
+        Scripts/test.sh || exit 1
 
-echo
-echo "==> Version consistency (single source: Config/version.env)"
-# This script runs without `set -e` on purpose (the test step inspects its own
-# status), so every gate here must be checked explicitly.  A drift report that
-# only prints is a release gate that always passes.
-if ! "$ROOT/Scripts/sync-versions.sh"; then
-    echo "    FAILED"
-    exit 1
-fi
+        echo "==> Version consistency (single source: Config/version.env)"
+        # This script runs without `set -e` on purpose (the test step inspects its own
+        # status), so every gate here must be checked explicitly.  A drift report that
+        # only prints is a release gate that always passes.
+        if ! "$ROOT/Scripts/sync-versions.sh"; then
+            echo "    FAILED"
+            exit 1
+        fi
 
-echo
-echo "==> Sparkle is linked only by the host app"
-SPARKLE_IMPORTS="$(grep -rln 'import Sparkle' Sources --include='*.swift' || true)"
-if [ -z "$SPARKLE_IMPORTS" ]; then
-    echo "    FAIL: no source file imports Sparkle — the updater was not wired up"
-    exit 1
-fi
-for file in $SPARKLE_IMPORTS; do
-    case "$file" in
-        Sources/DownrightApp/Updater/*) : ;;  # the engine boundary, as designed
-        Sources/DownrightApp/*) : ;;
-        *) echo "    FAIL: Sparkle imported outside the host app: $file"; exit 1 ;;
-    esac
-done
-echo "    ok"
+        echo
+        echo "==> Sparkle is linked only by the host app"
+        SPARKLE_IMPORTS="$(grep -rln 'import Sparkle' Sources --include='*.swift' || true)"
+        if [ -z "$SPARKLE_IMPORTS" ]; then
+            echo "    FAIL: no source file imports Sparkle — the updater was not wired up"
+            exit 1
+        fi
+        for file in $SPARKLE_IMPORTS; do
+            case "$file" in
+                Sources/DownrightApp/Updater/*) : ;;  # the engine boundary, as designed
+                Sources/DownrightApp/*) : ;;
+                *) echo "    FAIL: Sparkle imported outside the host app: $file"; exit 1 ;;
+            esac
+        done
+        echo "    ok"
 
-echo
-echo "==> Theme contrast"
-# Same rule as the version gate above: a WCAG regression must fail the run,
-# not just decorate its output.
-if ! python3 "$ROOT/Scripts/check-contrast.py"; then
-    echo "    FAILED"
-    exit 1
-fi
+        echo
+        echo "==> Theme contrast"
+        # Same rule as the version gate above: a WCAG regression must fail the run,
+        # not just decorate its output.
+        if ! python3 "$ROOT/Scripts/check-contrast.py"; then
+            echo "    FAILED"
+            exit 1
+        fi
 
-echo
-echo "==> Sanity: the runner must actually have run something"
-# macOS ships BSD awk, which only matches multibyte characters (✔ ✘) under a
-# UTF-8 locale — with the default C locale the bracket expression never
-# matches and every correctly-run suite counts as "nothing ran".  Pin the
-# locale so the gate measures tests, not bytes.
-# Verbose Swift Testing also prints parameterized-case result lines. Sum
-# completed run summaries so those cases are not counted a second time and
-# a truncated stream of individual results cannot masquerade as a full run.
-COUNT=$(LC_ALL=en_US.UTF-8 awk '/^[✔✘] Test run with [0-9]+ tests?/ { count += $5 } END { print count + 0 }' "$TEST_LOG")
-# A missing or unreadable log leaves COUNT empty, and an empty COUNT must read
-# as "nothing ran", never as "the arithmetic test was malformed, carry on".
-case "$COUNT" in ''|*[!0-9]*) COUNT=0 ;; esac
-echo "    $COUNT tests executed"
-if [ "$COUNT" -eq 0 ]; then
-    echo "    NO TESTS RAN — see the note at the top of this script"
-    exit 1
+        echo
+    }
+    run_source || exit 1
 fi
+if [ "${1:-}" = "--source-only" ]; then exit 0; fi
 
-# Known issues are deliberate environment boundaries, not a second success
-# path. Keep their inventory explicit so a test cannot quietly become a
-# permanent suppression (or disappear from the gate) while the test count still
-# looks healthy. The two current sites are the headless TextKit viewport hit
-# test and the raster smoke test; an activated-app lane exercises both without
-# this exception.
-if command -v rg >/dev/null 2>&1; then
-    KNOWN_ISSUE_SITES=$(rg -n --glob '*.swift' "withKnownIssue\\(" Tests | wc -l | tr -d ' ')
-else
-    # The release runner intentionally uses only the tools shipped by macOS.
-    # Keep the gate portable when ripgrep is not preinstalled there.
-    KNOWN_ISSUE_SITES=$(find Tests -type f -name '*.swift' \
-        -exec grep -F -n 'withKnownIssue(' {} + | wc -l | tr -d ' ')
-fi
-EXPECTED_KNOWN_ISSUES=2
-echo "    $KNOWN_ISSUE_SITES deliberate known-issue sites"
-if [ "$KNOWN_ISSUE_SITES" -ne "$EXPECTED_KNOWN_ISSUES" ]; then
-    echo "    KNOWN-ISSUE GATE FAILED — expected exactly $EXPECTED_KNOWN_ISSUES deliberate suppressions"
-    exit 1
-fi
-# Exit codes are taken modulo 256, so a status of 256 would surface as success.
-# Report the failure with a literal 1 instead of forwarding the raw status.
-if [ "$TEST_STATUS" -ne 0 ]; then
-    echo "    TESTS FAILED (swift test exited $TEST_STATUS) — see $TEST_LOG"
-    exit 1
-fi
-
-echo
 # `RUN_DRBENCH=1 Scripts/check.sh` builds release and treats the budget as a
 # gate. Run the corpus once: release enforces the product budgets, while the
 # default debug run only checks that the tool runs.

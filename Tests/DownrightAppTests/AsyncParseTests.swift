@@ -41,17 +41,20 @@ struct AsyncParseTests {
         let incoming = "# One\n\nA rewritten paragraph with a different shape.\n"
         document.adopt(text: initial, displayURL: nil)
 
+        defer { document.close() }
+        let reparsed = TestSignal()
         var observedDirty: DirtySet?
-        document.onReparse = { _, dirty in observedDirty = dirty }
+        document.onReparse = { _, dirty in
+            observedDirty = dirty
+            reparsed.signal()
+        }
         document.applyExternalText(
             incoming,
             hunks: TextDiff.hunks(old: initial, new: incoming)
         )
 
         #expect(document.text == incoming)
-        for _ in 0..<100 where observedDirty == nil {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await reparsed.wait(), "External absorb never published its incremental render")
         #expect(observedDirty?.isWholesale == false)
         #expect(observedDirty?.ranges.isEmpty == false)
     }
@@ -62,14 +65,17 @@ struct AsyncParseTests {
         let original = "# One\n\nOriginal body.\n"
         let incoming = "# One\n\nExternal body.\n"
         document.adopt(text: original, displayURL: nil)
+        defer { document.close() }
 
+        let absorbed = TestSignal()
+        document.onReparse = { parsed, _ in
+            if parsed.text == incoming { absorbed.signal() }
+        }
         document.applyExternalText(
             incoming,
             hunks: TextDiff.hunks(old: original, new: incoming)
         )
-        for _ in 0..<100 where document.parsed.text != incoming {
-            try await Task.sleep(for: .milliseconds(2))
-        }
+        try #require(await absorbed.wait(), "External absorb never committed the incoming revision")
         #expect(document.parsed.text == incoming)
 
         document.undoManager.undo()
@@ -82,10 +88,14 @@ struct AsyncParseTests {
 
         // Drain the delegate callbacks from absorb, undo, and redo. The next
         // edit must still be treated as a user mutation after all of them.
-        for _ in 0..<20 { await Task.yield() }
+        await drainTestMainQueue()
+        let reparsed = TestSignal()
         var reparseCount = 0
         document.onReparse = { parsed, _ in
-            if parsed.text == document.text { reparseCount += 1 }
+            if parsed.text == document.text {
+                reparseCount += 1
+                reparsed.signal()
+            }
         }
         #expect(document.replace(
             NSRange(location: document.storage.length, length: 0),
@@ -95,9 +105,8 @@ struct AsyncParseTests {
         #expect(document.isDirty)
         #expect(document.presentationState.phase == .edited)
 
-        for _ in 0..<100 where document.parsed.text != document.text {
-            try await Task.sleep(for: .milliseconds(2))
-        }
+        try #require(await reparsed.wait(), "The local edit following undo/redo never committed")
+        await drainTestMainQueue()
         #expect(document.parsed.text == document.text)
         #expect(reparseCount == 1)
     }
@@ -183,22 +192,15 @@ struct AsyncParseTests {
     }
 
     @Test
-    func injectedWorkerRunsPureParseAndDiff() async {
-        let worker = MarkdownParseWorker { text, previous, revision in
-            let document = MarkdownParser.parse(text)
-            return MarkdownParseResult(
-                revision: revision,
-                text: text,
-                document: document,
-                dirty: ASTDiff.dirtySet(old: previous, new: document)
-            )
-        }
+    func defaultWorkerRunsRealParseAndDiff() async {
+        let worker = MarkdownParseWorker()
         let previous = MarkdownParser.parse("# One\n")
         let result = await worker.run(
             text: "# Two\n", previous: previous, revision: .zero.advanced()
         )
 
         #expect(result.document.text == "# Two\n")
+        #expect(result.document.headings.first?.title == "Two")
         #expect(result.revision == .zero.advanced())
         #expect(!result.dirty.isEmpty)
     }
@@ -459,4 +461,69 @@ private final class WorkerConcurrencyCounter: @unchecked Sendable {
         currentCount -= 1
         lock.unlock()
     }
+}
+
+/// Buffered so synchronous completions and notifications that arrive before
+/// the test suspends are observable too. The clock bounds missing signals.
+struct TestSignal: Sendable {
+    private let stream: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
+
+    init() {
+        (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    }
+
+    func signal() { continuation.yield(()) }
+
+    func wait(timeout: Duration = .seconds(5)) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next() != nil
+            }
+            group.addTask {
+                try? await ContinuousClock().sleep(until: deadline)
+                return false
+            }
+            let arrived = await group.next() ?? false
+            group.cancelAll()
+            return arrived
+        }
+    }
+}
+
+@MainActor
+func drainTestMainQueue() async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+}
+
+/// Last resort for AppKit state with no completion or notification.
+@MainActor
+func waitForAppKitState(
+    _ description: String,
+    timeout: Duration = .seconds(5),
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: @escaping @MainActor () -> Bool
+) async -> Bool {
+    if condition() { return true }
+    let deadline = ContinuousClock.now + timeout
+    let ready = await withCheckedContinuation { continuation in
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(5))
+        timer.setEventHandler {
+            MainActor.assumeIsolated {
+                let ready = condition()
+                if ready || ContinuousClock.now >= deadline {
+                    timer.cancel()
+                    continuation.resume(returning: ready)
+                }
+            }
+        }
+        timer.resume()
+    }
+    if !ready { Issue.record("Timed out waiting for \(description)", sourceLocation: sourceLocation) }
+    return ready
 }
