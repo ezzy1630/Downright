@@ -136,9 +136,20 @@ final class UIDriver {
     }
 
     func drag(fromText start: String, toText end: String) throws {
-        try input.drag(
-            from: point(atSourceOffset: range(of: start).location),
-            to: point(atSourceOffset: range(of: end).upperBound)
+        let from = try point(atSourceOffset: range(of: start).location)
+        let to = try point(atSourceOffset: range(of: end).upperBound)
+        try requireEditorHit(at: from)
+        try input.drag(from: from, to: to)
+    }
+
+    /// A mouse-down outside the editor leaves its selection untouched, which
+    /// otherwise reads as a selection bug. Name the view that took the point.
+    private func requireEditorHit(at point: NSPoint) throws {
+        let content = window.contentView
+        let hit = content?.hitTest(content?.superview?.convert(point, from: nil) ?? point)
+        try #require(
+            hit.map { $0 === textView || $0.isDescendant(of: textView) } == true,
+            "Window point \(point) hits \(hit.map { String(describing: Swift.type(of: $0)) } ?? "nothing"), not the editor"
         )
     }
 
