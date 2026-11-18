@@ -507,11 +507,8 @@ extension DocumentWindowController: CommandResponder {
     /// Shows a small dialog to jump to a line number.  The line number is
     /// one-based, matching what a reader sees in a text editor status bar.
     private func goToLine() {
-        let text = markdownDocument.text as NSString
-        let totalLines = max(1, text.length == 0 ? 1 :
-            (text.substring(from: max(0, text.length - 1)) == "\n"
-                ? text.components(separatedBy: "\n").count - 1
-                : text.components(separatedBy: "\n").count))
+        markdownDocument.ensureParsedCurrent()
+        let totalLines = markdownDocument.parsed.lineStarts.count
         let alert = NSAlert()
         alert.messageText = "Go to Line"
         alert.informativeText = "Enter a line number (1–\(totalLines)):"
@@ -526,14 +523,14 @@ extension DocumentWindowController: CommandResponder {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         guard let lineNumber = Int(input.stringValue.trimmingCharacters(in: .whitespaces)),
               lineNumber > 0 else { return }
-        let targetLine = min(lineNumber - 1, totalLines - 1)
-        let lines = text.components(separatedBy: "\n")
-        var offset = 0
-        for i in 0..<min(targetLine, lines.count) {
-            offset += lines[i].utf16.count + 1  // +1 for the newline
-        }
-        offset = min(offset, text.length)
-        jump(to: offset, label: "Line \(lineNumber)")
+        jumpToLine(lineNumber)
+    }
+
+    func jumpToLine(_ lineNumber: Int, animated: Bool = true) {
+        markdownDocument.ensureParsedCurrent()
+        let starts = markdownDocument.parsed.lineStarts
+        let line = min(max(1, lineNumber), starts.count)
+        jump(to: starts[line - 1], label: "Line \(line)", animated: animated)
     }
 
     private func useSelectionForFind() {

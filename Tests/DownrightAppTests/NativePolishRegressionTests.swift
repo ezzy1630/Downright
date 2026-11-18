@@ -67,6 +67,24 @@ struct NativePolishRegressionTests {
         #expect(controller.primaryContainer.textView.currentSearchHit?.location == 11)
     }
 
+    @Test func commandLineNavigationFindsLinesInMixedEndingDocuments() async throws {
+        let url = try fixture("First 😃\rSecond\r\nThird\n")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = DocumentWindowController()
+        try controller.open(url, mode: .live)
+        defer { controller.close() }
+
+        controller.applyCommandLineOpen(line: 2, review: false)
+
+        let deadline = ContinuousClock.now + .seconds(1)
+        while controller.jumpHistory.current == nil, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        let destination = try #require(controller.jumpHistory.current)
+        #expect(destination.label == "Line 2")
+        #expect(destination.offset == "First 😃\r".utf16.count)
+    }
+
     @Test func openingAnotherDocumentRestoresItsSplitState() throws {
         let first = try fixture("# First\n")
         let second = try fixture("# Second\n")

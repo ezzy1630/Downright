@@ -268,6 +268,9 @@ filesystem paths. The text surface routes native link activation through the app
 so Launch Services cannot independently open the same click. Back/Forward commit
 a history move only after the destination opens successfully and restore semantic
 reading anchors across files.
+Go to Line and the app's command-line line handler use the parsed source's
+one-based line index, which recognizes LF, CRLF, and lone CR even within the
+same document.
 
 The app can open one file or an optional folder workspace. Workspace mode scans
 the folder for sibling documents and shows them newest first. It does not build
