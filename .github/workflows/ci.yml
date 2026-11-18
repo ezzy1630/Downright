@@ -19,22 +19,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
-  swift:
-    # AppKit Liquid Glass symbols are part of the macOS 26 SDK.  macos-15's
-    # default Xcode 16.4 has Swift 6 but cannot resolve those APIs at compile
-    # time, even behind availability checks.
+  source-check:
+    # AppKit Liquid Glass requires the macOS 26 SDK.
     runs-on: macos-26
-    # Debug builds and tests share modules; release benchmarks retain their
-    # own graph and enforce the unchanged §12 budgets.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: source
+            mode: --source-only
+            scratch: .build-ci-main
+            coverage: --require-tests
+          - name: performance
+            mode: --bench-only
+            scratch: .build-ci-main-bench
+            coverage: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fast repository checks
+        if: matrix.name == 'source'
         run: Scripts/check-fast.sh
-      # The runner's default developer directory is not guaranteed to provide
-      # the Swift 6.0 tools this package's manifest declares, and when it does
-      # not, every step fails with a message that names neither the selected
-      # Xcode nor the alternatives.  Choose and verify the toolchain first.
       - name: Select and verify the Swift toolchain
         run: ./Scripts/select-toolchain.sh
       - name: Identify compiler and SDK for the build cache
@@ -42,50 +47,59 @@ jobs:
         run: |
           ID=$( { xcodebuild -version; swift --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | cut -d ' ' -f 1)
           echo "id=$ID" >> "$GITHUB_OUTPUT"
-      # Restore compiled modules, not test results. SwiftPM still checks the
-      # current sources, and every test and benchmark runs even on a cache hit.
-      - name: Restore Swift build graphs
+      - name: Restore Swift build graph
         id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            .build-ci-main
-            .build-ci-main-bench
-            !.build-ci-main/**/index
-            !.build-ci-main-bench/**/index
-          key: swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-${{ github.sha }}
+            ${{ matrix.scratch }}
+            !${{ matrix.scratch }}/**/index
+          key: swift-v2-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh', 'Scripts/test.sh') }}-${{ github.sha }}
           restore-keys: |
-            swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh') }}-
-      # The §12 performance budget is the product promise; RUN_DRBENCH makes
-      # check.sh treat it as a gate (release numbers, exit non-zero on a miss).
-      # The separate release `swift build` step is folded into this run.
-      - name: Build, test, and enforce the §12 performance budget
+            swift-v2-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Vendor/**', 'Scripts/check.sh', 'Scripts/test.sh') }}-
+      - name: Run ${{ matrix.name }} gate
         env:
-          SCRATCH: .build-ci-main
-          RUN_DRBENCH: "1"
+          CHECK_NAME: ${{ matrix.name }}
+          CHECK_MODE: ${{ matrix.mode }}
+          CHECK_COVERAGE: ${{ matrix.coverage }}
+          SCRATCH: ${{ matrix.scratch }}
+          BENCH_SCRATCH: ${{ matrix.scratch }}
           CHECK_VERBOSE_BUILD: "1"
           CI_CACHE_REQUESTED_KEY: ${{ steps.cache.outputs.cache-primary-key }}
           CI_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
           CI_CACHE_EXACT_HIT: ${{ steps.cache.outputs.cache-hit }}
-        run: python3 Scripts/ci-report.py --name source --output .build-ci-evidence/source --require-tests -- Scripts/check.sh
-      - name: Save validated Swift build graphs
+        run: |
+          python3 Scripts/ci-report.py --name "$CHECK_NAME" --output ".build-ci-evidence/$CHECK_NAME" \
+            ${CHECK_COVERAGE:+"$CHECK_COVERAGE"} -- Scripts/check.sh "$CHECK_MODE"
+      - name: Save validated Swift build graph
         if: success() && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: ${{ steps.cache.outputs.cache-primary-key }}
           path: |
-            .build-ci-main
-            .build-ci-main-bench
-            !.build-ci-main/**/index
-            !.build-ci-main-bench/**/index
-      - name: Retain source diagnostics and timing report
+            ${{ matrix.scratch }}
+            !${{ matrix.scratch }}/**/index
+      - name: Retain diagnostics and timing report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: source-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .build-ci-evidence/source
+          name: ${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build-ci-evidence/${{ matrix.name }}
           retention-days: 7
           if-no-files-found: warn
+
+  # Keep the existing PR readback contract. The matrix reports success only
+  # when both source tests and the release performance budgets have passed.
+  swift:
+    if: always()
+    needs: source-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both source and performance gates
+        env:
+          RESULT: ${{ needs.source-check.result }}
+        run: test "$RESULT" = success
 
   app-acceptance:
     runs-on: macos-26

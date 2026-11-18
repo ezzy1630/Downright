@@ -21,5 +21,6 @@ for root in (Path("Scripts"), Path("Tests/ScriptTests")):
     for path in root.glob("*.py"):
         ast.parse(path.read_text(), filename=str(path))
 PY
+python3 -B Scripts/lint-tests.py
 "$ACTIONLINT" -shellcheck=''
-echo "Fast checks passed (versions, contrast, shell/Python syntax, workflows)"
+echo "Fast checks passed (versions, contrast, shell/Python syntax, test honesty, workflows)"

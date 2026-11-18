@@ -21,19 +21,17 @@ SIGNATURE = '<!-- sparkle-signatures: edSignature: YWJjZA== -->\n'
 
 # Mock only HTTP; the production script still runs Bash, xmllint, grep and
 # Python. The request log proves failed prerequisites never reach the asset.
-CURL = '''#!/usr/bin/env python3
-import os
-from pathlib import Path
-import sys
-
-args = sys.argv[1:]
-destination = args[args.index("-o") + 1]
-with open(os.environ["REQUEST_LOG"], "a") as log:
-    log.write("asset\\n" if destination == "/dev/null" else "feed\\n")
-if destination == "/dev/null":
-    sys.exit(int(os.environ.get("ASSET_STATUS", "0")))
-Path(destination).write_bytes(Path(os.environ["FIXTURE"]).read_bytes())
-sys.exit(int(os.environ.get("FEED_STATUS", "0")))
+CURL = '''#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ] && [ "$1" != "-o" ]; do shift; done
+destination=$2
+if [ "$destination" = /dev/null ]; then
+    echo asset >> "$REQUEST_LOG"
+    exit "$ASSET_STATUS"
+fi
+echo feed >> "$REQUEST_LOG"
+cat "$FIXTURE" > "$destination"
+exit "$FEED_STATUS"
 '''
 
 

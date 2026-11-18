@@ -40,6 +40,28 @@ Changes to rendering or storage should include a focused regression test and
 must preserve the source file's exact bytes. Changes to external-write review
 should cover clean and dirty local-edit states.
 
+## Writing tests
+
+Use a Swift Testing unit or integration test for parser, edit, persistence,
+and view-model behavior that can be observed without physical input. Use an
+XCUITest with real mouse or keyboard input when the bug depends on focus,
+hit testing, scrolling, or the WindowServer's rendered pixels. Reserve manual
+checks for surfaces the automated suite cannot drive, such as Finder's
+Spacebar preview. [CI and test evidence](Docs/CI.md)
+
+Reduce a bug report to a small disposable document and the shortest failing
+action sequence. Assert the affected output, file bytes, or user-visible state.
+Run the test against the original implementation and confirm it fails for the
+reported reason, then rerun it after the fix. To run a Swift suite locally, use
+`Scripts/test.sh --filter SuiteName`.
+
+Use real implementations and observe their effects. Wait for a callback,
+notification, or completion. When AppKit only exposes state, use the test
+target's bounded condition helper and name the expected state in the failure.
+The fast gate rejects fixed waits, assertion retries, time-limit overrides, and
+untracked known issues. Lower the corresponding allowance when retiring an
+existing violation. [Test honesty allowlist](Scripts/test-lint-allowlist.json)
+
 ## Pull requests
 
 Describe the user-visible problem, the invariant the change preserves, and the

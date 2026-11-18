@@ -1,0 +1,62 @@
+{
+  "Tests/DownrightAppTests/AsyncParseTests.swift": {
+    "fixed-wait": 3
+  },
+  "Tests/DownrightAppTests/DocumentTrustStateTests.swift": {
+    "fixed-wait": 6
+  },
+  "Tests/DownrightAppTests/EditingKeyReproTests.swift": {
+    "fixed-wait": 2
+  },
+  "Tests/DownrightAppTests/FileWatcherTests.swift": {
+    "fixed-wait": 3
+  },
+  "Tests/DownrightAppTests/LocalAITests.swift": {
+    "fixed-wait": 3
+  },
+  "Tests/DownrightAppTests/NativePolishRegressionTests.swift": {
+    "fixed-wait": 3
+  },
+  "Tests/DownrightAppTests/RealWindowPerformanceTests.swift": {
+    "fixed-wait": 2
+  },
+  "Tests/DownrightAppTests/ReleaseWatchProbeTests.swift": {
+    "test-double": 1
+  },
+  "Tests/DownrightAppTests/RemoteImagePolicyTests.swift": {
+    "fixed-wait": 2
+  },
+  "Tests/DownrightAppTests/RenderSmokeTests.swift": {
+    "known-issue": 2
+  },
+  "Tests/DownrightAppTests/ReviewBaselineTests.swift": {
+    "fixed-wait": 1
+  },
+  "Tests/DownrightAppTests/ScrollGestureChainTests.swift": {
+    "test-double": 1
+  },
+  "Tests/DownrightAppTests/SiblingSearchTests.swift": {
+    "fixed-wait": 1
+  },
+  "Tests/DownrightAppTests/TrustTests.swift": {
+    "fixed-wait": 1
+  },
+  "Tests/DownrightAppTests/UpdateCoordinatorTests.swift": {
+    "test-double": 1
+  },
+  "Tests/DownrightAppTests/WorkspaceTests.swift": {
+    "fixed-wait": 1
+  },
+  "Tests/DownrightUITests/DownrightActivatedAppTests.swift": {
+    "fixed-wait": 4
+  },
+  "Tests/MarkdownRenderTests/ContentResizeTests.swift": {
+    "fixed-wait": 6
+  },
+  "Tests/MarkdownRenderTests/DensityRailTests.swift": {
+    "fixed-wait": 1
+  },
+  "Tests/MarkdownRenderTests/ImageLoadingPresentationTests.swift": {
+    "fixed-wait": 1
+  }
+}
