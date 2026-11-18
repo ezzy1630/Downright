@@ -78,8 +78,21 @@ struct PreviewViewControllerTests {
         }
     }
 
+    @Test("The preview accepts keyboard navigation before the first click")
+    func previewTakesKeyboardFocusWhenWindowHasNone() async throws {
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 800),
+            styleMask: [.titled], backing: .buffered, defer: true
+        )
+        try await withPreview("# Sample\n\nBody\n", in: window) { _, container, _ in
+            #expect(window.firstResponder === container.textView)
+        }
+    }
+
     private func withPreview(
         _ source: String,
+        in window: NSWindow? = nil,
         check: (PreviewViewController, MarkdownContainerView, URL) throws -> Void
     ) async throws {
         _ = NSApplication.shared
@@ -90,6 +103,8 @@ struct PreviewViewControllerTests {
         let url = directory.appendingPathComponent("sample.md")
         try source.write(to: url, atomically: true, encoding: .utf8)
         let controller = PreviewViewController()
+        window?.contentViewController = controller
+        if let window { window.makeFirstResponder(window) }
         let error = await withCheckedContinuation { continuation in
             controller.preparePreviewOfFile(at: url) { continuation.resume(returning: $0) }
         }

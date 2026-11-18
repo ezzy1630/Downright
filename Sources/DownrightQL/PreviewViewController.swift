@@ -67,6 +67,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         updateDensityGutterState()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        focusPreviewIfNeeded()
+    }
+
     // MARK: - QLPreviewingController
 
     func preparePreviewOfFile(
@@ -167,6 +172,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         densityGutter = gutter
         updateDensityGutterVisibility()
         startInteractionObservation()
+        focusPreviewIfNeeded()
         DispatchQueue.main.async { [weak self] in self?.updateDensityGutterState() }
     }
 
@@ -241,9 +247,16 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         scroll.backgroundColor = styleSheet.background
         install(scroll)
         fallbackTextView = textView
+        focusPreviewIfNeeded()
         if let sourceURL {
             installOpenInAppBar(for: sourceURL, note: "Plain text preview — open in Downright for full rendering")
         }
+    }
+
+    private func focusPreviewIfNeeded() {
+        guard let window = view.window, window.firstResponder === window,
+              let textView = container?.textView ?? fallbackTextView else { return }
+        window.makeFirstResponder(textView)
     }
 
     /// Quick Look has its own bundle and defaults domain. Resolve the palette
