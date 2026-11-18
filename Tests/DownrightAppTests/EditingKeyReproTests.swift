@@ -674,12 +674,18 @@ struct EditingKeyReproTests {
             #expect(abs(immediateY - screenY) < 1,
                     "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
             document.flushScheduledReparse()
-            try #require(await waitForAppKitState("word deletion to commit and finish viewport repair") {
+            let settled = await waitForAppKitState("word deletion to commit and finish viewport repair") {
                 document.lastCompletedParseRevision.map { $0 > beforeRevision } == true
                     && document.lastCompletedParseRevision == document.revision
                     && view.parsedDocument === document.parsed
                     && view.pendingResizeRequestForTesting == nil
-            })
+            }
+            try #require(settled, """
+                Stuck after word deletion: revision \(document.revision.rawValue) (before \(beforeRevision.rawValue)), \
+                parsed \(String(describing: document.lastCompletedParseRevision)), \
+                snapshot adopted \(view.parsedDocument === document.parsed), \
+                pending resize \(String(describing: view.pendingResizeRequestForTesting))
+                """)
             let converged = view.parsedDocument.text == controller.markdownDocument.text
             #expect(converged,
                     "the edit never reached its parsed presentation; source revision=\(document.revision.rawValue), parsed revision=\(String(describing: document.lastCompletedParseRevision)), snapshot matches=\(view.parsedDocument === document.parsed)")
