@@ -35,7 +35,7 @@ func selectsRenderedHeadingExactly() async throws {
 | API | Behavior |
 | --- | --- |
 | `UIDriver.withDocument(_:mode:files:run:)` | Opens disposable Markdown in a real `DocumentWindowController`. |
-| `click(onText:modifiers:)`, `doubleClick(onText:)`, `drag(fromText:toText:)` | Resolve explicit visible source text through TextKit. Drag starts before the first match and ends after the second. |
+| `click(onText:modifiers:)`, `doubleClick(onText:)`, `drag(fromText:toText:)` | Resolve explicit visible source text through TextKit. Drag presses inside the first match's first glyph (which resolves to the boundary before it, clear of the margin rail) and ends after the second. A drag that would start outside the editor fails and names the view under the point. |
 | `point(atSourceOffset:in:)`, `point(onText:)` | Locate a UTF-16 insertion boundary or the interior of a glyph. A target must be in the visible viewport. An explicit pane can be selected in Split View. |
 | `hover(onText:)`, `scroll(lines:)`, `resize(width:)` | Dispatch pointer movement or a pixel-wheel event at the current document, or change the native window’s content size. |
 | `type(_:)`, `press(_:modifiers:)` | Send key-down and key-up to the window. `type` sends graphemes as event text. Use a named key for Return, Delete, Escape, and arrows. |

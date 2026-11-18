@@ -116,7 +116,13 @@ final class UIDriver {
 
     func point(onText text: String) throws -> NSPoint {
         let range = try range(of: text)
-        let offset = range.location + (range.length - 1) / 2
+        return try point(insideGlyphAt: range.location + (range.length - 1) / 2)
+    }
+
+    /// A point a quarter into the glyph at `offset`, which AppKit resolves to
+    /// the insertion boundary before it. A point exactly on a line's leading
+    /// boundary also touches the margin rail's edge and can miss the editor.
+    func point(insideGlyphAt offset: Int) throws -> NSPoint {
         let glyph = (source as NSString).rangeOfComposedCharacterSequence(at: offset)
         let start = try point(atSourceOffset: glyph.location)
         let end = try point(atSourceOffset: glyph.upperBound)
@@ -136,7 +142,7 @@ final class UIDriver {
     }
 
     func drag(fromText start: String, toText end: String) throws {
-        let from = try point(atSourceOffset: range(of: start).location)
+        let from = try point(insideGlyphAt: range(of: start).location)
         let to = try point(atSourceOffset: range(of: end).upperBound)
         try requireEditorHit(at: from)
         try input.drag(from: from, to: to)
