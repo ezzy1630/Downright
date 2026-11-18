@@ -148,10 +148,18 @@ differences. It is a useful extra, not a different way of owning your files.
 
 ## Reading and window preferences
 
-In **Settings → Typography**, Measure (characters) controls line length from
-60–120 characters without changing the font size, with a Full width option.
-The default is 70, and narrow windows fit the column to the available space.
-Reader profiles, HTML export, and Quick Look use the saved measure.
+In **Settings → Typography**, the Reading preset sets the body in New York and
+Working sets it in SF Pro Text. Font family replaces the preset's face with any
+installed family for body text and headings; Preset Default keeps the preset's
+face, and code keeps its own monospace family. If a chosen family is later
+removed, documents fall back to the preset's face. HTML export names the chosen
+family first, ahead of the preset's fonts; Quick Look previews keep the preset's
+face.
+
+Line width controls line length from 60–120 characters without changing the
+font size, with a Full width option. The default is 70, and narrow windows fit
+the column to the available space. Reader profiles, HTML export, and Quick Look
+use the saved measure.
 
 In **Settings → General**, When the last document closes offers **Show start
 window**, **Quit Downright**, and **Do nothing**. The default remains Show start

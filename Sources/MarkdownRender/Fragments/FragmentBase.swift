@@ -30,6 +30,8 @@ public enum StyleToken {
         hasher.combine(styleSheet.revision)
         hasher.combine(styleSheet.theme.name)
         hasher.combine(styleSheet.bodyFont().pointSize)
+        // The face, not only the size: a body family or preset change redraws.
+        hasher.combine(styleSheet.bodyFont().fontName)
         hasher.combine(styleSheet.increaseContrast)
         for color in [styleSheet.background, styleSheet.text, styleSheet.accent, styleSheet.codeBackground] {
             let resolved = color.usingColorSpace(.sRGB) ?? color

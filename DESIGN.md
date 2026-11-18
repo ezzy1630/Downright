@@ -49,6 +49,9 @@ levels, code, tables, tasks, search hits, changed regions, and progress.
 ## Typography and colour
 
 - Reading preset: New York. Working preset: SF Pro Text. Code: SF Mono.
+  A body font family chosen in Settings replaces the preset's face for prose
+  and headings, never for code; a family that is not installed falls back to
+  the preset. Missing bold keeps the regular weight; missing italic is slanted.
 - Use a modular scale for headings. H1–H4 carry size; H5–H6 use treatment,
   tracking, and weight.
 - Use a fixed baseline grid and optical hanging punctuation.
