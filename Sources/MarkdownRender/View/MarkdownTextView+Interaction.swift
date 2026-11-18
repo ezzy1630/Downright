@@ -494,7 +494,9 @@ extension MarkdownTextView {
             return
         }
 
-        let mathCaret = event.clickCount == 1 && modifiers.isEmpty ? renderedMathSourceOffset(at: point) : nil
+        let selectionModifiers: NSEvent.ModifierFlags = [.command, .option, .shift, .control]
+        let mathCaret = event.clickCount == 1 && modifiers.intersection(selectionModifiers).isEmpty
+            ? renderedMathSourceOffset(at: point) : nil
 
         // `super` owns the whole click/drag gesture.  Make the target first
         // responder explicitly; relying on the window's default mouse routing
