@@ -3,6 +3,173 @@ import Testing
 @testable import drdownright
 
 struct MarkdownCLITests {
+    @Test func openRequestKeepsPathsAndPresentationOptionsTogether() throws {
+        let paths = ["/tmp/plan #1 & café%.md", "/tmp/another plan.md"]
+        let action = try MarkdownCLI.parse(paths + ["--line", "100", "--review"])
+        guard case .open(let options, let parsedPaths) = action else {
+            Issue.record("Expected an open command")
+            return
+        }
+        let urls = parsedPaths.map { URL(fileURLWithPath: $0) }
+        let request = CommandLineOpenRequest(urls: urls, options: options)
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let delivered = try request.handoffURL(directory: directory)
+        #expect(!delivered.absoluteString.contains("tmp"), "the delivered URL carries no paths")
+        let decoded = try #require(CommandLineOpenRequest.receive(delivered, directory: directory))
+        #expect(decoded.urls.map(\.path) == paths)
+        #expect(decoded.line == 100)
+        #expect(decoded.review)
+        #expect(decoded.edit)
+        #expect(CommandLineOpenRequest.receive(delivered, directory: directory) == nil, "one shot")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test func openRequestFromAnythingButTheCLIIsIgnored() throws {
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // A web page or another app can form any URL but cannot create the
+        // owner-only handoff file: path-carrying and unknown IDs do nothing.
+        for forged in [
+            "downright-cli://open?file=/etc/hosts&edit=1",
+            "downright-cli://open?request=\(UUID().uuidString)",
+            "downright-cli://open?request=../../etc/hosts",
+            "downright-cli://open?request=\(UUID().uuidString.lowercased())",
+        ] {
+            #expect(CommandLineOpenRequest.receive(try #require(URL(string: forged)), directory: directory) == nil)
+        }
+
+        // A handoff readable by others, or one left over from long ago, is refused and consumed.
+        let request = CommandLineOpenRequest(urls: [URL(fileURLWithPath: "/tmp/a.md")], options: .init())
+        let exposed = try request.handoffURL(directory: directory)
+        let exposedFile = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: exposedFile.path)
+        #expect(CommandLineOpenRequest.receive(exposed, directory: directory) == nil)
+        let stale = try request.handoffURL(directory: directory)
+        #expect(CommandLineOpenRequest.receive(stale, directory: directory, now: Date().addingTimeInterval(600)) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test func oversizedOpenRequestFailsWithoutWritingHandoff() throws {
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Percent encoding expands these paths beyond 256 KiB even though
+        // their unencoded UTF-8 fits comfortably in an argument list.
+        let path = "/tmp/" + String(repeating: "é", count: 110) + ".md"
+        let urls = Array(repeating: URL(fileURLWithPath: path), count: 400)
+        let request = CommandLineOpenRequest(urls: urls, options: .init())
+
+        #expect(throws: CommandLineOpenRequest.HandoffError.payloadTooLarge) {
+            try request.handoffURL(directory: directory)
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test func senderAndReceiverAgreeAtOpenRequestSizeLimit() throws {
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let prefix = "/tmp/"
+        let url = URL(fileURLWithPath: prefix + String(repeating: "a", count: 240) + ".md")
+        let maxBytes = 256 * 1024
+        let baseURLs = Array(repeating: url, count: 1_030)
+        let base = CommandLineOpenRequest(urls: baseURLs, options: .init())
+        let padding = maxBytes - base.payloadURL.absoluteString.utf8.count - "&file=/tmp/".utf8.count
+        try #require(padding > 0)
+        let finalURL = URL(fileURLWithPath: prefix + String(repeating: "b", count: padding))
+        let request = CommandLineOpenRequest(urls: baseURLs + [finalURL], options: .init())
+        try #require(request.payloadURL.absoluteString.utf8.count == maxBytes)
+
+        let delivered = try request.handoffURL(directory: directory)
+        let decoded = try #require(CommandLineOpenRequest.receive(delivered, directory: directory))
+        #expect(decoded.urls.count == request.urls.count)
+        #expect(decoded.urls.last == finalURL)
+
+        let overflow = try request.handoffURL(directory: directory)
+        let file = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        do {
+            let handle = try FileHandle(forWritingTo: file)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data("b".utf8))
+        }
+        #expect(CommandLineOpenRequest.receive(overflow, directory: directory) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test func cliExitsNonzeroForOversizedOpenRequest() throws {
+        let directory = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // The CLI derives the host from an embedded path. Use an isolated
+        // bundle path so this test can never target the installed application.
+        let macOS = directory.appendingPathComponent("Isolated.app/Contents/MacOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+        let embedded = macOS.appendingPathComponent("down")
+        let builtCLI = ProcessInfo.processInfo.environment["DOWNRIGHT_TEST_CLI_EXECUTABLE"].map {
+            URL(fileURLWithPath: $0)
+        } ?? Bundle(for: MarkdownCLITestBundleAnchor.self).bundleURL
+            .deletingLastPathComponent().appendingPathComponent("down")
+        try FileManager.default.copyItem(at: builtCLI, to: embedded)
+        let file = directory.appendingPathComponent(String(repeating: "é", count: 110) + ".md")
+        try Data("# Sample".utf8).write(to: file)
+
+        let process = Process()
+        let stderr = Pipe()
+        process.executableURL = embedded
+        process.arguments = ["open", "--edit"] + Array(repeating: file.path, count: 400)
+        process.standardError = stderr
+        try process.run()
+        let output = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+
+        #expect(process.terminationReason == .exit)
+        #expect(process.terminationStatus != 0)
+        #expect(output.contains("open request exceeds 256 KiB after encoding"), "Unexpected diagnostic: \(output)")
+    }
+
+    @Test func sandboxedCallerHandoffIsFoundOnlyInItsOwnContainer() throws {
+        // A `down` spawned by a sandboxed app (the XCUITest runner, a
+        // sandboxed agent) writes into ~/Library/Containers/<id>/Data/tmp.
+        let root = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let containers = root.appendingPathComponent("Containers", isDirectory: true)
+        let tmp = containers.appendingPathComponent("com.example.agent/Data/tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let ordinary = root.appendingPathComponent("T", isDirectory: true)
+        try FileManager.default.createDirectory(at: ordinary, withIntermediateDirectories: true)
+
+        let request = CommandLineOpenRequest(urls: [URL(fileURLWithPath: "/tmp/a.md")], options: .init())
+        let delivered = try request.handoffURL(directory: tmp, container: "com.example.agent")
+        #expect(delivered.absoluteString.contains("container=com.example.agent"))
+        #expect(CommandLineOpenRequest.receive(delivered, directory: ordinary, containers: containers, now: Date())?
+            .urls.map(\.path) == ["/tmp/a.md"])
+
+        for forged in ["../../etc", "a/b", ".hidden", "", "com.example.agent%2F..%2F.."] {
+            let url = try #require(URL(string: "downright-cli://open?request=\(UUID().uuidString)&container=\(forged)"))
+            #expect(CommandLineOpenRequest.receive(url, directory: ordinary, containers: containers) == nil, "\(forged)")
+        }
+        #expect(!CommandLineOpenRequest.isValidContainerID("../x"))
+        #expect(CommandLineOpenRequest.isValidContainerID("com.ezzy.downright.uitests.xctrunner"))
+    }
+
+    private func handoffDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-cli-handoff-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    @Test(arguments: [
+        "downright-cli://open?file=/tmp/a.md&line=0",
+        "downright-cli://open?file=https://example.com/a.md",
+        "downright-cli://open?file=/tmp/a.md&edit=1&edit=1",
+        "downright-cli://write?file=/tmp/a.md",
+        "downright-cli://open?file=/tmp/a.md&write=1",
+    ])
+    func openRequestRejectsAnythingOutsideLocalPresentation(url: String) throws {
+        let url = try #require(URL(string: url))
+        #expect(CommandLineOpenRequest(payloadURL: url) == nil)
+    }
+
     @Test func defaultActionIsOpen() throws {
         let action = try MarkdownCLI.parse(["README.md"])
         #expect(action == .open(MarkdownCLI.OpenOptions(), paths: ["README.md"]))
@@ -148,6 +315,18 @@ struct MarkdownCLITests {
         #expect(!html.contains("src=\"../"))
         #expect(!html.contains("src=\"%2e%2e"))
         #expect(html.components(separatedBy: "class=\"missing-image\"").count - 1 == 7)
+    }
+
+    @Test func htmlExportHandlesImageDestinationsWithoutAPath() {
+        let html = MarkdownCLI.html(for: """
+        ![Fragment](#)
+        ![Query](?size=small)
+        ![Local](photo.png?size=small#preview)
+        """)
+
+        #expect(html.contains("class=\"missing-image\" title=\"#\">Fragment</span>"))
+        #expect(html.contains("class=\"missing-image\" title=\"?size=small\">Query</span>"))
+        #expect(html.contains("src=\"photo.png?size=small#preview\""))
     }
 
     @Test func settingsLoaderDistinguishesAbsentFromInvalidFiles() throws {
@@ -343,3 +522,5 @@ struct MarkdownCLITests {
         throw CocoaError(.fileNoSuchFile)
     }
 }
+
+private final class MarkdownCLITestBundleAnchor {}

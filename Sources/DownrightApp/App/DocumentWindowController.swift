@@ -47,6 +47,7 @@ final class DocumentWindowController: NSWindowController {
     var onClose: (() -> Void)?
     /// Successful in-place navigation only; restoring a failed hop is not usage.
     var onDocumentOpen: (() -> Void)?
+    var focusOpenDocument: ((URL) -> DocumentWindowController?)?
 
     // Text surface.  Internal rather than private because the command and
     // support extensions live in sibling files, and `private` is file-scoped.
@@ -2571,9 +2572,19 @@ final class DocumentWindowController: NSWindowController {
         let changesDocument = entry.url.map { url in
             markdownDocument.url.map { !FileIdentity.sameFile($0, url) } ?? true
         } ?? false
+        let destination: DocumentWindowController
         if changesDocument, let url = entry.url {
-            guard openInPlace(url, recordingHistory: false) else { return false }
+            guard let opened = openInPlace(url, recordingHistory: false) else { return false }
+            destination = opened
+        } else {
+            destination = self
         }
+        destination.restoreHistoryAnchor(entry, changesDocument: changesDocument)
+        // A tab switch leaves each tab's trail at its own current document.
+        return destination === self
+    }
+
+    private func restoreHistoryAnchor(_ entry: JumpHistory.Entry, changesDocument: Bool) {
         markdownDocument.ensureParsedCurrent()
         prepareForExplicitNavigation()
         let offset = entry.anchor.map { ScrollAnchoring.offset(for: $0, in: markdownDocument.parsed) }
@@ -2581,7 +2592,6 @@ final class DocumentWindowController: NSWindowController {
         let source = containerTextView
         source.scroll(toOffset: offset, position: .top, animated: false)
         synchronizePanes(from: source, viewport: changesDocument)
-        return true
     }
 
     func goBack() {
@@ -2778,6 +2788,10 @@ final class DocumentWindowController: NSWindowController {
         case .alertSecondButtonReturn:
             discardChangesOnClose = markDiscardForWindowClose
             implicitSaveSuppressed = true
+            if !markDiscardForWindowClose {
+                markdownDocument.discardUnsavedChanges()
+                if pendingConflict != nil { dismissConflictBar() }
+            }
             return true
         default:
             return false

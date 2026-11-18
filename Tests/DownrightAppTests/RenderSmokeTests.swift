@@ -99,10 +99,8 @@ struct RenderSmokeTests {
     ///
     /// The layout itself is unaffected — `NSTextLayoutManager` produces the
     /// right fragments with the right frames, which is what the assertions
-    /// below that do not depend on the view can still check.  So the two
-    /// tests that are genuinely *about* what the view puts on screen keep
-    /// their full strength and declare this prerequisite, rather than being
-    /// softened into something that passes without it.
+    /// below that do not depend on the view can still check. The raster smoke
+    /// test declares that display-cycle prerequisite explicitly.
     private func viewportLayoutRuns() -> Bool {
         // Probe the same fixture as the smoke test. A tiny prose-only sample
         // can draw while a document whose blocks use the renderer's custom
@@ -263,16 +261,10 @@ struct RenderSmokeTests {
         #expect(sampledOffset == firstOffset, "the sample point must sit inside the first fragment, not the inset")
         #expect(origin.y > 0, "…and the inset it must skip is real")
 
-        // The view-level answer needs the viewport pass; see `viewportLayoutRuns`.
-        // Capture the answer once. TextKit can finish its display pass during
-        // the test; the known-issue precondition must describe this exact
-        // observation rather than a separate probe with different lifecycle
-        // timing. The fragment assertions above remain fully active.
-        let observedTopVisibleOffset = textView.topVisibleOffset
-        withKnownIssue("NSTextView hit testing needs a viewport layout pass") {
-            #expect(observedTopVisibleOffset < later)
-        } when: {
-            observedTopVisibleOffset >= later
+        // TextKit must have created a viewport before native hit testing
+        // works. Use that prerequisite independently of the result under test.
+        if layout.textViewportLayoutController.viewportRange != nil {
+            #expect(textView.topVisibleOffset < later)
         }
     }
 

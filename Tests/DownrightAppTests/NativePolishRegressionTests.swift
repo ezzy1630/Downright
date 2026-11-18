@@ -39,7 +39,7 @@ struct NativePolishRegressionTests {
         let controller = DocumentWindowController()
         try controller.open(first, mode: .live)
         defer { controller.close() }
-        #expect(controller.openInPlace(second))
+        #expect(controller.openInPlace(second) === controller)
         #expect(controller.jumpHistory.canGoBack)
         controller.goBack()
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
@@ -48,7 +48,7 @@ struct NativePolishRegressionTests {
         controller.goForward()
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
         #expect(controller.jumpHistory.canGoForward)
-        #expect(!controller.openInPlace(second))
+        #expect(controller.openInPlace(second) == nil)
         #expect(controller.jumpHistory.canGoForward)
     }
 
@@ -67,6 +67,24 @@ struct NativePolishRegressionTests {
         #expect(controller.primaryContainer.textView.currentSearchHit?.location == 11)
     }
 
+    @Test func commandLineNavigationFindsLinesInMixedEndingDocuments() async throws {
+        let url = try fixture("First 😃\rSecond\r\nThird\n")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = DocumentWindowController()
+        try controller.open(url, mode: .live)
+        defer { controller.close() }
+
+        controller.applyCommandLineOpen(line: 2, review: false)
+
+        let deadline = ContinuousClock.now + .seconds(1)
+        while controller.jumpHistory.current == nil, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        let destination = try #require(controller.jumpHistory.current)
+        #expect(destination.label == "Line 2")
+        #expect(destination.offset == "First 😃\r".utf16.count)
+    }
+
     @Test func openingAnotherDocumentRestoresItsSplitState() throws {
         let first = try fixture("# First\n")
         let second = try fixture("# Second\n")
@@ -75,11 +93,11 @@ struct NativePolishRegressionTests {
         try controller.open(first, mode: .live)
         defer { controller.close() }
         controller.toggleSplitView()
-        #expect(controller.openInPlace(second))
+        #expect(controller.openInPlace(second) === controller)
         #expect(controller.splitContainer == nil)
-        #expect(controller.openInPlace(first))
+        #expect(controller.openInPlace(first) === controller)
         #expect(controller.splitContainer != nil)
-        #expect(controller.openInPlace(first))
+        #expect(controller.openInPlace(first) === controller)
         #expect(controller.splitContainer != nil)
     }
 
@@ -117,18 +135,25 @@ struct NativePolishRegressionTests {
         let controller = DocumentWindowController()
         try controller.open(url, mode: .live)
         defer { controller.close() }
-        controller.markdownDocument.replace(NSRange(location: 0, length: 6), with: "first", actionName: "Edit")
-        try await Task.sleep(for: .seconds(1.2))
-        controller.markdownDocument.replace(NSRange(location: 0, length: 5), with: "second", actionName: "Edit")
-        try await Task.sleep(for: .seconds(1.1))
-        #expect(try String(contentsOf: url, encoding: .utf8) == "before\n")
-        // The no-save assertion above straddles the superseded deadline.
-        // After that, wait for the actual write rather than assuming the main
-        // queue must execute the idle timer within a 200ms CI scheduling margin.
-        let deadline = ContinuousClock.now + .seconds(5)
-        while try String(contentsOf: url, encoding: .utf8) != "second\n", ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        let document = controller.markdownDocument
+        var saved = TestSignal()
+        let existingObserver = document.onDirtyChanged
+        defer { document.onDirtyChanged = existingObserver }
+        document.onDirtyChanged = { dirty in
+            existingObserver?(dirty)
+            if !dirty { saved.signal() }
         }
+
+        try #require(document.replace(NSRange(location: 0, length: 6), with: "first", actionName: "Edit"))
+        try #require(await !saved.wait(timeout: .seconds(1.2)), "Autosave fired before the first idle deadline")
+        saved = TestSignal()
+        try #require(document.replace(NSRange(location: 0, length: 5), with: "second", actionName: "Edit"))
+        // This window crosses the superseded deadline and ends before the
+        // latest one. Any save here breaks the debounce contract.
+        try #require(await !saved.wait(timeout: .seconds(1.1)), "A superseded autosave deadline saved the document")
+        #expect(try String(contentsOf: url, encoding: .utf8) == "before\n")
+        saved = TestSignal()
+        try #require(await saved.wait(), "Autosave never cleared the document's dirty state")
         #expect(try String(contentsOf: url, encoding: .utf8) == "second\n")
     }
 
@@ -179,8 +204,8 @@ struct NativePolishRegressionTests {
         controller.window?.contentView?.layoutSubtreeIfNeeded()
         controller.primaryContainer.textView.prepareForDisplay()
         controller.toggleSplitView()
-        #expect(controller.openInPlace(first))
-        #expect(controller.openInPlace(target, fragment: "target"))
+        #expect(controller.openInPlace(first) === controller)
+        #expect(controller.openInPlace(target, fragment: "target") === controller)
         // Pane attachment queues a responsive-width resize. Let it finish:
         // an immediate offset assertion misses its stale camera restoration.
         await withCheckedContinuation { continuation in

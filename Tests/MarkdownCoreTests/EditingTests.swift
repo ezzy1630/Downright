@@ -26,6 +26,15 @@ import Testing
         #expect(pressReturn("- [x] done\n", at: 10) == "- [x] done\n- [ ] \n")
     }
 
+    @Test func continuationKeepsTheDocumentsLineEnding() {
+        #expect(pressReturn("- one\r\n- two\r\n", at: 5) == "- one\r\n- \r\n- two\r\n")
+        #expect(pressReturn("- one\r- two\r", at: 5) == "- one\r- \r- two\r")
+        // The unterminated last line follows the line before it.
+        #expect(pressReturn("- one\r\n- two", at: 12) == "- one\r\n- two\r\n- ")
+        #expect(pressReturn("- one\r- two", at: 11) == "- one\r- two\r- ")
+        #expect(pressReturn("- one", at: 5) == "- one\n- ")
+    }
+
     @Test func keepsNestedIndentation() {
         #expect(pressReturn("- top\n  - nested\n", at: 16) == "- top\n  - nested\n  - \n")
     }

@@ -456,8 +456,12 @@ struct BlockBuilder {
         _ code: CodeBlock, range: NSRange, depth: Int, quoteDepth: Int
     ) -> MDBlock {
         let startLine = map.line(containing: range.location)
-        let firstLine = map.string(ofLine: startLine)
-        let fenceCharacters = Self.fencePrefix(of: firstLine)
+        // The parser's range starts at the fence itself, even when a list
+        // item opens on the same line.
+        let fenceCharacters = text.substring(with: NSRange(
+            location: range.location,
+            length: max(0, map.contentRange(ofLine: startLine).upperBound - range.location)
+        ))
         let isFenced = fenceCharacters.hasPrefix("```") || fenceCharacters.hasPrefix("~~~")
 
         var content = range

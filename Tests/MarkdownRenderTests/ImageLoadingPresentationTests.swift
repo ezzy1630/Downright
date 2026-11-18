@@ -172,13 +172,9 @@ struct ImageLoadingPresentationTests {
         fragment.drawObject(at: .zero, in: graphics.cgContext)
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let dimension = Int(ceil(4 * scale))
-        let deadline = ContinuousClock().now + .seconds(2)
-        while cache.cachedImage(for: url, maxPixelDimension: dimension) == nil,
-              ContinuousClock().now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(cache.cachedImage(for: url, maxPixelDimension: dimension) != nil,
-                "a wide document must request the fitted image pixels, not a column-sized bitmap")
+        #expect(await waitForRenderState {
+            cache.cachedImage(for: url, maxPixelDimension: dimension) != nil
+        }, "a wide document must request the fitted image pixels, not a column-sized bitmap")
         #expect(storage.string == source)
     }
 

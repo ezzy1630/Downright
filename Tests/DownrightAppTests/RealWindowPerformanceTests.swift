@@ -121,17 +121,6 @@ struct RealWindowPerformanceTests {
         return condition()
     }
 
-    private func awaitCondition(
-        timeout: TimeInterval = 15,
-        _ condition: @escaping @MainActor () -> Bool
-    ) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition(), Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return condition()
-    }
-
     private func forceFrame(_ window: NSWindow, _ textView: MarkdownTextView) {
         window.layoutIfNeeded()
         window.contentView?.layoutSubtreeIfNeeded()
@@ -353,7 +342,7 @@ struct RealWindowPerformanceTests {
         let budget = try displayBudget(for: window)
         let textView = fixture.controller.primaryContainer.textView
         let length = fixture.controller.markdownDocument.storage.length
-        let initialConverged = await awaitCondition(timeout: 30) {
+        let initialConverged = await waitForAppKitState("the external rewrite benchmark fixture", timeout: .seconds(30)) {
             fixture.controller.markdownDocument.lastCompletedParseRevision
                 == fixture.controller.markdownDocument.revision
         }
@@ -401,7 +390,7 @@ struct RealWindowPerformanceTests {
                 forceFrame(window, textView)
             })
             sample += 1
-            try await Task.sleep(for: .milliseconds(2))
+            await drainTestMainQueue()
         }
         let converged = fixture.controller.markdownDocument.parsed.text == incoming
         #expect(converged, "external rewrite did not converge in the 15-second acceptance window")

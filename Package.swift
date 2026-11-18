@@ -179,6 +179,13 @@ let package = Package(
             dependencies: ["MarkdownCore", "MarkdownRender"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .target(
+            name: "NativeUITestSupport",
+            dependencies: ["NativeUITestBridge"],
+            path: "Tests/NativeUITestSupport",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(name: "NativeUITestBridge", path: "Tests/NativeUITestBridge"),
         .testTarget(
             name: "MarkdownCoreTests",
             dependencies: ["MarkdownCore"],
@@ -187,19 +194,19 @@ let package = Package(
         ),
         .testTarget(
             name: "MarkdownRenderTests",
-            dependencies: ["MarkdownRender"],
+            dependencies: ["MarkdownRender", "NativeUITestSupport"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),
         .testTarget(
             name: "DownrightAppTests",
-            dependencies: ["DownrightApp"],
+            dependencies: ["DownrightApp", "NativeUITestSupport"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),
         .testTarget(
             name: "DownrightQLTests",
-            dependencies: ["DownrightQL"],
+            dependencies: ["DownrightQL", "DownrightThumb", "NativeUITestSupport"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),

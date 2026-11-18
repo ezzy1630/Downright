@@ -32,8 +32,10 @@ class CoverageTests(unittest.TestCase):
 
     def test_disabled_window_coverage_is_skipped_not_passed(self):
         text = '➜ Test "10k-line typing and scrolling" skipped: "Requires a window server"\n'
+        # Swift Testing's run total counts skipped tests too (measured with
+        # a two-of-three-disabled package: "Test run with 3 tests").
         result = REPORT.coverage(text + "✔ Test run with 3 tests passed after 0.1 seconds.\n")
-        self.assertEqual(result["executed"], 3)
+        self.assertEqual(result["executed"], 2)
         self.assertEqual(result["skipped"], 1)
         self.assertEqual(result["real_window_performance"], "not executed")
 

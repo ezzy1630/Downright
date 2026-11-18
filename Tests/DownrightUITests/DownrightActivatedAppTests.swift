@@ -9,6 +9,7 @@ final class DownrightActivatedAppTests: XCTestCase {
     private var app: XCUIApplication!
     private var root: URL!
     private var fixture: URL!
+    private var host: URL!
     private var isProductionUpdaterSmoke = false
 
     override func setUpWithError() throws {
@@ -41,7 +42,7 @@ final class DownrightActivatedAppTests: XCTestCase {
             .deletingLastPathComponent()
         let productDirectory = runner.deletingLastPathComponent()
         let siblingHost = productDirectory.appendingPathComponent("Downright.app", isDirectory: true)
-        let host = FileManager.default.fileExists(atPath: siblingHost.path)
+        host = FileManager.default.fileExists(atPath: siblingHost.path)
             ? siblingHost
             : runner
         XCTAssertTrue(FileManager.default.fileExists(atPath: host.path), "test host is missing: \(host.path)")
@@ -235,6 +236,121 @@ final class DownrightActivatedAppTests: XCTestCase {
         add(XCTAttachment(screenshot: returned.screenshot()))
     }
 
+    func testPointerLinkSelectsTheExistingDestinationTab() throws {
+        let target = root.appendingPathComponent("already-open.md")
+        try Data("# Already open\n\nDestination text.\n".utf8).write(to: target)
+        try Data("[Open existing tab](already-open.md)\n".utf8).write(to: fixture)
+        app.launchArguments.insert(target.path, at: 0)
+        app.launch()
+        app.activate()
+        func tab(_ name: String, in window: XCUIElement) -> XCUIElement {
+            window.tabGroups.firstMatch.descendants(matching: .any).matching(identifier: name).firstMatch
+        }
+        let initialTab = tab(fixture.lastPathComponent, in: app.windows.firstMatch)
+        XCTAssertTrue(initialTab.waitForExistence(timeout: 10), app.windows.debugDescription)
+        initialTab.click()
+        let origin = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", fixture.lastPathComponent)).firstMatch
+        let editor = origin.textViews["Document editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        editor.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 60, dy: 49)).click()
+
+        let destination = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", target.lastPathComponent)).firstMatch
+        XCTAssertTrue(destination.waitForExistence(timeout: 10), app.windows.debugDescription)
+        let originalTab = tab(fixture.lastPathComponent, in: destination)
+        XCTAssertTrue(originalTab.waitForExistence(timeout: 10), destination.debugDescription)
+        let capture = XCTAttachment(screenshot: destination.screenshot())
+        capture.name = "Existing destination and original tabs"
+        capture.lifetime = .keepAlways
+        add(capture)
+        originalTab.click()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), app.windows.debugDescription)
+    }
+
+    func testBundledCLIReopensRunningDocumentAtRequestedLineInReview() throws {
+        try writeCLIReviewFixture(to: fixture)
+        app.launchArguments += ["--mode", "source"]
+        app.launch()
+        app.activate()
+        let documentWindows = app.windows.matching(NSPredicate(
+            format: "title BEGINSWITH %@", fixture.lastPathComponent
+        ))
+        let window = documentWindows.firstMatch
+        XCTAssertTrue(window.textViews["Markdown source editor"].waitForExistence(timeout: 10))
+        _ = try waitForScrollPosition(in: window) { $0 < 0.01 }
+
+        try launchCLIReview(for: fixture)
+        try assertCLIReview(in: window)
+        XCTAssertEqual(documentWindows.count, 1)
+    }
+
+    func testBundledCLIOpensNewDocumentInRunningInstanceAtRequestedLineInReview() throws {
+        let target = root.appendingPathComponent("Plan #1 café.md")
+        try writeCLIReviewFixture(to: target)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows.firstMatch.textViews["Document editor"].waitForExistence(timeout: 10))
+        try launchCLIReview(for: target)
+        let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", target.lastPathComponent)).firstMatch
+        try assertCLIReview(in: window)
+        XCTAssertEqual(window.tabGroups.count, 1)
+    }
+
+    private func writeCLIReviewFixture(to url: URL) throws {
+        // Put the target at EOF, far below the initial viewport. The blank
+        // lines keep it scrollable even with Document reflow enabled.
+        let body = (1...49).map { "CLI paragraph \($0).\n\n" }.joined()
+        try Data((body + "\n# CLI destination on line 100").utf8).write(to: url)
+    }
+
+    private func launchCLIReview(for url: URL) throws {
+        let launcher = Process()
+        launcher.executableURL = host.appendingPathComponent("Contents/MacOS/down")
+        launcher.arguments = [url.path, "--line", "100", "--review"]
+        let exited = XCTestExpectation(description: "CLI completed its Launch Services handoff")
+        launcher.terminationHandler = { _ in exited.fulfill() }
+        try launcher.run()
+        defer { if launcher.isRunning { launcher.terminate() } }
+        XCTAssertEqual(XCTWaiter.wait(for: [exited], timeout: 20), .completed)
+        XCTAssertEqual(launcher.terminationStatus, 0)
+    }
+
+    private func assertCLIReview(in window: XCUIElement) throws {
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 10))
+        // Review is a floating child window and appears separately in the AX tree.
+        let reviewStatus = app.staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@", "No open reviews", "No open reviews"
+        )).firstMatch
+        XCTAssertTrue(reviewStatus.waitForExistence(timeout: 10), app.windows.debugDescription)
+        _ = try waitForScrollPosition(in: window) { $0 > 0.9 }
+        let capture = XCTAttachment(screenshot: window.screenshot())
+        capture.name = "CLI line 100 and Review panel"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    func testSourceRendersMixedLineEndingsWithoutChangingTheFile() throws {
+        let original = Data(("First row with a lone carriage return\r" +
+            "Second row with another lone carriage return\r" +
+            "Third row ends in a CRLF separator\r\n" +
+            "Fourth row before an intentionally empty row\r\r" +
+            "Sixth row has no final separator").utf8)
+        try original.write(to: fixture)
+        app.launch()
+        app.activate()
+        let source = app.radioButtons["Source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        source.click()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.textViews["Markdown source editor"].waitForExistence(timeout: 10))
+        assertVisibleProse(in: window.scrollViews.firstMatch, window: window)
+        let capture = XCTAttachment(screenshot: window.screenshot())
+        capture.name = "Source rows with CR and CRLF"
+        capture.lifetime = .keepAlways
+        add(capture)
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
     func testEncodedHeadingLinkSupportsDeepBackAndForward() throws {
         let target = root.appendingPathComponent("my notes.md")
         let paragraphs = (1...100).map { "Paragraph \($0) keeps the destination tall." }.joined(separator: "\n\n")
@@ -327,6 +443,32 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
     }
 
+    func testKeepMineAfterUndoSavesTheVisibleVersion() throws {
+        let original = Data("Original paragraph.\n".utf8)
+        try original.write(to: fixture, options: .atomic)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+
+        let source = app.radioButtons["Source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 15))
+        source.click()
+        let editor = app.windows.firstMatch.textViews["Markdown source editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeText("!")
+        try Data("An external rewrite.\n".utf8).write(to: fixture, options: .atomic)
+
+        let keepMine = app.buttons["Keep Mine"]
+        XCTAssertTrue(keepMine.waitForExistence(timeout: 10))
+        editor.typeKey("z", modifierFlags: .command)
+        XCTAssertEqual(editor.value as? String, "Original paragraph.\n")
+        keepMine.click()
+
+        XCTAssertTrue(keepMine.waitForNonExistence(timeout: 10))
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
     func testActivatedBundleRendersAndKeepsSourceEditingLive() throws {
         app.launch()
         app.activate()
@@ -353,6 +495,43 @@ final class DownrightActivatedAppTests: XCTestCase {
 
         XCTAssertTrue(rendered.isSelected || rendered.value as? String == "Selected")
         add(XCTAttachment(screenshot: window.screenshot()))
+    }
+
+    func testNewDocumentCanBeNamedAfterChangingDirectory() throws {
+        let folder = root.appendingPathComponent("New documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let destination = folder.appendingPathComponent("Test.md")
+        app.launchArguments.removeFirst() // Start with the welcome window, without an open file.
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+
+        app.typeKey("n", modifierFlags: .command)
+        let panel = app.dialogs["save-panel"]
+        let create = panel.buttons["OKButton"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10), "New Document did not open a save panel")
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(folder.path)
+        app.typeKey(.return, modifierFlags: [])
+
+        let name = panel.textFields["saveAsNameTextField"]
+        let nameReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"),
+            object: name
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [nameReady], timeout: 10), .completed,
+                       "The name field did not accept input after changing folders")
+        name.click()
+        name.typeKey("a", modifierFlags: .command)
+        name.typeText("Test.md")
+        XCTAssertEqual(name.value as? String, "Test.md")
+        create.click()
+
+        XCTAssertTrue(waitForFile(destination, timeout: 15))
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "# Test\n\n")
+        XCTAssertTrue(app.textViews["Document editor"].waitForExistence(timeout: 10),
+                      "Downright did not open the new document")
     }
 
     func testHTMLExportThroughSavePanelPreservesEditedMarkdown() throws {
@@ -524,8 +703,12 @@ final class DownrightActivatedAppTests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
-        RunLoop.current.run(until: Date().addingTimeInterval(11))
-        XCTAssertFalse(dismiss.exists, "an answered suggestion returned after relaunch")
+        let returned = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"), object: dismiss
+        )
+        returned.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 11), .completed,
+                       "an answered suggestion returned after relaunch")
         try assertStarSuggestionRetired()
     }
 
@@ -749,12 +932,11 @@ final class DownrightActivatedAppTests: XCTestCase {
     }
 
     private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if FileManager.default.fileExists(atPath: url.path) { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-        return false
+        let created = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: url.path) },
+            object: nil
+        )
+        return XCTWaiter.wait(for: [created], timeout: timeout) == .completed
     }
 
     private func waitForButton(
@@ -762,14 +944,7 @@ final class DownrightActivatedAppTests: XCTestCase {
         titles: [String],
         timeout: TimeInterval
     ) -> XCUIElement? {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            for title in titles {
-                let button = window.buttons[title]
-                if button.exists { return button }
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        } while Date() < deadline
-        return nil
+        let action = window.buttons.matching(NSPredicate(format: "label IN %@", titles)).firstMatch
+        return action.waitForExistence(timeout: timeout) ? action : nil
     }
 }

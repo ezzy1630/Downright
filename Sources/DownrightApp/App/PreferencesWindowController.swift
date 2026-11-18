@@ -245,6 +245,43 @@ enum PreferenceRow {
     }
 }
 
+/// The body font popup: Preset Default first, then installed families.
+/// Pure, so the index mapping is testable without a window.
+enum BodyFontChoices {
+    static let presetDefaultTitle = "Preset Default"
+
+    /// Installed families in the order a reader scans a list: alphabetical,
+    /// ignoring case and treating digits as numbers.
+    static func families(installed: [String] = NSFontManager.shared.availableFontFamilies) -> [String] {
+        installed.filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    static func selection(for family: String?, families: [String]) -> PreferenceRow.ChoiceSelection {
+        guard let family else { return .index(0) }
+        return families.firstIndex(of: family).map { .index($0 + 1) } ?? .missing(family)
+    }
+
+    /// The stored value for a popup index: `.some(nil)` for Preset Default,
+    /// nil for an index outside the list.
+    static func family(at index: Int, families: [String]) -> String?? {
+        if index == 0 { return .some(nil) }
+        guard families.indices.contains(index - 1) else { return nil }
+        return .some(families[index - 1])
+    }
+}
+
+/// The monospace popup: SF Mono first, then installed families.  SF Mono is
+/// the default code face but is often not installed as a named family — the
+/// renderer reaches it as the system monospaced font — so it is always listed
+/// rather than shown as "not available".
+enum MonoFontChoices {
+    static let systemMonospace = "SF Mono"
+
+    static func families(installed: [String] = NSFontManager.shared.availableFontFamilies) -> [String] {
+        [systemMonospace] + BodyFontChoices.families(installed: installed).filter { $0 != systemMonospace }
+    }
+}
+
 /// Pure filtering, so the search behaviour is testable without a window.
 enum PreferenceRowFilter {
     /// Keeps rows matching every word of the query, then drops section headers
@@ -539,6 +576,10 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
                 popup.lastItem?.isEnabled = false
                 popup.select(popup.lastItem)
             }
+            // The row label sits beside the popup, not on it; without this
+            // VoiceOver announces only the selected item.
+            popup.setAccessibilityLabel(title)
+            if let help { popup.setAccessibilityHelp(help) }
             let handler = ActionHandler { set(popup.indexOfSelectedItem) }
             popup.target = handler
             popup.action = #selector(ActionHandler.run)
@@ -861,7 +902,7 @@ enum PreferencesForms {
     static func typography() -> [PreferenceRow] {
         [
             .section("Body"),
-            .choice("Preset", help: "Reading is set in New York, Working in SF Pro Text.",
+            .choice("Preset", help: "Reading is set in New York, Working in SF Pro Text. A font family chosen below replaces the preset’s face.",
                     options: TypographyConfig.BodyPreset.allCases.map(\.title),
                     get: {
                         let presets = TypographyConfig.BodyPreset.allCases
@@ -873,6 +914,20 @@ enum PreferencesForms {
                         Preferences.shared.update {
                             $0.typography.preset = TypographyConfig.BodyPreset.allCases[index]
                         }
+                    }),
+            .choice("Font family",
+                    help: "Sets body text and headings. Preset Default uses the preset’s face; code keeps the monospace family below.",
+                    options: [BodyFontChoices.presetDefaultTitle] + BodyFontChoices.families(),
+                    get: {
+                        BodyFontChoices.selection(
+                            for: Preferences.shared.values.typography.customBodyFamily,
+                            families: BodyFontChoices.families()
+                        )
+                    },
+                    set: { index in
+                        let families = BodyFontChoices.families()
+                        guard let family = BodyFontChoices.family(at: index, families: families) else { return }
+                        Preferences.shared.update { $0.typography.bodyFamily = family }
                     }),
             .stepper("Size", help: nil, range: 11...24, step: 1,
                      get: { Double(Preferences.shared.values.typography.bodySize) },
@@ -911,14 +966,14 @@ enum PreferencesForms {
 
             .section("Code"),
             .choice("Monospace family", help: nil,
-                    options: NSFontManager.shared.availableFontFamilies.sorted(),
+                    options: MonoFontChoices.families(),
                     get: {
-                        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+                        let fonts = MonoFontChoices.families()
                         let current = Preferences.shared.values.typography.monoFamily
                         return fonts.firstIndex(of: current).map { .index($0) } ?? .missing(current)
                     },
                     set: { index in
-                        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+                        let fonts = MonoFontChoices.families()
                         guard fonts.indices.contains(index) else { return }
                         Preferences.shared.update { $0.typography.monoFamily = fonts[index] }
                     }),

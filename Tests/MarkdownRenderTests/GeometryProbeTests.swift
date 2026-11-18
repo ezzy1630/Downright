@@ -5,6 +5,23 @@ import Testing
 
 @testable import MarkdownRender
 
+@Test @MainActor func mixedLineEndingsKeepSeparateSourceRows() throws {
+    let text = "First\rSecond\rThird\r\nFourth\r\rSixth"
+    let storage = NSTextStorage(string: text)
+    let document = MarkdownParser.parse(text)
+    let view = MarkdownTextView(
+        frame: NSRect(x: 0, y: 0, width: 640, height: 400), storage: storage
+    )
+    view.mode = .source
+    view.update(document: document, dirty: .wholesale)
+    let rows = try document.lineStarts.map { offset in
+        try #require(view.rect(forOffset: offset)).minY
+    }
+    #expect(rows.count == 6)
+    #expect(zip(rows, rows.dropFirst()).allSatisfy { $1 - $0 > 1 }, "Source row origins: \(rows)")
+    #expect(Data(storage.string.utf8) == Data(text.utf8))
+}
+
 /// P1-6/7 + P2-18 regression: a nested list item must keep its own deeper
 /// indent.  The root cause was `applyBase` spreading a parent item's paragraph
 /// style across its whole subtree; NSTextStorage's paragraph fixup then

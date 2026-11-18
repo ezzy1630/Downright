@@ -31,28 +31,48 @@ public enum ListEditing {
         let text = doc.text as NSString
         let lineNumber = doc.line(at: marker.location)
         let lineRange = doc.range(ofLine: lineNumber)
-        let source = doc.substring(lineRange)
-        let indent = source.leadingIndent
+        guard offset >= marker.location else { return nil }
+        if let child = item.children.first(where: { $0.range.touches(offset: offset) }) {
+            guard case .paragraph = child.content else { return nil }
+        } else if offset > lineRange.upperBound {
+            return nil
+        }
+        // Before the innermost marker, an outer list marker occupies the
+        // columns the new sibling must indent through. Quote markers survive
+        // on the new line because spaces alone would leave the quote.
+        let prefixRange = NSRange(location: lineRange.location, length: marker.location - lineRange.location)
+        let prefix = String(doc.substring(prefixRange).map { character in
+            character == ">" || character == "\t" ? character : " "
+        })
+        let quoteEnd = prefix.lastIndex(of: ">").map { index in
+            let after = prefix.index(after: index)
+            return after < prefix.endIndex && prefix[after].isWhitespace ? prefix.index(after: after) : after
+        } ?? prefix.startIndex
+        let quotePrefix = prefix[..<quoteEnd]
+        let indent = prefix[quoteEnd...]
         let markerText = text.substring(with: marker)
-        let body = text.substring(with: NSRange(
+        let body = doc.substring(NSRange(
             location: marker.upperBound,
             length: max(0, item.range.upperBound - marker.upperBound)
-        ))
+        )).trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMarker = markerText.prefix { !$0.isWhitespace }
 
         // An empty item ends the list.  Outdent one level if it is nested,
         // otherwise clear the marker and leave a blank line behind.  The whole
         // line is replaced because an empty item is nothing but its marker, so
         // there is no content to preserve.
-        if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if body.isEmpty || body == "[ ]" || body == "[x]" || body == "[X]" {
+            let replace = NSRange(location: prefixRange.location + quotePrefix.utf16.count,
+                                  length: lineRange.length - quotePrefix.utf16.count)
             guard !indent.isEmpty else {
-                return ListContinuation(replaceRange: lineRange, insertion: "")
+                return ListContinuation(replaceRange: replace, insertion: "")
             }
-            let bullet = markerText.trimmingCharacters(in: .whitespaces)
             let outdented = String(indent.dropLast(min(indent.count, 2)))
-            return ListContinuation(replaceRange: lineRange, insertion: outdented + bullet + " ")
+            return ListContinuation(replaceRange: replace, insertion: outdented + trimmedMarker + " ")
         }
+        guard offset >= min(marker.upperBound, lineRange.upperBound) else { return nil }
 
-        var next = indent
+        var next = prefix
         if let ordinal {
             let punctuation = markerText.contains(")") ? ")" : "."
             next += "\(ordinal + 1)\(punctuation) "
@@ -66,9 +86,22 @@ public enum ListEditing {
             next += bullet + " "
         }
         if checkbox != nil { next += "[ ] " }
+        let caretLine = doc.range(ofLine: doc.line(at: offset))
+        // Match the caret line's own terminator, or the previous line's on an
+        // unterminated last line, so continuing a list never mixes endings.
+        let lineEnd = caretLine.upperBound
+        let terminator = lineEnd < text.length ? lineEnd : caretLine.location - 1
+        let newline: String
+        if terminator >= 0, text.character(at: terminator) == 0x0D {
+            newline = terminator + 1 < text.length && text.character(at: terminator + 1) == 0x0A ? "\r\n" : "\r"
+        } else if terminator > 0, text.character(at: terminator) == 0x0A, text.character(at: terminator - 1) == 0x0D {
+            newline = "\r\n"
+        } else {
+            newline = "\n"
+        }
         return ListContinuation(
             replaceRange: NSRange(location: offset, length: 0),
-            insertion: "\n" + next
+            insertion: newline + next
         )
     }
 
@@ -131,11 +164,10 @@ public enum ListEditing {
     /// so a caret parked after the trailing space of `"  - "` is outside the
     /// item's range but unmistakably inside the item.
     private static func enclosingItem(_ doc: ParsedDocument, offset: Int) -> MDBlock? {
-        let text = doc.text as NSString
         var found: MDBlock?
         doc.root.walkPruning { candidate in
             let lastCharacter = max(candidate.range.location, candidate.range.upperBound - 1)
-            let end = text.lineEnd(after: lastCharacter)
+            let end = doc.range(ofLine: doc.line(at: lastCharacter)).upperBound
             let lines = NSRange(
                 location: candidate.range.location,
                 length: max(candidate.range.length, end - candidate.range.location)

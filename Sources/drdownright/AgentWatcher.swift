@@ -1,4 +1,5 @@
 import CoreServices
+import Darwin
 import Foundation
 
 /// A directory watcher for `down watch` — the fallback path for agents that have
@@ -34,7 +35,7 @@ public final class AgentWatcher {
     /// Resolved once at `start()`.  Recomputing it per event would stat the
     /// file system on every write in a busy directory to answer a question whose
     /// answer cannot change while the stream is running.
-    private var watchPlan = WatchPlan(directories: [], allowedFiles: [])
+    private var watchPlan = WatchPlan(directories: [], recursivePrefixes: [], allowedFiles: [])
     /// Paths accumulated since the last flush, in first-seen order.
     private var pending: [String] = []
     private var pendingSeen = Set<String>()
@@ -92,41 +93,54 @@ public final class AgentWatcher {
     /// a directory contributes itself and allows everything beneath it.
     struct WatchPlan {
         var directories: [String]
-        /// Exact file paths to allow.  Empty means "allow anything under the
-        /// watched directories".
+        /// Only explicit directory roots permit recursive events. Watching a
+        /// file's parent supplies replacement events for that one file.
+        var recursivePrefixes: [String]
         var allowedFiles: Set<String>
     }
 
     static func plan(for roots: [URL]) -> WatchPlan {
         var directories: [String] = []
         var allowedFiles = Set<String>()
-        var sawDirectory = false
+        var recursivePrefixes: [String] = []
         for root in roots {
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory)
             if exists, isDirectory.boolValue {
-                sawDirectory = true
-                directories.append(root.path)
+                let path = physicalDirectoryPath(root.path)
+                directories.append(path)
+                recursivePrefixes.append(path == "/" ? "/" : path + "/")
             } else {
                 // A file that does not exist yet is still a legitimate target —
                 // agents create files as well as rewrite them — so this does not
                 // require existence, only that the parent directory is real.
-                directories.append(root.deletingLastPathComponent().path)
-                allowedFiles.insert(root.path)
+                let parent = physicalDirectoryPath(root.deletingLastPathComponent().path)
+                directories.append(parent)
+                allowedFiles.insert(URL(fileURLWithPath: parent, isDirectory: true)
+                    .appendingPathComponent(root.lastPathComponent).path)
             }
         }
         var seen = Set<String>()
         directories = directories.filter { seen.insert($0).inserted }
-        // A directory root subsumes any file root under it; mixing the two would
-        // otherwise let the allow-list suppress everything the directory wanted.
-        return WatchPlan(directories: directories, allowedFiles: sawDirectory ? [] : allowedFiles)
+        // A directory root subsumes only the file roots under that directory.
+        allowedFiles = allowedFiles.filter { file in
+            !recursivePrefixes.contains { file.hasPrefix($0) }
+        }
+        return WatchPlan(directories: directories, recursivePrefixes: recursivePrefixes, allowedFiles: allowedFiles)
+    }
+
+    /// FSEvents supplies physical paths, including /private/var when the
+    /// command was given /var. Resolve directories before matching events.
+    private static func physicalDirectoryPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// True when an event path should be reported, given a plan.
     static func accepts(_ path: String, plan: WatchPlan) -> Bool {
         guard MarkdownCLI.isMarkdownPath(path) else { return false }
-        guard !plan.allowedFiles.isEmpty else { return true }
-        return plan.allowedFiles.contains(path)
+        return plan.allowedFiles.contains(path) || plan.recursivePrefixes.contains { path.hasPrefix($0) }
     }
 
     @discardableResult

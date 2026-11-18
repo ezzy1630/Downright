@@ -31,56 +31,64 @@ struct LocalAITests {
 
     @Test func appleAdapterAvailabilityFailsClosed() async {
         let provider = AppleOnDeviceAIProvider()
-        guard provider.availability != .available else {
-            #expect(provider.availability == .available)
-            return
+        await #expect(throws: LocalAIError.emptyInput) {
+            try await provider.run(LocalAIRequest(task: .summarize, source: " "))
         }
-        do {
-            _ = try await provider.run(LocalAIRequest(task: .summarize, source: "Text"))
-            Issue.record("Unavailable Apple adapter must fail closed")
-        } catch let error as LocalAIError {
-            guard case .unavailable = error else {
-                Issue.record("expected unavailable local adapter")
-                return
+        let availability = provider.availability
+        if availability != .available {
+            await #expect(throws: LocalAIError.unavailable(availability)) {
+                try await provider.run(LocalAIRequest(task: .summarize, source: "Text"))
             }
-        } catch {
-            Issue.record("unexpected error type")
         }
     }
 
     @Test @MainActor func latestRequestWins() async throws {
-        let provider = SlowLocalAIProvider()
+        let provider = GatedLocalAIProvider()
+        defer { provider.releaseFirst.signal() }
         let controller = LocalAILatestWinsController(provider: provider)
-        var values: [String] = []
-        controller.submit(LocalAIRequest(task: .summarize, source: "first")) { result in
-            if case .success(let value) = result { values.append(value.text) }
+        controller.submit(LocalAIRequest(task: .summarize, source: "first")) { _ in
+            Issue.record("The superseded request delivered a result")
         }
+        try #require(await provider.firstStarted.wait(), "The initial request never entered its provider")
+
+        let completed = TestSignal()
+        var latest: LocalAIResult?
         controller.submit(LocalAIRequest(task: .summarize, source: "second")) { result in
-            if case .success(let value) = result { values.append(value.text) }
+            latest = try? result.get()
+            completed.signal()
         }
-        // Wait for the result rather than for a stopwatch.  A fixed 80ms sleep
-        // against a 30ms provider passes alone and loses the race about half
-        // the time inside the full parallel suite, which made this the one
-        // test nobody could trust.  Polling asserts the same thing — that only
-        // the newest request ever delivers — without betting on scheduler
-        // latency; the deadline is generous because it only bounds a failure.
-        let deadline = ContinuousClock.now + .seconds(5)
-        while values.isEmpty, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        // A short grace period after the winner lands: if the superseded
-        // request were also going to deliver, this is when it would.
-        try await Task.sleep(for: .milliseconds(60))
-        #expect(values == ["second"])
+        try #require(await provider.firstCancelled.wait(), "Superseding the first request must cancel it")
+        try #require(await completed.wait(), "The replacement request never completed")
+        #expect(latest?.text == "second")
+
+        provider.releaseFirst.signal()
+        try #require(await provider.firstReturning.wait(), "The superseded provider never finished")
+        await drainTestMainQueue()
     }
 }
 
-private final class SlowLocalAIProvider: LocalAIProvider {
-    let availability: LocalAIAvailability = .available
+/// Gate delivery at the provider boundary while generating the result with the
+/// real deterministic provider. A provider may finish even after cancellation.
+private final class GatedLocalAIProvider: LocalAIProvider {
+    private let provider = DeterministicLocalAIProvider()
+    var availability: LocalAIAvailability { provider.availability }
+    let firstStarted = TestSignal()
+    let firstCancelled = TestSignal()
+    let firstReturning = TestSignal()
+    let releaseFirst = TestSignal()
 
+    @MainActor
     func run(_ request: LocalAIRequest) async throws -> LocalAIResult {
-        try await Task.sleep(for: .milliseconds(30))
-        try Task.checkCancellation()
-        return LocalAIResult(task: request.task, text: request.source, preview: nil)
+        let result = try await provider.run(request)
+        guard request.source == "first" else { return result }
+        let release = Task.detached { [releaseFirst] in await releaseFirst.wait() }
+        return try await withTaskCancellationHandler {
+            firstStarted.signal()
+            guard await release.value else { throw LocalAIError.cancelled }
+            firstReturning.signal()
+            return result
+        } onCancel: { [firstCancelled] in
+            firstCancelled.signal()
+        }
     }
 }

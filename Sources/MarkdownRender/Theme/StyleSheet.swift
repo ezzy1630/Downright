@@ -133,16 +133,16 @@ public struct StyleSheet {
 
         // Fonts.  Built through locals so nothing reads a property that is
         // still being initialised.
-        let bodyFont = StyleSheet.systemFont(
-            preset: typography.preset, size: typography.bodySize, weight: .regular
+        let bodyFont = StyleSheet.proseFont(
+            typography: typography, size: typography.bodySize, weight: .regular
         )
         body = bodyFont
         headings = (1...6).map { level in
             let weight: NSFont.Weight = level <= 3
                 ? .bold
                 : (level == 6 ? .medium : .semibold)
-            let font = StyleSheet.systemFont(
-                preset: typography.preset,
+            let font = StyleSheet.proseFont(
+                typography: typography,
                 size: StyleSheet.headingSize(level: level, typography: typography),
                 weight: weight
             )
@@ -272,6 +272,39 @@ public struct StyleSheet {
 
     private static func clampLevel(_ level: Int) -> Int { min(6, max(1, level)) }
 
+    /// Body and heading text: the chosen family when one is set and installed,
+    /// otherwise the preset's face.  Code never comes through here.
+    static func proseFont(typography: TypographyConfig, size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        if let family = typography.customBodyFamily,
+           let font = familyFont(family: family, size: size, weight: weight) {
+            return font
+        }
+        return systemFont(preset: typography.preset, size: size, weight: weight)
+    }
+
+    /// The member of `family` closest to `weight`, upright where the family
+    /// has an upright face.  Nil when the family is not installed: a
+    /// descriptor naming a missing family otherwise resolves to some unrelated
+    /// face, and the caller must fall back to the preset instead.
+    static func familyFont(family: String, size: CGFloat, weight: NSFont.Weight) -> NSFont? {
+        let descriptor = NSFontDescriptor(fontAttributes: [
+            .family: family,
+            .traits: [NSFontDescriptor.TraitKey.weight: weight.rawValue],
+        ])
+        guard let font = NSFont(descriptor: descriptor, size: size), font.familyName == family else {
+            return nil
+        }
+        guard font.fontDescriptor.symbolicTraits.contains(.italic) else { return font }
+        // Weight matching ignores slant, so a family can answer with its italic.
+        let traits = font.fontDescriptor.symbolicTraits.subtracting(.italic)
+        if let upright = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: size),
+           upright.familyName == family,
+           !upright.fontDescriptor.symbolicTraits.contains(.italic) {
+            return upright
+        }
+        return font
+    }
+
     private static func systemFont(preset: TypographyConfig.BodyPreset, size: CGFloat, weight: NSFont.Weight) -> NSFont {
         let base = NSFont.systemFont(ofSize: size, weight: weight)
         guard preset == .reading else { return base }  // Working = SF Pro Text
@@ -284,10 +317,12 @@ public struct StyleSheet {
     }
 
     private static func monoFont(family: String, size: CGFloat, ligatures: Bool) -> NSFont {
-        // SF Mono is not installed on every machine and is not exposed under a
-        // single stable name, so the chain degrades: configured face, SF Mono
-        // under both of its names, Menlo, then the system monospace face.
-        let candidates = [family, "SF Mono", "SFMono-Regular", "Menlo"]
+        // SF Mono is often not installed as a named family; macOS exposes it
+        // only as the system monospaced face.  The chain is: configured face,
+        // SF Mono under both of its names, then the system monospaced face
+        // (which is SF Mono).  Menlo is never reached by name, so the default
+        // renders in SF Mono everywhere, as DESIGN.md specifies.
+        let candidates = [family, "SF Mono", "SFMono-Regular"]
         var resolved: NSFont?
         for name in candidates where !name.isEmpty {
             if let font = NSFont(name: name, size: size) { resolved = font; break }
@@ -307,12 +342,59 @@ public struct StyleSheet {
         return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
     }
 
-    private static func applying(bold: Bool, italic: Bool, to font: NSFont) -> NSFont {
+    /// `font` with bold and/or italic added, staying in its family.
+    ///
+    /// The shipped presets have every face, but a chosen body family may not.
+    /// Each missing trait degrades on its own: without a bold face the text
+    /// stays at its weight, and without an italic face the upright is slanted,
+    /// so emphasis still reads as emphasis instead of vanishing.
+    static func applying(bold: Bool, italic: Bool, to font: NSFont) -> NSFont {
         guard bold || italic else { return font }
-        var traits = font.fontDescriptor.symbolicTraits
-        if bold { traits.insert(.bold) }
-        if italic { traits.insert(.italic) }
-        let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+        func adding(_ trait: NSFontDescriptor.SymbolicTraits, to font: NSFont) -> NSFont? {
+            let traits = font.fontDescriptor.symbolicTraits.union(trait)
+            guard let result = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize),
+                  result.familyName == font.familyName,
+                  result.fontDescriptor.symbolicTraits.contains(trait)
+            else { return nil }
+            return result
+        }
+        var wanted: NSFontDescriptor.SymbolicTraits = []
+        if bold { wanted.insert(.bold) }
+        if italic { wanted.insert(.italic) }
+        if let exact = adding(wanted, to: font) { return exact }
+
+        var result = font
+        if bold, let bolder = adding(.bold, to: result) { result = bolder }
+        if italic {
+            result = adding(.italic, to: result) ?? oblique(result)
+        }
+        return result
+    }
+
+    /// Whether `font` reads as italic: an italic face, or an upright face that
+    /// `oblique` slanted because its family has no italic.
+    static func isItalic(_ font: NSFont) -> Bool {
+        font.fontDescriptor.symbolicTraits.contains(.italic) || CTFontGetMatrix(font as CTFont).c != 0
+    }
+
+    /// `font` at `size`.  `withSize` returns a slanted face upright, so the
+    /// slant is reapplied at the new size.
+    static func resized(_ font: NSFont, to size: CGFloat) -> NSFont {
+        let resized = font.withSize(size)
+        return CTFontGetMatrix(font as CTFont).c != 0 ? oblique(resized) : resized
+    }
+
+    /// A slanted rendering of an upright face, for families with no italic.
+    /// The skew matches the common 12° oblique.  A font matrix carries the
+    /// point size, so the transform is scaled by it; a later `withSize` keeps
+    /// the size right but returns the upright face.
+    private static func oblique(_ font: NSFont) -> NSFont {
+        let size = font.pointSize
+        let skew = NSAffineTransform()
+        skew.transformStruct = NSAffineTransformStruct(
+            m11: size, m12: 0, m21: 0.21 * size, m22: size, tX: 0, tY: 0
+        )
+        let descriptor = font.fontDescriptor.addingAttributes([.matrix: skew])
         return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
     }
 

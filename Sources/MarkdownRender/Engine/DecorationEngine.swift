@@ -1121,11 +1121,7 @@ public final class DecorationEngine {
         if abs(base.pointSize - styleSheet.bodyFont().pointSize) < 0.5 {
             return styleSheet.emphasisFont(bold: bold, italic: italic)
         }
-        var traits = base.fontDescriptor.symbolicTraits
-        if bold { traits.insert(.bold) }
-        if italic { traits.insert(.italic) }
-        let descriptor = base.fontDescriptor.withSymbolicTraits(traits)
-        return NSFont(descriptor: descriptor, size: base.pointSize) ?? base
+        return StyleSheet.applying(bold: bold, italic: italic, to: base)
     }
 
     // MARK: - Code blocks (§11.3)
@@ -1144,6 +1140,7 @@ public final class DecorationEngine {
         let payload = emitFragment(collapses ? .collapsedCodeBlock : .codeBlock,
                                    block: block, detail: language ?? "", state: &state)
         payload?.isCollapsed = collapses
+        payload?.codeContentRange = contentRange
 
         // Fences stay in the text (see `MarkerPolicy.blockMarkersAreHidden`);
         // the fragment absorbs them as the band's chrome, so they are styled

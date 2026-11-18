@@ -15,8 +15,9 @@ Its `validation` job calls the same-commit
 `ci.yml` reusable workflow with production acceptance enabled. Source tests and
 release performance budgets, development native acceptance, and production
 updater acceptance run on separate macOS runners. The archive job depends on
-the entire reusable workflow succeeding. There is one source gate per release;
-no archive or publication can bypass a failed native lane. Release runs
+the entire reusable workflow succeeding. The `swift` check combines both the
+source and performance results for PR readback. Publication requires both
+and every applicable native lane. Release runs
 are never cancelled halfway through signing or publication.
 
 `ci.yml` also supports manual branch dispatch. It runs source and development
@@ -55,7 +56,14 @@ cancelled, missing, or unfinished required checks and reports their exact state.
 ## Local entry points
 
 - `Scripts/check-fast.sh`: version consistency, contrast, shell/Python syntax,
-  and pinned Actionlint validation. This does not compile or prove the app.
+  test honesty, and pinned Actionlint validation.
+- `Scripts/test.sh [--filter REGEX]`: serial Swift tests with CLT framework
+  flags when needed and a fresh Application Support sandbox each run. A filter
+  that matches zero executed tests fails. Use the same `SCRATCH` as the source
+  gate to reuse build products.
+- `Scripts/check.sh`: complete source gate and informational debug benchmark.
+  `--source-only` and `--bench-only` run the independent CI gates. The latter
+  always enforces the release performance budgets.
 - `Scripts/install-hooks.sh`: install the tracked pre-push hook while preserving
   an existing custom hook. Each proposed commit is archived into a disposable
   directory and checked there, including pushes from a dirty checkout. Deleted
@@ -67,6 +75,32 @@ cancelled, missing, or unfinished required checks and reports their exact state.
   unchanged release performance budgets.
 - `Scripts/check-app.sh`: build, verify, and drive an exact native bundle.
   Main native acceptance runs the complete existing suite.
+
+## Writing tests
+
+Test source, storage, and rendering logic with Swift Testing. Drive document
+interaction (pointer, keyboard, hover, scrolling, Settings) with the in-process
+UI driver described in [Native UI testing](UI-TESTING.md); it runs in this
+source gate. Use an XCUITest against the packaged host for behavior that needs
+a foreground packaged app, system dialogs, another process, or composited
+output. Use a manual check where a required surface has
+no automated input or observable result, and record exactly what it proved.
+
+Start with the report's document and action, reproduce the failure, and assert
+what a user or caller can observe. Keep the assertion sensitive to the original
+fault. Use disposable fixtures and verify exact saved bytes for storage and
+editing regressions.
+
+Wait for real completion or notification. AppKit state without a completion
+can use the test target's bounded condition helper with a diagnostic message.
+Exercise the real subject and use recorders to observe it. A fixture can stand
+in for an external process or service while the actual client handles its
+input, output, and failure. The stdlib linter checks Swift and Python for
+fixed waits, common assertion retries, time-limit overrides, undocumented
+`withKnownIssue` calls, and common behavior-replacing test types. The
+`Scripts/test-lint-allowlist.json` counts are exact for each file and rule.
+Remove or lower the entry when resolving violations. The linter covers
+recognizable source patterns, so review still needs to assess test behavior.
 
 ## Evidence and caches
 

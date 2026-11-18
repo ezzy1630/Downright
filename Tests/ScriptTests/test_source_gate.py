@@ -19,9 +19,9 @@ class SourceGateTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         for directory in ("Scripts", "Tests", "Sources/DownrightApp/Updater", "bin"):
             (self.root / directory).mkdir(parents=True)
-        shutil.copy2(REPOSITORY / "Scripts/check.sh", self.root / "Scripts/check.sh")
+        for script in ("check.sh", "test.sh"):
+            shutil.copy2(REPOSITORY / "Scripts" / script, self.root / "Scripts" / script)
         (self.root / "Sources/DownrightApp/Updater/Updater.swift").write_text("import Sparkle\n")
-        (self.root / "Tests/KnownIssues.swift").write_text("withKnownIssue(\nwithKnownIssue(\n")
         self.executable("Scripts/sync-versions.sh", '#!/bin/bash\nexit "${VERSION_STATUS:-0}"\n')
         self.executable("bin/python3", "#!/bin/bash\ncat >/dev/null\nexit 0\n")
         self.executable("bin/xcode-select", "#!/bin/bash\necho /Applications/Xcode.app/Contents/Developer\n")
@@ -33,9 +33,16 @@ with open(os.environ["SWIFT_CALLS"], "a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
 command = sys.argv[1]
 if command == "test" and os.environ.get("ZERO_TESTS") != "1":
+    with open(os.environ["SWIFT_CALLS"] + ".support", "w") as log:
+        log.write(os.environ["DOWNRIGHT_SUPPORT_DIRECTORY"])
+    print("◇ Test run started.")
     print("✔ Test example() passed after 0.001 seconds.")
     if os.environ.get("MISSING_TEST_SUMMARY") != "1":
         print("✔ Test run with 1 test passed after 0.001 seconds.")
+    if os.environ.get("ABANDONED_SECOND_RUN") == "1":
+        # A second test runner that stops before its summary but exits 0.
+        print("◇ Test run started.")
+        print("✔ Test other() passed after 0.001 seconds.")
 elif command == "run":
     print("Typing response p95: 1 ms")
 elif command == "build" and "--show-bin-path" in sys.argv:
@@ -45,7 +52,8 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
         if ripgrep := shutil.which("rg"):
             (self.root / "bin/rg").symlink_to(ripgrep)
         self.environment = dict(os.environ)
-        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH", "MISSING_TEST_SUMMARY"):
+        for key in ("TEST_SCRATCH", "BENCH_SCRATCH", "DOWNRIGHT_SUPPORT_DIRECTORY", "RUN_DRBENCH", "MISSING_TEST_SUMMARY",
+                    "ABANDONED_SECOND_RUN", "CHECK_VERBOSE_BUILD"):
             self.environment.pop(key, None)
         self.environment.update(
             PATH=f"{self.root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -58,10 +66,10 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
         path.write_text(contents)
         path.chmod(0o755)
 
-    def run_gate(self, **overrides):
+    def run_gate(self, *arguments, **overrides):
         result = subprocess.run(
-            ["/bin/bash", str(self.root / "Scripts/check.sh")],
-            env=dict(self.environment, **overrides), capture_output=True, text=True, timeout=10,
+            ["/bin/bash", str(self.root / "Scripts/check.sh"), *arguments],
+            env=dict(self.environment, **overrides), capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
         )
         calls_path = Path(self.environment["SWIFT_CALLS"])
         calls = [json.loads(line) for line in calls_path.read_text().splitlines()] if calls_path.exists() else []
@@ -100,7 +108,7 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
     def test_clt_framework_flags_keep_tests_in_a_separate_graph(self):
         frameworks = self.root / "clt-frameworks"
         (frameworks / "Testing.framework").mkdir(parents=True)
-        script = self.root / "Scripts/check.sh"
+        script = self.root / "Scripts/test.sh"
         script.write_text(script.read_text().replace(
             "/Library/Developer/CommandLineTools/Library/Developer/Frameworks", str(frameworks),
         ))
@@ -127,22 +135,42 @@ sys.exit(int(os.environ.get(command.upper() + "_STATUS", "0")))
     def test_success_without_a_completed_test_run_is_rejected(self):
         result, _ = self.run_gate(MISSING_TEST_SUMMARY="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("NO TESTS RAN", result.stdout)
+        self.assertIn("INCOMPLETE", result.stdout)
+
+    def test_a_runner_that_stops_before_its_summary_fails_despite_other_passes(self):
+        result, calls = self.run_gate(ABANDONED_SECOND_RUN="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("2 Swift Testing runs started but 1 finished", result.stdout)
+        self.assertFalse(any(call[0] == "run" for call in calls))
 
     def test_release_budget_failure_is_rejected(self):
         result, _ = self.run_gate(RUN_DRBENCH="1", RUN_STATUS="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("performance budget was violated", result.stdout)
 
-    def test_known_issue_inventory_counts_swift_sites_and_ignores_script_fixtures(self):
-        (self.root / "Tests/fixture.py").write_text('fixture = "withKnownIssue("\n')
-        result, _ = self.run_gate()
+    def test_split_jobs_preserve_source_and_release_benchmark(self):
+        result, calls = self.run_gate("--source-only")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("2 deliberate known-issue sites", result.stdout)
-        (self.root / "Tests/Unexpected.swift").write_text("withKnownIssue(\n")
-        result, _ = self.run_gate()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("KNOWN-ISSUE GATE FAILED", result.stdout)
+        self.assertTrue(any(call[0] == "test" for call in calls))
+        self.assertFalse(any(call[0] == "run" for call in calls))
+        Path(self.environment["SWIFT_CALLS"]).unlink()
+        result, calls = self.run_gate("--bench-only")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:3], ["run", "-c", "release"])
+
+    def test_focused_runner_forwards_filter_and_isolates_support(self):
+        result = subprocess.run(
+            ["/bin/bash", str(self.root / "Scripts/test.sh"), "--filter", "Suite.*name"],
+            env=dict(self.environment, DOWNRIGHT_SUPPORT_DIRECTORY="untouched"),
+            capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        logs = Path(self.environment["SWIFT_CALLS"]).read_text().splitlines()
+        self.assertEqual(json.loads(logs[-1])[-2:], ["--filter", "Suite.*name"])
+        support = Path(self.environment["SWIFT_CALLS"] + ".support").read_text()
+        self.assertTrue(Path(support).name.startswith("downright-test-support."))
+        self.assertFalse(Path(support).exists())
 
 
 class ToolchainSelectionTests(unittest.TestCase):
@@ -169,7 +197,7 @@ class ToolchainSelectionTests(unittest.TestCase):
                 ["/bin/bash", str(root / "Scripts/select-toolchain.sh")],
                 env=dict(os.environ, PATH=f"{root}/bin:/usr/bin:/bin", GITHUB_ENV=str(root / "github-env"),
                          TOOLCHAIN_CALLS=str(root / "calls")),
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             calls = (root / "calls").read_text().splitlines()

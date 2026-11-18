@@ -121,13 +121,14 @@ extension DocumentWindowController: CommandPaletteViewDelegate {
         case .open(let url):
             (NSApp.delegate as? AppDelegate)?.open(url, mode: mode)
         case .openAt(let url, let range):
-            guard openInPlace(url) else { return }
-            guard range.upperBound <= markdownDocument.storage.length else { return }
-            containerTextView.setSourceSelectedRanges([range])
-            containerTextView.scroll(
+            guard let destination = openInPlace(url),
+                  range.upperBound <= destination.markdownDocument.storage.length else { return }
+            let editor = destination.containerTextView
+            editor.setSourceSelectedRanges([range])
+            editor.scroll(
                 toOffset: range.location, position: .visible, animated: false
             )
-            window?.makeFirstResponder(containerTextView)
+            destination.window?.makeFirstResponder(editor)
         }
     }
 

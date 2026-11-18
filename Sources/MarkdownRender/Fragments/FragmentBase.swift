@@ -30,6 +30,8 @@ public enum StyleToken {
         hasher.combine(styleSheet.revision)
         hasher.combine(styleSheet.theme.name)
         hasher.combine(styleSheet.bodyFont().pointSize)
+        // The face, not only the size: a body family or preset change redraws.
+        hasher.combine(styleSheet.bodyFont().fontName)
         hasher.combine(styleSheet.increaseContrast)
         for color in [styleSheet.background, styleSheet.text, styleSheet.accent, styleSheet.codeBackground] {
             let resolved = color.usingColorSpace(.sRGB) ?? color
@@ -86,6 +88,8 @@ public final class FragmentContext {
     public var checkboxPulses: [CheckboxPulse] = []
     /// Primary caret in source coordinates, or `nil` in Read mode.
     public var caret: Int?
+    /// Display math whose source is visible for the current Live selection.
+    var mathSourcePayload: FragmentPayload?
     /// Width of the text column, for objects that fill the measure.
     public var contentWidth: CGFloat = 640
     /// Directory images and diagrams resolve against (§3.4 — unsandboxed, so

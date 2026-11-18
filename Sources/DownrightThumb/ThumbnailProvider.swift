@@ -279,13 +279,26 @@ final class ThumbnailProvider: QLThumbnailProvider {
 
     // MARK: - Reading
 
-    private static func firstProseLine(in document: ParsedDocument) -> String? {
+    static func firstProseLine(in document: ParsedDocument) -> String? {
+        let source = document.text as NSString
         for block in document.root.children {
             guard case .paragraph = block.content else { continue }
-            let text = document.substring(block.contentRange)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = prose(in: block.inlines, source: source)
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
             if !text.isEmpty { return text }
         }
         return nil
+    }
+
+    private static func prose(in spans: [InlineSpan], source: NSString) -> String {
+        spans.map { span in
+            switch span.kind {
+            case .text, .inlineCode: return source.substring(with: span.contentRange)
+            case .softBreak, .lineBreak, .image: return " "
+            case .inlineHTML, .footnoteReference: return ""
+            case .autolink(let destination): return destination
+            default: return prose(in: span.children, source: source)
+            }
+        }.joined()
     }
 }

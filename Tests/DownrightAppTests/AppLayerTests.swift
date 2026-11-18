@@ -550,6 +550,7 @@ struct AppLayerTests {
         values.typography.lineHeightMultiple = 1.7
         values.typography.measureCharacters = 72
         values.typography.monoFamily = "Menlo"
+        values.typography.bodyFamily = "Georgia"
         values.typography.monoSizeAdjust = 1
         values.typography.monoLigatures = true
         values.typography.opticalMargins = false
@@ -575,6 +576,69 @@ struct AppLayerTests {
         let data = try JSONEncoder().encode(values)
         let decoded = try JSONDecoder().decode(Preferences.Values.self, from: data)
         #expect(decoded == values)
+    }
+
+    /// A settings file from before the body font family existed keeps every
+    /// typography choice and gets the preset's face.  Typography decodes as one
+    /// value, so a schema mismatch there would silently reset all of it.
+    @Test
+    func preferencesWithoutABodyFamilyKeepTheirTypography() throws {
+        let legacy = Data(#"""
+        {"appearancePreferenceVersion":1,"typography":{"preset":"working","bodySize":18,"scaleRatio":1.333,
+        "lineHeightMultiple":1.7,"measureCharacters":80,"monoFamily":"Menlo","monoSizeAdjust":0.9,
+        "monoLigatures":true,"opticalMargins":false,"mathScale":1.1}}
+        """#.utf8)
+        let decoded = try JSONDecoder().decode(Preferences.Values.self, from: legacy)
+        #expect(decoded.typography.bodyFamily == nil)
+        #expect(decoded.typography.preset == .working)
+        #expect(decoded.typography.bodySize == 18)
+        #expect(decoded.typography.monoFamily == "Menlo")
+        #expect(decoded.typography.measureCharacters == 80)
+    }
+
+    @Test
+    func bodyFontPopupMapsPresetDefaultFamiliesAndMissingFaces() {
+        let families = BodyFontChoices.families(installed: ["charter", "Avenir Next", "Font 10", "Font 9", ".Hidden"])
+        #expect(families == ["Avenir Next", "charter", "Font 9", "Font 10"], "case-insensitive, numeric, no hidden faces")
+
+        guard case .index(0) = BodyFontChoices.selection(for: nil, families: families) else {
+            Issue.record("no family selects Preset Default"); return
+        }
+        guard case .index(2) = BodyFontChoices.selection(for: "charter", families: families) else {
+            Issue.record("an installed family selects its own row"); return
+        }
+        guard case .missing("Gone Sans") = BodyFontChoices.selection(for: "Gone Sans", families: families) else {
+            Issue.record("an uninstalled family stays visible as missing"); return
+        }
+
+        #expect(BodyFontChoices.family(at: 0, families: families) == .some(nil))
+        #expect(BodyFontChoices.family(at: 1, families: families) == .some("Avenir Next"))
+        #expect(BodyFontChoices.family(at: 4, families: families) == .some("Font 10"))
+        #expect(BodyFontChoices.family(at: 5, families: families) == nil, "the disabled missing row stores nothing")
+    }
+
+    @Test
+    func themeStoreUsesTheSameIsolatedThemesFolderAsTheApp() throws {
+        // The test gate and isolated launches set DOWNRIGHT_SUPPORT_DIRECTORY;
+        // theme import/hot reload must stay inside it, never touching the
+        // user's real Application Support folder.
+        let override = try #require(
+            ProcessInfo.processInfo.environment["DOWNRIGHT_SUPPORT_DIRECTORY"],
+            "run through Scripts/check.sh, which isolates Application Support"
+        )
+        let themes = try #require(ThemeStore.userThemesDirectory)
+        #expect(themes.standardizedFileURL == AppPaths.themesDirectory.standardizedFileURL)
+        #expect(themes.path.hasPrefix(URL(fileURLWithPath: override).standardizedFileURL.path))
+    }
+
+    @Test
+    func monospacePopupAlwaysOffersTheDefaultCodeFace() {
+        // SF Mono is the default code face but is often not an installed
+        // named family; the default popup must select it, not "(not available)".
+        let families = MonoFontChoices.families(installed: ["Menlo", "PT Mono", ".Hidden"])
+        #expect(families == ["SF Mono", "Menlo", "PT Mono"])
+        #expect(families.firstIndex(of: TypographyConfig.default.monoFamily) == 0)
+        #expect(MonoFontChoices.families(installed: ["SF Mono", "Menlo"]) == ["SF Mono", "Menlo"], "no duplicate row")
     }
 
     @Test
@@ -939,6 +1003,22 @@ struct AppLayerTests {
         #expect(html.contains("type=\"checkbox\""))
         #expect(html.contains("<table>"))
         #expect(html.contains("text-align:right"), "table alignment must survive")
+    }
+
+    @Test @MainActor func htmlExportLeadsWithTheChosenBodyFamily() {
+        let document = MarkdownParser.parse("Body text.")
+        func css(_ family: String?) -> String {
+            var theme = ThemeStore.shared.current
+            theme.typography.preset = .reading
+            theme.typography.bodyFamily = family
+            return HTMLExporter(document: document, theme: theme, title: "T", baseDirectory: nil, imageProvider: nil).html()
+        }
+        #expect(css(nil).contains("font-family: 'New York', 'Iowan Old Style', Georgia, serif;"))
+        #expect(css("Avenir Next").contains("font-family: 'Avenir Next', 'New York', 'Iowan Old Style', Georgia, serif;"))
+
+        let hostile = css("Evil'; } </style><script>x</script>")
+        #expect(!hostile.contains("</style><script>"), "a family name cannot close the stylesheet")
+        #expect(hostile.contains(#"'Evil\'; } \3C /style\3E \3C script\3E x\3C /script\3E '"#))
     }
 
     @Test @MainActor func htmlExportRewritesRelativeMarkdownLinks() {

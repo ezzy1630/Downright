@@ -12,8 +12,77 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.24] - 2026-11-18
+
+### Added
+
+- Choose any installed font for document text and headings in Settings →
+  Typography → Font family. "Preset Default" keeps the Reading (New York) or
+  Working (SF Pro Text) font, and code keeps its own monospace font. If a font
+  you chose is later removed, documents go back to the preset's font, and HTML
+  export uses your chosen font too.
+  ([#61](https://github.com/ezzy1630/Downright/issues/61))
+- Pressing Return at the end of a bulleted, numbered, or task item starts the
+  next item. Return on an empty item ends the list or moves it up a level.
+
 ### Fixed
 
+- In a narrow Quick Look window, the heading preview no longer covers the
+  document map beside it, so every heading stays reachable.
+  ([#62](https://github.com/ezzy1630/Downright/issues/62))
+- Quick Look opens empty files, shows images stored next to the document,
+  responds to the arrow keys right away, names the right heading when you
+  hover the map, and recolors the map when you switch between light and dark.
+  Very large files no longer show broken characters where the preview stops,
+  and the metadata card no longer offers an Edit button that can't work there.
+- Finder thumbnails show a document's opening text instead of a badge.
+- Clicking a display formula, including one right after a heading, reveals
+  its LaTeX and keeps it visible while you select it, so you can select and
+  edit the source again. Double-click selects the LaTeX and triple-click its
+  line. Multiline and inline formulas work the same way.
+  ([#63](https://github.com/ezzy1630/Downright/issues/63))
+- Copying or cutting formatted text no longer picks up stray Markdown
+  markers, and pasting it back no longer doubles them.
+- Double-clicking a bold or italic word selects the word instead of a
+  formatting marker. In Document mode, Option-double-click selects a word
+  inside a link.
+- Tables stay visible after you undo an edit above them.
+- Copy Code appears when you hover either end of a code block, including
+  after you scroll past its top.
+- Selecting a heading's `#` and typing replaces it as expected, multi-line
+  pastes stay inside a focused source block, you can click and type on the
+  last line of an unfinished code block, Copy Code keeps lines that only look
+  like fences, and a code block that starts on a list item's line is
+  recognized.
+- Keep Mine saves the text you see, even after Undo returned it to the saved
+  version. If another change lands on disk before Keep Mine finishes,
+  Downright keeps that change and shows the conflict again instead of
+  overwriting it.
+- Recreate File no longer overwrites a version that arrives while you're
+  recovering a damaged file.
+- Checking off a task, or adding or moving one in the Task panel, no longer
+  saves the document's other unsaved edits along with it. In a document with
+  unsaved changes, the task change waits for your next save like any other
+  edit; in a saved document it still saves right away.
+- Choosing Discard when you follow a link away from unsaved changes now drops
+  those changes, even if the linked document opens in another tab.
+- Go to Line lands on the right line in files with mixed line endings, and
+  Source mode keeps each line on its own numbered row in those files.
+- Switching from Document to Source and back without scrolling returns to
+  exactly the same place instead of shifting by part of a line.
+- Clicking a link to a document that's already open switches to its tab or
+  window instead of opening a second copy of the same file.
+- `down --line`, `--review`, and `--edit` now work when Downright is already
+  running, instead of opening the file at the top. If you pass more files
+  than fit in one request, `down` says so instead of silently opening
+  nothing.
+- Code is set in SF Mono as designed. On Macs where SF Mono isn't installed as
+  a separate font, code had fallen back to Menlo and Settings listed SF Mono as
+  "not available".
+- VoiceOver reads the name of every popup menu in Settings.
+- `down export` no longer crashes on an image link without a file path, and
+  `down watch` reports changes only for the files and folders you name,
+  including folders reached through a symlink.
 - When an update has downloaded in the background, resting the pointer on
   the title bar's "Update Now" button shows that update's release notes
   instead of "No release notes for this build." The fix takes effect for

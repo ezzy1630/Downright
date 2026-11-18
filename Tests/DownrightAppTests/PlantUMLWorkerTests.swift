@@ -54,7 +54,7 @@ struct PlantUMLWorkerTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let worker = root.appendingPathComponent("worker")
-        try Data("#!/bin/sh\ncat >/dev/null\nsleep 0.02\nprintf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\"/></svg>'\n".utf8).write(to: worker)
+        try Data("#!/bin/sh\ncat >/dev/null\nprintf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\"/></svg>'\n".utf8).write(to: worker)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: worker.path)
         let renderer = try #require(LocalPlantUMLRenderer(executable: worker))
         let overflow = "@startuml\nOverflow -> Worker\n@enduml"
@@ -66,6 +66,8 @@ struct PlantUMLWorkerTests {
             #expect(!renderer.hasFailed(source: overflow, dark: false))
         }
         #expect(!renderer.hasFailed(source: overflow, dark: false))
+        #expect(renderer.cachedImage(source: overflow, dark: false) == nil,
+                "the seventeenth request must wait for capacity before it can render")
         await withCheckedContinuation { continuation in
             renderer.render(source: overflow, dark: false) { continuation.resume() }
         }
@@ -99,9 +101,12 @@ struct PlantUMLWorkerTests {
             ("component Client\ncomponent Server\nClient --> Server", ["Client", "Server"]),
         ]
         #expect(FileManager.default.isExecutableFile(atPath: executable.path))
+        // This checks the engine's output, not the 5 s display budget (a
+        // timeout there is retried).  A cold JVM in a loaded parallel run can
+        // exceed that budget, so give the worker room here.
         for (body, labels) in examples {
             let source = "@startuml\n\(body)\n@enduml"
-            let data = try #require(LocalPlantUMLRenderer.renderSVG(source: source, dark: false, executable: executable))
+            let data = try #require(LocalPlantUMLRenderer.renderSVG(source: source, dark: false, executable: executable, timeout: 60))
             let svg = try #require(String(data: data, encoding: .utf8))
             #expect(svg.hasPrefix("<svg"))
             #expect(!svg.contains("An error has occurred"))

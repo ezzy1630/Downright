@@ -1,0 +1,20 @@
+{
+  "Tests/DownrightAppTests/ReleaseWatchProbeTests.swift": {
+    "test-double": 1
+  },
+  "Tests/DownrightAppTests/RenderSmokeTests.swift": {
+    "known-issue": 1
+  },
+  "Tests/DownrightAppTests/ScrollGestureChainTests.swift": {
+    "test-double": 1
+  },
+  "Tests/DownrightAppTests/UpdateCoordinatorTests.swift": {
+    "test-double": 1
+  },
+  "Tests/DownrightUITests/DownrightActivatedAppTests.swift": {
+    "fixed-wait": 1
+  },
+  "Tests/MarkdownRenderTests/DensityRailTests.swift": {
+    "fixed-wait": 1
+  }
+}

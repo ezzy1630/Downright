@@ -84,6 +84,11 @@ public final class MarkdownTextView: NSTextView {
     // MARK: - Public surface
 
     public weak var markdownDelegate: MarkdownTextViewDelegate?
+
+    /// The metadata card is an edit control only when the host can edit it.
+    public var canEditFrontMatter: Bool {
+        markdownDelegate?.markdownTextViewCanEditFrontMatter(self) ?? false
+    }
     private var textMagnificationAccumulator: CGFloat = 0
 
     /// Host hook for the command/keybinding layer.  Invoked before the view's
@@ -94,13 +99,25 @@ public final class MarkdownTextView: NSTextView {
     public var keyEventHandler: ((NSEvent) -> Bool)?
 
     public private(set) var parsedDocument: ParsedDocument = .empty
+    // The unchanged prefix of the parsed snapshot is safe to use as a
+    // structural starting point while storage is ahead of the parser.
+    private(set) var firstUnparsedSourceEdit: Int? = 0
     private var pendingPresentationRefresh = false
 
     /// Instant, and preserves scroll position and selection (§3.2).
     public var mode: RenderMode = .live {
         didSet {
             guard mode != oldValue else { return }
-            let anchor = captureViewportAnchor()
+            mouseSelectionPresentation = nil
+            // Recapturing after a switch can land on a blank line whose height
+            // differs between modes, so an unscrolled round trip drifted by
+            // most of a line.  Reuse the last switch's anchor while the camera
+            // is still where that switch left it.
+            let clipY = enclosingScrollView?.contentView.bounds.origin.y
+            let anchor = modeSwitchAnchor.flatMap { saved in
+                clipY.map { abs($0 - saved.clipY) <= 0.5 } == true ? saved.anchor : nil
+            } ?? captureViewportAnchor()
+            modeSwitchAnchor = (anchor, clipY ?? 0)
             let selection = sourceSelectedRanges
             if mode == .source {
                 sourceFocus = .document
@@ -556,10 +573,9 @@ public final class MarkdownTextView: NSTextView {
     private var elision: ElisionPlan = .none
     private var expandedElisionRanges: [NSRange] = []
 
-    // Hidden runs make source→TextKit→source lossy. After a source edit,
-    // retain its exact caret while the native projection is unchanged. Normal
-    // navigation still resolves to visible text; a native gesture retires this
-    // edit intent in setSelectedRanges.
+    // Hidden runs make source→TextKit→source lossy. Retain exact source
+    // selections and edit carets while their native projection is unchanged.
+    // A native gesture retires them in setSelectedRanges.
     private var explicitSourceSelection: (source: [NSRange], textKit: [NSValue])?
     private var isApplyingSelection = false
     private var isPerformingSourceEdit = false
@@ -578,6 +594,19 @@ public final class MarkdownTextView: NSTextView {
     /// AppKit sends many selection updates while a drag is in flight. Do not
     /// rebuild substitutions or scroll the document until that gesture ends.
     var isTrackingMouseSelection = false
+    private struct CaretPresentation {
+        let caret: Int?
+        let selections: [NSRange]
+    }
+    private struct MouseSelectionPresentation {
+        let caretPresentation: CaretPresentation
+        let viewportAnchor: ViewportAnchor
+        let updateGeneration: Int
+        let sourceFocus: SourceFocus
+        var clickCount: Int
+        var timestamp: TimeInterval
+    }
+    private var mouseSelectionPresentation: MouseSelectionPresentation?
     /// True while AppKit is deciding whether a mouse-down becomes a caret or
     /// a drag selection.  Marker reveal waits for mouse-up, preventing the
     /// first character of a drag from flashing into source and moving.
@@ -620,6 +649,9 @@ public final class MarkdownTextView: NSTextView {
     /// Chrome repairs may survive edits, but never a different source buffer.
     private var documentPresentationGeneration: UInt = 0
     private var pendingResizeAnchor: ViewportAnchor?
+    /// The anchor the last mode switch restored, and where restoring it last
+    /// left the camera.
+    private var modeSwitchAnchor: (anchor: ViewportAnchor, clipY: CGFloat)?
     private var pendingResizeViewportY: CGFloat?
     /// One-shot camera lock for semantic controls such as checkboxes. Their
     /// edit changes source bytes but is not a navigation request.
@@ -727,6 +759,7 @@ public final class MarkdownTextView: NSTextView {
         contentStorage.delegate = substitution
 
         super.init(frame: frame, textContainer: container)
+        observeSourceEdits(in: storage)
 
         fragmentProvider = FragmentProvider(context: fragmentContext)
         markdownLayoutManager.delegate = fragmentProvider
@@ -809,9 +842,28 @@ public final class MarkdownTextView: NSTextView {
         isApplyingSelection = true
         defer { isApplyingSelection = wasApplyingSelection }
         contentStorage.performEditingTransaction {
+            if let previous = textStorage {
+                NotificationCenter.default.removeObserver(self, name: NSTextStorage.willProcessEditingNotification, object: previous)
+            }
             contentStorage.textStorage = storage
+            observeSourceEdits(in: storage)
             adoptSharedPresentation(from: source)
         }
+    }
+
+    private func observeSourceEdits(in storage: NSTextStorage) {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceWillProcessEditing(_:)),
+            name: NSTextStorage.willProcessEditingNotification, object: storage
+        )
+    }
+
+    @objc private func sourceWillProcessEditing(_ note: Notification) {
+        guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+        let start = storage.editedRange.location
+        firstUnparsedSourceEdit = min(firstUnparsedSourceEdit ?? start, start)
+        // A saved mode-switch anchor names a source offset; an edit can move it.
+        modeSwitchAnchor = nil
     }
 
     public func adoptSharedPresentation(from source: MarkdownTextView) {
@@ -821,6 +873,7 @@ public final class MarkdownTextView: NSTextView {
         documentURL = source.documentURL
         localAssetAuthorizer = source.localAssetAuthorizer
         parsedDocument = source.parsedDocument
+        firstUnparsedSourceEdit = source.firstUnparsedSourceEdit
         installedRemoteImageLoader = source.remoteImageLoader
         installedPlantUMLRenderer = source.plantUMLRenderer
         fragmentContext.plantUMLRenderer = installedPlantUMLRenderer
@@ -859,6 +912,7 @@ public final class MarkdownTextView: NSTextView {
         fragmentContext.paragraphIndex = paragraphIndex
         fragmentContext.sourceFocusRange = sourceFocus.range
         fragmentContext.caret = source.fragmentContext.caret
+        fragmentContext.mathSourcePayload = source.fragmentContext.mathSourcePayload
         fragmentContext.elision = source.fragmentContext.elision
         fragmentContext.cueElision = source.fragmentContext.cueElision
         fragmentContext.collapseOverrides = codeCollapseOverrides
@@ -886,6 +940,7 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func discardPreviousDocumentCameraRepairs() {
+        mouseSelectionPresentation = nil
         documentPresentationGeneration &+= 1
         interruptAnimatedScroll()
         resizeGeneration &+= 1
@@ -951,6 +1006,7 @@ public final class MarkdownTextView: NSTextView {
         let decorationDirty: DirtySet = isFullRefresh ? .wholesale : dirty
         let dirtyScopes = isFullRefresh ? [] : sourceScopes(for: dirty)
         parsedDocument = document
+        firstUnparsedSourceEdit = nil
         if refreshesPresentation { synchronizeStyleSheet() }
         hoveredLinkRange = nil
         updateGeneration &+= 1
@@ -992,7 +1048,8 @@ public final class MarkdownTextView: NSTextView {
             autoreleasepool {
                 rebuildDisplayMap(
                     fullRefresh: isFullRefresh,
-                    additionalScopes: decoratedScopes
+                    additionalScopes: decoratedScopes,
+                    shiftedLayoutStart: dirty.shiftedLayoutStart
                 )
             }
             applyOverlays(scopes: isFullRefresh ? nil : decoratedScopes)
@@ -1096,11 +1153,12 @@ public final class MarkdownTextView: NSTextView {
             case .mermaid: ("Mermaid diagram", .group, "Rendered mermaid diagram")
             case .codeBlock(let language, _, _) where PlantUMLFence.accepts(language) && plantUMLRenderer != nil:
                 ("PlantUML diagram", .group, "Locally rendered PlantUML diagram")
-            case .frontMatter: (
+            case .frontMatter where canEditFrontMatter: (
                 "Edit document metadata",
                 .button,
                 "Edit title, author, tags, status, and other front matter"
             )
+            case .frontMatter: ("Document metadata", .group, "Rendered front matter")
             default: nil
             }
             guard let descriptor else { return }
@@ -1113,7 +1171,7 @@ public final class MarkdownTextView: NSTextView {
             element.setAccessibilityParent(self)
             element.setAccessibilityHelp(descriptor.help)
             element.setAccessibilityEnabled(true)
-            if case .frontMatter = block.content {
+            if case .frontMatter = block.content, canEditFrontMatter {
                 let range = block.range
                 element.onPress = { [weak self] in
                     guard let self else { return false }
@@ -1258,7 +1316,7 @@ public final class MarkdownTextView: NSTextView {
     /// line's top edge makes the restore exact: content above the anchor may
     /// change height freely, and the line under the reader's eye does not move
     /// at all.
-    struct ViewportAnchor {
+    struct ViewportAnchor: Equatable {
         var offset: Int
         /// Signed distance from the anchor line's top edge down to the
         /// viewport's top edge, in document coordinates.
@@ -1312,6 +1370,9 @@ public final class MarkdownTextView: NSTextView {
         let offset = min(max(0, anchor.offset), parsedDocument.length)
         guard let rect = rect(forOffset: offset) else { return }
         let clip = scrollView.contentView
+        defer {
+            if modeSwitchAnchor?.anchor == anchor { modeSwitchAnchor?.clipY = clip.bounds.origin.y }
+        }
         // Preserve the current clip extent when the document frame is
         // transiently stale; otherwise a chrome transition can clamp a valid
         // deep viewport to zero before the next layout pass repairs it.
@@ -2074,6 +2135,7 @@ public final class MarkdownTextView: NSTextView {
     }
 
     func beginSourceEdit() {
+        mouseSelectionPresentation = nil
         // A queued repair still addresses the previous source revision. It
         // must retire before this mutation can shift the anchor's offset.
         viewportRepairGeneration &+= 1
@@ -2099,10 +2161,33 @@ public final class MarkdownTextView: NSTextView {
     /// the caret's paragraph and the one it just left.
     private func rebuildDisplayMap(
         fullRefresh: Bool = false,
-        additionalScopes: [NSRange] = []
+        additionalScopes: [NSRange] = [],
+        shiftedLayoutStart: Int? = nil,
+        caretPresentation: CaretPresentation? = nil
     ) {
         let previousMap = displayMap
-        let caret = suppressesCaretReveal ? nil : primarySourceCaret
+        // A multi-click replays the first click's presentation (see
+        // `rememberMouseSelectionPresentation`); otherwise use the live caret.
+        let caret = caretPresentation.map(\.caret) ?? (suppressesCaretReveal ? nil : primarySourceCaret)
+        let selection = caretPresentation.map(\.selections.first)
+            ?? (suppressesCaretReveal ? nil : sourceSelectedRanges.first)
+        let previousMathSource = fragmentContext.mathSourcePayload
+        fragmentContext.mathSourcePayload = mode == .live ? mathPayload(for: selection, kind: .blockMath) : nil
+        let currentMathSource = fragmentContext.mathSourcePayload
+        defer {
+            // Math fragments change even when the display map is identical.
+            // Invalidate the whole formula so multiline fences switch together.
+            if !fullRefresh, previousMathSource !== currentMathSource {
+                for payload in [previousMathSource, currentMathSource].compactMap({ $0 }) {
+                    guard let range = clampToStorage(payload.sourceRange) else { continue }
+                    contentStorage.performEditingTransaction {
+                        contentStorage.invalidateElements(in: range)
+                        textStorage?.edited(.editedAttributes, range: range, changeInLength: 0)
+                    }
+                    invalidateFragments(in: range, includingRendering: true)
+                }
+            }
+        }
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
         var requiresFullHiddenRefresh = false
@@ -2111,6 +2196,11 @@ public final class MarkdownTextView: NSTextView {
         /// to match, or the sweep erases markers it has no data to restore.
         var hiddenIsParagraphScoped = false
         var logicalDisplayMap = baseDisplayMap
+        let inlineMathSelection = effectivePolicy.revealsAtCaret && (selection?.length ?? 0) > 0
+            ? mathPayload(for: selection, kind: .inlineMath)?.sourceRange : nil
+        let current = (caret ?? inlineMathSelection?.location).map {
+            paragraphIndex.paragraphRange(containing: $0)
+        }
         // Both maps are derived from the cached bases by the *same* subsetting.
         // A reveal only ever drops entries, and `baseLayoutMap` already holds
         // every surviving entry in layout form, so nothing here has to rebuild
@@ -2134,25 +2224,25 @@ public final class MarkdownTextView: NSTextView {
                 containing: composing.location, with: stillHiding(in: baseLayoutMap))
             requiresFullHiddenRefresh = caret == nil
         } else if effectivePolicy.revealsAtCaret {
+            let selections = caretPresentation?.selections ?? sourceSelectedRanges
             let revealed = MarkerPolicy.revealedMarkerRanges(
                 document: parsedDocument, policy: effectivePolicy,
-                caret: caret, selections: sourceSelectedRanges)
+                caret: caret, selections: selections)
             let revealedMath = caret.map {
                 InlineMathDisplay.ranges(in: parsedDocument, touching: $0)
-            } ?? []
+            } ?? [inlineMathSelection].compactMap { $0 }
             let revealedDisplayObjects = revealed + revealedMath
-            let paragraph = caret.map { paragraphIndex.paragraphRange(containing: $0) }
             // The fast path holds when the reveal is confined to the caret's
             // own paragraph, which is every ordinary keystroke.  A span
             // straddling a soft line break, or a multi-paragraph selection,
             // falls back to a full rebuild — rare, and driven by a gesture
             // rather than by typing.
-            let singleCaret = paragraph.map { paragraph in
-                sourceSelectedRanges.count <= 1 && revealed.allSatisfy {
+            let isParagraphLocal = current.map { paragraph in
+                selections.count <= 1 && revealedDisplayObjects.allSatisfy {
                     $0.location >= paragraph.location && $0.upperBound <= paragraph.upperBound
                 }
             } ?? false
-            if let paragraph, singleCaret {
+            if let paragraph = current, isParagraphLocal {
                 if !revealedDisplayObjects.isEmpty {
                     logicalDisplayMap = baseDisplayMap.replacingParagraph(containing: paragraph.location,
                                                                            excluding: revealedDisplayObjects)
@@ -2179,7 +2269,7 @@ public final class MarkdownTextView: NSTextView {
                     })
                     hiddenIsParagraphScoped = true
                 }
-            } else if !revealed.isEmpty {
+            } else if !revealedDisplayObjects.isEmpty {
                 hidden = subtract(revealed, from: hidden)
                 func unrevealed(in map: DisplayMap) -> [DisplaySubstitution] {
                     map.substitutions.filter { entry in
@@ -2200,7 +2290,6 @@ public final class MarkdownTextView: NSTextView {
         substitution.displayMap = logicalDisplayMap
         displayMap = layoutMap
 
-        let current = caret.map { paragraphIndex.paragraphRange(containing: $0) }
         let isFullRefresh = fullRefresh || (requiresFullHiddenRefresh && additionalScopes.isEmpty)
         // The caret's paragraph and the one it just left are two *discrete*
         // paragraphs.  Covering them with the single range that spans them —
@@ -2217,7 +2306,7 @@ public final class MarkdownTextView: NSTextView {
         // when the caret only moved to a neighbouring paragraph, so the common
         // case costs exactly what it did before.
         let paragraphs = isFullRefresh ? [] : [revealParagraph, current].compactMap { $0 }
-        if !isFullRefresh, additionalScopes.isEmpty,
+        if !isFullRefresh, additionalScopes.isEmpty, shiftedLayoutStart == nil,
            let current,
            baseDisplayMap.substitutions(inParagraphContaining: current.location).isEmpty,
            revealParagraph.map({
@@ -2226,7 +2315,7 @@ public final class MarkdownTextView: NSTextView {
             revealParagraph = current
             return
         }
-        if !isFullRefresh, additionalScopes.isEmpty,
+        if !isFullRefresh, additionalScopes.isEmpty, shiftedLayoutStart == nil,
            displayMap.hasSameSubstitutions(as: previousMap) {
             // Moving through plain prose changes the caret paragraph but not
             // its presentation. Reconfiguring and invalidating those elements
@@ -2246,11 +2335,16 @@ public final class MarkdownTextView: NSTextView {
         }
         revealParagraph = current
         let invalidatedScopes = RangeSet.normalized(additionalScopes + touched)
+        let shiftedLayout: [NSRange] = shiftedLayoutStart.map { offset in
+            let start = paragraphIndex.paragraphRange(containing: offset).location
+            return [NSRange(location: start, length: paragraphIndex.length - start)]
+        } ?? []
+        let layoutScopes = RangeSet.normalized(invalidatedScopes + shiftedLayout)
         contentStorage.configure(
             paragraphIndex: paragraphIndex,
             reflowRanges: hardWrapRanges,
             displayMap: displayMap,
-            invalidating: isFullRefresh ? nil : invalidatedScopes
+            invalidating: isFullRefresh ? nil : layoutScopes
         )
         if isFullRefresh {
             applyHiddenAttribute(hidden, scope: nil, excluding: revealedForAttributes)
@@ -2258,9 +2352,23 @@ public final class MarkdownTextView: NSTextView {
         } else {
             for scope in invalidatedScopes {
                 applyHiddenAttribute(hidden, scope: scope, excluding: revealedForAttributes)
+            }
+            for scope in layoutScopes {
                 invalidateFragments(in: scope)
             }
         }
+    }
+
+    private func mathPayload(for selection: NSRange?, kind: FragmentKind) -> FragmentPayload? {
+        guard let storage = textStorage, let selection, selection.location < storage.length,
+              let payload = storage.attribute(.drFragment, at: selection.location,
+                                              effectiveRange: nil) as? FragmentPayload,
+              payload.kind == kind else { return nil }
+        let math = payload.sourceRange
+        if selection.length == 0 {
+            return selection.location > math.location && selection.location < math.upperBound ? payload : nil
+        }
+        return selection.location >= math.location && selection.upperBound <= math.upperBound ? payload : nil
     }
 
     /// `drHidden` mirrors the map so anything reading the storage (rich-text
@@ -2791,7 +2899,13 @@ public final class MarkdownTextView: NSTextView {
             return NSRange(location: location, length: min(max(0, range.length), storage.length - location))
         }
         let converted = bounded.map { NSValue(range: displayMap.textKitRange(forSource: $0)) }
-        explicitSourceSelection = preservingEditCaret ? (source: bounded, textKit: converted) : nil
+        // A non-empty range can start or end in hidden syntax, or project
+        // entirely to one insertion point. Keep the source endpoints until
+        // the user makes a new native selection, as we do for an edit caret.
+        let needsExactRange = zip(bounded, converted).contains { source, textKit in
+            source.length > 0 && displayMap.sourceRange(forTextKit: textKit.rangeValue) != source
+        }
+        explicitSourceSelection = preservingEditCaret || needsExactRange ? (source: bounded, textKit: converted) : nil
         guard converted != selectedRanges else { return }
         isApplyingSelection = true
         super.setSelectedRanges(converted, affinity: .downstream, stillSelecting: false)
@@ -2815,6 +2929,7 @@ public final class MarkdownTextView: NSTextView {
     /// is read-only — the bare 1–5 zoom / `n`/`p` / vim letters) can run.  A
     /// key the host does not claim falls through to normal text editing.
     public override func keyDown(with event: NSEvent) {
+        mouseSelectionPresentation = nil
         // Arrow and page keys move the viewport too, so they interrupt a
         // running scroll animation for the same reason a gesture does.
         interruptAnimatedScroll()
@@ -2889,6 +3004,33 @@ public final class MarkdownTextView: NSTextView {
         )
     }
 
+    func renderedMathSelection(at point: NSPoint, clickCount: Int) -> NSRange? {
+        guard mode == .live else { return nil }
+        let origin = textContainerOrigin
+        let localPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        // TextKit locates the fragment by the suppressed glyphs at the left.
+        // The formula draws across the measure, beyond that narrow frame.
+        let linePoint = NSPoint(x: 0, y: localPoint.y)
+        guard let fragment = markdownLayoutManager.textLayoutFragment(for: linePoint) as? MathFragment else {
+            return nil
+        }
+        var frame = fragment.layoutFragmentFrame
+        frame.size.width = fragment.contentWidth
+        guard frame.contains(localPoint) else { return nil }
+        let range = fragment.payload.sourceRange
+        guard let block = parsedDocument.root.block(at: range.location), block.range == range,
+              case .mathBlock(let latex) = block.content,
+              let storage = textStorage, latex.upperBound <= storage.length else { return nil }
+        if clickCount == 2 { return latex }
+        let firstSymbol = (storage.string as NSString).rangeOfCharacter(
+            from: CharacterSet.whitespacesAndNewlines.inverted, range: latex)
+        let start = firstSymbol.location == NSNotFound ? latex.location : firstSymbol.location
+        if clickCount >= 3 {
+            return latex.intersection(paragraphRange(containing: start))
+        }
+        return NSRange(location: start, length: 0)
+    }
+
     /// The caret moved, so the reveal set may have.  Order matters: capture the
     /// selection in source terms *before* the map changes under it, rebuild,
     /// then put it back.  Getting this backwards is exactly the caret drift
@@ -2911,38 +3053,78 @@ public final class MarkdownTextView: NSTextView {
         // A caret/selection gesture is newer than any queued layout pass. The
         // pass may still repair height, but it must not restore an old viewport.
         pendingResizeAnchor = nil
-        // Revealing markers in the new caret paragraph and re-hiding them in
-        // the old one can change wrapping above the viewport. Preserve the
-        // visible source line through that rebuild; a raw clip y-coordinate
-        // points at different content once TextKit resolves the new geometry.
-        let preservesEditCaret = explicitSourceSelection != nil
-        let sourceSelection = sourceSelectedRanges
-        let viewportAnchor = requestedViewportAnchor ?? sourceSelection.first.flatMap { selection -> ViewportAnchor? in
+        // Rewrapping the new or old caret paragraph can move content above
+        // the viewport. Preserve the visible line in source coordinates.
+        let viewportAnchor = requestedViewportAnchor ?? sourceSelectedRanges.first.flatMap { selection -> ViewportAnchor? in
             guard selection.length == 0 else { return nil }
             return captureViewportAnchor(at: selection.location)
         } ?? captureViewportAnchor()
-        fragmentContext.caret = suppressesCaretReveal ? nil : primarySourceCaret
-        let previousAnchor = anchoredParagraph
-
-        rebuildDisplayMap()
-        restoreAnchorShift(previous: previousAnchor)
-        applyCaretAnchorShift()
-
-        setSourceSelectedRanges(sourceSelection, preservingEditCaret: preservesEditCaret)
-        restoreViewport(to: viewportAnchor)
-        // A height repair may still be queued from the previous parse. Carry
-        // this newer camera through it, in the current source coordinates.
+        refreshCaretPresentation(currentCaretPresentation, preservingViewport: viewportAnchor)
+        // Carry the newer camera through any queued height repair.
         if pendingResizeRequest != nil {
             pendingResizeAnchor = viewportAnchor
             pendingResizeViewportY = nil
         }
-        gutterRail?.needsDisplay = true
         markdownDelegate?.markdownTextViewDidChangeSelection(self)
         if allowTypewriterScrolling, !isTrackingMouseSelection,
            configuration.typewriterScrolling, let caret = primarySourceCaret,
            sourceSelectedRange.length == 0 {
             scroll(toOffset: caret, position: .center, animated: true)
         }
+    }
+
+    private var currentCaretPresentation: CaretPresentation {
+        CaretPresentation(caret: suppressesCaretReveal ? nil : primarySourceCaret,
+                          selections: sourceSelectedRanges)
+    }
+
+    func rememberMouseSelectionPresentation(for event: NSEvent, at point: NSPoint) {
+        guard event.clickCount == 1, mode == .live, effectivePolicy.revealsAtCaret else { return }
+        mouseSelectionPresentation = MouseSelectionPresentation(
+            caretPresentation: currentCaretPresentation,
+            viewportAnchor: captureViewportAnchor(at: sourceOffset(at: point)),
+            updateGeneration: updateGeneration,
+            sourceFocus: sourceFocus,
+            clickCount: event.clickCount,
+            timestamp: event.timestamp
+        )
+    }
+
+    func restoreMouseSelectionPresentation(for event: NSEvent) -> Bool {
+        guard var initial = mouseSelectionPresentation,
+              event.clickCount == initial.clickCount + 1,
+              event.timestamp >= initial.timestamp,
+              event.timestamp - initial.timestamp <= NSEvent.doubleClickInterval,
+              window?.firstResponder === self,
+              initial.updateGeneration == updateGeneration,
+              initial.sourceFocus == sourceFocus,
+              mode == .live, effectivePolicy.revealsAtCaret else {
+            mouseSelectionPresentation = nil
+            return false
+        }
+        // AppKit resolves later mouse-downs from the window point again.
+        // Replay the first click's caret layout so the same point still
+        // addresses the same glyphs. AppKit also tracks any ensuing drag.
+        isTrackingMouseSelection = true
+        refreshCaretPresentation(initial.caretPresentation, preservingViewport: initial.viewportAnchor)
+        isTrackingMouseSelection = false
+        initial.clickCount = event.clickCount
+        initial.timestamp = event.timestamp
+        mouseSelectionPresentation = initial
+        return true
+    }
+
+    private func refreshCaretPresentation(_ presentation: CaretPresentation, preservingViewport anchor: ViewportAnchor) {
+        let preservesEditCaret = explicitSourceSelection != nil
+        let sourceSelection = sourceSelectedRanges
+        fragmentContext.caret = presentation.caret
+        let previousAnchor = anchoredParagraph
+        rebuildDisplayMap(caretPresentation: presentation)
+        restoreAnchorShift(previous: previousAnchor)
+        applyCaretAnchorShift(at: presentation.caret)
+        setSourceSelectedRanges(sourceSelection, preservingEditCaret: preservesEditCaret)
+        restoreViewport(to: anchor)
+        gutterRail?.needsDisplay = true
     }
 
     // MARK: - Caret-anchored reveal (§6.1c)
@@ -2960,8 +3142,8 @@ public final class MarkdownTextView: NSTextView {
     /// with it.  Vertical position never moves in any case, because block
     /// markers are never revealed inline and line height is fixed per block
     /// kind (§6.1a).
-    private func applyCaretAnchorShift() {
-        guard !suppressesCaretReveal, effectivePolicy.revealsAtCaret, let caret = primarySourceCaret,
+    private func applyCaretAnchorShift(at caret: Int?) {
+        guard effectivePolicy.revealsAtCaret, let caret,
               let storage = textStorage, storage.length > 0 else { return }
         let paragraph = paragraphIndex.paragraphRange(containing: caret)
         let revealed = MarkerPolicy.revealedMarkerRanges(
@@ -3315,6 +3497,7 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func scrollWheel(with event: NSEvent) {
+        mouseSelectionPresentation = nil
         interruptAnimatedScroll()
         // The host gets first refusal on every scroll event: this surface
         // only scrolls vertically, so the horizontal axis is free for a
@@ -3477,6 +3660,7 @@ public final class MarkdownTextView: NSTextView {
     func drawForeground(in rect: NSRect) {
         drawHoveredLinkUnderline(in: rect)
         drawDropInsertionCaret(in: rect)
+        drawHoveredCodeControls(in: rect)
     }
 
     private func applyInvisibles(scopes: [NSRange]? = nil) {
@@ -3681,6 +3865,7 @@ public final class MarkdownTextView: NSTextView {
         motionDriver?.viewDidMoveToWindow(window: window)
         installHoverTracking()
         if window == nil {
+            mouseSelectionPresentation = nil
             // Detached views must not keep driving a clip that may belong to
             // a recycled scroll view — ground the trip with the window.
             interruptAnimatedScroll()

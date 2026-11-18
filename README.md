@@ -144,14 +144,23 @@ resting on the button shows what changed before you commit to it.
 
 If another app or coding agent rewrites an open file, Downright can show the
 change in place, preserve dirty local edits, and let you review word-level
-differences. It is a useful extra, not a different way of owning your files.
+differences. **Keep Mine** saves your current text over the external version
+shown in the conflict. A newer external edit prompts you to review it first.
 
 ## Reading and window preferences
 
-In **Settings → Typography**, Measure (characters) controls line length from
-60–120 characters without changing the font size, with a Full width option.
-The default is 70, and narrow windows fit the column to the available space.
-Reader profiles, HTML export, and Quick Look use the saved measure.
+In **Settings → Typography**, the Reading preset sets the body in New York and
+Working sets it in SF Pro Text. Font family replaces the preset's face with any
+installed family for body text and headings; Preset Default keeps the preset's
+face, and code keeps its own monospace family. If a chosen family is later
+removed, documents fall back to the preset's face. HTML export names the chosen
+family first, ahead of the preset's fonts; Quick Look previews keep the preset's
+face.
+
+Line width controls line length from 60–120 characters without changing the
+font size, with a Full width option. The default is 70, and narrow windows fit
+the column to the available space. Reader profiles, HTML export, and Quick Look
+use the saved measure.
 
 In **Settings → General**, When the last document closes offers **Show start
 window**, **Quit Downright**, and **Do nothing**. The default remains Show start
@@ -176,6 +185,7 @@ down read --json README.md                # inspect without launching the app
 down outline --json README.md             # emit document structure
 down export --format html -o out.html README.md
 down check --target github Docs/sample.md # validate a render target
+down watch Docs Notes/plan.md            # watch a folder and one separate file
 down doctor                               # diagnose app, CLI, Quick Look, and updater setup
 ```
 
@@ -183,6 +193,11 @@ down doctor                               # diagnose app, CLI, Quick Look, and u
 machine-readable support report without modifying the machine; use
 `down doctor --app path/to/Downright.app` to inspect a development bundle. Run
 `down --help` for every command.
+`--edit`, `--line`, and `--review` also apply when Downright is already running.
+If a request using these options exceeds 256 KiB after encoding, `down` exits
+with an error. Open fewer files at a time.
+`down watch` includes Markdown descendants of a folder argument and only the
+named file for each file argument.
 
 ## Keyboard essentials
 
@@ -197,6 +212,10 @@ All bindings are editable in **Settings → Keys**.
 | `⌥⇧⌘3` | Task worklist | `⌥⌘V` | Version timeline |
 | `⌃⌥⌘1`–`5` | Structural zoom | `⌥⇧↑` / `↓` | Previous / next change |
 | `⌘\` | Split view | `⌘L` | Toggle task at caret |
+
+Press Return to continue a list or leave an empty item. In a nested list, Return
+on an empty item moves it up one level. Hover over a rendered code block to copy
+its contents from either fence.
 
 Two fingers sideways across the document switch between Document and Source.
 The titlebar's mode rail travels with your fingers, so you can see how far is

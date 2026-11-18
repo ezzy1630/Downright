@@ -78,6 +78,51 @@ struct SmartPasteIntegrationTests {
         #expect(pasteboard.data(forType: .rtf) != nil)
     }
 
+    @Test("Copy includes complete formatting and excludes unrelated edge markers")
+    func visibleCopyIncludesOnlySelectedFormatting() {
+        let source = "Before **bold** after"
+        let view = view(for: source)
+        let pasteboard = isolatedPasteboard()
+        for (visible, markdown) in [
+            ("Before ", "Before "),
+            (" after", " after"),
+            ("bold", "**bold**"),
+            ("Before bold", "Before **bold**"),
+        ] {
+            let raw = (source as NSString).range(of: visible == "Before bold" ? "Before **bold" : visible)
+            view.setSelectedRange(view.currentDisplayMap.textKitRange(forSource: raw))
+            #expect(view.writeSelection(to: pasteboard, types: []))
+            #expect(pasteboard.string(forType: .string) == visible)
+            #expect(pasteboard.string(forType: .downrightMarkdown) == markdown)
+        }
+    }
+
+    @Test("Selecting a source range can address hidden Markdown")
+    func explicitSelectionCanReplaceHiddenMarkers() {
+        let view = view(for: "# Title\n\n**bold**\n")
+        let headingMarker = NSRange(location: 0, length: 1)
+        view.setSourceSelectedRanges([headingMarker])
+        #expect(view.sourceSelectedRange == headingMarker)
+        view.insertText("##", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(view.textStorage?.string == "## Title\n\n**bold**\n")
+    }
+
+    @Test("Cut removes exactly the Markdown that Paste restores")
+    func cutRoundTripsSelectedFormatting() throws {
+        let source = "Before **bold** after"
+        let view = view(for: source)
+        let selected = (source as NSString).range(of: "bold")
+        view.setSelectedRange(view.currentDisplayMap.textKitRange(forSource: selected))
+        let pasteboard = isolatedPasteboard()
+        view.cutSelection(to: pasteboard)
+        #expect(view.textStorage?.string == "Before  after")
+
+        let payload = try #require(MarkdownSmartPaste.payload(from: pasteboard))
+        let replacement = MarkdownSmartPaste.replacement(for: payload, selection: "", context: .markdown)
+        view.insertText(replacement, replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(view.textStorage?.string == source)
+    }
+
     @Test("Source typography stays uniform across incremental parse commits")
     func sourceTypographySurvivesIncrementalCommit() throws {
         let text = "# Heading **bold**\n\nA paragraph with `code`.\n"
@@ -134,6 +179,26 @@ struct SmartPasteIntegrationTests {
         view.clearSourceFocus()
         #expect(view.sourceFocus == .none)
         #expect(view.mode == .live)
+    }
+
+    @Test(arguments: [true, false])
+    func sourceFocusKeepsMultilineInsertionsAtItsEdges(atStart: Bool) throws {
+        let source = "Before\n\n**selected**"
+        let view = view(for: source)
+        let selection = (source as NSString).range(of: "**selected**")
+        view.focusSource(in: selection)
+
+        let caret = atStart ? selection.location : selection.upperBound
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+        let inserted = atStart ? "_new_\n\n" : "\n\n_new_"
+        view.insertText(inserted, replacementRange: NSRange(location: NSNotFound, length: 0))
+        let updated = try #require(view.textStorage?.string)
+        view.update(document: MarkdownParser.parse(updated), dirty: .wholesale)
+        #expect(view.sourceFocus == .scoped(NSRange(
+            location: selection.location, length: selection.length + inserted.utf16.count
+        )))
+        let marker = (updated as NSString).range(of: "_new_").location
+        #expect(view.currentDisplayMap.substitutionStarting(at: marker) == nil)
     }
 
     @Test("HTML-only clipboard converts without a plain fallback")

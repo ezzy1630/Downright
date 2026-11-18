@@ -94,6 +94,45 @@ struct DensityRailTests {
         ) == 296)
     }
 
+    @Test("Hover cards leave the entire rail hit area clear", arguments: [520, 600, 720, 800, 1020, 1400])
+    @MainActor
+    func previewDoesNotCoverTheRail(width: Int) throws {
+        _ = NSApplication.shared
+        let parent = NSWindow(
+            contentRect: NSRect(x: 40, y: 80, width: width, height: 400),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        let rail = NSRect(x: parent.frame.minX, y: parent.frame.minY,
+                          width: DensityGutterView.width, height: parent.frame.height)
+        let preview = DensityGutterPreviewWindow(styleSheet: StyleSheet(
+            theme: ThemeStore.shared.current, appearance: parent.effectiveAppearance,
+            reduceMotionOverride: true
+        ))
+        defer { preview.hide() }
+
+        let proseBoundary = rail.maxX + (width <= 800 ? 24 : 180)
+        for allowContentOverlap in [false, true] {
+            preview.show(
+                title: "A section title", snippet: "The opening sentence of the section.",
+                footer: "19 words · 1 min read", beside: rail, pointerY: rail.midY,
+                over: parent, maximumTrailingX: proseBoundary, reduceMotion: true,
+                interactive: true, allowContentOverlap: allowContentOverlap
+            )
+            let shouldShow = allowContentOverlap || width > 800
+            #expect((preview.parent === parent) == shouldShow)
+            if shouldShow {
+                #expect(!preview.frame.intersects(rail), "Card \(preview.frame) intersects rail \(rail)")
+                #expect(preview.frame.maxX <= parent.frame.maxX)
+                if width <= 800 {
+                    #expect(preview.ignoresMouseEvents)
+                } else {
+                    #expect(preview.frame.maxX <= proseBoundary)
+                }
+            }
+            preview.hide()
+        }
+    }
+
     /// The integrator is the closed-form damped-harmonic solution, so where
     /// the state lands after any elapsed time is a pure function of that time
     /// — a dropped 33 ms frame lands exactly where the 120 Hz stream would

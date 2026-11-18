@@ -1,4 +1,5 @@
 import AppKit
+import drdownright
 import MarkdownCore
 import MarkdownRender
 
@@ -292,12 +293,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Opening
 
+    private func openDeliveredURL(_ url: URL) {
+        if url.isFileURL {
+            open(url)
+        } else if let request = CommandLineOpenRequest.receive(url) {
+            openFromCommandLine(request)
+        }
+    }
+
+    private func openFromCommandLine(_ request: CommandLineOpenRequest) {
+        for url in request.urls {
+            guard (try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]))?
+                .isRegularFile == true else { continue }
+            let mode: RenderMode? = request.edit ? .live : nil
+            guard let destination = open(url, mode: mode) else { continue }
+            if let mode, destination.mode != mode { destination.applyMode(mode) }
+            destination.applyCommandLineOpen(line: request.line, review: request.review)
+        }
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard hasFinishedLaunching else {
             pendingOpenURLs.append(contentsOf: urls)
             return
         }
-        for url in urls { open(url) }
+        for url in urls { openDeliveredURL(url) }
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
@@ -322,8 +342,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !pendingOpenURLs.isEmpty else { return false }
         let urls = pendingOpenURLs
         pendingOpenURLs.removeAll(keepingCapacity: true)
-        for url in urls { open(url) }
-        return true
+        for url in urls { openDeliveredURL(url) }
+        return urls.contains(where: \.isFileURL) || !windowControllers.isEmpty
     }
 
     @discardableResult
@@ -338,13 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) -> DocumentWindowController? {
         // One window per file: reopening a file you already have open should
         // raise it, not give you two buffers over the same bytes.
-        if let existing = windowControllers.first(where: {
-            guard let open = $0.markdownDocument.url else { return false }
-            return FileIdentity.sameFile(open, url)
-        }) {
-            existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            dismissStartWindow()
+        if let existing = focusOpenDocument(at: url) {
             existing.applyCommandLineOpen(line: line, review: review)
             return existing
         }
@@ -386,6 +400,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controller
     }
 
+    private func focusOpenDocument(at url: URL) -> DocumentWindowController? {
+        guard let existing = windowControllers.first(where: {
+            guard let open = $0.markdownDocument.url else { return false }
+            return FileIdentity.sameFile(open, url)
+        }) else { return nil }
+        existing.showWindow(nil)
+        if let window = existing.window {
+            window.tabGroup?.selectedWindow = window
+            window.makeKeyAndOrderFront(nil)
+        }
+        dismissStartWindow()
+        return existing
+    }
+
     private func documentWindow(owning window: NSWindow) -> NSWindow? {
         var candidate: NSWindow? = window
         while let current = candidate {
@@ -406,6 +434,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func adopt(_ controller: DocumentWindowController) {
         windowControllers.append(controller)
+        controller.focusOpenDocument = { [weak self] url in
+            self?.focusOpenDocument(at: url)
+        }
         controller.onDocumentOpen = { [weak self, weak controller] in
             guard let url = controller?.markdownDocument.url else { return }
             self?.starPrompt.recordOpen(origin: WelcomeDocument.isTour(url) ? .tour : .user)

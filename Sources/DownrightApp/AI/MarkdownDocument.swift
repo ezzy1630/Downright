@@ -9,13 +9,11 @@ enum SaveIntent {
     /// conflict instead of deciding silently.  Used by every implicit save
     /// path: occlusion autosave, quit, checkbox toggle, and the close alert.
     case normal
-    /// An explicit "keep my changes and write them over the file" decision,
-    /// made by the user through the conflict bar.
+    /// Overwrite the external version shown in the conflict bar.
     case keepMine
-    /// Recreates a path that is missing or replaces one that cannot currently
-    /// be read. This intent is only issued from the explicit recovery sheet;
-    /// autosave, close, quit, and task toggles must never choose it.
-    case recreateFile
+    /// Creates the missing path or replaces the undecodable bytes shown in
+    /// the explicit recovery sheet. A nil expectation means the path was absent.
+    case recreateFile(url: URL, expected: Data?)
 }
 
 enum SaveError: Error, LocalizedError {
@@ -26,9 +24,21 @@ enum SaveError: Error, LocalizedError {
     /// The document disappeared after it was opened. A normal save must not
     /// silently bring it back.
     case fileMissing(URL)
-    /// The path still exists but could not be read, so overwriting it would be
-    /// an uninformed destructive action.
-    case fileUnreadable(URL, underlying: Error)
+    /// Reading or decoding failed. Only successfully inspected bytes can be
+    /// approved for replacement.
+    case fileUnreadable(URL, underlying: Error, inspectedData: Data?)
+    case recoveryTargetChanged
+
+    var recreationIntent: SaveIntent? {
+        switch self {
+        case .fileMissing(let url):
+            return .recreateFile(url: url, expected: nil)
+        case .fileUnreadable(let url, _, .some(let data)):
+            return .recreateFile(url: url, expected: data)
+        default:
+            return nil
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -36,8 +46,10 @@ enum SaveError: Error, LocalizedError {
             return "The file changed on disk. Review the conflict before saving."
         case .fileMissing:
             return "The original file is missing. Choose Save a Copy or explicitly recreate it."
-        case .fileUnreadable(_, let error):
+        case .fileUnreadable(_, let error, _):
             return "The original file could not be read: \(error.localizedDescription)"
+        case .recoveryTargetChanged:
+            return "The original file changed after the recovery prompt opened."
         }
     }
 }
@@ -52,6 +64,7 @@ final class MarkdownUndoManager: UndoManager {
     private(set) var isApplyingUndoRedo = false
 
     override func undo() {
+        guard canUndo else { return }
         onWillApplyUndoRedo?()
         isApplyingUndoRedo = true
         defer {
@@ -62,6 +75,7 @@ final class MarkdownUndoManager: UndoManager {
     }
 
     override func redo() {
+        guard canRedo else { return }
         onWillApplyUndoRedo?()
         isApplyingUndoRedo = true
         defer {
@@ -89,7 +103,7 @@ final class MarkdownDocument: NSObject {
         case unchanged(data: Data, fidelity: ByteFidelity)
         case changed(text: String, hunks: [ChangeHunk], data: Data, fidelity: ByteFidelity)
         case missing
-        case unreadable(Error)
+        case unreadable(Error, inspectedData: Data?)
     }
 
     /// One explicit state vocabulary for native chrome and accessibility.
@@ -194,6 +208,9 @@ final class MarkdownDocument: NSObject {
     let changes = ChangeTracker()
     var state: DocumentState
     let undoManager = MarkdownUndoManager()
+    private var undoRedoEditedRanges: [NSRange] = []
+    private var undoRedoShiftStart: Int?
+    private var isReplacingSource = false
 
     /// Fires after every reparse with the set of blocks needing re-decoration.
     var onReparse: ((ParsedDocument, DirtySet) -> Void)?
@@ -207,6 +224,8 @@ final class MarkdownDocument: NSObject {
     var onExternalEvent: ((ExternalEvent) -> Void)?
     /// Deterministic filesystem-race seam. Production never assigns it.
     var beforeSaveCommitForTesting: (() -> Void)?
+    /// Observes the real background read before its result reaches the main actor.
+    var onExternalSnapshotReadForTesting: (@MainActor @Sendable () -> Void)?
     var onDirtyChanged: ((Bool) -> Void)?
     /// Actual local source edits, including edits while the buffer is already dirty.
     var onSourceEdit: (() -> Void)?
@@ -520,9 +539,9 @@ final class MarkdownDocument: NSObject {
         // may make the keep-mine call for the user.  Surface any unresolved
         // conflict — or one detected right now — and refuse to write.
         var expectedDiskData: Data?
-        var requiresMissingPath = false
-        if intent != .recreateFile {
-            if intent == .normal, let conflict = pendingConflict {
+        switch intent {
+        case .normal, .keepMine:
+            if case .normal = intent, let conflict = pendingConflict {
                 throw presentBlockingConflict(conflict, incoming: conflict.incomingText, incomingHash: nil)
             }
             switch inspectDiskState() {
@@ -530,7 +549,9 @@ final class MarkdownDocument: NSObject {
                 expectedDiskData = data
                 fidelity = freshFidelity
             case .changed(let incoming, let hunks, let data, let freshFidelity):
-                if intent == .normal {
+                let incomingHash = SnapshotStore.hash(incoming)
+                let approvedHash = pendingConflict.map { SnapshotStore.hash($0.incomingText) }
+                guard case .keepMine = intent, incomingHash == approvedHash else {
                     let conflict = Conflict(
                         incomingText: incoming,
                         hunks: hunks,
@@ -539,44 +560,29 @@ final class MarkdownDocument: NSObject {
                         incomingByteHash: DocumentIO.contentHash(data)
                     )
                     throw presentBlockingConflict(
-                        conflict, incoming: incoming,
-                        incomingHash: SnapshotStore.hash(incoming)
+                        conflict, incoming: incoming, incomingHash: incomingHash
                     )
                 }
-                // Keep Mine is explicit about content, not byte formatting.
-                // Preserve the latest readable encoding/BOM/line-ending facts.
+                // Keep Mine is explicit about content. Preserve the latest
+                // readable encoding, BOM, and line endings.
                 expectedDiskData = data
                 fidelity = freshFidelity
             case .missing:
                 let error = SaveError.fileMissing(url)
                 publishSaveFailure(error)
                 throw error
-            case .unreadable(let underlying):
-                let error = SaveError.fileUnreadable(url, underlying: underlying)
+            case .unreadable(let underlying, let inspectedData):
+                let error = SaveError.fileUnreadable(url, underlying: underlying, inspectedData: inspectedData)
                 publishSaveFailure(error)
                 throw error
             }
-        } else {
-            // The recovery choice authorizes creation only while the path is
-            // still missing/unreadable. If a readable generation has appeared
-            // since the sheet was shown, it is external state and wins.
-            switch inspectDiskState() {
-            case .missing:
-                requiresMissingPath = true
-            case .unreadable:
-                break
-            case .unchanged(let data, let freshFidelity):
-                expectedDiskData = data
-                fidelity = freshFidelity
-            case .changed(let incoming, let hunks, let data, let freshFidelity):
-                let conflict = Conflict(
-                    incomingText: incoming, hunks: hunks, changedBlockCount: hunks.count,
-                    incomingFidelity: freshFidelity, incomingByteHash: DocumentIO.contentHash(data)
-                )
-                throw presentBlockingConflict(
-                    conflict, incoming: incoming, incomingHash: SnapshotStore.hash(incoming)
-                )
+        case .recreateFile(let approvedURL, let expected):
+            guard url == approvedURL else {
+                let error = SaveError.recoveryTargetChanged
+                publishSaveFailure(error)
+                throw error
             }
+            expectedDiskData = expected
         }
 
         publishPresentationState(PresentationState(
@@ -589,19 +595,19 @@ final class MarkdownDocument: NSObject {
             publishSaveFailure(error)
             throw error
         }
-        beforeSaveCommitForTesting?()
         watcher?.suppressOwnWrite()
         do {
+            if case .recreateFile = intent, let expectedDiskData,
+               try Data(contentsOf: url) != expectedDiskData {
+                throw SaveError.recoveryTargetChanged
+            }
+            beforeSaveCommitForTesting?()
             if let expectedDiskData {
                 try DocumentIO.replaceExistingAtomically(
                     with: encoded, at: url, expected: expectedDiskData
                 )
-            } else if requiresMissingPath {
-                try DocumentIO.createAtomically(with: encoded, at: url)
             } else {
-                // Only the explicit Recreate File recovery action may create
-                // or replace without an inspected existing generation.
-                try encoded.write(to: url, options: .atomic)
+                try DocumentIO.createAtomically(with: encoded, at: url)
             }
         } catch {
             watcher?.cancelOwnWriteSuppression()
@@ -626,8 +632,8 @@ final class MarkdownDocument: NSObject {
                 let missing = SaveError.fileMissing(url)
                 publishSaveFailure(missing)
                 throw missing
-            case .unreadable(let underlying):
-                let unreadable = SaveError.fileUnreadable(url, underlying: underlying)
+            case .unreadable(let underlying, let inspectedData):
+                let unreadable = SaveError.fileUnreadable(url, underlying: underlying, inspectedData: inspectedData)
                 publishSaveFailure(unreadable)
                 throw unreadable
             case .unchanged:
@@ -642,6 +648,9 @@ final class MarkdownDocument: NSObject {
         diskByteHash = DocumentIO.contentHash(encoded)
         lastCommittedText = text
         pendingConflict = nil
+        // The buffer can be identical before and after a save. Retire work
+        // that read the previous disk generation before it can apply as clean.
+        cancelPendingExternalWrite()
         snapshotStore.record(text, for: url, kind: .local)
         setDirty(false)
         persistState()
@@ -652,20 +661,25 @@ final class MarkdownDocument: NSObject {
     /// distinct fail-closed states, never collapsed into "no change".
     func inspectDiskState() -> DiskState {
         guard let url else { return .missing }
-        let snapshot: (text: String, fidelity: ByteFidelity, data: Data)
+        let data: Data
         do {
-            snapshot = try DocumentIO.readSnapshot(contentsOf: url)
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return .missing
         } catch {
-            if !FileManager.default.fileExists(atPath: url.path) {
-                return .missing
-            }
-            return .unreadable(error)
+            return .unreadable(error, inspectedData: nil)
+        }
+        let snapshot: (text: String, fidelity: ByteFidelity)
+        do {
+            snapshot = try DocumentIO.decodeSnapshot(data, sourceURL: url)
+        } catch {
+            return .unreadable(error, inspectedData: data)
         }
         let incoming = snapshot.text
         let incomingHash = SnapshotStore.hash(incoming)
-        let incomingByteHash = DocumentIO.contentHash(snapshot.data)
+        let incomingByteHash = DocumentIO.contentHash(data)
         guard incomingByteHash != diskByteHash else {
-            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+            return .unchanged(data: data, fidelity: snapshot.fidelity)
         }
         // The decoded generation is still the one we opened; only its byte
         // representation changed externally. Adopt those facts even when the
@@ -674,7 +688,7 @@ final class MarkdownDocument: NSObject {
         if incomingHash == diskHash {
             diskByteHash = incomingByteHash
             fidelity = snapshot.fidelity
-            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+            return .unchanged(data: data, fidelity: snapshot.fidelity)
         }
         // If the disk already holds the buffer's bytes, writing is a no-op and
         // there is nothing being clobbered.  A trailing-newline-only difference
@@ -685,12 +699,12 @@ final class MarkdownDocument: NSObject {
             diskHash = incomingHash
             diskByteHash = incomingByteHash
             fidelity = snapshot.fidelity
-            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+            return .unchanged(data: data, fidelity: snapshot.fidelity)
         }
         return .changed(
             text: incoming,
             hunks: TextDiff.hunks(old: storage.string, new: incoming),
-            data: snapshot.data,
+            data: data,
             fidelity: snapshot.fidelity
         )
     }
@@ -757,18 +771,12 @@ final class MarkdownDocument: NSObject {
     }
 
     /// Explicit recovery action. No implicit path may call this.
-    func recreateMissingFile() -> Result<Void, Error> {
-        do {
-            try save(intent: .recreateFile)
-            return .success(())
-        } catch {
-            return .failure(error)
-        }
+    func recreateMissingFile(authorizedBy error: Error) -> Result<Void, Error> {
+        guard let intent = (error as? SaveError)?.recreationIntent else { return .failure(error) }
+        return Result { try save(intent: intent) }
     }
 
-    /// Explicitly abandons unsaved local changes after a failed save. The
-    /// in-memory text remains visible until the window closes, but it is no
-    /// longer eligible for autosave and the missing path is never resurrected.
+    /// Drops local edits and their undo history without writing to disk.
     func discardUnsavedChanges() {
         let replacement: String
         if let url, let snapshot = try? DocumentIO.readSnapshot(contentsOf: url) {
@@ -790,6 +798,7 @@ final class MarkdownDocument: NSObject {
         undoManager.removeAllActions()
         reparseSynchronously(notifying: true, wholesale: true)
         pendingConflict = nil
+        cancelPendingExternalWrite()
         setDirty(false)
         publishPresentationState(.neutral)
     }
@@ -897,9 +906,11 @@ final class MarkdownDocument: NSObject {
         // happens to redecorate it (stale code-block copies, image loads
         // invalidating the wrong range).
         projectFragmentPayloads(across: range, insertedLength: (replacement as NSString).length)
+        isReplacingSource = true
         storage.beginEditing()
         storage.replaceCharacters(in: range, with: replacement)
         storage.endEditing()
+        isReplacingSource = false
 
         let delta = (replacement as NSString).length - range.length
         changes.adjust(forEditIn: range, delta: delta)
@@ -960,12 +971,14 @@ final class MarkdownDocument: NSObject {
         reparseNow()
     }
 
-    /// Toggling a checkbox writes the file immediately (§7.1, §8.5).
+    /// Persist a standalone toggle immediately (§7.1, §8.5). An already-dirty
+    /// buffer keeps its normal save policy for this edit and the others.
     func toggleTask(atMarkOffset offset: Int) {
         ensureParsedCurrent()
         guard let edit = Restructure.toggleTask(parsed, atMarkOffset: offset) else { return }
+        let shouldSaveImmediately = url != nil && !isDirty
         apply([edit], actionName: "Toggle Task")
-        if url != nil { _ = saveIfNeeded() }
+        if shouldSaveImmediately { _ = saveIfNeeded() }
     }
 
     private func setDirty(_ value: Bool) {
@@ -1072,7 +1085,7 @@ final class MarkdownDocument: NSObject {
 
     private func finishUndoRedo() {
         refreshDirtyState()
-        guard !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
+        guard !undoRedoEditedRanges.isEmpty || !parsed.text.utf16.elementsEqual(storage.string.utf16) else { return }
         // A grouped undo/redo can invoke several inverse closures. Keep the
         // renderer suspended for the whole transaction, then publish exactly
         // one parsed/display-map repair after AppKit has finished mutating the
@@ -1095,9 +1108,21 @@ final class MarkdownDocument: NSObject {
             let fresh = MarkdownParser.parse(storage.string)
             // Finish the comparison before replacing the model, so the caller
             // does not pin the old tree throughout fresh decoration/layout.
-            let dirty: DirtySet? = notifying
+            var dirty: DirtySet? = notifying
                 ? (wholesale ? .wholesale : ASTDiff.dirtySet(old: parsed, new: fresh))
                 : nil
+            if notifying, !undoRedoEditedRanges.isEmpty {
+                if dirty?.isWholesale == false, storage.length > 0 {
+                    dirty?.ranges += undoRedoEditedRanges.map { edited in
+                        let start = min(edited.location, storage.length - 1)
+                        let end = min(storage.length, max(start + 1, edited.upperBound))
+                        return NSRange(location: start, length: end - start)
+                    }
+                    dirty?.shiftedLayoutStart = undoRedoShiftStart
+                }
+                undoRedoEditedRanges.removeAll(keepingCapacity: true)
+                undoRedoShiftStart = nil
+            }
             parsed = fresh
             lastCompletedParseRevision = revision
             if let dirty { onReparse?(fresh, dirty) }
@@ -1219,6 +1244,7 @@ final class MarkdownDocument: NSObject {
     }
 
     private func cancelPendingExternalWrite() {
+        externalPreparationGeneration &+= 1
         pendingExternalWrite?.cancel()
         pendingExternalWrite = nil
         endBurstIfNeeded()
@@ -1292,7 +1318,7 @@ final class MarkdownDocument: NSObject {
             onExternalWriteActivity?(true)
         }
         let item = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.absorbExternalWrite() }
+            MainActor.assumeIsolated { _ = self?.absorbExternalWrite() }
         }
         pendingExternalWrite = item
         DispatchQueue.main.asyncAfter(deadline: .now() + externalWriteQuietPeriod, execute: item)
@@ -1300,13 +1326,14 @@ final class MarkdownDocument: NSObject {
 
     private let externalWriteQuietPeriod: TimeInterval = 0.25
 
-    /// Applies any external write still waiting on the quiet period.  Tests and
-    /// lifecycle code use this instead of guessing at wall-clock timing.
-    func flushPendingExternalWrite() {
-        guard pendingExternalWrite != nil else { return }
+    /// Starts any external write waiting on the quiet period. Callers can await
+    /// the task to observe delivery of the prepared snapshot to the main actor.
+    @discardableResult
+    func flushPendingExternalWrite() -> Task<Void, Never>? {
+        guard pendingExternalWrite != nil else { return nil }
         pendingExternalWrite?.cancel()
         pendingExternalWrite = nil
-        absorbExternalWrite()
+        return absorbExternalWrite()
     }
 
     private struct PreparedExternalWrite: @unchecked Sendable {
@@ -1322,25 +1349,27 @@ final class MarkdownDocument: NSObject {
         let applicationHunks: [ChangeHunk]
     }
 
-    private func absorbExternalWrite() {
+    private func absorbExternalWrite() -> Task<Void, Never>? {
         pendingExternalWrite = nil
         guard let url else {
             endBurstIfNeeded()
-            return
+            return nil
         }
         let generation = externalPreparationGeneration
         let capturedText = storage.string
         let baseline = effectiveBaselineText(fallback: capturedText)
         let snapshotStore = snapshotStore
+        let onSnapshotRead = onExternalSnapshotReadForTesting
 
         // File I/O, history reservation, and the two Myers diffs are pure or
         // internally synchronized. Keeping them off the main actor is what
         // lets a reader continue scrolling while a large agent rewrite lands.
-        Task.detached(priority: .userInitiated) { [weak self] in
+        return Task.detached(priority: .userInitiated) { [weak self] in
             guard let snapshot = try? DocumentIO.readSnapshot(contentsOf: url) else {
                 await self?.finishExternalPreparation(generation: generation, prepared: nil)
                 return
             }
+            await onSnapshotRead?()
             let incoming = snapshot.text
             let freshFidelity = snapshot.fidelity
             let incomingHash = SnapshotStore.hash(incoming)
@@ -1683,7 +1712,8 @@ final class MarkdownDocument: NSObject {
     /// Conflict resolution: keep the buffer and write it over the file.
     @discardableResult
     func resolveConflictKeepingMine() -> Result<Void, Error> {
-        let result = saveIfNeeded(intent: .keepMine)
+        let result = pendingConflict == nil
+            ? saveIfNeeded(intent: .keepMine) : Result { try save(intent: .keepMine) }
         if case .success = result {
             pendingConflict = nil
             changes.clear()
@@ -1736,9 +1766,37 @@ extension MarkdownDocument: NSTextStorageDelegate {
         // edit, so reading `storage.string` in the task would lose the
         // transaction boundary and consume the wrong suppression token.
         let callbackText = textStorage.string
+        MainActor.assumeIsolated {
+            recordUndoRedoEdit(editedRange, delta: delta)
+        }
         Task { @MainActor [weak self] in
             self?.handleTextStorageEdit(callbackText: callbackText)
         }
+    }
+
+    private func recordUndoRedoEdit(_ edited: NSRange, delta: Int) {
+        guard undoManager.isApplyingUndoRedo else { return }
+        let before = NSRange(location: edited.location, length: edited.length - delta)
+        if delta != 0 {
+            if !isReplacingSource && !isApplyingExternalChange {
+                // AppKit's own typing undo mutates storage directly. The
+                // attached runs already moved, but their payload offsets did not.
+                projectFragmentPayloads(across: before, insertedLength: edited.length)
+            }
+            undoRedoShiftStart = min(undoRedoShiftStart ?? edited.location, edited.location)
+        }
+        if delta != 0 {
+            undoRedoEditedRanges = undoRedoEditedRanges.map { previous in
+                if previous.upperBound <= before.location { return previous }
+                if previous.location >= before.upperBound {
+                    return NSRange(location: previous.location + delta, length: previous.length)
+                }
+                let start = min(previous.location, edited.location)
+                let end = max(edited.upperBound, previous.upperBound + delta)
+                return NSRange(location: start, length: end - start)
+            }
+        }
+        undoRedoEditedRanges.append(edited)
     }
 
     private func handleTextStorageEdit(callbackText: String) {

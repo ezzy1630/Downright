@@ -81,7 +81,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
                                          payload: payload, context: context) ?? plain()
 
         case .blockMath:
-            guard !editing else { return plain() }
+            guard !editing, context.mathSourcePayload !== payload else { return plain() }
             return MathFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
 
         case .mermaid:

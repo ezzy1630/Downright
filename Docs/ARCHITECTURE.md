@@ -82,6 +82,14 @@ into the vendored SwiftMath typesetter; fragments, inline math, HTML/PDF export,
 and Quick Look all go through it, so one formula is typeset once per cached
 style.
 
+In Live mode, a plain click on a rendered display formula places the caret at
+its LaTeX source. Double-clicking the rendered formula selects its LaTeX, and
+triple-clicking selects the first LaTeX source line inside the formula. A
+selection inside a formula keeps its raw text visible. The
+view invalidates all paragraphs of a display formula when it switches between
+typeset and source, even when the `DisplayMap` is unchanged. Inline math uses
+the paragraph-local map to keep the selected LaTeX visible.
+
 `SwiftMathDialect` converts the LaTeX people write for KaTeX, MathJax, Typora,
 and Obsidian into the subset SwiftMath parses. Examples include `\dfrac`,
 `\not=`, `\tag`, `\label`, `\big`, `align*`, `equation`, `gathered`, and
@@ -188,9 +196,18 @@ without overlap, including empty paragraphs and two-unit CRLF separators.
 
 Block markers live in the gutter. Inline markers reveal per span near the
 primary caret. IME composition suspends hiding in the composing paragraph.
+Single clicks reveal nearby inline markers as soon as AppKit places the caret.
+When AppKit reports another click in that sequence, the text view restores the
+first mouse-down's caret reveal and viewport anchor before AppKit tracks the
+word or paragraph selection. This also keeps native word dragging on the
+original layout. In Document mode, Option-double-click selects link text.
 After a source edit, retain its exact source caret while its native projection
 is unchanged: hidden markers make a source-to-display round trip lossy. A new
 native selection retires that edit position and resolves against visible text.
+Selections requested in source coordinates also retain their endpoints when
+the native projection omits part or all of the selected syntax.
+Multiline insertion at the opening boundary of a scoped source editor or at
+its end at EOF keeps the inserted lines in that source scope.
 A split pane adopts the existing parsed presentation during construction, before
 any setter can decorate the shared storage. Each pane owns its layout caches;
 opening a split must preserve source attributes and avoid a full decoration pass.
@@ -216,10 +233,33 @@ before sizing the new presentation. Its shrink must not capture a reading anchor
 from the old camera; ordinary edits and mode changes continue preserving anchors.
 
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
-is a separate explicit command.
+is a separate explicit command. AppKit's typing undo and redo mutate the shared
+storage directly. The document projects surviving fragment payloads across those
+edits. The synchronous parse commit invalidates shifted layout in every pane
+while keeping decoration scoped to the edited and semantically changed ranges.
+Standard Copy and Cut carry visible text for other apps and exact Markdown for
+paste in Downright. Hidden delimiters at a selection edge travel with a
+complete selected construct. Cut removes the same source that it puts on the
+clipboard. Copy Code reads the parsed body, including any fence-like lines
+that belong to the example. The rendered fence bands supply the hover and click
+geometry for Copy Code at both ends of a block. The viewport overlay draws hover
+and copy feedback independently of TextKit's cached fence surfaces.
+Code fences can open on a list item's first line. Only actual opening and
+closing fence rows redirect a click into the code body.
+
+Source mode lays out physical lines without joining hard-wrapped prose. Its
+gutter and Go to Line use the parser's UTF-16 line starts, including LF, lone
+CR, and CRLF. The layout keeps the original separators in storage and on disk.
 
 Document commands apply source edits, reparse, and decorate inside one undo
-group. List indentation and ordered-list repair use this sequence:
+group. Return uses the current source to continue a list in one undo step. It
+keeps the bullet, quote prefix, and nesting, increments the new ordered marker,
+and starts a new task unchecked. On an empty item, Return exits the list or
+outdents one level. AppKit handles Return during marked-text composition.
+Return reuses the parsed list structure when current. With pending edits, it
+plans from a bounded window of live source starting at an unchanged block
+boundary. If the context falls outside that window, it inserts a plain newline.
+List indentation and ordered-list repair use this sequence:
 
 ```text
 apply edit -> reparse -> plan tidy rules -> apply tidy edit
@@ -240,10 +280,19 @@ writes replace the inode. On an external write:
 Dirty state compares exact UTF-16 source with the last saved generation. Returning
 to that text by deletion or undo clears the edited state without writing the
 file; pending external conflicts remain independent and cannot be overwritten.
+Keep Mine writes the visible buffer even after undo returns it to the last saved
+text. If a different external edit arrives before that save, the app presents
+the newer conflict. A successful save retires watcher preparation from before
+that commit. Recreate File uses the state that triggered its recovery prompt.
+It creates an absent path exclusively or replaces the exact undecodable bytes
+inspected for that prompt. A changed path requires a fresh decision. If the
+bytes could not be read, the buffer remains available for Save a Copy.
 
 Autosave is opt-in. Actual local source edits reset its idle deadline even when
-the buffer is already dirty. Discard suppresses implicit saves until a fresh
-source edit; parser and presentation updates cannot re-arm saving.
+the buffer is already dirty. A checkbox toggle or Task panel edit saves
+immediately from a clean file-backed buffer. In a dirty buffer it follows the
+normal save policy with the other edits. Discard suppresses implicit saves until a fresh source edit;
+parser and presentation updates cannot re-arm saving.
 
 Snapshots deduplicate by content hash. Retention applies the configured age,
 per-document, and global byte caps without rewriting unchanged indexes; a
@@ -260,9 +309,32 @@ run them without an isolated Application Support directory.
 
 Local document links resolve URL encoding and heading fragments separately from
 filesystem paths. The text surface routes native link activation through the app
-so Launch Services cannot independently open the same click. Back/Forward commit
-a history move only after the destination opens successfully and restore semantic
-reading anchors across files.
+so Launch Services cannot independently open the same click. In-place navigation
+checks the same file-identity registry as ordinary opens. An already-open
+destination selects its existing tab or window and resolves a linked heading
+there. Discard in a navigation prompt drops the origin's unsaved edits and undo
+history, including when the destination opens in another tab during the prompt.
+Each tab keeps its own Back/Forward trail. In-place history hops commit
+only after a successful open and restore semantic reading anchors across files.
+If a history destination is already open in a different tab, that tab receives
+the saved anchor and both history cursors stay with their own documents.
+
+The CLI delivers `--edit`, `--line`, and `--review` to the selected app bundle
+through a `downright-cli:` URL, which Launch Services delivers on cold and warm
+opens. Any app or web page can open such a URL, so it carries only a random
+handoff ID. The request itself (local file paths and presentation options) is
+written by the CLI to a one-shot, owner-only file in the per-user temporary
+directory. The CLI fails before writing a request larger than 256 KiB after
+encoding. The app consumes the file and uses the ordinary open registry for
+valid requests up to the same limit. It accepts only private regular files
+owned by the user and no more than two minutes old. A URL without a valid
+handoff file does nothing. When `down` itself runs inside an App Sandbox
+(spawned by a sandboxed app or agent), its temporary directory is its
+container's `Data/tmp`. The URL then also names that container ID, and the app
+looks only in `~/Library/Containers/<id>/Data/tmp`, with the same checks.
+Go to Line and the app's command-line line handler use the parsed source's
+one-based line index, which recognizes LF, CRLF, and lone CR even within the
+same document.
 
 The app can open one file or an optional folder workspace. Workspace mode scans
 the folder for sibling documents and shows them newest first. It does not build

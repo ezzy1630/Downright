@@ -20,7 +20,7 @@ struct DocumentTrustStateTests {
         try FileManager.default.removeItem(at: fixture.url)
 
         let result = document.saveIfNeeded()
-        guard case .failure(SaveError.fileMissing) = result else {
+        guard case .failure(let error as SaveError) = result, case .fileMissing = error else {
             Issue.record("a missing path must be an explicit save failure")
             return
         }
@@ -28,7 +28,7 @@ struct DocumentTrustStateTests {
         #expect(document.isDirty)
         #expect(document.presentationState.phase == .saveFailed)
 
-        guard case .success = document.recreateMissingFile() else {
+        guard case .success = document.recreateMissingFile(authorizedBy: error) else {
             Issue.record("explicit recreation should write the retained buffer")
             return
         }
@@ -187,13 +187,13 @@ struct DocumentTrustStateTests {
             with: "mine\n", actionName: "Replace"
         ))
         try FileManager.default.removeItem(at: fixture.url)
-        guard case .failure(SaveError.fileMissing) = document.saveIfNeeded() else {
+        guard case .failure(let error as SaveError) = document.saveIfNeeded(), case .fileMissing = error else {
             Issue.record("missing file recovery must be active")
             return
         }
         try Data("restored-by-someone-else\n".utf8).write(to: fixture.url)
 
-        guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile() else {
+        guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile(authorizedBy: error) else {
             Issue.record("Recreate must reconcile a readable file that appeared after the alert")
             return
         }
@@ -210,15 +210,112 @@ struct DocumentTrustStateTests {
         defer { document.close() }
         document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
         try FileManager.default.removeItem(at: fixture.url)
+        guard case .failure(let error as SaveError) = document.saveIfNeeded(), case .fileMissing = error else {
+            Issue.record("missing file recovery must be active")
+            return
+        }
         document.beforeSaveCommitForTesting = {
             try! Data("external\n".utf8).write(to: fixture.url, options: .atomic)
         }
-        guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile() else {
+        guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile(authorizedBy: error) else {
             Issue.record("recreation must not replace a concurrent external creation")
             return
         }
         #expect(try Data(contentsOf: fixture.url) == Data("external\n".utf8))
         #expect(document.isDirty)
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func recreateChoiceDoesNotClobberAnUninspectedUndecodableGeneration(initiallyMissing: Bool) throws {
+        let fixture = try Fixture(text: "before\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
+        if initiallyMissing {
+            try FileManager.default.removeItem(at: fixture.url)
+        } else {
+            try Data([0xEF, 0xBB, 0xBF, 0xFF]).write(to: fixture.url, options: .atomic)
+        }
+        guard case .failure(let error) = document.saveIfNeeded() else {
+            Issue.record("The first save must require recovery")
+            return
+        }
+        let replacement = Data([0xEF, 0xBB, 0xBF, 0xFE])
+        try replacement.write(to: fixture.url, options: .atomic)
+
+        // Another save may detect the new bytes while the original prompt
+        // stays open. That prompt still carries only the first save's error.
+        guard case .failure(SaveError.fileUnreadable) = document.saveIfNeeded() else {
+            Issue.record("The new bytes must also require recovery")
+            return
+        }
+        #expect(throws: SaveError.self) { try document.recreateMissingFile(authorizedBy: error).get() }
+        #expect(try Data(contentsOf: fixture.url) == replacement)
+        #expect(document.text == "mine\n")
+        #expect(document.isDirty)
+    }
+
+    @Test @MainActor
+    func keepMineRetiresAnExternalSnapshotAlreadyReadByTheWatcher() async throws {
+        let fixture = try Fixture(text: "before\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
+        try Data("theirs\n".utf8).write(to: fixture.url, options: .atomic)
+        guard case .failure(SaveError.blockedByExternalConflict) = document.saveIfNeeded() else {
+            Issue.record("The save must present the external version")
+            return
+        }
+        var keepMine: Result<Void, Error>?
+        document.onExternalSnapshotReadForTesting = { [weak document] in
+            keepMine = document?.resolveConflictKeepingMine()
+        }
+
+        document.handleWatchEvent(.changed)
+        let preparation = try #require(document.flushPendingExternalWrite())
+        // The observer saves after the real disk read and before prepared
+        // results are delivered. Await that delivery before checking the buffer.
+        await preparation.value
+        try #require(keepMine, "The watcher never read the external bytes").get()
+
+        #expect(try Data(contentsOf: fixture.url) == Data("mine\n".utf8))
+        #expect(document.text == "mine\n")
+        #expect(document.pendingConflict == nil)
+        #expect(!document.isDirty)
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func recreationOfUndecodableFileProtectsTheInspectedGeneration(replacedDuringSave: Bool) throws {
+        let fixture = try Fixture(text: "before\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
+        try Data([0xEF, 0xBB, 0xBF, 0xFF]).write(to: fixture.url, options: .atomic)
+        guard case .failure(let error as SaveError) = document.saveIfNeeded(), case .fileUnreadable = error else {
+            Issue.record("the file must require explicit recovery")
+            return
+        }
+
+        let external = Data("another writer's replacement\n".utf8)
+        if replacedDuringSave {
+            document.beforeSaveCommitForTesting = { try! external.write(to: fixture.url, options: .atomic) }
+            guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile(authorizedBy: error) else {
+                Issue.record("Recreate File overwrote a replacement that arrived during saving")
+                return
+            }
+            #expect(try Data(contentsOf: fixture.url) == external)
+            #expect(document.isDirty)
+        } else {
+            try document.recreateMissingFile(authorizedBy: error).get()
+            #expect(try Data(contentsOf: fixture.url) == Data("mine\n".utf8))
+            #expect(!document.isDirty)
+        }
     }
 
     @Test @MainActor
@@ -330,14 +427,7 @@ struct DocumentTrustStateTests {
         ))
         let incoming = Data((changesContent ? "header\nab\r\n" : "header\na\r\n").utf8)
         try incoming.write(to: fixture.url, options: .atomic)
-        var finished = false
-        document.onExternalWriteActivity = { if !$0 { finished = true } }
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where !finished {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(finished)
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
         #expect(document.text == "header\na")
         #expect((document.pendingConflict != nil) == changesContent)
         if changesContent {
@@ -369,11 +459,7 @@ struct DocumentTrustStateTests {
         try document.open(fixture.url)
         defer { document.close() }
         try Data("body".utf8).write(to: fixture.url, options: .atomic)
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where document.text != "body" {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
         #expect(document.text == "body")
         #expect(!document.isDirty)
         document.replace(NSRange(location: 0, length: 4), with: "changed", actionName: "Typing")
@@ -389,14 +475,7 @@ struct DocumentTrustStateTests {
         try document.open(fixture.url)
         defer { document.close() }
         document.replace(NSRange(location: 4, length: 1), with: "", actionName: "Delete")
-        var finished = false
-        document.onExternalWriteActivity = { active in if !active { finished = true } }
-        document.handleExternalWrite()
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where !finished {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(finished)
+        try await completeExternalWrite(document) { document.handleExternalWrite() }
         #expect(document.text == "body")
         #expect(document.isDirty)
         #expect(document.pendingConflict == nil)
@@ -436,11 +515,7 @@ struct DocumentTrustStateTests {
         #expect(document.presentationState.phase == .changedOnDisk)
         #expect(document.presentationState.detail == "File missing")
 
-        document.handleWatchEvent(.restored)
-        document.flushPendingExternalWrite()
-        for _ in 0..<100 where document.presentationState.phase != .neutral {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try await completeExternalWrite(document) { document.handleWatchEvent(.restored) }
         #expect(document.presentationState == .neutral)
         document.close()
     }
@@ -465,9 +540,13 @@ struct DocumentTrustStateTests {
         let original = "# One\n\nBody.\n"
         let incoming = "# One\n\n" + String(repeating: "A longer external paragraph.\n\n", count: 2_000)
         document.adopt(text: original, displayURL: nil)
+        let reparsed = TestSignal()
         var incomingCommits = 0
         document.onReparse = { parsed, _ in
-            if parsed.text == incoming { incomingCommits += 1 }
+            if parsed.text == incoming {
+                incomingCommits += 1
+                reparsed.signal()
+            }
         }
 
         document.applyExternalText(
@@ -477,9 +556,7 @@ struct DocumentTrustStateTests {
         #expect(document.text == incoming)
         #expect(document.parsed.text != incoming, "the main actor must not synchronously parse a wholesale rewrite")
 
-        for _ in 0..<200 where document.parsed.text != incoming {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await reparsed.wait(), "The external rewrite never committed")
         #expect(document.parsed.text == incoming)
         #expect(incomingCommits == 1)
         document.close()
@@ -491,6 +568,10 @@ struct DocumentTrustStateTests {
         let original = "# One\n\nBody.\n"
         let incoming = "# External\n\nBody.\n"
         document.adopt(text: original, displayURL: nil)
+        let reparsed = TestSignal()
+        document.onReparse = { parsed, _ in
+            if parsed.text.hasSuffix("Local tail.\n") { reparsed.signal() }
+        }
         document.applyExternalText(
             incoming,
             hunks: TextDiff.hunks(old: original, new: incoming)
@@ -501,15 +582,27 @@ struct DocumentTrustStateTests {
             actionName: "Paste"
         ))
 
-        for _ in 0..<200 where document.parsed.text != document.text {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await reparsed.wait(), "The latest local revision never committed")
         #expect(document.parsed.text == document.text)
         #expect(document.text.hasSuffix("Local tail.\n"))
         #expect(document.isDirty)
         #expect(document.presentationState.provenance == "Paste")
         document.close()
     }
+}
+
+@MainActor
+func completeExternalWrite(_ document: MarkdownDocument, trigger: () throws -> Void) async throws {
+    let finished = TestSignal()
+    let existingObserver = document.onExternalWriteActivity
+    defer { document.onExternalWriteActivity = existingObserver }
+    document.onExternalWriteActivity = { active in
+        existingObserver?(active)
+        if !active { finished.signal() }
+    }
+    try trigger()
+    document.flushPendingExternalWrite()
+    try #require(await finished.wait(), "External write reconciliation never finished")
 }
 
 private struct Fixture {

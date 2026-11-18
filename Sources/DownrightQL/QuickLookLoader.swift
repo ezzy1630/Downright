@@ -34,10 +34,12 @@ enum QuickLookLoader {
 
         // One sentinel byte tells us whether the file exceeded the cap while
         // keeping the allocation strictly bounded (limit + 1 bytes).
-        guard let boundedData = try? handle.read(upToCount: limit + 1) else { return nil }
+        let boundedData: Data
+        do { boundedData = try handle.read(upToCount: limit + 1) ?? Data() }
+        catch { return nil }
         let didExceedLimit = boundedData.count > limit
         let data = didExceedLimit ? Data(boundedData.prefix(limit)) : boundedData
-        guard let text = decode(data) else { return nil }
+        guard let text = decode(data, nextByte: didExceedLimit ? boundedData.last : nil) else { return nil }
 
         switch hintedPresentation {
         case .prefix:
@@ -47,7 +49,7 @@ enum QuickLookLoader {
         }
     }
 
-    private static func decode(_ data: Data) -> String? {
+    private static func decode(_ data: Data, nextByte: UInt8?) -> String? {
         let bytes = [UInt8](data.prefix(4))
         let bomLength: Int
         let encoding: String.Encoding
@@ -77,14 +79,11 @@ enum QuickLookLoader {
             bomLength = 0
             encoding = guessed.encoding
             codeUnitWidth = guessed.width
-        } else if String(data: data, encoding: .utf8) != nil {
-            bomLength = 0
-            encoding = .utf8
-            codeUnitWidth = 1
         } else {
-            bomLength = 0
-            encoding = .isoLatin1
-            codeUnitWidth = 1
+            // An otherwise UTF-8 prefix can end partway through a scalar.
+            // Recover it before treating the whole file as Latin-1.
+            return (decodeUTF8(data, nextByte: nextByte)
+                ?? String(data: data, encoding: .isoLatin1)).map(normalizeLineEndings)
         }
 
         var body = Data(data.dropFirst(min(bomLength, data.count)))
@@ -92,22 +91,37 @@ enum QuickLookLoader {
             body = Data(body.prefix(body.count - (body.count % codeUnitWidth)))
         }
 
-        let text: String
-        if let decoded = String(data: body, encoding: encoding) {
-            text = decoded
-        } else {
-            // A UTF-8 head can end in a torn scalar.  Trim only the small
-            // trailing suffix needed to recover a valid preview.
-            guard encoding == .utf8 else { return nil }
-            var recovered: String?
-            for drop in 1...3 where body.count > drop {
-                recovered = String(data: body.dropLast(drop), encoding: .utf8)
-                if recovered != nil { break }
-            }
-            guard let recovered else { return nil }
-            text = recovered
+        if encoding == .utf8 {
+            // The BOM settles the encoding, so a scalar torn at the end of the
+            // file (not only at the cap) is trimmed rather than failing.
+            return decodeUTF8(body, nextByte: nextByte, encodingIsKnown: true).map(normalizeLineEndings)
         }
-        return normalizeLineEndings(text)
+        if let decoded = String(data: body, encoding: encoding) {
+            return normalizeLineEndings(decoded)
+        }
+        // A UTF-16 cap can land on a whole code unit but leave its partner
+        // surrogate unread. Remove the high surrogate only at a known cut.
+        guard nextByte != nil, codeUnitWidth == 2,
+              let highByte = encoding == .utf16LittleEndian ? body.last : body.suffix(2).first,
+              (0xD8...0xDB).contains(highByte) else { return nil }
+        return String(data: body.dropLast(2), encoding: encoding).map(normalizeLineEndings)
+    }
+
+    private static func decodeUTF8(_ data: Data, nextByte: UInt8?, encodingIsKnown: Bool = false) -> String? {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        // Without a BOM, trim only at a known cut: the sentinel continues the
+        // torn scalar.  Otherwise the bytes may simply be Latin-1.
+        guard encodingIsKnown || nextByte.map({ (0x80...0xBF).contains($0) }) == true else { return nil }
+        for count in 1...min(3, data.count) {
+            let suffix = data.suffix(count)
+            guard let lead = suffix.first, (0xC2...0xF4).contains(lead),
+                  suffix.dropFirst().allSatisfy({ (0x80...0xBF).contains($0) }) else { continue }
+            let scalarWidth = lead < 0xE0 ? 2 : (lead < 0xF0 ? 3 : 4)
+            if count < scalarWidth {
+                return String(data: data.dropLast(count), encoding: .utf8)
+            }
+        }
+        return nil
     }
 
     private static func sniffBOMlessEncoding(_ data: Data) -> (encoding: String.Encoding, width: Int)? {

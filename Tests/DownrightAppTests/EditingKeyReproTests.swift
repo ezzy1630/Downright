@@ -291,6 +291,167 @@ struct EditingKeyReproTests {
         #expect(controller.markdownDocument.text.contains("xBody text."))
     }
 
+    @Test(arguments: [
+        ("- item|\n", "- item\n- |\n"),
+        ("* item|\n", "* item\n* |\n"),
+        ("+ item|\n", "+ item\n+ |\n"),
+        ("3) item|\n", "3) item\n4) |\n"),
+        ("1. first\n2. second|\n", "1. first\n2. second\n3. |\n"),
+        ("- [x] done|\n", "- [x] done\n- [ ] |\n"),
+        ("- [ ] |\n", "|\n"),
+        ("- top\n  * nested|\n", "- top\n  * nested\n  * |\n"),
+        ("- - nested|\n", "- - nested\n  - |\n"),
+        ("> - quoted|\n", "> - quoted\n> - |\n"),
+        ("- first\n- |\n", "- first\n|\n"),
+        ("- parent\n  - child\n  - |\n", "- parent\n  - child\n- |\n"),
+        ("> - first\n> - |\n", "> - first\n> |\n"),
+        ("- ```\n  sample|\n  ```\n", "- ```\n  sample\n|\n  ```\n"),
+        ("prose|\n", "prose\n|\n"),
+        ("- first\n|\n", "- first\n\n|\n"),
+    ])
+    func returnContinuesListInOneUndoStep(input: String, expected: String) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = input.replacingOccurrences(of: "|", with: "")
+        let caret = (input as NSString).range(of: "|").location
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        view.setSourceSelectedRanges([NSRange(location: caret, length: 0)])
+
+        view.insertNewline(nil)
+
+        let document = controller.markdownDocument
+        #expect(document.text == expected.replacingOccurrences(of: "|", with: ""))
+        #expect(view.sourceSelectedRange == NSRange(location: (expected as NSString).range(of: "|").location, length: 0))
+        document.undoManager.undo()
+        #expect(document.text == source)
+        #expect(!document.undoManager.canUndo)
+    }
+
+    @Test func returnUsesCurrentSourceAndLeavesMarkedTextToAppKit() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-ime-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try makeController(text: "- ", file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        view.setSourceSelectedRanges([NSRange(location: 2, length: 0)])
+        view.insertText("item", replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.insertNewline(nil)
+        #expect(controller.markdownDocument.text == "- item\n- ")
+
+        view.setMarkedText("変換", selectedRange: NSRange(location: 2, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(view.hasMarkedText())
+        view.insertNewline(nil)
+        #expect(controller.markdownDocument.text.components(separatedBy: "\n- ").count == 2)
+        view.unmarkText()
+    }
+
+    @Test(arguments: [
+        ("> - parent\n>   * ", "nested", "> - parent\n>   * nested\n>   * "),
+        ("- ```\n  ", "- still code", "- ```\n  - still code\n"),
+        ("", "7. new list", "7. new list\n8. "),
+    ])
+    func returnUsesLiveListContextWithPendingParse(source: String, typed: String, expected: String) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-pending-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        view.setSourceSelectedRanges([NSRange(location: source.utf16.count, length: 0)])
+        view.insertText(typed, replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(view.parsedDocument.text != controller.markdownDocument.text)
+
+        view.insertNewline(nil)
+
+        #expect(controller.markdownDocument.text == expected)
+    }
+
+    @Test func returnInLargePlainParagraphDoesNotSynchronouslyParse() throws {
+        let source = "Plain paragraph.\n\n" + String(repeating: "**Bold** and *italic* with `code`.\n\n", count: 4_000)
+        let caret = NSRange(location: "Plain paragraph.".utf16.count, length: 0)
+
+        // Measure both paths with pending edits on the main thread. Subtract
+        // normal storage/layout work and calibrate against this machine's cost
+        // of a full parse of the same fixture.
+        func newlineCPUTime(usingReturn: Bool) throws -> UInt64 {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("return-large-\(UUID()).md")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let controller = try makeController(text: source, file: url)
+            defer { controller.close() }
+            let view = controller.primaryContainer.textView
+            view.setSourceSelectedRanges([caret])
+            view.insertText("!", replacementRange: NSRange(location: NSNotFound, length: 0))
+            try #require(view.parsedDocument.text != controller.markdownDocument.text)
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            if usingReturn {
+                view.insertNewline(nil)
+            } else {
+                view.performSourceEdit(range: view.sourceSelectedRange, replacement: "\n")
+            }
+            let elapsed = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
+            #expect(controller.markdownDocument.text == source.replacingOccurrences(of: "Plain paragraph.", with: "Plain paragraph.!\n"))
+            return elapsed
+        }
+
+        let parseStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let parsed = MarkdownParser.parse(source)
+        let parseTime = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - parseStart
+        try #require(parsed.root.children.count == 4_001)
+        let newlineTime = try newlineCPUTime(usingReturn: false)
+        let returnTime = try newlineCPUTime(usingReturn: true)
+        print("RETURN_CPU_NS return=\(returnTime) newline=\(newlineTime) fullParse=\(parseTime)")
+        #expect(returnTime < newlineTime + parseTime / 2,
+                "Return used \(returnTime) ns of main-thread CPU, plain newline \(newlineTime) ns, full parse \(parseTime) ns")
+    }
+
+    @Test(arguments: [false, true])
+    func undoBeforeTableRestoresRenderedTableWithoutChangingMode(continuesList: Bool) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("table-undo-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = "- List item\n\n| Name | Value |\n| --- | --- |\n| Hello | World |\n\nDone.\n"
+        let controller = try makeController(text: source, file: url)
+        defer { controller.close() }
+        let view = controller.primaryContainer.textView
+        let document = controller.markdownDocument
+        let body = "| Hello | World |"
+        let layout = try #require(view.textLayoutManager)
+
+        func rendersTable(at offset: Int) -> Bool {
+            let textKit = view.currentDisplayMap.textKitOffset(forSource: offset)
+            guard let location = layout.location(layout.documentRange.location, offsetBy: textKit) else { return false }
+            layout.ensureLayout(for: NSTextRange(location: location))
+            guard let row = layout.textLayoutFragment(for: location) as? TableRowFragment else { return false }
+            return row.overrideHeight.map { $0 > 0 } == true
+        }
+
+        let originalRow = (source as NSString).range(of: body).location
+        #expect(rendersTable(at: originalRow))
+        view.setSourceSelectedRanges([NSRange(location: "- List item".utf16.count, length: 0)])
+        if continuesList {
+            view.insertNewline(nil)
+        } else {
+            // Exercise the original bare-newline journey independently of the list fix.
+            try #require(view.performSourceEdit(range: view.sourceSelectedRange, replacement: "\n"))
+        }
+        let edited = document.text
+        let shiftedRow = (edited as NSString).range(of: body).location
+        try document.save()
+        if !continuesList { document.ensureParsedCurrent() }
+        #expect(rendersTable(at: shiftedRow))
+
+        document.undoManager.undo()
+        try document.save()
+
+        #expect(try Data(contentsOf: url) == Data(source.utf8))
+        #expect(rendersTable(at: originalRow))
+
+        document.undoManager.redo()
+        #expect(document.text == edited)
+        #expect(rendersTable(at: shiftedRow))
+    }
+
     @Test func typingAtHeadingStartExtendsVisibleTitle() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("EditingKeyReproHeading-\(UUID().uuidString).md")
@@ -485,7 +646,9 @@ struct EditingKeyReproTests {
         view.resizeToFitContent()
         view.scroll(toOffset: caret, position: .center, animated: false)
         view.prepareForDisplay()
-        try await Task.sleep(for: .milliseconds(150))
+        try #require(await waitForAppKitState("initial document layout repair") {
+            view.pendingResizeRequestForTesting == nil
+        })
         let clip = controller.primaryContainer.scrollView.contentView
         // Deep lazy layout can refine its estimate after the first reveal.
         // Establish a visible editing caret before measuring deletion.
@@ -510,17 +673,13 @@ struct EditingKeyReproTests {
             let immediateY = clip.convert(immediateRect, from: view).minY - clip.bounds.minY
             #expect(abs(immediateY - screenY) < 1,
                     "word deletion moved the caret line immediately; reference rect/clip: \(referenceRect.minY)/\(referenceClipY), current: \(immediateRect.minY)/\(clip.bounds.minY), edit anchor: \(String(describing: view.localEditViewportAnchor))")
-            let deadline = ContinuousClock().now + .seconds(3)
-            // Poll immutable snapshot identity and revision, not the entire
-            // megabyte buffer every 5ms. Exact source equality is checked below.
-            while ContinuousClock().now < deadline,
-                  document.lastCompletedParseRevision.map({ $0 > beforeRevision }) != true
-                    || document.lastCompletedParseRevision != document.revision
-                    || view.parsedDocument !== document.parsed
-                    || view.pendingResizeRequestForTesting != nil {
-                controller.markdownDocument.flushScheduledReparse()
-                try await Task.sleep(for: .milliseconds(5))
-            }
+            document.flushScheduledReparse()
+            try #require(await waitForAppKitState("word deletion to commit and finish viewport repair") {
+                document.lastCompletedParseRevision.map { $0 > beforeRevision } == true
+                    && document.lastCompletedParseRevision == document.revision
+                    && view.parsedDocument === document.parsed
+                    && view.pendingResizeRequestForTesting == nil
+            })
             let converged = view.parsedDocument.text == controller.markdownDocument.text
             #expect(converged,
                     "the edit never reached its parsed presentation; source revision=\(document.revision.rawValue), parsed revision=\(String(describing: document.lastCompletedParseRevision)), snapshot matches=\(view.parsedDocument === document.parsed)")

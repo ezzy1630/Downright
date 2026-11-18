@@ -120,6 +120,11 @@ func stdinFile() -> URL? {    guard isatty(FileHandle.standardInput.fileDescript
 }
 
 func locateApp() -> URL? {
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    let bundleSuffix = ".app/Contents/MacOS/down"
+    if executable.path.hasSuffix(bundleSuffix) {
+        return URL(fileURLWithPath: String(executable.path.dropLast("/Contents/MacOS/down".count)), isDirectory: true)
+    }
     let candidates = [
         "/Applications/Downright.app",
         "\(NSHomeDirectory())/Applications/Downright.app",
@@ -147,22 +152,61 @@ func locateApp() -> URL? {
 @discardableResult
 func launch(_ paths: [String], options: MarkdownCLI.OpenOptions) -> Int32 {
     guard !paths.isEmpty, let app = locateApp() else { return 69 }
+    if options.edit || options.line != nil || options.review {
+        let urls = paths.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        launch(app, request: CommandLineOpenRequest(urls: urls, options: options), options: options)
+    }
     var openArguments = ["-a", app.path]
     if options.newWindow { openArguments.append("-n") }
     if options.background { openArguments.append("-g") }
     if options.wait { openArguments.append("-W") }
     openArguments.append("--")
     openArguments.append(contentsOf: paths)
-    var appArguments: [String] = []
-    if options.edit { appArguments.append(contentsOf: ["--mode", "live"]) }
-    if let line = options.line { appArguments.append(contentsOf: ["--downright-line", String(line)]) }
-    if options.review { appArguments.append("--downright-review") }
-    if !appArguments.isEmpty { openArguments.append(contentsOf: ["--args"] + appArguments) }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     process.arguments = openArguments
     do { try process.run(); process.waitUntilExit(); return process.terminationStatus }
     catch { return 70 }
+}
+
+func launch(_ app: URL, request: CommandLineOpenRequest, options: MarkdownCLI.OpenOptions) -> Never {
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = !options.background
+    configuration.createsNewApplicationInstance = options.newWindow
+    configuration.allowsRunningApplicationSubstitution = false
+    if let support = ProcessInfo.processInfo.environment["DOWNRIGHT_SUPPORT_DIRECTORY"] {
+        configuration.environment = ["DOWNRIGHT_SUPPORT_DIRECTORY": support]
+    }
+    // Keep the CLI alive for the Launch Services handoff, or until the exact
+    // receiver terminates when --wait was given.
+    let handoff: URL
+    do { handoff = try request.handoffURL() } catch {
+        writeError("Could not prepare the request for Downright: \(error.localizedDescription)", status: 1)
+    }
+    Task { @MainActor in
+        do {
+            let runningApp = try await NSWorkspace.shared.open([handoff], withApplicationAt: app, configuration: configuration)
+            guard runningApp.bundleURL?.resolvingSymlinksInPath().path == app.resolvingSymlinksInPath().path else {
+                writeError("Launch Services did not open \(app.path)", status: 1)
+            }
+            if options.wait, !runningApp.isTerminated {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    let process = DispatchSource.makeProcessSource(
+                        identifier: runningApp.processIdentifier, eventMask: .exit, queue: .main
+                    )
+                    process.setEventHandler { process.cancel() }
+                    process.setCancelHandler { continuation.resume() }
+                    process.activate()
+                    if runningApp.isTerminated { process.cancel() }
+                }
+            }
+            exit(0)
+        } catch {
+            CommandLineOpenRequest.discardHandoff(handoff)
+            writeError(error.localizedDescription, status: 1)
+        }
+    }
+    dispatchMain()
 }
 
 /// Reveals files in Finder without requiring Downright to be installed.

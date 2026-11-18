@@ -92,6 +92,18 @@ struct QuickLookPolicyTests {
         #expect(QuickLookLoader.load(contentsOf: url, hintedByteCount: utf32.count) == .full("# UTF-32\n"))
     }
 
+    @Test("A BOM-marked UTF-8 file that ends partway through a character still previews")
+    func bomUTF8TornAtEndOfFile() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("torn.md")
+        // A partially written file: the BOM declares UTF-8 and the last
+        // scalar (the first two bytes of 🌊) is incomplete at EOF.
+        let data = Data([0xEF, 0xBB, 0xBF]) + Data("# Café\n".utf8) + Data([0xF0, 0x9F])
+        try data.write(to: url)
+        #expect(QuickLookLoader.load(contentsOf: url, hintedByteCount: data.count) == .full("# Café\n"))
+    }
+
     @Test("Bounded loader normalizes a pure CRLF document")
     func boundedLoaderNormalizesCRLF() throws {
         let directory = try temporaryDirectory()
@@ -125,6 +137,32 @@ struct QuickLookPolicyTests {
             return
         }
         #expect(text.utf8.count <= QuickLookPolicy.prefixReadLimitBytes)
+    }
+
+    @Test("An oversized file keeps its encoding when the read cuts through an emoji", arguments: [false, true])
+    func oversizedPrefixKeepsEncoding(utf16: Bool) throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("emoji-at-boundary.md")
+        let start = "# Café\n\n"
+        let limit = QuickLookPolicy.prefixReadLimitBytes
+        let data: Data
+        if utf16 {
+            let pad = String(repeating: "a", count: limit / 2 - 2 - start.utf16.count)
+            let encoded = try #require((start + pad + "🌊 rest").data(using: .utf16LittleEndian))
+            data = Data([0xFF, 0xFE]) + encoded
+        } else {
+            data = Data(start.utf8) + Data(repeating: 0x61, count: limit - 1 - start.utf8.count)
+                + Data("🌊 rest".utf8)
+        }
+        try data.write(to: url)
+
+        guard case .prefix(let text) = QuickLookLoader.load(contentsOf: url, hintedByteCount: data.count) else {
+            Issue.record("A cut character at the byte limit should still produce a preview")
+            return
+        }
+        #expect(text.hasPrefix(start))
+        #expect(text.hasSuffix("aaaa"))
     }
 
     private func temporaryDirectory() throws -> URL {
