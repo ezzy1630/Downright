@@ -289,9 +289,9 @@ inspected for that prompt. A changed path requires a fresh decision. If the
 bytes could not be read, the buffer remains available for Save a Copy.
 
 Autosave is opt-in. Actual local source edits reset its idle deadline even when
-the buffer is already dirty. A checkbox toggle saves immediately from a clean
-file-backed buffer. In a dirty buffer it follows the normal save policy with
-the other edits. Discard suppresses implicit saves until a fresh source edit;
+the buffer is already dirty. A checkbox toggle or Task panel edit saves
+immediately from a clean file-backed buffer. In a dirty buffer it follows the
+normal save policy with the other edits. Discard suppresses implicit saves until a fresh source edit;
 parser and presentation updates cannot re-arm saving.
 
 Snapshots deduplicate by content hash. Retention applies the configured age,

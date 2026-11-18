@@ -504,16 +504,19 @@ extension DocumentWindowController: TaskPanelDelegate {
         commitTaskEdits(edits, actionName: "Move Task")
     }
 
-    /// Task edits behave like checkbox toggles (§7.1): the document writes
-    /// through immediately, the viewport does not jump, and the parse — which
-    /// repopulates the panel — lands in the same turn.
+    /// Task edits behave like checkbox toggles (§7.1): a standalone edit
+    /// writes through immediately, the viewport does not jump, and the parse —
+    /// which repopulates the panel — lands in the same turn.  An already-dirty
+    /// buffer keeps its normal save policy, so a task edit never persists
+    /// other unsaved (possibly discarded) text along with it.
     private func commitTaskEdits(_ edits: [TextEdit], actionName: String) {
         guard !edits.isEmpty else { return }
+        let shouldSaveImmediately = markdownDocument.url != nil && !markdownDocument.isDirty
         primaryContainer.textView.preserveViewportOnNextDocumentUpdate()
         splitContainer?.textView.preserveViewportOnNextDocumentUpdate()
         markdownDocument.apply(edits, actionName: actionName)
         markdownDocument.reparseNow()
-        if markdownDocument.url != nil { _ = markdownDocument.saveIfNeeded() }
+        if shouldSaveImmediately { _ = markdownDocument.saveIfNeeded() }
         refitFloatingSurfaceAfterContentChange()
     }
 }

@@ -175,6 +175,33 @@ struct NativeUIDriverTests {
         }
     }
 
+    @Test func taskPanelEditsLeaveExistingUnsavedEditsInMemory() async throws {
+        // Same policy as the checkbox: after "Discard" during a cancelled
+        // Quit, the refused text is still on screen and must not reach disk
+        // through the Task panel.
+        let original = "- [ ] First task\n\nOriginal prose.\n"
+        try await UIDriver.withDocument(original) { ui in
+            defer { ui.controller.markdownDocument.discardUnsavedChanges() }
+            try ui.click(onText: "Original prose")
+            try ui.type("unsaved ")
+            try #require(ui.isDirty)
+            ui.controller.taskPanel(TaskPanelView(), didRequestNewTask: "Second task", headingIndex: nil)
+            #expect(ui.source.contains("Second task") && ui.source.contains("unsaved "))
+            #expect(ui.isDirty)
+            #expect(try Data(contentsOf: ui.fixture) == Data(original.utf8))
+        }
+    }
+
+    @Test func taskPanelEditOnACleanDocumentStillWritesThrough() async throws {
+        let original = "- [ ] First task\n"
+        try await UIDriver.withDocument(original) { ui in
+            ui.controller.taskPanel(TaskPanelView(), didRequestNewTask: "Second task", headingIndex: nil)
+            #expect(!ui.isDirty)
+            let saved = try String(contentsOf: ui.fixture, encoding: .utf8)
+            #expect(saved.contains("Second task"))
+        }
+    }
+
     private func firstCheckboxPoint(in ui: UIDriver) throws -> NSPoint {
         let task = try #require(ui.textView.parsedDocument.tasks.first)
         let line = try #require(ui.textView.rect(forOffset: task.contentRange.location))

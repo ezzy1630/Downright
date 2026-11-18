@@ -58,6 +58,12 @@ every release; Sparkle orders updates by it.
   overwriting it.
 - Recreate File no longer overwrites a version that arrives while you're
   recovering a damaged file.
+- Checking off a task, or adding or moving one in the Task panel, no longer
+  saves the document's other unsaved edits along with it. In a document with
+  unsaved changes, the task change waits for your next save like any other
+  edit; in a saved document it still saves right away.
+- Choosing Discard when you follow a link away from unsaved changes now drops
+  those changes, even if the linked document opens in another tab.
 - Go to Line lands on the right line in files with mixed line endings, and
   Source mode keeps each line on its own numbered row in those files.
 - Clicking a link to a document that's already open switches to its tab or
