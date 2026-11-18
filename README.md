@@ -144,7 +144,8 @@ resting on the button shows what changed before you commit to it.
 
 If another app or coding agent rewrites an open file, Downright can show the
 change in place, preserve dirty local edits, and let you review word-level
-differences. It is a useful extra, not a different way of owning your files.
+differences. **Keep Mine** saves your current text over the external version
+shown in the conflict. A newer external edit prompts you to review it first.
 
 ## Reading and window preferences
 
@@ -184,6 +185,7 @@ down read --json README.md                # inspect without launching the app
 down outline --json README.md             # emit document structure
 down export --format html -o out.html README.md
 down check --target github Docs/sample.md # validate a render target
+down watch Docs Notes/plan.md            # watch a folder and one separate file
 down doctor                               # diagnose app, CLI, Quick Look, and updater setup
 ```
 
@@ -191,6 +193,9 @@ down doctor                               # diagnose app, CLI, Quick Look, and u
 machine-readable support report without modifying the machine; use
 `down doctor --app path/to/Downright.app` to inspect a development bundle. Run
 `down --help` for every command.
+`--edit`, `--line`, and `--review` also apply when Downright is already running.
+`down watch` includes Markdown descendants of a folder argument and only the
+named file for each file argument.
 
 ## Keyboard essentials
 

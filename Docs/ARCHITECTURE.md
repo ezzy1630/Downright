@@ -245,6 +245,10 @@ and copy feedback independently of TextKit's cached fence surfaces.
 Code fences can open on a list item's first line. Only actual opening and
 closing fence rows redirect a click into the code body.
 
+Source mode lays out physical lines without joining hard-wrapped prose. Its
+gutter and Go to Line use the parser's UTF-16 line starts, including LF, lone
+CR, and CRLF. The layout keeps the original separators in storage and on disk.
+
 Document commands apply source edits, reparse, and decorate inside one undo
 group. Return uses the current source to continue a list in one undo step. It
 keeps the bullet, quote prefix, and nesting, increments the new ordered marker,
@@ -271,6 +275,11 @@ writes replace the inode. On an external write:
 Dirty state compares exact UTF-16 source with the last saved generation. Returning
 to that text by deletion or undo clears the edited state without writing the
 file; pending external conflicts remain independent and cannot be overwritten.
+Keep Mine writes the visible buffer even after undo returns it to the last saved
+text. If a different external edit arrives before that save, the app presents
+the newer conflict. Recreate File creates an absent path exclusively or replaces
+the exact bytes it could read but could not decode. If the bytes cannot be read,
+the buffer remains available for Save a Copy.
 
 Autosave is opt-in. Actual local source edits reset its idle deadline even when
 the buffer is already dirty. Discard suppresses implicit saves until a fresh
@@ -291,9 +300,21 @@ run them without an isolated Application Support directory.
 
 Local document links resolve URL encoding and heading fragments separately from
 filesystem paths. The text surface routes native link activation through the app
-so Launch Services cannot independently open the same click. Back/Forward commit
-a history move only after the destination opens successfully and restore semantic
-reading anchors across files.
+so Launch Services cannot independently open the same click. In-place navigation
+checks the same file-identity registry as ordinary opens. An already-open
+destination selects its existing tab or window and resolves a linked heading
+there. Each tab keeps its own Back/Forward trail. In-place history hops commit
+only after a successful open and restore semantic reading anchors across files.
+If a history destination is already open in a different tab, that tab receives
+the saved anchor and both history cursors stay with their own documents.
+
+The CLI sends `--edit`, `--line`, and `--review` in an open-only
+`downright-cli:` URL addressed to the selected app bundle. Launch Services
+delivers the same request on cold and warm opens. The handler accepts local
+file paths and presentation options and uses the ordinary open registry.
+Go to Line and the app's command-line line handler use the parsed source's
+one-based line index, which recognizes LF, CRLF, and lone CR even within the
+same document.
 
 The app can open one file or an optional folder workspace. Workspace mode scans
 the folder for sibling documents and shows them newest first. It does not build

@@ -39,7 +39,7 @@ struct NativePolishRegressionTests {
         let controller = DocumentWindowController()
         try controller.open(first, mode: .live)
         defer { controller.close() }
-        #expect(controller.openInPlace(second))
+        #expect(controller.openInPlace(second) === controller)
         #expect(controller.jumpHistory.canGoBack)
         controller.goBack()
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
@@ -48,7 +48,7 @@ struct NativePolishRegressionTests {
         controller.goForward()
         #expect(controller.markdownDocument.url == first.resolvingSymlinksInPath())
         #expect(controller.jumpHistory.canGoForward)
-        #expect(!controller.openInPlace(second))
+        #expect(controller.openInPlace(second) == nil)
         #expect(controller.jumpHistory.canGoForward)
     }
 
@@ -67,6 +67,24 @@ struct NativePolishRegressionTests {
         #expect(controller.primaryContainer.textView.currentSearchHit?.location == 11)
     }
 
+    @Test func commandLineNavigationFindsLinesInMixedEndingDocuments() async throws {
+        let url = try fixture("First 😃\rSecond\r\nThird\n")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = DocumentWindowController()
+        try controller.open(url, mode: .live)
+        defer { controller.close() }
+
+        controller.applyCommandLineOpen(line: 2, review: false)
+
+        let deadline = ContinuousClock.now + .seconds(1)
+        while controller.jumpHistory.current == nil, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        let destination = try #require(controller.jumpHistory.current)
+        #expect(destination.label == "Line 2")
+        #expect(destination.offset == "First 😃\r".utf16.count)
+    }
+
     @Test func openingAnotherDocumentRestoresItsSplitState() throws {
         let first = try fixture("# First\n")
         let second = try fixture("# Second\n")
@@ -75,11 +93,11 @@ struct NativePolishRegressionTests {
         try controller.open(first, mode: .live)
         defer { controller.close() }
         controller.toggleSplitView()
-        #expect(controller.openInPlace(second))
+        #expect(controller.openInPlace(second) === controller)
         #expect(controller.splitContainer == nil)
-        #expect(controller.openInPlace(first))
+        #expect(controller.openInPlace(first) === controller)
         #expect(controller.splitContainer != nil)
-        #expect(controller.openInPlace(first))
+        #expect(controller.openInPlace(first) === controller)
         #expect(controller.splitContainer != nil)
     }
 
@@ -186,8 +204,8 @@ struct NativePolishRegressionTests {
         controller.window?.contentView?.layoutSubtreeIfNeeded()
         controller.primaryContainer.textView.prepareForDisplay()
         controller.toggleSplitView()
-        #expect(controller.openInPlace(first))
-        #expect(controller.openInPlace(target, fragment: "target"))
+        #expect(controller.openInPlace(first) === controller)
+        #expect(controller.openInPlace(target, fragment: "target") === controller)
         // Pane attachment queues a responsive-width resize. Let it finish:
         // an immediate offset assertion misses its stale camera restoration.
         await withCheckedContinuation { continuation in

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -297,7 +298,9 @@ struct AgentWatcherPlanTests {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("downright-watch-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        let physicalPath = try #require(realpath(url.path, nil))
+        defer { free(physicalPath) }
+        return URL(fileURLWithPath: String(cString: physicalPath), isDirectory: true)
     }
 
     /// Agents write atomically — temp file, then rename over the target — which
@@ -311,8 +314,8 @@ struct AgentWatcherPlanTests {
         try Data("# hi".utf8).write(to: file)
 
         let plan = AgentWatcher.plan(for: [file])
-        #expect(plan.directories == [directory.standardizedFileURL.path])
-        #expect(plan.allowedFiles == [file.standardizedFileURL.path])
+        #expect(plan.directories == [directory.path])
+        #expect(plan.allowedFiles == [file.path])
     }
 
     @Test("A directory root is watched directly and allows everything under it")
@@ -321,7 +324,7 @@ struct AgentWatcherPlanTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let plan = AgentWatcher.plan(for: [directory])
-        #expect(plan.directories == [directory.standardizedFileURL.path])
+        #expect(plan.directories == [directory.path])
         #expect(plan.allowedFiles.isEmpty)
     }
 
@@ -334,8 +337,8 @@ struct AgentWatcherPlanTests {
         let file = directory.appendingPathComponent("not-written-yet.md")
 
         let plan = AgentWatcher.plan(for: [file])
-        #expect(plan.directories == [directory.standardizedFileURL.path])
-        #expect(plan.allowedFiles == [file.standardizedFileURL.path])
+        #expect(plan.directories == [directory.path])
+        #expect(plan.allowedFiles == [file.path])
     }
 
     @Test("Duplicate roots collapse to one watch")
@@ -363,11 +366,61 @@ struct AgentWatcherPlanTests {
         #expect(AgentWatcher.accepts(directory.appendingPathComponent("other.md").path, plan: plan))
     }
 
+    @Test func directoryRootDoesNotBroadenASeparateFileWatch() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("project")
+        let other = root.appendingPathComponent("project-private")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: false)
+        let file = other.appendingPathComponent("watch.md")
+
+        let plan = AgentWatcher.plan(for: [directory, file])
+
+        #expect(AgentWatcher.accepts(directory.appendingPathComponent("deep/changed.markdown").path, plan: plan))
+        #expect(AgentWatcher.accepts(file.path, plan: plan))
+        #expect(!AgentWatcher.accepts(other.appendingPathComponent("unwatched.md").path, plan: plan))
+    }
+
+    @Test func directoryWatchReceivesFilesystemEventsThroughASymlink() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("actual")
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        let (events, continuation) = AsyncStream<URL>.makeStream()
+        let watcher = AgentWatcher(roots: [alias], debounce: 0.1) { urls in
+            for url in urls { continuation.yield(url) }
+        }
+        try #require(watcher.start())
+        defer {
+            watcher.stop()
+            continuation.finish()
+        }
+
+        let report = target.appendingPathComponent("report.markdown")
+        try Data("# Report\n".utf8).write(to: report, options: .atomic)
+
+        let observed = await withTaskGroup(of: URL?.self) { group in
+            group.addTask { await events.first { $0.lastPathComponent == "report.markdown" } }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(5))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        let reportedURL = try #require(observed)
+        #expect(try Data(contentsOf: reportedURL) == Data("# Report\n".utf8))
+    }
+
     /// A folder of agent output churns constantly with lockfiles, build
     /// artefacts and `.DS_Store`; only Markdown should wake the app.
     @Test("Only Markdown paths are accepted")
     func rejectsNonMarkdown() {
-        let plan = AgentWatcher.WatchPlan(directories: ["/w"], allowedFiles: [])
+        let plan = AgentWatcher.WatchPlan(directories: ["/w"], recursivePrefixes: ["/w/"], allowedFiles: [])
         #expect(AgentWatcher.accepts("/w/notes.md", plan: plan))
         #expect(AgentWatcher.accepts("/w/deep/nested/spec.mdx", plan: plan))
         #expect(!AgentWatcher.accepts("/w/.DS_Store", plan: plan))
@@ -377,7 +430,7 @@ struct AgentWatcherPlanTests {
 
     @Test("A file allow-list rejects siblings in the same directory")
     func allowListRejectsSiblings() {
-        let plan = AgentWatcher.WatchPlan(directories: ["/w"], allowedFiles: ["/w/notes.md"])
+        let plan = AgentWatcher.WatchPlan(directories: ["/w"], recursivePrefixes: [], allowedFiles: ["/w/notes.md"])
         #expect(AgentWatcher.accepts("/w/notes.md", plan: plan))
         #expect(!AgentWatcher.accepts("/w/other.md", plan: plan))
     }

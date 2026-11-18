@@ -115,14 +115,14 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         range: NSRange?,
         inNewWindow: Bool
     ) {
-        if inNewWindow {
-            (NSApp.delegate as? AppDelegate)?.open(url)
-        } else {
-            openInPlace(url)
-        }
-        guard let range, url.standardizedFileURL.path == markdownDocument.url?.standardizedFileURL.path else { return }
-        containerTextView.setSourceSelectedRanges([range])
-        containerTextView.scroll(toOffset: range.location, position: .visible, animated: true)
-        window?.makeFirstResponder(containerTextView)
+        let destination = inNewWindow
+            ? (NSApp.delegate as? AppDelegate)?.open(url)
+            : openInPlace(url)
+        guard let destination, let range,
+              range.upperBound <= destination.markdownDocument.storage.length else { return }
+        let editor = destination.containerTextView
+        editor.setSourceSelectedRanges([range])
+        editor.scroll(toOffset: range.location, position: .visible, animated: true)
+        destination.window?.makeFirstResponder(editor)
     }
 }

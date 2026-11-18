@@ -221,6 +221,36 @@ struct DocumentTrustStateTests {
         #expect(document.isDirty)
     }
 
+    @Test(arguments: [false, true]) @MainActor
+    func recreationOfUndecodableFileProtectsTheInspectedGeneration(replacedDuringSave: Bool) throws {
+        let fixture = try Fixture(text: "before\n")
+        defer { fixture.remove() }
+        let document = MarkdownDocument()
+        try document.open(fixture.url)
+        defer { document.close() }
+        document.replace(NSRange(location: 0, length: document.storage.length), with: "mine\n", actionName: "Typing")
+        try Data([0xEF, 0xBB, 0xBF, 0xFF]).write(to: fixture.url, options: .atomic)
+        guard case .failure(SaveError.fileUnreadable) = document.saveIfNeeded() else {
+            Issue.record("the file must require explicit recovery")
+            return
+        }
+
+        let external = Data("another writer's replacement\n".utf8)
+        if replacedDuringSave {
+            document.beforeSaveCommitForTesting = { try! external.write(to: fixture.url, options: .atomic) }
+            guard case .failure(SaveError.blockedByExternalConflict) = document.recreateMissingFile() else {
+                Issue.record("Recreate File overwrote a replacement that arrived during saving")
+                return
+            }
+            #expect(try Data(contentsOf: fixture.url) == external)
+            #expect(document.isDirty)
+        } else {
+            try document.recreateMissingFile().get()
+            #expect(try Data(contentsOf: fixture.url) == Data("mine\n".utf8))
+            #expect(!document.isDirty)
+        }
+    }
+
     @Test @MainActor
     func discardedEditsCannotReturnOnTheNextKeystroke() throws {
         let fixture = try Fixture(text: "saved\n")

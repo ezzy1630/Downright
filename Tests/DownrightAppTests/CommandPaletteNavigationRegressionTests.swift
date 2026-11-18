@@ -6,6 +6,35 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct CommandPaletteNavigationRegressionTests {
+    @Test func inPlaceLinkReusesOpenDocumentWithoutChangingOriginHistory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let origin = root.appendingPathComponent("A.md")
+        let destination = root.appendingPathComponent("B.md")
+        try Data("[Jump to B](B.md#target)\n".utf8).write(to: origin)
+        try Data("# B\n\n## Target\n".utf8).write(to: destination)
+        let app = AppDelegate()
+        let a = DocumentWindowController()
+        let b = DocumentWindowController()
+        try a.open(origin, mode: .live)
+        try b.open(destination, mode: .live)
+        app.adopt(a)
+        app.adopt(b)
+        defer {
+            a.documentWillClose()
+            b.documentWillClose()
+            a.close()
+            b.close()
+        }
+        let history = a.jumpHistory.entries
+        #expect(a.openInPlace(destination, fragment: "target") === b)
+        #expect(a.markdownDocument.url == origin.resolvingSymlinksInPath())
+        #expect(a.jumpHistory.entries == history)
+        #expect(b.markdownDocument.url == destination.resolvingSymlinksInPath())
+        #expect(b.jumpHistory.canGoBack)
+    }
+
     @Test func openInPlaceReportsWhetherTheIntendedDestinationOpened() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -17,9 +46,9 @@ struct CommandPaletteNavigationRegressionTests {
         let controller = DocumentWindowController()
         try controller.open(current, mode: .source)
         defer { controller.close() }
-        #expect(!controller.openInPlace(root.appendingPathComponent("missing.md")))
+        #expect(controller.openInPlace(root.appendingPathComponent("missing.md")) == nil)
         #expect(controller.markdownDocument.url == current.resolvingSymlinksInPath())
-        #expect(controller.openInPlace(destination))
+        #expect(controller.openInPlace(destination) === controller)
         #expect(controller.markdownDocument.url == destination.resolvingSymlinksInPath())
     }
 

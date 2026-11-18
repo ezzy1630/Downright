@@ -9,11 +9,10 @@ enum SaveIntent {
     /// conflict instead of deciding silently.  Used by every implicit save
     /// path: occlusion autosave, quit, checkbox toggle, and the close alert.
     case normal
-    /// An explicit "keep my changes and write them over the file" decision,
-    /// made by the user through the conflict bar.
+    /// Overwrite the external version shown in the conflict bar.
     case keepMine
-    /// Recreates a path that is missing or replaces one that cannot currently
-    /// be read. This intent is only issued from the explicit recovery sheet;
+    /// Recreates a missing path or replaces bytes that could not be decoded.
+    /// This intent is only issued from the explicit recovery sheet;
     /// autosave, close, quit, and task toggles must never choose it.
     case recreateFile
 }
@@ -91,7 +90,7 @@ final class MarkdownDocument: NSObject {
         case unchanged(data: Data, fidelity: ByteFidelity)
         case changed(text: String, hunks: [ChangeHunk], data: Data, fidelity: ByteFidelity)
         case missing
-        case unreadable(Error)
+        case unreadable(Error, inspectedData: Data?)
     }
 
     /// One explicit state vocabulary for native chrome and accessibility.
@@ -525,7 +524,6 @@ final class MarkdownDocument: NSObject {
         // may make the keep-mine call for the user.  Surface any unresolved
         // conflict — or one detected right now — and refuse to write.
         var expectedDiskData: Data?
-        var requiresMissingPath = false
         if intent != .recreateFile {
             if intent == .normal, let conflict = pendingConflict {
                 throw presentBlockingConflict(conflict, incoming: conflict.incomingText, incomingHash: nil)
@@ -535,7 +533,9 @@ final class MarkdownDocument: NSObject {
                 expectedDiskData = data
                 fidelity = freshFidelity
             case .changed(let incoming, let hunks, let data, let freshFidelity):
-                if intent == .normal {
+                let incomingHash = SnapshotStore.hash(incoming)
+                let approvedHash = pendingConflict.map { SnapshotStore.hash($0.incomingText) }
+                if intent == .normal || incomingHash != approvedHash {
                     let conflict = Conflict(
                         incomingText: incoming,
                         hunks: hunks,
@@ -544,8 +544,7 @@ final class MarkdownDocument: NSObject {
                         incomingByteHash: DocumentIO.contentHash(data)
                     )
                     throw presentBlockingConflict(
-                        conflict, incoming: incoming,
-                        incomingHash: SnapshotStore.hash(incoming)
+                        conflict, incoming: incoming, incomingHash: incomingHash
                     )
                 }
                 // Keep Mine is explicit about content, not byte formatting.
@@ -556,7 +555,7 @@ final class MarkdownDocument: NSObject {
                 let error = SaveError.fileMissing(url)
                 publishSaveFailure(error)
                 throw error
-            case .unreadable(let underlying):
+            case .unreadable(let underlying, _):
                 let error = SaveError.fileUnreadable(url, underlying: underlying)
                 publishSaveFailure(error)
                 throw error
@@ -567,9 +566,14 @@ final class MarkdownDocument: NSObject {
             // since the sheet was shown, it is external state and wins.
             switch inspectDiskState() {
             case .missing:
-                requiresMissingPath = true
-            case .unreadable:
-                break
+                expectedDiskData = nil
+            case .unreadable(let underlying, let inspectedData):
+                guard let inspectedData else {
+                    let error = SaveError.fileUnreadable(url, underlying: underlying)
+                    publishSaveFailure(error)
+                    throw error
+                }
+                expectedDiskData = inspectedData
             case .unchanged(let data, let freshFidelity):
                 expectedDiskData = data
                 fidelity = freshFidelity
@@ -601,12 +605,8 @@ final class MarkdownDocument: NSObject {
                 try DocumentIO.replaceExistingAtomically(
                     with: encoded, at: url, expected: expectedDiskData
                 )
-            } else if requiresMissingPath {
-                try DocumentIO.createAtomically(with: encoded, at: url)
             } else {
-                // Only the explicit Recreate File recovery action may create
-                // or replace without an inspected existing generation.
-                try encoded.write(to: url, options: .atomic)
+                try DocumentIO.createAtomically(with: encoded, at: url)
             }
         } catch {
             watcher?.cancelOwnWriteSuppression()
@@ -631,7 +631,7 @@ final class MarkdownDocument: NSObject {
                 let missing = SaveError.fileMissing(url)
                 publishSaveFailure(missing)
                 throw missing
-            case .unreadable(let underlying):
+            case .unreadable(let underlying, _):
                 let unreadable = SaveError.fileUnreadable(url, underlying: underlying)
                 publishSaveFailure(unreadable)
                 throw unreadable
@@ -657,20 +657,25 @@ final class MarkdownDocument: NSObject {
     /// distinct fail-closed states, never collapsed into "no change".
     func inspectDiskState() -> DiskState {
         guard let url else { return .missing }
-        let snapshot: (text: String, fidelity: ByteFidelity, data: Data)
+        let data: Data
         do {
-            snapshot = try DocumentIO.readSnapshot(contentsOf: url)
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return .missing
         } catch {
-            if !FileManager.default.fileExists(atPath: url.path) {
-                return .missing
-            }
-            return .unreadable(error)
+            return .unreadable(error, inspectedData: nil)
+        }
+        let snapshot: (text: String, fidelity: ByteFidelity)
+        do {
+            snapshot = try DocumentIO.decodeSnapshot(data, sourceURL: url)
+        } catch {
+            return .unreadable(error, inspectedData: data)
         }
         let incoming = snapshot.text
         let incomingHash = SnapshotStore.hash(incoming)
-        let incomingByteHash = DocumentIO.contentHash(snapshot.data)
+        let incomingByteHash = DocumentIO.contentHash(data)
         guard incomingByteHash != diskByteHash else {
-            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+            return .unchanged(data: data, fidelity: snapshot.fidelity)
         }
         // The decoded generation is still the one we opened; only its byte
         // representation changed externally. Adopt those facts even when the
@@ -679,7 +684,7 @@ final class MarkdownDocument: NSObject {
         if incomingHash == diskHash {
             diskByteHash = incomingByteHash
             fidelity = snapshot.fidelity
-            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+            return .unchanged(data: data, fidelity: snapshot.fidelity)
         }
         // If the disk already holds the buffer's bytes, writing is a no-op and
         // there is nothing being clobbered.  A trailing-newline-only difference
@@ -690,12 +695,12 @@ final class MarkdownDocument: NSObject {
             diskHash = incomingHash
             diskByteHash = incomingByteHash
             fidelity = snapshot.fidelity
-            return .unchanged(data: snapshot.data, fidelity: snapshot.fidelity)
+            return .unchanged(data: data, fidelity: snapshot.fidelity)
         }
         return .changed(
             text: incoming,
             hunks: TextDiff.hunks(old: storage.string, new: incoming),
-            data: snapshot.data,
+            data: data,
             fidelity: snapshot.fidelity
         )
     }
@@ -1702,7 +1707,8 @@ final class MarkdownDocument: NSObject {
     /// Conflict resolution: keep the buffer and write it over the file.
     @discardableResult
     func resolveConflictKeepingMine() -> Result<Void, Error> {
-        let result = saveIfNeeded(intent: .keepMine)
+        let result = pendingConflict == nil
+            ? saveIfNeeded(intent: .keepMine) : Result { try save(intent: .keepMine) }
         if case .success = result {
             pendingConflict = nil
             changes.clear()
