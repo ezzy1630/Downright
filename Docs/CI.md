@@ -78,9 +78,12 @@ cancelled, missing, or unfinished required checks and reports their exact state.
 
 ## Writing tests
 
-Test source, storage, and rendering logic with Swift Testing. Use an XCUITest
-against the packaged host for bugs involving actual pointer input, typing,
-focus, or composited output. Use a manual check where a required surface has
+Test source, storage, and rendering logic with Swift Testing. Drive document
+interaction (pointer, keyboard, hover, scrolling, Settings) with the in-process
+UI driver described in [Native UI testing](UI-TESTING.md); it runs in this
+source gate. Use an XCUITest against the packaged host for behavior that needs
+a foreground packaged app, system dialogs, another process, or composited
+output. Use a manual check where a required surface has
 no automated input or observable result, and record exactly what it proved.
 
 Start with the report's document and action, reproduce the failure, and assert

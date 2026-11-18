@@ -91,6 +91,15 @@ COUNT="$(LC_ALL=en_US.UTF-8 awk '
     /^➜ Test .* skipped/ { skipped++ }
     END { print count - skipped }
 ' "$TEST_LOG")"
+# A test runner can stop after AppKit event posting without a summary yet exit
+# 0 (https://github.com/swiftlang/swift/issues/91716). Every started Swift
+# Testing run must reach its completion line, or its tests did not all run.
+STARTED="$(grep -ac '^◇ Test run started' "$TEST_LOG")"
+FINISHED="$(grep -acE '^[✔✘] Test run with [0-9]+ tests?' "$TEST_LOG")"
+if [ "$STARTED" -ne "$FINISHED" ]; then
+    echo "    INCOMPLETE — $STARTED Swift Testing runs started but $FINISHED finished ($TEST_LOG)"
+    exit 1
+fi
 if ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
     echo "    NO TESTS RAN — check the filter or selected Swift toolchain ($TEST_LOG)"
     exit 1

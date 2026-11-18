@@ -43,11 +43,15 @@ should cover clean and dirty local-edit states.
 ## Writing tests
 
 Use a Swift Testing unit or integration test for parser, edit, persistence,
-and view-model behavior that can be observed without physical input. Use an
-XCUITest with real mouse or keyboard input when the bug depends on focus,
-hit testing, scrolling, or the WindowServer's rendered pixels. Reserve manual
-checks for surfaces the automated suite cannot drive, such as Finder's
-Spacebar preview. [CI and test evidence](Docs/CI.md)
+and view-model behavior that can be observed without physical input. For
+clicks, drags, typing, hover, scrolling, and Settings changes inside a document
+window, use the in-process UI driver: it sends real AppKit events through real
+windows inside `swift test`, needs no Automation Mode, and never moves your
+cursor. Keep XCUITests (hosted CI) for behavior that needs a packaged,
+foreground app, a system dialog such as the save panel, or another process.
+Reserve manual checks for surfaces neither can drive, such as Finder's
+Spacebar preview. [Native UI testing](Docs/UI-TESTING.md) ·
+[CI and test evidence](Docs/CI.md)
 
 Reduce a bug report to a small disposable document and the shortest failing
 action sequence. Assert the affected output, file bytes, or user-visible state.

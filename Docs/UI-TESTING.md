@@ -6,18 +6,16 @@ Use the activated XCUITest suite on hosted CI for behavior that depends on a pac
 
 ## Run a focused test
 
-On an Xcode toolchain, create a disposable support directory before SwiftPM starts. App services load their support paths at initialization. The source gate already sets and cleans this directory.
-
 ```bash
-(
-  DOWNRIGHT_SUPPORT_DIRECTORY="$(mktemp -d)" || exit 1
-  export DOWNRIGHT_SUPPORT_DIRECTORY
-  trap 'find "$DOWNRIGHT_SUPPORT_DIRECTORY" -depth -delete' EXIT
-  swift test --no-parallel --scratch-path .build-ui-test --filter 'Native(UIDriver|RenderInput|PreviewInput)Tests'
-)
+Scripts/test.sh --filter 'Native(UIDriver|RenderInput|PreviewInput)Tests'
 ```
 
-Run `Scripts/check.sh` for the authoritative check, including Command Line Tools configurations. Check for the concluding Swift Testing summary from each target that had a selected suite. In particular, AppKit event posting can stop the SwiftPM runner before it emits a result. A zero exit code with a missing summary does not establish a pass. [Swift runtime issue](https://github.com/swiftlang/swift/issues/91716)
+`Scripts/test.sh` uses the source gate's toolchain flags and a disposable
+Application Support directory. It fails when no tests ran, and when a Swift
+Testing run started but never printed its completion summary: AppKit event
+posting can stop the SwiftPM runner early while it still exits 0
+([Swift runtime issue](https://github.com/swiftlang/swift/issues/91716)).
+Run `Scripts/check.sh` for the authoritative check.
 
 ## Driver API
 
