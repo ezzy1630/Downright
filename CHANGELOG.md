@@ -12,8 +12,52 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+### Added
+
+- Choose any installed font for document text and headings in Settings →
+  Typography → Font family. "Preset Default" keeps the Reading (New York) or
+  Working (SF Pro Text) font, and code keeps its own monospace font. If a font
+  you chose is later removed, documents go back to the preset's font, and HTML
+  export uses your chosen font too.
+  ([#61](https://github.com/ezzy1630/Downright/issues/61))
+- Pressing Return at the end of a bulleted, numbered, or task item starts the
+  next item. Return on an empty item ends the list or moves it up a level.
+
 ### Fixed
 
+- In a narrow Quick Look window, the heading preview no longer covers the
+  document map beside it, so every heading stays reachable.
+  ([#62](https://github.com/ezzy1630/Downright/issues/62))
+- Quick Look opens empty files, shows images stored next to the document,
+  responds to the arrow keys right away, names the right heading when you
+  hover the map, and recolors the map when you switch between light and dark.
+  Very large files no longer show broken characters where the preview stops,
+  and the metadata card no longer offers an Edit button that can't work there.
+- Finder thumbnails show a document's opening text instead of a badge.
+- Copying or cutting formatted text no longer picks up stray Markdown
+  markers, and pasting it back no longer doubles them.
+- Tables stay visible after you undo an edit above them.
+- Copy Code appears when you hover either end of a code block, including
+  after you scroll past its top.
+- Selecting a heading's `#` and typing replaces it as expected, multi-line
+  pastes stay inside a focused source block, you can click and type on the
+  last line of an unfinished code block, Copy Code keeps lines that only look
+  like fences, and a code block that starts on a list item's line is
+  recognized.
+- Keep Mine saves the text you see, even after Undo returned it to the saved
+  version. If another change lands on disk before Keep Mine finishes,
+  Downright keeps that change and shows the conflict again instead of
+  overwriting it.
+- Recreate File no longer overwrites a version that arrives while you're
+  recovering a damaged file.
+- Go to Line lands on the right line in files with mixed line endings.
+- Code is set in SF Mono as designed. On Macs where SF Mono isn't installed as
+  a separate font, code had fallen back to Menlo and Settings listed SF Mono as
+  "not available".
+- VoiceOver reads the name of every popup menu in Settings.
+- `down export` no longer crashes on an image link without a file path, and
+  `down watch` reports changes only for the files and folders you name,
+  including folders reached through a symlink.
 - When an update has downloaded in the background, resting the pointer on
   the title bar's "Update Now" button shows that update's release notes
   instead of "No release notes for this build." The fix takes effect for
