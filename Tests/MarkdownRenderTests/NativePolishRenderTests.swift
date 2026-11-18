@@ -85,7 +85,7 @@ struct NativePolishRenderTests {
         source.update(document: MarkdownParser.parse(text), dirty: .wholesale)
         let shared = MarkdownTextView(frame: source.frame, storage: storage, styleSheet: source.styleSheet, sharingPresentationOf: source)
         let children = (shared.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityElement }
-        #expect(children.compactMap { $0.accessibilityLabel() } == ["Edit document metadata", "Markdown table", "Display math"])
+        #expect(children.compactMap { $0.accessibilityLabel() } == ["Document metadata", "Markdown table", "Display math"], "no delegate: a read-only host")
         #expect(children.allSatisfy { ($0.accessibilityParent() as? MarkdownTextView) === shared })
     }
 
