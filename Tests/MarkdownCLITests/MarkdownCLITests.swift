@@ -126,6 +126,31 @@ struct MarkdownCLITests {
         #expect(output.contains("open request exceeds 256 KiB after encoding"), "Unexpected diagnostic: \(output)")
     }
 
+    @Test func sandboxedCallerHandoffIsFoundOnlyInItsOwnContainer() throws {
+        // A `down` spawned by a sandboxed app (the XCUITest runner, a
+        // sandboxed agent) writes into ~/Library/Containers/<id>/Data/tmp.
+        let root = try handoffDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let containers = root.appendingPathComponent("Containers", isDirectory: true)
+        let tmp = containers.appendingPathComponent("com.example.agent/Data/tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let ordinary = root.appendingPathComponent("T", isDirectory: true)
+        try FileManager.default.createDirectory(at: ordinary, withIntermediateDirectories: true)
+
+        let request = CommandLineOpenRequest(urls: [URL(fileURLWithPath: "/tmp/a.md")], options: .init())
+        let delivered = try request.handoffURL(directory: tmp, container: "com.example.agent")
+        #expect(delivered.absoluteString.contains("container=com.example.agent"))
+        #expect(CommandLineOpenRequest.receive(delivered, directory: ordinary, containers: containers, now: Date())?
+            .urls.map(\.path) == ["/tmp/a.md"])
+
+        for forged in ["../../etc", "a/b", ".hidden", "", "com.example.agent%2F..%2F.."] {
+            let url = try #require(URL(string: "downright-cli://open?request=\(UUID().uuidString)&container=\(forged)"))
+            #expect(CommandLineOpenRequest.receive(url, directory: ordinary, containers: containers) == nil, "\(forged)")
+        }
+        #expect(!CommandLineOpenRequest.isValidContainerID("../x"))
+        #expect(CommandLineOpenRequest.isValidContainerID("com.ezzy.downright.uitests.xctrunner"))
+    }
+
     private func handoffDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("downright-cli-handoff-\(UUID().uuidString)", isDirectory: true)

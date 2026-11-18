@@ -45,9 +45,20 @@ public struct CommandLineOpenRequest {
         return URL(fileURLWithPath: String(cString: buffer), isDirectory: true)
     }
 
+    /// When `down` runs inside an App Sandbox (for example spawned by a
+    /// sandboxed app or agent), the system temporary directory is that
+    /// container's `Data/tmp`, which the app cannot find on its own.  Name
+    /// the container in the URL only in that exact case.
+    public static var callerContainer: String? {
+        guard let id = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"],
+              isValidContainerID(id) else { return nil }
+        let path = handoffDirectory.standardizedFileURL.path
+        return path.hasSuffix("/Library/Containers/\(id)/Data/tmp") ? id : nil
+    }
+
     /// Writes the request to a new owner-only file and returns the URL to
     /// deliver.  Call `discardHandoff(_:)` if delivery fails.
-    public func handoffURL(directory: URL = handoffDirectory) throws -> URL {
+    public func handoffURL(directory: URL = handoffDirectory, container: String? = callerContainer) throws -> URL {
         let payload = Array(payloadURL.absoluteString.utf8)
         guard payload.count <= Self.maximumPayloadBytes else { throw HandoffError.payloadTooLarge }
         let id = UUID().uuidString
@@ -69,23 +80,30 @@ public struct CommandLineOpenRequest {
         parts.scheme = Self.scheme
         parts.host = "open"
         parts.queryItems = [URLQueryItem(name: "request", value: id)]
+            + (container.map { [URLQueryItem(name: "container", value: $0)] } ?? [])
         return parts.url!
     }
 
     /// Removes the handoff file behind a URL that was never delivered.
     public static func discardHandoff(_ url: URL, directory: URL = handoffDirectory) {
-        guard let id = handoffID(in: url) else { return }
-        unlink(handoffFile(id: id, in: directory).path)
+        guard let handoff = handoff(in: url) else { return }
+        unlink(handoffFile(id: handoff.id, in: directory).path)
     }
 
     /// Reads and consumes the request behind a delivered URL.  Returns nil
     /// for any URL whose one-shot file is missing, expired, not a private
-    /// regular file owned by this user, or malformed.
+    /// regular file owned by this user, or malformed.  A sandboxed caller's
+    /// file is looked up only in `<home>/Library/Containers/<id>/Data/tmp`.
     public static func receive(
-        _ url: URL, directory: URL = handoffDirectory, now: Date = Date()
+        _ url: URL, directory: URL = handoffDirectory, containers: URL = userContainersDirectory,
+        now: Date = Date()
     ) -> CommandLineOpenRequest? {
-        guard let id = handoffID(in: url) else { return nil }
-        let path = handoffFile(id: id, in: directory).path
+        guard let handoff = handoff(in: url) else { return nil }
+        let source = handoff.container.map {
+            containers.appendingPathComponent($0, isDirectory: true)
+                .appendingPathComponent("Data/tmp", isDirectory: true)
+        } ?? directory
+        let path = handoffFile(id: handoff.id, in: source).path
         let descriptor = Darwin.open(path, O_RDONLY | O_NOFOLLOW)
         guard descriptor >= 0 else { return nil }
         defer { close(descriptor) }
@@ -108,14 +126,45 @@ public struct CommandLineOpenRequest {
         return CommandLineOpenRequest(payloadURL: payload)
     }
 
-    private static func handoffID(in url: URL) -> String? {
+    /// The real user's `~/Library/Containers`, from the password database
+    /// rather than `$HOME`, which a sandboxed process sees as its container.
+    public static var userContainersDirectory: URL {
+        let home = getpwuid(getuid()).flatMap { String(validatingCString: $0.pointee.pw_dir) }
+            ?? NSHomeDirectory()
+        return URL(fileURLWithPath: home, isDirectory: true)
+            .appendingPathComponent("Library/Containers", isDirectory: true)
+    }
+
+    static func isValidContainerID(_ id: String) -> Bool {
+        guard (1...255).contains(id.utf8.count), !id.hasPrefix("."), !id.contains("..") else { return false }
+        return id.unicodeScalars.allSatisfy {
+            ("a"..."z").contains($0) || ("A"..."Z").contains($0) || ("0"..."9").contains($0)
+                || $0 == "." || $0 == "-" || $0 == "_"
+        }
+    }
+
+    private static func handoff(in url: URL) -> (id: String, container: String?)? {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               parts.scheme == scheme, parts.host == "open", parts.path.isEmpty,
               parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil,
-              let items = parts.queryItems, items.count == 1, items[0].name == "request",
-              let value = items[0].value, let uuid = UUID(uuidString: value), uuid.uuidString == value
+              let items = parts.queryItems, (1...2).contains(items.count)
         else { return nil }
-        return value
+        var id: String?
+        var container: String?
+        for item in items {
+            guard let value = item.value else { return nil }
+            switch item.name {
+            case "request" where id == nil:
+                guard let uuid = UUID(uuidString: value), uuid.uuidString == value else { return nil }
+                id = value
+            case "container" where container == nil:
+                guard isValidContainerID(value) else { return nil }
+                container = value
+            default:
+                return nil
+            }
+        }
+        return id.map { ($0, container) }
     }
 
     private static func handoffFile(id: String, in directory: URL) -> URL {
