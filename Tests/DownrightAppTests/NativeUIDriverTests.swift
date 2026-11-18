@@ -60,6 +60,17 @@ struct NativeUIDriverTests {
         }
     }
 
+    @Test func dragAfterTheFixtureWindowResignsKeyStillSelects() async throws {
+        // Hosted runners can resign the invisible window's key state while a
+        // test awaits; the next mouse-down was then swallowed as a first click.
+        try await UIDriver.withDocument("# Title\n\nBefore **bold words** after.\n") { ui in
+            ui.window.resignKey()
+            try ui.drag(fromText: "Before", toText: "after")
+            ui.check(ui.selectedSourceText == "Before **bold words** after",
+                     "Drag after resignKey selected \(ui.selectedSourceRange)")
+        }
+    }
+
     @Test func listReturnAndUndoRedo() async throws {
         let initial = "- alpha\n"
         try await UIDriver.withDocument(initial) { ui in
