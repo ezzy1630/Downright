@@ -57,7 +57,12 @@ every release; Sparkle orders updates by it.
   overwriting it.
 - Recreate File no longer overwrites a version that arrives while you're
   recovering a damaged file.
-- Go to Line lands on the right line in files with mixed line endings.
+- Go to Line lands on the right line in files with mixed line endings, and
+  Source mode keeps each line on its own numbered row in those files.
+- Clicking a link to a document that's already open switches to its tab or
+  window instead of opening a second copy of the same file.
+- `down --line`, `--review`, and `--edit` now work when Downright is already
+  running, instead of opening the file at the top.
 - Code is set in SF Mono as designed. On Macs where SF Mono isn't installed as
   a separate font, code had fallen back to Menlo and Settings listed SF Mono as
   "not available".
