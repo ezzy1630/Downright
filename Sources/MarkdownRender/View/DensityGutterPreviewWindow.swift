@@ -5,9 +5,9 @@ import MarkdownCore
 ///
 /// A borderless child window rather than an `NSPopover`: a popover animates,
 /// takes focus, and draws an anchor arrow, all of which are wrong for something
-/// that has to track a drag at 120fps.  It ignores mouse events entirely so it
-/// stays non-interactive during scrubbing, but can accept pointer presence
-/// during passive hover so the line-to-card path does not feel fragile.
+/// that has to track a drag at 120fps. Compact overlays and scrub previews
+/// pass pointer events through. A card in the margin can stay open while
+/// the pointer moves from a mark into the card.
 final class DensityGutterPreviewWindow: NSWindow {
     var styleSheet: StyleSheet {
         didSet {
@@ -29,12 +29,6 @@ final class DensityGutterPreviewWindow: NSWindow {
     /// body) and only gives up when the margin is genuinely a sliver.
     static let minimumUsefulWidth: CGFloat = 140
     static let anchorGap: CGFloat = 8
-    /// Quick Look windows are often only 600–800pt wide. When the reading
-    /// measure consumes the entire margin, a compact overlay is preferable to
-    /// silently removing the map's only orientation affordance. The editor
-    /// leaves this off so prose is never covered during normal work.
-    var allowsContentOverlap = false
-
     static func compactOverlayWidth(parentWidth: CGFloat) -> CGFloat {
         min(preferredWidth, max(minimumUsefulWidth, parentWidth * 0.42))
     }
@@ -76,14 +70,15 @@ final class DensityGutterPreviewWindow: NSWindow {
         }
     }
 
-    /// `anchor` is the screen point at the gutter's trailing edge, level with
-    /// the pointer. The hover form carries the heading and a short text
+    /// `rail` and `pointerY` are in screen coordinates. The entire rail stays
+    /// clear of the child window. The hover form carries the heading and a short text
     /// glimpse; `footer` carries the §9.6 reading metrics.
     func show(
         title: String,
         snippet: String,
         footer: String,
-        rightOf anchor: NSPoint,
+        beside rail: NSRect,
+        pointerY: CGFloat,
         over parent: NSWindow,
         maximumTrailingX: CGFloat? = nil,
         reduceMotion: Bool,
@@ -91,57 +86,61 @@ final class DensityGutterPreviewWindow: NSWindow {
         allowContentOverlap: Bool = false
     ) {
         presentationGeneration &+= 1
-        allowsContentOverlap = allowContentOverlap
-        ignoresMouseEvents = !interactive
         let titleChanged = content.update(title: title, snippet: snippet, footer: footer)
         let alreadyPresented = isVisible && self.parent === parent
         // Pointer movement should not trigger a new text measurement on every
         // event. Keep the card geometry stable within a section; reflow only
         // when a new heading arrives, where the change carries meaning.
-        let opensInward = anchor.x > parent.frame.midX
-        let visibleFrame = (parent.screen ?? NSScreen.main)?.visibleFrame
-        let resolvedWidth = Self.resolvedMaximumWidth(
-            anchorX: anchor.x,
-            maximumTrailingX: maximumTrailingX,
-            minimumOriginX: visibleFrame.map { $0.minX + 4 },
-            opensInward: opensInward
-        )
-        let usesCompactOverlay = resolvedWidth == nil && allowsContentOverlap
+        let opensInward = maximumTrailingX == nil && rail.midX > parent.frame.midX
+        let visibleFrame = (parent.screen ?? NSScreen.main)?.visibleFrame.insetBy(dx: 4, dy: 4)
+        let hostBounds = visibleFrame.map { $0.intersection(parent.frame) } ?? parent.frame
+        guard !hostBounds.isEmpty else {
+            hide(immediately: true)
+            return
+        }
+        let edge = opensInward
+            ? min(hostBounds.maxX, rail.minX - Self.anchorGap)
+            : max(hostBounds.minX, rail.maxX + Self.anchorGap)
+        let available = opensInward ? edge - hostBounds.minX : hostBounds.maxX - edge
+        let resolvedWidth: CGFloat?
+        if opensInward {
+            resolvedWidth = min(Self.preferredWidth, available)
+        } else {
+            resolvedWidth = Self.resolvedMaximumWidth(
+                anchorX: rail.maxX,
+                maximumTrailingX: min(hostBounds.maxX, maximumTrailingX ?? hostBounds.maxX),
+                minimumOriginX: hostBounds.minX,
+                opensInward: false
+            )
+        }
+        let usesCompactOverlay = resolvedWidth == nil && allowContentOverlap
         let maximumWidth: CGFloat
         if let resolvedWidth {
             maximumWidth = resolvedWidth
         } else if usesCompactOverlay {
-            maximumWidth = Self.compactOverlayWidth(parentWidth: parent.frame.width)
+            maximumWidth = min(available, Self.compactOverlayWidth(parentWidth: parent.frame.width))
         } else {
-            hide()
+            maximumWidth = 0
+        }
+        guard maximumWidth >= Self.minimumUsefulWidth else {
+            hide(immediately: true)
             return
         }
+        ignoresMouseEvents = !interactive || usesCompactOverlay
         let size = alreadyPresented && !titleChanged && frame.width <= maximumWidth
             ? frame.size
             : content.fittingSize(maxWidth: maximumWidth)
-
-        var origin = NSPoint(
-            x: opensInward
-                ? anchor.x - size.width - Self.anchorGap
-                : max(anchor.x + Self.anchorGap, visibleFrame.map { $0.minX + 4 } ?? anchor.x + Self.anchorGap),
-            y: anchor.y - size.height / 2
-        )
-        if !opensInward, let maximumTrailingX {
-            origin.x = min(origin.x, maximumTrailingX - size.width)
-        }
-        if let visible = visibleFrame {
-            origin.x = min(max(visible.minX + 4, origin.x), visible.maxX - size.width - 4)
-            origin.y = min(max(visible.minY + 4, origin.y), visible.maxY - size.height - 4)
-        }
-        // The screen clamp above must not trade one invariant for another. If
-        // the card cannot fit both on-screen and before the text column, hide
-        // it; covering prose is never an acceptable fallback.
-        if !opensInward, let maximumTrailingX,
-           !usesCompactOverlay,
-           origin.x + size.width > maximumTrailingX + 0.5 {
-            hide()
+        guard size.height <= hostBounds.height else {
+            hide(immediately: true)
             return
         }
+
+        // Fit the width before choosing the origin. Clamping the finished
+        // card horizontally can slide it over the rail it is anchored to.
+        let origin = NSPoint(
+            x: opensInward ? edge - size.width : edge,
+            y: min(max(hostBounds.minY, pointerY - size.height / 2), hostBounds.maxY - size.height)
+        )
         let finalFrame = NSRect(origin: origin, size: size)
 
         if alreadyPresented {
@@ -184,12 +183,12 @@ final class DensityGutterPreviewWindow: NSWindow {
         content.staggerSnippetReveal(reduceMotion: false)
     }
 
-    func hide() {
+    func hide(immediately: Bool = false) {
         guard isVisible || parent != nil else { return }
         presentationGeneration &+= 1
         let generation = presentationGeneration
 
-        guard !styleSheet.reduceMotion else {
+        guard !immediately, !styleSheet.reduceMotion else {
             ignoresMouseEvents = true
             parent?.removeChildWindow(self)
             orderOut(nil)

@@ -199,7 +199,7 @@ let package = Package(
         ),
         .testTarget(
             name: "DownrightQLTests",
-            dependencies: ["DownrightQL"],
+            dependencies: ["DownrightQL", "DownrightThumb"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),

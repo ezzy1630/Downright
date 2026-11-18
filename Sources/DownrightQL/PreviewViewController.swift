@@ -46,7 +46,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private var previewGeneration: UInt = 0
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 800))
+        let surface = PreviewSurface(frame: NSRect(x: 0, y: 0, width: 720, height: 800))
+        surface.onAppearanceChange = { [weak self] in self?.refreshAppearance() }
+        view = surface
         // nil preserves the host's native macOS appearance. An explicit user
         // choice is applied only to this preview surface, never globally.
         view.appearance = previewAppearance.nsAppearance
@@ -63,6 +65,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         super.viewDidLayout()
         updateDensityGutterVisibility()
         updateDensityGutterState()
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        focusPreviewIfNeeded()
     }
 
     // MARK: - QLPreviewingController
@@ -150,7 +157,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
         let container = MarkdownContainerView(storage: storage)
         container.textView.allowsAnimatedImages = false
-        container.textView.styleSheet = makeStyleSheet()
+        container.styleSheet = makeStyleSheet()
+        container.textView.documentURL = url
         container.textView.mode = .read
         container.textView.update(document: document, dirty: .wholesale)
         // Selectable and copyable — most Quick Look previews are dead surfaces,
@@ -164,6 +172,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         densityGutter = gutter
         updateDensityGutterVisibility()
         startInteractionObservation()
+        focusPreviewIfNeeded()
         DispatchQueue.main.async { [weak self] in self?.updateDensityGutterState() }
     }
 
@@ -179,7 +188,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         )
 
         present(prefix, url: url)
-        installOpenInAppBar(for: url, note: "Showing the first \(prefixBlockCount) blocks")
+        installOpenInAppBar(for: url, note: "Showing part of this large file")
     }
 
     /// Keep the rendered prefix bounded in both Foundation's UTF-16 coordinate
@@ -238,9 +247,16 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         scroll.backgroundColor = styleSheet.background
         install(scroll)
         fallbackTextView = textView
+        focusPreviewIfNeeded()
         if let sourceURL {
             installOpenInAppBar(for: sourceURL, note: "Plain text preview — open in Downright for full rendering")
         }
+    }
+
+    private func focusPreviewIfNeeded() {
+        guard let window = view.window, window.firstResponder === window,
+              let textView = container?.textView ?? fallbackTextView else { return }
+        window.makeFirstResponder(textView)
     }
 
     /// Quick Look has its own bundle and defaults domain. Resolve the palette
@@ -248,24 +264,26 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     /// dark macOS desktop can never inherit the app's old Paper Light default.
     @MainActor
     private func makeStyleSheet() -> StyleSheet {
-        let mode = previewAppearance
-        let appearance = mode.nsAppearance ?? view.effectiveAppearance
+        let appearance = view.effectiveAppearance
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let preferredName = PreviewAppearanceStore.themeName(for: appearance)
         var theme = preferredName.flatMap { name in
             ThemeStore.shared.themes.first { $0.name == name }
-        } ?? ThemeStore.shared.themes.first {
-            switch mode {
-            case .dark: return $0.appearance == .dark
-            case .light: return $0.appearance != .dark
-            case .system:
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return isDark ? $0.appearance == .dark : $0.appearance != .dark
-            }
-        } ?? .fallback
+        } ?? ThemeStore.shared.themes.first { ($0.appearance == .dark) == isDark } ?? .fallback
         if let measure = PreviewAppearanceStore.measureCharacters {
             theme.typography.measureCharacters = measure
         }
         return StyleSheet(theme: theme, appearance: appearance)
+    }
+
+    private func refreshAppearance() {
+        guard container != nil || fallbackTextView != nil else { return }
+        let sheet = makeStyleSheet()
+        container?.styleSheet = sheet
+        densityGutter?.styleSheet = sheet
+        fallbackTextView?.textColor = sheet.text
+        fallbackTextView?.backgroundColor = sheet.background
+        fallbackTextView?.enclosingScrollView?.backgroundColor = sheet.background
     }
 
     /// Quick Look reuses one controller for multiple files.  Release every
@@ -523,13 +541,22 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     static func previewMemoryBytes(current: Int, baseline: Int) -> Int {
         max(0, current - baseline)
     }
+
+    private final class PreviewSurface: NSView {
+        var onAppearanceChange: (() -> Void)?
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            onAppearanceChange?()
+        }
+    }
 }
 
 @available(macOS 14.0, *)
 extension PreviewViewController: DensityGutterDelegate {
     func densityGutter(_ gutter: DensityGutterView, didRequestScrollToFraction fraction: CGFloat) {
         guard let document = parsedDocument else { return }
-        let offset = min(document.length, max(0, Int(fraction * CGFloat(document.length))))
+        let offset = Self.sourceOffset(at: fraction, length: document.length)
         guard let textView = container?.textView else { return }
         // QL can deliver the first click before TextKit has completed its lazy
         // layout. Force the target fragment, then use the same spring as the
@@ -552,7 +579,7 @@ extension PreviewViewController: DensityGutterDelegate {
         _ gutter: DensityGutterView, previewAtFraction fraction: CGFloat
     ) -> (title: String, snippet: String, context: String)? {
         guard let document = parsedDocument else { return nil }
-        let offset = min(document.length, Int(fraction * CGFloat(document.length)))
+        let offset = Self.sourceOffset(at: fraction, length: document.length)
         guard let index = document.headings.lastIndex(where: { $0.range.location <= offset }) else {
             return ("Document start", "", gutter.metricsSummary)
         }
@@ -566,5 +593,11 @@ extension PreviewViewController: DensityGutterDelegate {
             StructuralZoom.sectionPreview(document, headingIndex: index) ?? "Section overview",
             context
         )
+    }
+
+    private static func sourceOffset(at fraction: CGFloat, length: Int) -> Int {
+        // Fractions are built from UTF-16 offsets. Rounding recovers an exact
+        // heading offset when the division and multiplication lose precision.
+        Int((min(1, max(0, fraction)) * CGFloat(length)).rounded())
     }
 }
