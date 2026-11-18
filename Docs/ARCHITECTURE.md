@@ -322,7 +322,10 @@ directory. The CLI fails before writing a request larger than 256 KiB after
 encoding. The app consumes the file and uses the ordinary open registry for
 valid requests up to the same limit. It accepts only private regular files
 owned by the user and no more than two minutes old. A URL without a valid
-handoff file does nothing.
+handoff file does nothing. When `down` itself runs inside an App Sandbox
+(spawned by a sandboxed app or agent), its temporary directory is its
+container's `Data/tmp`. The URL then also names that container ID, and the app
+looks only in `~/Library/Containers/<id>/Data/tmp`, with the same checks.
 Go to Line and the app's command-line line handler use the parsed source's
 one-based line index, which recognizes LF, CRLF, and lone CR even within the
 same document.
