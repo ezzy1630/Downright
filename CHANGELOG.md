@@ -12,6 +12,8 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.24] - 2026-11-18
+
 ### Added
 
 - Choose any installed font for document text and headings in Settings →
