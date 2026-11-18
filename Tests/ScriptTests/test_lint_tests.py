@@ -99,6 +99,32 @@ class TestHonestyLintTests(unittest.TestCase):
         self.assertEqual(findings, [(5, "fixed-wait"), (6, "fixed-wait"),
                                     (9, "assertion-retry"), (14, "test-double")])
 
+    def test_python_retry_through_superclass_or_bare_handlers(self):
+        findings = self.violations("python", '''
+            for attempt in range(3):
+                try:
+                    self.assertEqual(observe(), expected)
+                except Exception:
+                    continue
+            while True:
+                try:
+                    assert observe() == expected
+                    break
+                except (ValueError, BaseException):
+                    pass
+            for attempt in range(3):
+                try:
+                    self.assertTrue(observe())
+                except:
+                    continue
+            for attempt in range(3):
+                try:
+                    self.assertTrue(observe())
+                except ValueError:
+                    continue
+        ''')
+        self.assertEqual(findings, [(1, "assertion-retry"), (6, "assertion-retry"), (12, "assertion-retry")])
+
     def test_allowlist_fails_above_below_and_after_file_removal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

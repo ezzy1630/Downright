@@ -60,7 +60,8 @@ the default application, or contact a service.
 
 ## What the preview does
 
-- Read-mode rendering with the app's full typography.
+- Read-mode rendering with the app's full typography, in the preset face (the
+  Settings body font family applies only in the app and HTML export).
 - The preview starts at 720 × 800 points. The leading-edge document map is
   available at widths of 520 points and up. Hover shows the targeted section
   and its reading metrics. Click to jump or drag to scrub. When the margin is

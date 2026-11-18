@@ -165,11 +165,16 @@ def python_violations(source):
                    for method in methods if method.name != "__init__" for value in ast.walk(method)):
                 yield node.lineno, "test-double"
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            # A bare `except:` or a superclass handler swallows a failed
+            # assertion just as surely as `except AssertionError`.
+            def catches(error):
+                return resolved(error).removeprefix("builtins.") in {"AssertionError", "Exception", "BaseException"}
+
             catches_assertion = any(
                 isinstance(handler, ast.ExceptHandler)
-                and (qualified_name(handler.type) in {"AssertionError", "builtins.AssertionError"}
-                     or isinstance(handler.type, ast.Tuple) and any(
-                         qualified_name(error) == "AssertionError" for error in handler.type.elts))
+                and (handler.type is None
+                     or isinstance(handler.type, ast.Tuple) and any(catches(error) for error in handler.type.elts)
+                     or not isinstance(handler.type, ast.Tuple) and catches(handler.type))
                 for handler in ast.walk(node)
             )
             if catches_assertion and any(

@@ -38,8 +38,11 @@ final class UIDriver {
         let support = try #require(environment["DOWNRIGHT_SUPPORT_DIRECTORY"], "Set a temporary DOWNRIGHT_SUPPORT_DIRECTORY before launching swift test")
         let supportURL = URL(fileURLWithPath: support).resolvingSymlinksInPath()
         let userSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let userSupportPath = userSupport?.resolvingSymlinksInPath().path
         try #require(
-            !support.isEmpty && userSupport.map { !supportURL.path.hasPrefix($0.resolvingSymlinksInPath().path + "/") } != false,
+            !support.isEmpty && userSupportPath.map {
+                supportURL.path != $0 && !supportURL.path.hasPrefix($0 + "/")
+            } != false,
             "UI tests need a disposable support directory"
         )
         _ = NSApplication.shared

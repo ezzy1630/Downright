@@ -119,8 +119,14 @@ public struct CommandLineOpenRequest {
         let modified = Date(timeIntervalSince1970: TimeInterval(status.st_mtimespec.tv_sec))
         guard abs(now.timeIntervalSince(modified)) <= handoffLifetime else { return nil }
         var bytes = [UInt8](repeating: 0, count: Int(status.st_size))
-        guard read(descriptor, &bytes, bytes.count) == bytes.count,
-              let string = String(bytes: bytes, encoding: .utf8),
+        var filled = 0
+        while filled < bytes.count {
+            let result = bytes[filled...].withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+            if result < 0, errno == EINTR { continue }
+            guard result > 0 else { return nil }
+            filled += result
+        }
+        guard let string = String(bytes: bytes, encoding: .utf8),
               let payload = URL(string: string)
         else { return nil }
         return CommandLineOpenRequest(payloadURL: payload)

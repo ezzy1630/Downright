@@ -178,10 +178,15 @@ public final class WindowInput {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             var observer: NSObjectProtocol?
             var timer: Timer?
+            // A notification posted off the main thread can already be queued
+            // when the observer is removed; resume exactly once.
+            var finished = false
 
             @MainActor func check() {
+                guard !finished else { return }
                 let ready = condition()
                 guard ready || ProcessInfo.processInfo.systemUptime >= deadline else { return }
+                finished = true
                 timer?.invalidate()
                 if let observer { NotificationCenter.default.removeObserver(observer) }
                 if ready { continuation.resume() }
