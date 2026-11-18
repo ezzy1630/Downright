@@ -105,7 +105,7 @@ final class CodeBlockFragment: DownrightFragment {
             // A long block scrolls its opening chrome off the top, taking the
             // only copy control with it.  The closing fence carries a second
             // one so the block always has a reachable copy (§7.1).
-            drawCopyControl(in: band, style: style, language: "", in: cg)
+            drawCopyControl(in: band, style: style, in: cg)
         case .body:
             // AppKit paints selection beneath each fragment surface. Leave
             // those native segments transparent instead of covering them with
@@ -191,10 +191,10 @@ final class CodeBlockFragment: DownrightFragment {
             cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
             cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
         }
-        drawCopyControl(in: band, style: style, language: language, in: cg)
+        drawCopyControl(in: band, style: style, in: cg)
     }
 
-    private func drawCopyControl(in band: CGRect, style: StyleSheet, language: String, in cg: CGContext) {
+    private func drawCopyControl(in band: CGRect, style: StyleSheet, in cg: CGContext) {
         guard context?.hoveredFragmentRange == payload.sourceRange else { return }
         let copy = Self.copyButtonRect(in: band, style: style, language: language)
         let copied = context?.copiedCodeRange == payload.sourceRange
@@ -204,11 +204,14 @@ final class CodeBlockFragment: DownrightFragment {
         cg.fillRect(copy, color: bgColor, radius: 6)
         let symbol = copied ? "checkmark" : "doc.on.doc"
         let description = copied ? "Copied" : "Copy code"
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: copied ? .bold : .medium)) {
+        let iconSide = min(12, max(0, copy.width - 4))
+        if iconSide > 0,
+           let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+            .withSymbolConfiguration(.init(pointSize: iconSide, weight: copied ? .bold : .medium)) {
             let iconColor = copied ? style.accent : style.textSecondary
             let tinted = image.tinted(iconColor)
-            draw(image: tinted, in: copy.insetBy(dx: 8, dy: 8), in: cg)
+            let inset = (copy.width - iconSide) / 2
+            draw(image: tinted, in: copy.insetBy(dx: inset, dy: inset), in: cg)
         }
     }
 
@@ -235,6 +238,12 @@ final class CodeBlockFragment: DownrightFragment {
     /// The tinted band, inset to the block's own indentation so a code block
     /// inside a list stays inside the list.
     func bandRect(at point: CGPoint) -> CGRect {
+        let frame = layoutFragmentFrame
+        return bandInTextContainer.offsetBy(dx: point.x - RenderMetrics.codeInsetX * 2,
+                                            dy: point.y - frame.minY)
+    }
+
+    var bandInTextContainer: CGRect {
         // `firstLineHeadIndent`, not `headIndent`: wrapped code rows hang by a
         // continuation indent, and measuring the band from that would pull its
         // right edge in by two columns on any block containing a long line.
@@ -246,8 +255,8 @@ final class CodeBlockFragment: DownrightFragment {
         // paragraph fragment carries the other. Back both out, then restore
         // only the block's structural indent. Otherwise top-level bands land
         // 22pt right of prose and nested bands lose their list edge.
-        return CGRect(x: point.x + indent - RenderMetrics.codeInsetX * 2,
-                      y: point.y + gap.top,
+        return CGRect(x: indent,
+                      y: frame.minY + gap.top,
                       width: max(1, contentWidth - indent),
                       height: max(1, frame.height - gap.top - gap.bottom))
     }
@@ -272,6 +281,11 @@ final class CodeBlockFragment: DownrightFragment {
     /// A 28pt square: the smallest pointer target that does not need aiming.
     /// The old 24x17 was a decoration you had to hunt for.
     static let copyControlSide: CGFloat = 28
+
+    var copyButtonInTextContainer: CGRect? {
+        guard let styleSheet, role == .openChrome || role == .closeChrome else { return nil }
+        return Self.copyButtonRect(in: bandInTextContainer, style: styleSheet, language: language)
+    }
 
     static func copyButtonRect(in band: CGRect, style: StyleSheet, language: String) -> CGRect {
         // Clamp to the band: the header's 36pt row keeps the full 28pt target,

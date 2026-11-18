@@ -170,6 +170,11 @@ extension MarkdownTextView {
 
     // MARK: - Hover (§7.1)
 
+    public override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
     public override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
         updateHover(at: convert(event.locationInWindow, from: nil))
@@ -189,7 +194,7 @@ extension MarkdownTextView {
         clearHoverState()
     }
 
-    private func updateHover(at point: NSPoint) {
+    func updateHover(at point: NSPoint) {
         var needsRedraw = false
         // One TextKit hit test answers every question this method asks.
         let offset = sourceOffset(at: point)
@@ -198,13 +203,13 @@ extension MarkdownTextView {
 
         // Code blocks reveal a copy button; images reveal that they open; tables
         // zebra the row under the pointer (§7.1, §11.3).
-        let hoveredFragment: NSRange?
-        switch payload?.kind {
-        case .codeBlock, .collapsedCodeBlock, .image, .frontMatter: hoveredFragment = payload?.sourceRange
-        default: hoveredFragment = nil
-        }
+        let code = codeFragment(at: point, sourceOffset: offset)?.payload.sourceRange
+        let hoveredFragment = code ?? (payload?.kind == .image || payload?.kind == .frontMatter ? payload?.sourceRange : nil)
         if fragmentContext.hoveredFragmentRange != hoveredFragment {
+            let previous = fragmentContext.hoveredFragmentRange
             fragmentContext.hoveredFragmentRange = hoveredFragment
+            redrawCodeChrome(in: previous)
+            redrawCodeChrome(in: code)
             needsRedraw = true
         }
 
@@ -273,7 +278,9 @@ extension MarkdownTextView {
     }
 
     func clearHoverState() {
+        let previous = fragmentContext.hoveredFragmentRange
         fragmentContext.hoveredFragmentRange = nil
+        redrawCodeChrome(in: previous)
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
         hoveredLinkRange = nil
@@ -290,6 +297,8 @@ extension MarkdownTextView {
         // its own hit test; every remaining question shares one.
         if semanticCheckbox(at: point) != nil { return true }
         let offset = sourceOffset(at: point)
+        if let code = codeFragment(at: point, sourceOffset: offset),
+           code.role == .collapsedChip || copyControlContains(point, in: code) { return true }
         if mode == .live {
             // Rendered targets are actionable on a normal click. Option-click
             // still falls through to the editor for caret placement.
@@ -606,49 +615,53 @@ extension MarkdownTextView {
 
     /// Copy button and collapsed-chip expansion, both hit-tested against the
     /// same geometry the fragment draws with.
-    private func handleCodeBlockChrome(at point: NSPoint) -> Bool {
-        guard let hit = fragmentPayload(at: point) else { return false }
-        let payload = hit.payload
-        guard payload.kind == .codeBlock || payload.kind == .collapsedCodeBlock else { return false }
-
-        let collapsed = isCollapsed(payload)
-        guard let chrome = rect(forOffset: payload.sourceRange.location) else { return false }
-
-        if collapsed {
+    func handleCodeBlockChrome(at point: NSPoint, pasteboard: NSPasteboard = .general) -> Bool {
+        guard let code = codeFragment(at: point, sourceOffset: sourceOffset(at: point)) else { return false }
+        if code.role == .collapsedChip {
             // §5.1: click the chip to expand.
-            setCodeBlockCollapsed(false, at: payload.sourceRange.location)
+            setCodeBlockCollapsed(false, at: code.payload.sourceRange.location)
             return true
         }
+        guard copyControlContains(point, in: code) else { return false }
+        return copyCodeBlock(code.payload, pasteboard: pasteboard)
+    }
 
-        // `payload.sourceRange` can point past the end of the storage in the
-        // window between an edit and the async parse committing — a large
-        // deletion shrinks the buffer before the parse lands, and `attribute(at:)`
-        // beyond the storage raises an uncatchable NSRangeException.  Every
-        // other consumer of this storage clamps; do the same here.
-        guard let storage = textStorage, storage.length > 0 else { return false }
-        var styleLocation = payload.sourceRange.location
-        styleLocation = min(max(0, styleLocation), storage.length - 1)
-        // `firstLineHeadIndent`, matching `CodeBlockFragment.bandRect`: a
-        // wrapped code row hangs by a continuation indent, and `headIndent`
-        // would pull this reconstructed band — and the copy target inside it —
-        // two columns left of the one on screen.
-        let indent = max(
-            0,
-            ((storage.attribute(.paragraphStyle, at: styleLocation, effectiveRange: nil)
-                as? NSParagraphStyle)?.firstLineHeadIndent ?? RenderMetrics.codeInsetX)
-                - RenderMetrics.codeInsetX
-        )
-        let band = CGRect(
-            x: indent,
-            y: chrome.minY,
-            width: max(1, columnWidth - indent),
-            height: chrome.height
-        )
-        let copy = CodeBlockFragment.copyButtonRect(in: band, style: styleSheet, language: payload.detail)
-        let local = CGPoint(x: point.x - textContainerOrigin.x, y: point.y)
-        guard copy.insetBy(dx: -3, dy: -3).contains(local) else { return false }
+    private func copyControlContains(_ point: CGPoint, in code: CodeBlockFragment) -> Bool {
+        let origin = textContainerOrigin
+        let local = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        return code.copyButtonInTextContainer?.contains(local) == true
+    }
 
-        return copyCodeBlock(payload)
+    private func codeFragment(at point: CGPoint, sourceOffset: Int) -> CodeBlockFragment? {
+        guard mode != .source, let layout = textLayoutManager else { return nil }
+        let origin = textContainerOrigin
+        let local = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        guard local.x >= 0, local.x <= columnWidth else { return nil }
+        if let code = layout.textLayoutFragment(for: local) as? CodeBlockFragment,
+           code.bandInTextContainer.contains(local) { return code }
+
+        // At the right edge, the native frame or insertion hit can end at the
+        // last glyph. Probe both sides of that boundary, then use the band the
+        // fragment actually paints to decide whether this is a code hit.
+        guard let hit = fragmentPayload(atSourceOffset: sourceOffset)?.payload,
+              hit.kind == .codeBlock || hit.kind == .collapsedCodeBlock else { return nil }
+        for candidate in [sourceOffset, sourceOffset - 1] where candidate >= 0 {
+            let offset = currentDisplayMap.textKitOffset(forSource: candidate)
+            guard let location = layout.location(layout.documentRange.location, offsetBy: offset),
+                  let code = layout.textLayoutFragment(for: location) as? CodeBlockFragment,
+                  code.bandInTextContainer.contains(local) else { continue }
+            return code
+        }
+        return nil
+    }
+
+    private func redrawCodeChrome(in range: NSRange?) {
+        guard let range, let hit = fragmentPayload(atSourceOffset: range.location)?.payload,
+              hit.kind == .codeBlock || hit.kind == .collapsedCodeBlock else { return }
+        let first = paragraphRange(containing: range.location)
+        let last = paragraphRange(containing: max(range.location, range.upperBound - 1))
+        invalidateFragments(in: first, includingRendering: true)
+        if last != first { invalidateFragments(in: last, includingRendering: true) }
     }
 
     func copyCodeBlockForAccessibility(pasteboard: NSPasteboard = .general) -> Bool {
@@ -676,12 +689,12 @@ extension MarkdownTextView {
         pasteboard.setString(code, forType: .string)
         fragmentContext.copiedCodeRange = payload.sourceRange
         copiedCodeFeedbackWorkItem?.cancel()
-        needsDisplay = true
+        redrawCodeChrome(in: payload.sourceRange)
         let copiedRange = payload.sourceRange
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.fragmentContext.copiedCodeRange == copiedRange else { return }
             self.fragmentContext.copiedCodeRange = nil
-            self.needsDisplay = true
+            self.redrawCodeChrome(in: copiedRange)
         }
         copiedCodeFeedbackWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)

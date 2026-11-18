@@ -198,6 +198,10 @@ All bindings are editable in **Settings → Keys**.
 | `⌃⌥⌘1`–`5` | Structural zoom | `⌥⇧↑` / `↓` | Previous / next change |
 | `⌘\` | Split view | `⌘L` | Toggle task at caret |
 
+Press Return to continue a list or leave an empty item. In a nested list, Return
+on an empty item moves it up one level. Hover over a rendered code block to copy
+its contents from either fence.
+
 Two fingers sideways across the document switch between Document and Source.
 The titlebar's mode rail travels with your fingers, so you can see how far is
 far enough; release short of that and it returns having changed nothing. On

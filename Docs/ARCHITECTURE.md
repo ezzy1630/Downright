@@ -220,17 +220,25 @@ before sizing the new presentation. Its shrink must not capture a reading anchor
 from the old camera; ordinary edits and mode changes continue preserving anchors.
 
 Undo remains text undo. Copy as Markdown reads the source range. Rich-text copy
-is a separate explicit command.
+is a separate explicit command. AppKit's typing undo and redo mutate the shared
+storage directly. The document projects surviving fragment payloads across those
+edits. The synchronous parse commit invalidates shifted layout in every pane
+while keeping decoration scoped to the edited and semantically changed ranges.
 Standard Copy and Cut carry visible text for other apps and exact Markdown for
 paste in Downright. Hidden delimiters at a selection edge travel with a
 complete selected construct. Cut removes the same source that it puts on the
 clipboard. Copy Code reads the parsed body, including any fence-like lines
-that belong to the example.
+that belong to the example. The rendered fence bands supply the hover and click
+geometry for Copy Code at both ends of a block.
 Code fences can open on a list item's first line. Only actual opening and
 closing fence rows redirect a click into the code body.
 
 Document commands apply source edits, reparse, and decorate inside one undo
-group. List indentation and ordered-list repair use this sequence:
+group. Return uses the current source to continue a list in one undo step. It
+keeps the bullet, quote prefix, and nesting, increments the new ordered marker,
+and starts a new task unchecked. On an empty item, Return exits the list or
+outdents one level. AppKit handles Return during marked-text composition.
+List indentation and ordered-list repair use this sequence:
 
 ```text
 apply edit -> reparse -> plan tidy rules -> apply tidy edit
