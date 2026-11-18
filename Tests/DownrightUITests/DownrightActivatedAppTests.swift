@@ -327,6 +327,32 @@ final class DownrightActivatedAppTests: XCTestCase {
         }
     }
 
+    func testKeepMineAfterUndoSavesTheVisibleVersion() throws {
+        let original = Data("Original paragraph.\n".utf8)
+        try original.write(to: fixture, options: .atomic)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+
+        let source = app.radioButtons["Source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 15))
+        source.click()
+        let editor = app.windows.firstMatch.textViews["Markdown source editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeText("!")
+        try Data("An external rewrite.\n".utf8).write(to: fixture, options: .atomic)
+
+        let keepMine = app.buttons["Keep Mine"]
+        XCTAssertTrue(keepMine.waitForExistence(timeout: 10))
+        editor.typeKey("z", modifierFlags: .command)
+        XCTAssertEqual(editor.value as? String, "Original paragraph.\n")
+        keepMine.click()
+
+        XCTAssertTrue(keepMine.waitForNonExistence(timeout: 10))
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
     func testActivatedBundleRendersAndKeepsSourceEditingLive() throws {
         app.launch()
         app.activate()

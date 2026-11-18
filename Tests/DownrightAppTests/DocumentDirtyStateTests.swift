@@ -76,4 +76,46 @@ struct DocumentDirtyStateTests {
         _ = document.saveIfNeeded()
         #expect(try String(contentsOf: url, encoding: .utf8) == "# Agent version\n")
     }
+
+    @Test func keepingMineAfterUndoWritesTheBuffer() throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = MarkdownDocument()
+        try document.open(url)
+        defer { document.close() }
+        document.replace(NSRange(location: 2, length: 0), with: "local ", actionName: "Typing")
+        try Data("# Agent version\n".utf8).write(to: url, options: .atomic)
+        #expect(throws: SaveError.self) { try document.save() }
+        document.undoManager.undo()
+        try #require(!document.isDirty)
+        try #require(document.pendingConflict != nil)
+
+        try document.resolveConflictKeepingMine().get()
+
+        #expect(try String(contentsOf: url, encoding: .utf8) == "# Original\n")
+        #expect(document.pendingConflict == nil)
+    }
+
+    @Test func keepingMineRequiresReviewOfANewerExternalWrite() throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = MarkdownDocument()
+        try document.open(url)
+        defer { document.close() }
+        document.replace(NSRange(location: 2, length: 0), with: "local ", actionName: "Typing")
+        try Data("# First external version\n".utf8).write(to: url, options: .atomic)
+        #expect(throws: SaveError.self) { try document.save() }
+        try #require(document.pendingConflict?.incomingText == "# First external version\n")
+        try Data("# Second external version\n".utf8).write(to: url, options: .atomic)
+
+        #expect(throws: SaveError.self) { try document.resolveConflictKeepingMine().get() }
+
+        #expect(try String(contentsOf: url, encoding: .utf8) == "# Second external version\n")
+        #expect(document.pendingConflict?.incomingText == "# Second external version\n")
+        #expect(document.text == "# local Original\n")
+        #expect(document.isDirty)
+        guard document.pendingConflict?.incomingText == "# Second external version\n" else { return }
+        try document.resolveConflictKeepingMine().get()
+        #expect(try String(contentsOf: url, encoding: .utf8) == "# local Original\n")
+    }
 }

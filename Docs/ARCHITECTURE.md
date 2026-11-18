@@ -240,6 +240,11 @@ writes replace the inode. On an external write:
 Dirty state compares exact UTF-16 source with the last saved generation. Returning
 to that text by deletion or undo clears the edited state without writing the
 file; pending external conflicts remain independent and cannot be overwritten.
+Keep Mine writes the visible buffer even after undo returns it to the last saved
+text. If a different external edit arrives before that save, the app presents
+the newer conflict. Recreate File creates an absent path exclusively or replaces
+the exact bytes it could read but could not decode. If the bytes cannot be read,
+the buffer remains available for Save a Copy.
 
 Autosave is opt-in. Actual local source edits reset its idle deadline even when
 the buffer is already dirty. Discard suppresses implicit saves until a fresh

@@ -144,7 +144,8 @@ resting on the button shows what changed before you commit to it.
 
 If another app or coding agent rewrites an open file, Downright can show the
 change in place, preserve dirty local edits, and let you review word-level
-differences. It is a useful extra, not a different way of owning your files.
+differences. **Keep Mine** saves your current text over the external version
+shown in the conflict. A newer external edit prompts you to review it first.
 
 ## Reading and window preferences
 
