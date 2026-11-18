@@ -269,9 +269,18 @@ run them without an isolated Application Support directory.
 
 Local document links resolve URL encoding and heading fragments separately from
 filesystem paths. The text surface routes native link activation through the app
-so Launch Services cannot independently open the same click. Back/Forward commit
-a history move only after the destination opens successfully and restore semantic
-reading anchors across files.
+so Launch Services cannot independently open the same click. In-place navigation
+checks the same file-identity registry as ordinary opens. An already-open
+destination selects its existing tab or window and resolves a linked heading
+there. Each tab keeps its own Back/Forward trail. In-place history hops commit
+only after a successful open and restore semantic reading anchors across files.
+If a history destination is already open in a different tab, that tab receives
+the saved anchor and both history cursors stay with their own documents.
+
+The CLI sends `--edit`, `--line`, and `--review` in an open-only
+`downright-cli:` URL addressed to the selected app bundle. Launch Services
+delivers the same request on cold and warm opens. The handler accepts local
+file paths and presentation options and uses the ordinary open registry.
 Go to Line and the app's command-line line handler use the parsed source's
 one-based line index, which recognizes LF, CRLF, and lone CR even within the
 same document.

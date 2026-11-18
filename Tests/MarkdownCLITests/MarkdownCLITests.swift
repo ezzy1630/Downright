@@ -3,6 +3,34 @@ import Testing
 @testable import drdownright
 
 struct MarkdownCLITests {
+    @Test func openRequestKeepsPathsAndPresentationOptionsTogether() throws {
+        let paths = ["/tmp/plan #1 & café%.md", "/tmp/another plan.md"]
+        let action = try MarkdownCLI.parse(paths + ["--line", "100", "--review"])
+        guard case .open(let options, let parsedPaths) = action else {
+            Issue.record("Expected an open command")
+            return
+        }
+        let urls = parsedPaths.map { URL(fileURLWithPath: $0) }
+        let request = CommandLineOpenRequest(urls: urls, options: options)
+        let decoded = try #require(CommandLineOpenRequest(url: request.url))
+        #expect(decoded.urls.map(\.path) == paths)
+        #expect(decoded.line == 100)
+        #expect(decoded.review)
+        #expect(decoded.edit)
+    }
+
+    @Test(arguments: [
+        "downright-cli://open?file=/tmp/a.md&line=0",
+        "downright-cli://open?file=https://example.com/a.md",
+        "downright-cli://open?file=/tmp/a.md&edit=1&edit=1",
+        "downright-cli://write?file=/tmp/a.md",
+        "downright-cli://open?file=/tmp/a.md&write=1",
+    ])
+    func openRequestRejectsAnythingOutsideLocalPresentation(url: String) throws {
+        let url = try #require(URL(string: url))
+        #expect(CommandLineOpenRequest(url: url) == nil)
+    }
+
     @Test func defaultActionIsOpen() throws {
         let action = try MarkdownCLI.parse(["README.md"])
         #expect(action == .open(MarkdownCLI.OpenOptions(), paths: ["README.md"]))

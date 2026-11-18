@@ -177,7 +177,7 @@ public enum MarkdownCLI {
           -n, --new         open each file in a new window
           -b, --background  do not bring Downright to the front
           -w, --wait        wait for the app to exit
-          -e, --edit        open in Live mode instead of Read mode
+          -e, --edit        open in Live mode, including in a running instance
           --line N          open at one-based line N
           --reveal          reveal the file in Finder instead of opening it
           --review          open in Live mode with the Review panel visible

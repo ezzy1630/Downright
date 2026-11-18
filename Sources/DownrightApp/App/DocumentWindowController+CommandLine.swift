@@ -6,8 +6,9 @@ import AppKit
 extension DocumentWindowController {
     func applyCommandLineOpen(line: Int?, review: Bool) {
         guard line != nil || review else { return }
+        let url = markdownDocument.url
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.markdownDocument.url == url else { return }
             if let line {
                 jumpToLine(line, animated: false)
             }

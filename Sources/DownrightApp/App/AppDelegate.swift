@@ -1,4 +1,5 @@
 import AppKit
+import drdownright
 import MarkdownCore
 import MarkdownRender
 
@@ -292,12 +293,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Opening
 
+    private func openDeliveredURL(_ url: URL) {
+        if url.isFileURL {
+            open(url)
+        } else if let request = CommandLineOpenRequest(url: url) {
+            openFromCommandLine(request)
+        }
+    }
+
+    private func openFromCommandLine(_ request: CommandLineOpenRequest) {
+        for url in request.urls {
+            guard (try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]))?
+                .isRegularFile == true else { continue }
+            let mode: RenderMode? = request.edit ? .live : nil
+            guard let destination = open(url, mode: mode) else { continue }
+            if let mode, destination.mode != mode { destination.applyMode(mode) }
+            destination.applyCommandLineOpen(line: request.line, review: request.review)
+        }
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard hasFinishedLaunching else {
             pendingOpenURLs.append(contentsOf: urls)
             return
         }
-        for url in urls { open(url) }
+        for url in urls { openDeliveredURL(url) }
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
@@ -322,8 +342,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !pendingOpenURLs.isEmpty else { return false }
         let urls = pendingOpenURLs
         pendingOpenURLs.removeAll(keepingCapacity: true)
-        for url in urls { open(url) }
-        return true
+        for url in urls { openDeliveredURL(url) }
+        return urls.contains(where: \.isFileURL) || !windowControllers.isEmpty
     }
 
     @discardableResult
