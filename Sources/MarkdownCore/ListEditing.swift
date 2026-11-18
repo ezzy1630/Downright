@@ -87,9 +87,18 @@ public enum ListEditing {
         }
         if checkbox != nil { next += "[ ] " }
         let caretLine = doc.range(ofLine: doc.line(at: offset))
+        // Match the caret line's own terminator, or the previous line's on an
+        // unterminated last line, so continuing a list never mixes endings.
         let lineEnd = caretLine.upperBound
-        let newline = lineEnd < text.length && text.character(at: lineEnd) == 0x0D
-            && lineEnd + 1 < text.length && text.character(at: lineEnd + 1) == 0x0A ? "\r\n" : "\n"
+        let terminator = lineEnd < text.length ? lineEnd : caretLine.location - 1
+        let newline: String
+        if terminator >= 0, text.character(at: terminator) == 0x0D {
+            newline = terminator + 1 < text.length && text.character(at: terminator + 1) == 0x0A ? "\r\n" : "\r"
+        } else if terminator > 0, text.character(at: terminator) == 0x0A, text.character(at: terminator - 1) == 0x0D {
+            newline = "\r\n"
+        } else {
+            newline = "\n"
+        }
         return ListContinuation(
             replaceRange: NSRange(location: offset, length: 0),
             insertion: newline + next
