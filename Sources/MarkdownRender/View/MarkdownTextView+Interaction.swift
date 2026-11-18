@@ -255,7 +255,7 @@ extension MarkdownTextView {
             // see, and it doubles as the cue that the image opens.
             let alt = payload?.detail.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             nextToolTip = alt.isEmpty ? nil : alt
-        } else if payload?.kind == .frontMatter {
+        } else if payload?.kind == .frontMatter, canEditFrontMatter {
             nextToolTip = "Edit front matter"
         } else if let hit = attribute(.drReference, at: point, sourceOffset: offset),
                   let identifier = hit.value as? String,
@@ -298,14 +298,14 @@ extension MarkdownTextView {
                 || attribute(.drReference, at: point, sourceOffset: offset) != nil
                 || attribute(.drPathToken, at: point, sourceOffset: offset) != nil
                 || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
-                || fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter
+                || (canEditFrontMatter && fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter)
         }
         guard mode == .read else { return false }
         return attribute(.drLink, at: point, sourceOffset: offset) != nil
             || attribute(.drReference, at: point, sourceOffset: offset) != nil
             || attribute(.drPathToken, at: point, sourceOffset: offset) != nil
             || fragmentPayload(atSourceOffset: offset)?.payload.kind == .image
-            || fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter
+            || (canEditFrontMatter && fragmentPayload(atSourceOffset: offset)?.payload.kind == .frontMatter)
     }
 
     private func setPointerCursor(interactive: Bool) {
@@ -389,7 +389,7 @@ extension MarkdownTextView {
 
         if handleCodeBlockChrome(at: point) { return }
 
-        if mode != .source,
+        if mode != .source, canEditFrontMatter,
            let hit = fragmentPayload(at: point),
            hit.payload.kind == .frontMatter,
            clickActivates(

@@ -97,7 +97,8 @@ final class FrontMatterFragment: DownrightFragment {
             flipped: true
         )
 
-        let editTitle = card.width < 180 ? "Edit" : "Edit metadata"
+        let canEdit = context?.textView?.canEditFrontMatter ?? false
+        let editTitle = !canEdit ? "" : (card.width < 180 ? "Edit" : "Edit metadata")
         let edit = NSAttributedString(string: editTitle, attributes: [
             .font: headerFont,
             .foregroundColor: isHovered ? style.accent : style.textFaint,

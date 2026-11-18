@@ -22,7 +22,7 @@ struct ReaderProfileTests {
 
     @Test
     func customProfilesRoundTripThroughInjectedStore() {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("reader-(UUID().uuidString).json")
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("reader-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         let store = JSONReaderProfileStore(url: url)
         let profile = ReaderProfile.custom(name: "My setup")

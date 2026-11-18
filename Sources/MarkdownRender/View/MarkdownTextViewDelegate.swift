@@ -76,6 +76,10 @@ public protocol MarkdownTextViewDelegate: AnyObject {
     func markdownTextView(_ view: MarkdownTextView, didActivateLink destination: String, at range: NSRange, modifiers: NSEvent.ModifierFlags)
     func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange)
     func markdownTextView(_ view: MarkdownTextView, didActivateFrontMatterAt range: NSRange)
+    /// Whether this host can open a front matter editor.  Read-only hosts
+    /// (Quick Look) leave the default `false`, so the metadata card shows no
+    /// edit affordance that would do nothing.
+    func markdownTextViewCanEditFrontMatter(_ view: MarkdownTextView) -> Bool
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange)
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int)
     func markdownTextView(_ view: MarkdownTextView, didActivateHeadingAnchor headingIndex: Int, modifiers: NSEvent.ModifierFlags)
@@ -130,6 +134,7 @@ public extension MarkdownTextViewDelegate {
     func markdownTextView(_ view: MarkdownTextView, didActivateLink destination: String, at range: NSRange, modifiers: NSEvent.ModifierFlags) {}
     func markdownTextView(_ view: MarkdownTextView, didActivateImage source: String, at range: NSRange) {}
     func markdownTextView(_ view: MarkdownTextView, didActivateFrontMatterAt range: NSRange) {}
+    func markdownTextViewCanEditFrontMatter(_ view: MarkdownTextView) -> Bool { false }
     func markdownTextView(_ view: MarkdownTextView, didActivatePathToken token: PathToken, at range: NSRange) {}
     func markdownTextView(_ view: MarkdownTextView, didToggleCheckboxAtMarkOffset offset: Int) {}
     func markdownTextView(_ view: MarkdownTextView, didActivateHeadingAnchor headingIndex: Int, modifiers: NSEvent.ModifierFlags) {}

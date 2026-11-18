@@ -104,6 +104,8 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         presentLightbox(source: source, caption: nil)
     }
 
+    func markdownTextViewCanEditFrontMatter(_ view: MarkdownTextView) -> Bool { true }
+
     func markdownTextView(_ view: MarkdownTextView, didActivateFrontMatterAt range: NSRange) {
         showFrontMatterEditor(focus: nil)
     }

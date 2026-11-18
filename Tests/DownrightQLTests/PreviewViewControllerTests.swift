@@ -78,6 +78,13 @@ struct PreviewViewControllerTests {
         }
     }
 
+    @Test("Quick Look shows front matter without an edit action it cannot perform")
+    func frontMatterIsNotEditableInQuickLook() async throws {
+        try await withPreview("---\ntitle: Sample\n---\n\n# Sample\n") { _, container, _ in
+            #expect(container.textView.canEditFrontMatter == false)
+        }
+    }
+
     @Test("The preview accepts keyboard navigation before the first click")
     func previewTakesKeyboardFocusWhenWindowHasNone() async throws {
         _ = NSApplication.shared

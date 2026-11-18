@@ -84,6 +84,11 @@ public final class MarkdownTextView: NSTextView {
     // MARK: - Public surface
 
     public weak var markdownDelegate: MarkdownTextViewDelegate?
+
+    /// The metadata card is an edit control only when the host can edit it.
+    public var canEditFrontMatter: Bool {
+        markdownDelegate?.markdownTextViewCanEditFrontMatter(self) ?? false
+    }
     private var textMagnificationAccumulator: CGFloat = 0
 
     /// Host hook for the command/keybinding layer.  Invoked before the view's
@@ -1113,7 +1118,7 @@ public final class MarkdownTextView: NSTextView {
             element.setAccessibilityParent(self)
             element.setAccessibilityHelp(descriptor.help)
             element.setAccessibilityEnabled(true)
-            if case .frontMatter = block.content {
+            if case .frontMatter = block.content, canEditFrontMatter {
                 let range = block.range
                 element.onPress = { [weak self] in
                     guard let self else { return false }

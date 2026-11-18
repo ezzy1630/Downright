@@ -377,14 +377,14 @@ private final class Fixture {
 
     init(contents: String) throws {
         directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("downright-filewatcher-(UUID().uuidString)")
+            .appendingPathComponent("downright-filewatcher-\(UUID().uuidString)")
         url = directory.appendingPathComponent("document.md")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data(contents.utf8).write(to: url)
     }
 
     func atomicReplace(_ data: Data) throws {
-        let temporary = directory.appendingPathComponent(".tmp-(UUID().uuidString)")
+        let temporary = directory.appendingPathComponent(".tmp-\(UUID().uuidString)")
         try data.write(to: temporary)
         _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
     }
