@@ -92,20 +92,15 @@ final class CodeBlockFragment: DownrightFragment {
                         corners: [.topLeft, .topRight])
             drawHorizontalEdge(band, atTop: true, style: style, in: cg)
             drawRule(band, style: style, in: cg)
-            drawChip(band, style: style, in: cg)
+            drawLanguageChip(band, style: style, in: cg)
         case .closeChrome:
             // Mirror image: square top against the last code line, rounded
-            // bottom edge.  The copy control is allowed to be taller than this
-            // thin band, but the *fill* never leaves the frame.
+            // bottom edge. The fill never leaves the frame.
             cg.fillRect(band, color: style.codeBackground,
                         radius: RenderMetrics.codeCornerRadius,
                         corners: [.bottomLeft, .bottomRight])
             drawHorizontalEdge(band, atTop: false, style: style, in: cg)
             drawRule(band, style: style, in: cg)
-            // A long block scrolls its opening chrome off the top, taking the
-            // only copy control with it.  The closing fence carries a second
-            // one so the block always has a reachable copy (§7.1).
-            drawCopyControl(in: band, style: style, in: cg)
         case .body:
             // AppKit paints selection beneath each fragment surface. Leave
             // those native segments transparent instead of covering them with
@@ -184,19 +179,24 @@ final class CodeBlockFragment: DownrightFragment {
         )
     }
 
-    private func drawChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
-        let isHovered = context?.hoveredFragmentRange == payload.sourceRange
-        if !language.isEmpty, !isHovered {
-            let chip = Self.chipRect(in: band, style: style, language: language)
-            cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
-            cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
-        }
-        drawCopyControl(in: band, style: style, in: cg)
+    private func drawLanguageChip(_ band: CGRect, style: StyleSheet, in cg: CGContext) {
+        guard !language.isEmpty else { return }
+        let chip = Self.chipRect(in: band, style: style, language: language)
+        cg.fillRect(chip, color: style.codeRule.withAlphaComponent(0.22), radius: 4)
+        cg.drawText(Self.chipText(language, style: style), in: chip.insetBy(dx: 6, dy: 2), flipped: true)
     }
 
-    private func drawCopyControl(in band: CGRect, style: StyleSheet, in cg: CGContext) {
-        guard context?.hoveredFragmentRange == payload.sourceRange else { return }
-        let copy = Self.copyButtonRect(in: band, style: style, language: language)
+    /// TextKit can reuse the fence's rendered surface as the pointer moves.
+    /// Paint transient hover and copied feedback in the viewport overlay.
+    func drawCopyControl(at origin: CGPoint, in dirtyRect: CGRect, context cg: CGContext) {
+        guard let style = styleSheet, let button = copyButtonInTextContainer else { return }
+        let copy = button.offsetBy(dx: origin.x, dy: origin.y)
+        if role == .openChrome, !language.isEmpty {
+            let band = bandInTextContainer.offsetBy(dx: origin.x, dy: origin.y)
+            let chip = Self.chipRect(in: band, style: style, language: language)
+            if dirtyRect.intersects(chip) { cg.fillRect(chip.insetBy(dx: -1, dy: -1), color: style.codeBackground) }
+        }
+        guard dirtyRect.intersects(copy) else { return }
         let copied = context?.copiedCodeRange == payload.sourceRange
         let bgColor = copied
             ? style.accent.withAlphaComponent(0.20)
@@ -238,12 +238,6 @@ final class CodeBlockFragment: DownrightFragment {
     /// The tinted band, inset to the block's own indentation so a code block
     /// inside a list stays inside the list.
     func bandRect(at point: CGPoint) -> CGRect {
-        let frame = layoutFragmentFrame
-        return bandInTextContainer.offsetBy(dx: point.x - RenderMetrics.codeInsetX * 2,
-                                            dy: point.y - frame.minY)
-    }
-
-    var bandInTextContainer: CGRect {
         // `firstLineHeadIndent`, not `headIndent`: wrapped code rows hang by a
         // continuation indent, and measuring the band from that would pull its
         // right edge in by two columns on any block containing a long line.
@@ -255,11 +249,13 @@ final class CodeBlockFragment: DownrightFragment {
         // paragraph fragment carries the other. Back both out, then restore
         // only the block's structural indent. Otherwise top-level bands land
         // 22pt right of prose and nested bands lose their list edge.
-        return CGRect(x: indent,
-                      y: frame.minY + gap.top,
+        return CGRect(x: point.x + indent - RenderMetrics.codeInsetX * 2,
+                      y: point.y + gap.top,
                       width: max(1, contentWidth - indent),
                       height: max(1, frame.height - gap.top - gap.bottom))
     }
+
+    var bandInTextContainer: CGRect { bandRect(at: layoutFragmentFrame.origin) }
 
     // MARK: Hit-test geometry, shared with the view (§7.1)
 

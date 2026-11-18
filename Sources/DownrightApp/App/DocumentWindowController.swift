@@ -329,9 +329,6 @@ final class DocumentWindowController: NSWindowController {
         )
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        // Hover targets change within one text view, so tracking entry and exit
-        // alone cannot reveal the code controls as the pointer crosses a block.
-        window.acceptsMouseMovedEvents = true
         // AppKit's window-transform animations cannot settle in a source host
         // without NSApplication.run(); they can exhaust its dispatch workers.
         // A running application retains the normal native animation policy.

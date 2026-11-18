@@ -206,10 +206,8 @@ extension MarkdownTextView {
         let code = codeFragment(at: point, sourceOffset: offset)?.payload.sourceRange
         let hoveredFragment = code ?? (payload?.kind == .image || payload?.kind == .frontMatter ? payload?.sourceRange : nil)
         if fragmentContext.hoveredFragmentRange != hoveredFragment {
-            let previous = fragmentContext.hoveredFragmentRange
             fragmentContext.hoveredFragmentRange = hoveredFragment
-            redrawCodeChrome(in: previous)
-            redrawCodeChrome(in: code)
+            foregroundInvalidationHandler?(nil)
             needsRedraw = true
         }
 
@@ -278,9 +276,8 @@ extension MarkdownTextView {
     }
 
     func clearHoverState() {
-        let previous = fragmentContext.hoveredFragmentRange
         fragmentContext.hoveredFragmentRange = nil
-        redrawCodeChrome(in: previous)
+        foregroundInvalidationHandler?(nil)
         fragmentContext.hoveredTableRow = nil
         hoveredHeadingIndex = nil
         hoveredLinkRange = nil
@@ -655,13 +652,24 @@ extension MarkdownTextView {
         return nil
     }
 
-    private func redrawCodeChrome(in range: NSRange?) {
-        guard let range, let hit = fragmentPayload(atSourceOffset: range.location)?.payload,
-              hit.kind == .codeBlock || hit.kind == .collapsedCodeBlock else { return }
-        let first = paragraphRange(containing: range.location)
-        let last = paragraphRange(containing: max(range.location, range.upperBound - 1))
-        invalidateFragments(in: first, includingRendering: true)
-        if last != first { invalidateFragments(in: last, includingRendering: true) }
+    func drawHoveredCodeControls(in rect: CGRect) {
+        guard mode != .source, let range = fragmentContext.hoveredFragmentRange,
+              let layout = textLayoutManager,
+              let viewport = layout.textViewportLayoutController.viewportRange,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let first = range.location
+        let last = max(first, range.upperBound - 1)
+        let origin = textContainerOrigin
+        for offset in [first, last] {
+            let textKit = currentDisplayMap.textKitOffset(forSource: offset)
+            guard let location = layout.location(layout.documentRange.location, offsetBy: textKit),
+                  viewport.contains(location),
+                  let code = layout.textLayoutFragment(for: location) as? CodeBlockFragment,
+                  code.payload.sourceRange == range else { continue }
+            if offset == last && offset != first && code.role != .closeChrome { continue }
+            code.drawCopyControl(at: origin, in: rect, context: context)
+            if first == last { break }
+        }
     }
 
     func copyCodeBlockForAccessibility(pasteboard: NSPasteboard = .general) -> Bool {
@@ -689,12 +697,12 @@ extension MarkdownTextView {
         pasteboard.setString(code, forType: .string)
         fragmentContext.copiedCodeRange = payload.sourceRange
         copiedCodeFeedbackWorkItem?.cancel()
-        redrawCodeChrome(in: payload.sourceRange)
+        foregroundInvalidationHandler?(nil)
         let copiedRange = payload.sourceRange
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.fragmentContext.copiedCodeRange == copiedRange else { return }
             self.fragmentContext.copiedCodeRange = nil
-            self.redrawCodeChrome(in: copiedRange)
+            self.foregroundInvalidationHandler?(nil)
         }
         copiedCodeFeedbackWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)

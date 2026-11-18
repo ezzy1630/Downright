@@ -3491,6 +3491,7 @@ public final class MarkdownTextView: NSTextView {
     func drawForeground(in rect: NSRect) {
         drawHoveredLinkUnderline(in: rect)
         drawDropInsertionCaret(in: rect)
+        drawHoveredCodeControls(in: rect)
     }
 
     private func applyInvisibles(scopes: [NSRange]? = nil) {
