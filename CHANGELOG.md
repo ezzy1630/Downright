@@ -36,7 +36,8 @@ every release; Sparkle orders updates by it.
 - Finder thumbnails show a document's opening text instead of a badge.
 - Clicking a display formula, including one right after a heading, reveals
   its LaTeX and keeps it visible while you select it, so you can select and
-  edit the source again. Multiline and inline formulas work the same way.
+  edit the source again. Double-click selects the LaTeX and triple-click its
+  line. Multiline and inline formulas work the same way.
   ([#63](https://github.com/ezzy1630/Downright/issues/63))
 - Copying or cutting formatted text no longer picks up stray Markdown
   markers, and pasting it back no longer doubles them.
@@ -62,7 +63,9 @@ every release; Sparkle orders updates by it.
 - Clicking a link to a document that's already open switches to its tab or
   window instead of opening a second copy of the same file.
 - `down --line`, `--review`, and `--edit` now work when Downright is already
-  running, instead of opening the file at the top.
+  running, instead of opening the file at the top. If you pass more files
+  than fit in one request, `down` says so instead of silently opening
+  nothing.
 - Code is set in SF Mono as designed. On Macs where SF Mono isn't installed as
   a separate font, code had fallen back to Menlo and Settings listed SF Mono as
   "not available".
