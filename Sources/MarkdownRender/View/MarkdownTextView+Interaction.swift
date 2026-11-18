@@ -384,8 +384,14 @@ extension MarkdownTextView {
 
     public override func mouseDown(with event: NSEvent) {
         interruptAnimatedScroll()
+        let continuesTextSelection = restoreMouseSelectionPresentation(for: event)
         let point = convert(event.locationInWindow, from: nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if continuesTextSelection {
+            let trackingEvent = attribute(.drLink, at: point) == nil ? event : linkSelectionEvent(event, modifiers: modifiers)
+            trackTextMouseSelection(with: trackingEvent)
+            return
+        }
         var activateAfterTracking: (() -> Void)?
 
         if sourceFocusDoneRect?.insetBy(dx: -4, dy: -4).contains(point) == true {
@@ -445,7 +451,8 @@ extension MarkdownTextView {
                 )
             }
         }
-        if let hit = attribute(.drLink, at: point), let destination = hit.value as? String,
+        let link = attribute(.drLink, at: point)
+        if let hit = link, let destination = hit.value as? String,
            clickActivates(hit.range, modifiers: modifiers, clickCount: event.clickCount) {
             activateAfterTracking = { [weak self] in
                 guard let self else { return }
@@ -490,8 +497,8 @@ extension MarkdownTextView {
         }
 
         // A plain click in a fence's padding aims at the code, not at the
-        // invisible fence.  Shift-, option- and multi-clicks are deliberate
-        // selection gestures and go to `super` untouched.
+        // invisible fence. Shift-, option- and multi-clicks go to AppKit for
+        // selection tracking.
         if event.clickCount == 1, modifiers.isEmpty,
            let redirect = redirectedCodeFenceCaret(at: point) {
             window?.makeFirstResponder(self)
@@ -500,6 +507,14 @@ extension MarkdownTextView {
             return
         }
 
+        if activateAfterTracking == nil {
+            rememberMouseSelectionPresentation(for: event, at: point)
+        }
+        let trackingEvent = link == nil ? event : linkSelectionEvent(event, modifiers: modifiers)
+        trackTextMouseSelection(with: trackingEvent, activateAfterTracking: activateAfterTracking)
+    }
+
+    private func trackTextMouseSelection(with event: NSEvent, activateAfterTracking: (() -> Void)? = nil) {
         // `super` owns the whole click/drag gesture.  Make the target first
         // responder explicitly; relying on the window's default mouse routing
         // leaves a split-pane click visually correct but sends the next key to
@@ -527,6 +542,25 @@ extension MarkdownTextView {
         if sourceSelectedRange.length == 0 {
             activateAfterTracking?()
         }
+    }
+
+    private func linkSelectionEvent(_ event: NSEvent, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+        // Live mode uses Option to select link text without following it.
+        // AppKit's Option-modified tracking can narrow a word to one character
+        // at mouse-up. Hand it the normal multi-click selection gesture.
+        guard mode == .live, event.clickCount > 1,
+              modifiers.intersection([.option, .shift, .control, .command]) == .option else { return event }
+        return NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: event.locationInWindow,
+            modifierFlags: event.modifierFlags.subtracting(.option),
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            eventNumber: event.eventNumber,
+            clickCount: event.clickCount,
+            pressure: event.pressure
+        ) ?? event
     }
 
     private func semanticCheckbox(at point: NSPoint) -> CheckboxHit? {

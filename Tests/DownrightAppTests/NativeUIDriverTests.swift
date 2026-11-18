@@ -241,12 +241,69 @@ struct NativeUIDriverTests {
         }
     }
 
-    @Test(.disabled("First click reveals hidden emphasis markers and the second click at the same point misses the word."))
+    @Test
     func doubleClickSelectsRenderedEmphasisAfterTheFirstClickRevealsMarkers() async throws {
         try await UIDriver.withDocument("# Title\n\nBefore **café** after.\n") { ui in
             try ui.doubleClick(onText: "café")
             ui.check(ui.selectedSourceRange == NSRange(location: 18, length: 4),
                      "Double-click selected \(ui.selectedSourceRange) instead of the word")
+        }
+    }
+
+    @Test(arguments: ["`café`", "***café***"])
+    func doubleClickSelectsOnlyTheRenderedWordInInlineSyntax(markdown: String) async throws {
+        let source = "# Title\n\nBefore \(markdown) after.\n"
+        try await UIDriver.withDocument(source) { ui in
+            let word = try ui.range(of: "café")
+            try ui.doubleClick(onText: "café")
+            ui.check(ui.selectedSourceRange == word,
+                     "Double-click in \(markdown) selected \(ui.selectedSourceRange), expected \(word)")
+        }
+    }
+
+    @Test
+    func optionDoubleClickSelectsAWordInARenderedLink() async throws {
+        let source = "# Title\n\nBefore [café menu](sibling.md) after.\n"
+        try await UIDriver.withDocument(source, files: ["sibling.md": Data("# Sibling\n".utf8)]) { ui in
+            let word = try ui.range(of: "café")
+            try ui.input.click(at: ui.point(onText: "café"), count: 2, modifiers: .option)
+            ui.check(ui.selectedSourceRange == word,
+                     "Option-double-click in a link selected \(ui.selectedSourceRange), expected \(word)")
+            ui.check(ui.window.representedURL == ui.fixture, "Selecting link text followed the link")
+        }
+    }
+
+    @Test
+    func tripleClickSelectsTheRenderedEmphasisParagraph() async throws {
+        let paragraph = "Before ***café*** after.\n"
+        try await UIDriver.withDocument("# Title\n\n" + paragraph + "\nNext paragraph.\n") { ui in
+            let range = try ui.range(of: paragraph)
+            try ui.input.click(at: ui.point(onText: "café"), count: 3)
+            ui.check(ui.selectedSourceRange == range,
+                     "Triple-click selected \(ui.selectedSourceRange), expected \(range)")
+        }
+    }
+
+    @Test
+    func singleClickKeepsTheCaretAtTheRenderedEmphasisHit() async throws {
+        try await UIDriver.withDocument("# Title\n\nBefore **café** after.\n") { ui in
+            let word = try ui.range(of: "café")
+            let opener = NSRange(location: word.location - 2, length: 2)
+            let openerIsHidden = { ui.textView.currentDisplayMap.substitutions(in: opener).contains(where: \.isHidden) }
+            try #require(openerIsHidden(), "The opening marker must start hidden")
+            try ui.click(onText: "café")
+            ui.check(ui.selectedSourceRange == NSRange(location: word.location + 1, length: 0),
+                     "Single click placed the caret at \(ui.selectedSourceRange)")
+            ui.check(!openerIsHidden(), "The opening marker should reveal after one click")
+        }
+    }
+
+    @Test
+    func doubleClickThenDragExtendsTheWordSelection() async throws {
+        try await UIDriver.withDocument("# Title\n\nBefore **café** after.\n") { ui in
+            try ui.input.doubleClickAndDrag(from: ui.point(onText: "café"), to: ui.point(onText: "after"))
+            ui.check(ui.selectedSourceText == "café** after",
+                     "Double-click drag selected \(ui.selectedSourceRange) \(String(reflecting: ui.selectedSourceText))")
         }
     }
 
