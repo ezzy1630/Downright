@@ -328,13 +328,13 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .codeBlock(let range):
             menu.addItem(editMarkdownItem(view: view, range: range))
             menu.addItem(.separator())
-            menu.addItem(actionItem("Copy Code") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Copy Code")) { [weak self] in
                 self?.copy(range: range, flavour: .plain)
             })
-            menu.addItem(actionItem("Save as File…") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Save as File…")) { [weak self] in
                 self?.saveCodeBlock(range: range)
             })
-            menu.addItem(actionItem("Open in Editor") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Open in Editor")) { [weak self] in
                 self?.openCodeBlockInEditor(range: range)
             })
 
@@ -344,13 +344,13 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             // Missing paths stay inert on every surface, including this one:
             // no editor launch and no Finder reveal may run for a target that
             // does not exist (§ Workspace and path resolution).
-            menu.addItem(actionItem("Open in Editor") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Open in Editor")) { [weak self] in
                 _ = self?.openPathTokenInEditor(token)
             })
-            menu.addItem(actionItem("Reveal in Finder") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Reveal in Finder")) { [weak self] in
                 _ = self?.revealPathTokenInFinder(token)
             })
-            menu.addItem(actionItem("Copy Path") {
+            menu.addItem(actionItem(L10n.tr("Copy Path")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(token.rawPath, forType: .string)
             })
@@ -358,11 +358,11 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .image(let source):
             menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
             menu.addItem(.separator())
-            menu.addItem(actionItem("Open in Lightbox") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Open in Lightbox")) { [weak self] in
                 self?.presentLightbox(source: source, caption: nil)
             })
-            menu.addItem(actionItem("Save a Copy…") { [weak self] in self?.saveImageCopy(source: source) })
-            menu.addItem(actionItem("Reveal in Finder") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Save a Copy…")) { [weak self] in self?.saveImageCopy(source: source) })
+            menu.addItem(actionItem(L10n.tr("Reveal in Finder")) { [weak self] in
                 guard let self, let base = self.markdownDocument.url?.deletingLastPathComponent() else { return }
                 let url = base.appendingPathComponent(source).standardizedFileURL
                 self.authorizeLocalEffect(.launchPathOrEditor, target: url) {
@@ -373,11 +373,11 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .link(let destination):
             menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
             menu.addItem(.separator())
-            menu.addItem(actionItem("Open Link") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Open Link")) { [weak self] in
                 guard let self else { return }
                 self.markdownTextView(view, didActivateLink: destination, at: target.sourceRange, modifiers: [])
             })
-            menu.addItem(actionItem("Copy Target") {
+            menu.addItem(actionItem(L10n.tr("Copy Target")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(destination, forType: .string)
             })
@@ -385,19 +385,26 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
         case .table(let range):
             menu.addItem(editMarkdownItem(view: view, range: range))
             menu.addItem(.separator())
-            menu.addItem(actionItem("Insert Row") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Insert Row")) { [weak self] in
                 self?.tableInsertRow(range, at: target.hitOffset)
             })
-            menu.addItem(actionItem("Delete Row") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Delete Row")) { [weak self] in
                 self?.tableDeleteRow(range, at: target.hitOffset)
             })
             menu.addItem(.separator())
             for alignment in [TableAlignment.left, .center, .right] {
-                menu.addItem(actionItem("Align Column \(alignment.rawValue.capitalized)") { [weak self] in
+                let title: String
+                switch alignment {
+                case .left: title = L10n.tr("Align Column Left")
+                case .center: title = L10n.tr("Align Column Center")
+                case .right: title = L10n.tr("Align Column Right")
+                case .none: title = L10n.tr("Align Column")
+                }
+                menu.addItem(actionItem(title) { [weak self] in
                     self?.tableSetAlignment(range, alignment, at: target.hitOffset)
                 })
             }
-            menu.addItem(actionItem("Realign Source") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Realign Source")) { [weak self] in
                 guard let self else { return }
                 self.markdownDocument.ensureParsedCurrent()
                 self.markdownDocument.apply(
@@ -407,7 +414,7 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             })
 
         case .selection:
-            let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+            let copy = NSMenuItem(title: L10n.tr("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "")
             copy.target = view
             menu.addItem(copy)
             menu.addItem(editMarkdownItem(view: view, range: target.sourceRange))
@@ -416,10 +423,10 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
             add(.copyAsRichText, to: menu)
             add(.copyAsPlainText, to: menu)
             menu.addItem(.separator())
-            menu.addItem(actionItem("Add Comment…") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Add Comment…")) { [weak self] in
                 self?.presentAddReview(kind: .comment)
             })
-            menu.addItem(actionItem("Suggest Replacement…") { [weak self] in
+            menu.addItem(actionItem(L10n.tr("Suggest Replacement…")) { [weak self] in
                 self?.presentAddReview(kind: .suggestion)
             })
             add(.speakDocument, to: menu)
@@ -447,14 +454,14 @@ extension DocumentWindowController: MarkdownTextViewDelegate {
     }
 
     private func editMarkdownItem(view: MarkdownTextView, range: NSRange) -> NSMenuItem {
-        actionItem("Edit Markdown") { [weak view] in
+        actionItem(L10n.tr("Edit Markdown")) { [weak view] in
             view?.focusSource(in: range)
             view?.window?.makeFirstResponder(view)
         }
     }
 
     private func richTextSectionItem(index: Int) -> NSMenuItem {
-        actionItem("Copy Section as Rich Text") { [weak self] in
+        actionItem(L10n.tr("Copy Section as Rich Text")) { [weak self] in
             guard let self, index < self.markdownDocument.parsed.headings.count else { return }
             self.copy(range: self.markdownDocument.parsed.headings[index].sectionRange, flavour: .richText)
         }
@@ -537,12 +544,12 @@ extension DocumentWindowController: DensityGutterDelegate {
     ) -> (title: String, snippet: String, context: String)? {
         let offset = Int(fraction * CGFloat(markdownDocument.parsed.length))
         guard let index = markdownDocument.parsed.headings.lastIndex(where: { $0.range.location <= offset }) else {
-            return ("Document start", "", densityGutterView.metricsSummary)
+            return (L10n.tr("Document start"), "", densityGutterView.metricsSummary)
         }
         let heading = markdownDocument.parsed.headings[index]
-        let sectionPosition = "Section \(index + 1) of \(markdownDocument.parsed.headings.count)"
+        let sectionPosition = L10n.tr("Section %lld of %lld", index + 1, markdownDocument.parsed.headings.count)
         let context = heading.wordCount > 0
-            ? "\(sectionPosition) · \(heading.wordCount) words"
+            ? L10n.tr("%@ · %lld words", sectionPosition, heading.wordCount)
             : sectionPosition
         if containerTextView.mode == .source || containerTextView.sourceFocus == .document {
             let snippetLength = min(160, max(0, markdownDocument.parsed.length - offset))
@@ -554,7 +561,7 @@ extension DocumentWindowController: DensityGutterDelegate {
         }
         return (
             heading.title,
-            StructuralZoom.sectionPreview(markdownDocument.parsed, headingIndex: index) ?? "Section overview",
+            StructuralZoom.sectionPreview(markdownDocument.parsed, headingIndex: index) ?? L10n.tr("Section overview"),
             context
         )
     }
@@ -582,18 +589,18 @@ extension DocumentWindowController: FindBarDelegate {
             let edits = FindEngine.replaceAllEdits(in: markdownDocument.text, query: currentFindQuery, template: replacement)
             markdownDocument.apply(edits, actionName: "Replace All")
             runFind(currentFindQuery)
-            replaceResults("Replaced \(edits.count)")
+            replaceResults(L10n.tr("Replaced %lld", edits.count))
         } else if let edit = findSession.replacementEdit(
             in: markdownDocument.text, template: replacement,
             caret: containerTextView.sourceSelectedRange.location
         ) {
             applyInPlaceDocumentEdits([edit], actionName: "Replace")
             runFind(currentFindQuery)
-            replaceResults("Replaced 1")
+            replaceResults(L10n.tr("Replaced 1"))
         } else {
             // Nothing to replace (empty bar). Surface that rather than silently
             // doing nothing when the pill is in replace mode.
-            replaceResults("Nothing to replace")
+            replaceResults(L10n.tr("Nothing to replace"))
         }
     }
 
@@ -617,8 +624,8 @@ extension DocumentWindowController: ConflictBarDelegate {
     func conflictBarDidRequestReview(_ bar: ConflictBarView) {
         guard let conflict = pendingConflict, let url = markdownDocument.url else { return }
         let controller = CompareWindowController(
-            leftText: markdownDocument.text, leftTitle: "Yours",
-            rightText: conflict.incomingText, rightTitle: "On disk",
+            leftText: markdownDocument.text, leftTitle: L10n.tr("Yours"),
+            rightText: conflict.incomingText, rightTitle: L10n.tr("On disk"),
             documentURL: url
         )
         controller.showWindow(nil)
@@ -688,10 +695,10 @@ extension DocumentWindowController: HistoryInspectorViewDelegate {
         didRequestRestore record: SnapshotStore.VersionRecord
     ) {
         let alert = NSAlert()
-        alert.messageText = "Restore this version?"
-        alert.informativeText = "The current text will be replaced with the selected version. This is an ordinary edit, so ⌘Z undoes it."
-        alert.addButton(withTitle: "Restore")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L10n.tr("Restore this version?")
+        alert.informativeText = L10n.tr("The current text will be replaced with the selected version. This is an ordinary edit, so ⌘Z undoes it.")
+        alert.addButton(withTitle: L10n.tr("Restore"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         markdownDocument.restore(version: record)
         inspector.versions = markdownDocument.versions()

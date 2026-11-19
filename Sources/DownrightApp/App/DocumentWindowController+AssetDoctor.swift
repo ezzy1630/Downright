@@ -78,8 +78,8 @@ extension DocumentWindowController: AssetDoctorViewDelegate {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.message = kind == .relink
-            ? "Choose the replacement image."
-            : "Choose the image path to use."
+            ? L10n.tr("Choose the replacement image.")
+            : L10n.tr("Choose the image path to use.")
         guard panel.runModal() == .OK, let url = panel.url,
               let replacement = relativeAssetPath(for: url) else { return }
         let proposal = kind == .relink

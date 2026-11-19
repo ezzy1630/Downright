@@ -1,0 +1,10 @@
+/* DownrightQL English (Base) Localization */
+
+"%@ words · %@ characters · %lld min read" = "%@ words · %@ characters · %lld min read";
+"%@ · %lld words" = "%@ · %lld words";
+"Document start" = "Document start";
+"Open in Downright" = "Open in Downright";
+"Plain text preview — open in Downright for full rendering" = "Plain text preview — open in Downright for full rendering";
+"Section %lld of %lld" = "Section %lld of %lld";
+"Section overview" = "Section overview";
+"Showing part of this large file" = "Showing part of this large file";

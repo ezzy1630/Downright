@@ -474,7 +474,7 @@ private final class UpdateNotesContentView: NSView {
         // The footer is the honest half of "capped": the panel shows an
         // opening, and says plainly where the rest of it lives.
         if let infoURL = metadata.infoURL, infoURL.scheme == "https" {
-            let link = UpdateNotesLinkButton(title: "Full notes", url: infoURL, sheet: sheet)
+            let link = UpdateNotesLinkButton(title: L10n.tr("Full notes"), url: infoURL, sheet: sheet)
             stack.addArrangedSubview(link)
         }
     }
@@ -487,7 +487,7 @@ private final class UpdateNotesContentView: NSView {
         let notesWidth = width - 28
         let summary = UpdateNotesSummary.summary(from: metadata.itemDescription)
         if summary.isEmpty {
-            let empty = NSTextField(wrappingLabelWithString: "No release notes for this build.")
+            let empty = NSTextField(wrappingLabelWithString: L10n.tr("No release notes for this build."))
             empty.font = PanelFont.row
             empty.textColor = sheet.textFaint
             empty.preferredMaxLayoutWidth = notesWidth
@@ -542,7 +542,7 @@ private final class UpdateNotesContentView: NSView {
     }
 
     private static func statusText(_ metadata: UpdateMetadata, isReady: Bool) -> String {
-        if isReady { return "Ready to install" }
+        if isReady { return L10n.tr("Ready to install") }
         guard metadata.contentLength > 0 else { return "" }
         return ByteCountFormatter.string(
             fromByteCount: Int64(metadata.contentLength), countStyle: .file

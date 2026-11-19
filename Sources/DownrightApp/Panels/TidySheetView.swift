@@ -115,9 +115,9 @@ final class TidySheetView: NSView {
         }
         actions.append(contentsOf: [selectAll, selectNone, cancel, apply])
 
-        let cancelButton = PanelButton.text("Cancel", action: cancel)
+        let cancelButton = PanelButton.text(L10n.tr("Cancel"), action: cancel)
         cancelButton.keyEquivalent = "\u{1b}"
-        applyButton = PanelButton.text("Apply", action: apply, isDefault: true)
+        applyButton = PanelButton.text(L10n.tr("Apply"), action: apply, isDefault: true)
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
@@ -127,8 +127,8 @@ final class TidySheetView: NSView {
         footer.alignment = .centerY
         footer.distribution = .fill
         footer.translatesAutoresizingMaskIntoConstraints = false
-        footer.addArrangedSubview(PanelButton.text("Select All", action: selectAll))
-        footer.addArrangedSubview(PanelButton.text("Select None", action: selectNone))
+        footer.addArrangedSubview(PanelButton.text(L10n.tr("Select All"), action: selectAll))
+        footer.addArrangedSubview(PanelButton.text(L10n.tr("Select None"), action: selectNone))
         footer.addArrangedSubview(spacer)
         footer.addArrangedSubview(cancelButton)
         footer.addArrangedSubview(applyButton)
@@ -174,8 +174,8 @@ final class TidySheetView: NSView {
         }
         emptyState.configure(
             symbol: "checkmark.seal",
-            title: "Nothing to tidy",
-            subtitle: "This document already follows every\ntidy rule.",
+            title: L10n.tr("Nothing to tidy"),
+            subtitle: L10n.tr("This document already follows every\ntidy rule."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false
@@ -242,9 +242,9 @@ final class TidySheetView: NSView {
 
     private func updateFooter() {
         let count = accepted.count
-        applyButton.title = count == 1 ? "Apply 1 Change" : "Apply \(count) Changes"
+        applyButton.title = count == 1 ? L10n.tr("Apply 1 Change") : L10n.tr("Apply %lld Changes", count)
         applyButton.isEnabled = count > 0
-        subtitleLabel.stringValue = proposals.isEmpty ? "" : "\(count) of \(proposals.count) selected"
+        subtitleLabel.stringValue = proposals.isEmpty ? "" : L10n.tr("%lld of %lld selected", count, proposals.count)
     }
 
     private func applyStyle() {
@@ -274,11 +274,17 @@ final class TidySheetView: NSView {
     /// Whitespace-only edits are half of what Tidy does, and "" → "" tells the
     /// reader nothing, so those get described rather than shown.
     static func displayText(_ text: String) -> String {
-        if text.isEmpty { return "(nothing)" }
+        if text.isEmpty { return L10n.tr("(nothing)") }
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let newlines = text.filter(\.isNewline).count
-            if newlines > 0 { return "(\(newlines) blank line\(newlines == 1 ? "" : "s"))" }
-            return "(\(text.count) space\(text.count == 1 ? "" : "s"))"
+            if newlines > 0 {
+                return newlines == 1
+                    ? L10n.tr("(1 blank line)")
+                    : L10n.tr("(%lld blank lines)", newlines)
+            }
+            return text.count == 1
+                ? L10n.tr("(1 space)")
+                : L10n.tr("(%lld spaces)", text.count)
         }
         // Trailing whitespace is invisible and is exactly what one rule trims,
         // so make it visible where it occurs.
@@ -346,7 +352,7 @@ extension TidySheetView: NSTableViewDataSource, NSTableViewDelegate {
             let checkedCount = members.filter { accepted.contains($0.edit.id) }.count
             cell.onToggle = { [weak self] value in self?.setAccepted(value, forGroup: rule) }
             cell.configure(
-                title: rule?.title ?? "Other changes",
+                title: rule.map(L10n.tidyOptionTitle) ?? L10n.tr("Other changes"),
                 count: members.count,
                 checkedCount: checkedCount,
                 styleSheet: styleSheet
@@ -534,9 +540,9 @@ private final class TidyProposalRowView: NSView {
         expandButton.isHidden = !isTruncated
         expandButton.image = NSImage(
             systemSymbolName: isExpanded ? "chevron.up" : "chevron.down",
-            accessibilityDescription: isExpanded ? "Show less" : "Show the whole change"
+            accessibilityDescription: isExpanded ? L10n.tr("Show less") : L10n.tr("Show the whole change")
         )
-        expandButton.toolTip = isExpanded ? "Show less" : "Show the whole change"
+        expandButton.toolTip = isExpanded ? L10n.tr("Show less") : L10n.tr("Show the whole change")
         expandButton.contentTintColor = styleSheet.textFaint
         toolTip = isTruncated ? "− \(before)\n+ \(after)" : nil
 

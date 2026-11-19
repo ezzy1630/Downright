@@ -271,7 +271,7 @@ final class TaskSectionBarView: NSView {
     private func updateAccessibility() {
         let done = segments.reduce(0) { $0 + $1.doneCount }
         let total = segments.reduce(0) { $0 + $1.taskCount }
-        setAccessibilityValue(total > 0 ? "\(done) of \(total) tasks done" : "No tasks")
+        setAccessibilityValue(total > 0 ? L10n.tr("%lld of %lld tasks done", done, total) : L10n.tr("No tasks"))
     }
 
     // Most readers never request these actions. Keep all section destinations

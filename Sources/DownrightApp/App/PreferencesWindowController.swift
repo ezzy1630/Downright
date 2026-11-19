@@ -12,13 +12,13 @@ enum SettingsPane: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .general: return "General"
-        case .appearance: return "Appearance"
-        case .typography: return "Typography"
-        case .editor: return "Editor"
-        case .history: return "History"
-        case .updates: return "Updates"
-        case .keys: return "Keys"
+        case .general: return L10n.tr("General")
+        case .appearance: return L10n.tr("Appearance")
+        case .typography: return L10n.tr("Typography")
+        case .editor: return L10n.tr("Editor")
+        case .history: return L10n.tr("History")
+        case .updates: return L10n.tr("Updates")
+        case .keys: return L10n.tr("Keys")
         }
     }
 
@@ -59,7 +59,7 @@ final class PreferencesWindowController: NSWindowController {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
         let window = NSWindow(contentViewController: tabs)
-        window.title = "Downright Settings"
+        window.title = L10n.tr("Downright Settings")
         window.styleMask.insert(.resizable)
         window.setContentSize(NSSize(width: 760, height: 620))
         // Resizable, but not to the point of self-harm.  The forms lay out at a
@@ -152,7 +152,7 @@ final class PreferencesWindowController: NSWindowController {
     /// tells the user which pane the setting lives in.
     private func installSearchField(in window: NSWindow) {
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.placeholderString = "Search settings"
+        searchField.placeholderString = L10n.tr("Search settings")
         searchField.sendsSearchStringImmediately = false
         searchField.sendsWholeSearchString = false
         searchField.target = self
@@ -240,7 +240,7 @@ enum PreferenceRow {
         case .note(let text):
             return text
         case .themePreview:
-            return "theme preview colors typography sample"
+            return L10n.tr("theme preview colors typography sample")
         }
     }
 }
@@ -248,7 +248,7 @@ enum PreferenceRow {
 /// The body font popup: Preset Default first, then installed families.
 /// Pure, so the index mapping is testable without a window.
 enum BodyFontChoices {
-    static let presetDefaultTitle = "Preset Default"
+    static var presetDefaultTitle: String { L10n.tr("Preset Default") }
 
     /// Installed families in the order a reader scans a list: alphabetical,
     /// ignoring case and treating digits as numbers.
@@ -325,8 +325,8 @@ private final class FlippedStackView: NSStackView {
 
 @MainActor
 private final class ThemePreviewView: NSView {
-    private let heading = NSTextField(labelWithString: "A clear document")
-    private let body = NSTextField(labelWithString: "Readable prose, a link, and `inline code`.")
+    private let heading = NSTextField(labelWithString: L10n.tr("A clear document"))
+    private let body = NSTextField(labelWithString: L10n.tr("Readable prose, a link, and `inline code`."))
     private let accent = NSTextField(labelWithString: "downright.md")
     private var observer: NSObjectProtocol?
 
@@ -356,7 +356,7 @@ private final class ThemePreviewView: NSView {
         }
         refresh()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Theme preview")
+        setAccessibilityLabel(L10n.tr("Theme preview"))
         setAccessibilityElement(true)
     }
 
@@ -391,7 +391,7 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
     /// since — all of it is stale the moment it is captured.
     private let makeRows: () -> [PreferenceRow]
     private let stack = FlippedStackView()
-    private let emptyLabel = NSTextField(labelWithString: "No settings match your search.")
+    private let emptyLabel = NSTextField(labelWithString: L10n.tr("No settings match your search."))
 
     var searchQuery: String = "" {
         didSet {
@@ -572,7 +572,7 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
             case .missing(let name):
                 // Show what is stored, disabled, instead of silently selecting
                 // something else: the setting and the popup must agree.
-                popup.addItem(withTitle: "\(name) (not available)")
+                popup.addItem(withTitle: L10n.tr("%@ (not available)", name))
                 popup.lastItem?.isEnabled = false
                 popup.select(popup.lastItem)
             }
@@ -623,12 +623,18 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
 
     private static func unit(for title: String) -> String? {
         switch title {
-        case "Size", "Text size adjustment": return "pt"
-        case "Line height", "Math scale": return "×"
-        case "Measure (characters)": return "characters"
-        case "Large-file threshold", "Maximum size": return "MB"
-        case "Keep versions for": return "days"
-        default: return nil
+        case "Size", "Text size adjustment", L10n.tr("Size"), L10n.tr("Text size adjustment"):
+            return "pt"
+        case "Line height", "Math scale", L10n.tr("Line height"), L10n.tr("Math scale"):
+            return "×"
+        case "Measure (characters)", L10n.tr("Measure (characters)"):
+            return L10n.tr("characters")
+        case "Large-file threshold", "Maximum size", L10n.tr("Large-file threshold"), L10n.tr("Maximum size"):
+            return "MB"
+        case "Keep versions for", L10n.tr("Keep versions for"):
+            return L10n.tr("days")
+        default:
+            return nil
         }
     }
 
@@ -698,12 +704,12 @@ enum PreferencesForms {
         // with no explanation, so the list is what this Mac actually has.
         let editors = ExternalEditor.allCases.filter(\.isInstalled)
         return [
-            .section("On open"),
-            .toggle("Restore windows from the last session", help: nil,
+            .section(L10n.tr("On open")),
+            .toggle(L10n.tr("Restore windows from the last session"), help: nil,
                     get: { Preferences.shared.values.restoreSession },
                     set: { value in Preferences.shared.update { $0.restoreSession = value } }),
 
-            .choice("When the last document closes", help: nil,
+            .choice(L10n.tr("When the last document closes"), help: nil,
                     options: LastDocumentCloseBehavior.allCases.map(\.title),
                     get: {
                         .index(LastDocumentCloseBehavior.allCases.firstIndex(of: Preferences.shared.values.lastDocumentCloseBehavior) ?? 0)
@@ -713,17 +719,30 @@ enum PreferencesForms {
                         Preferences.shared.update { $0.lastDocumentCloseBehavior = LastDocumentCloseBehavior.allCases[index] }
                     }),
 
-            .section("Working with agents"),
-            .toggle("Watch files for external changes",
-                    help: "Marks what changed in the document while you were reading it.",
+            .section(L10n.tr("Language")),
+            .choice(L10n.tr("Interface language"),
+                    help: L10n.tr("Follows macOS by default. Reopen Downright after changing this setting so every window updates."),
+                    options: AppLanguage.allCases.map(\.title),
+                    get: {
+                        .index(AppLanguage.allCases.firstIndex(of: Preferences.shared.values.language) ?? 0)
+                    },
+                    set: { index in
+                        guard AppLanguage.allCases.indices.contains(index) else { return }
+                        Preferences.shared.update { $0.language = AppLanguage.allCases[index] }
+                        NSApp.mainMenu = MainMenu.build()
+                    }),
+
+            .section(L10n.tr("Working with agents")),
+            .toggle(L10n.tr("Watch files for external changes"),
+                    help: L10n.tr("Marks what changed in the document while you were reading it."),
                     get: { Preferences.shared.values.watchFiles },
                     set: { value in Preferences.shared.update { $0.watchFiles = value } }),
-            .toggle("Resolve file paths in documents",
-                    help: "Underlines paths that aren't there, so a file an agent claims to have written is easy to check.",
+            .toggle(L10n.tr("Resolve file paths in documents"),
+                    help: L10n.tr("Underlines paths that aren't there, so a file an agent claims to have written is easy to check."),
                     get: { Preferences.shared.values.resolvePathTokens },
                     set: { value in Preferences.shared.update { $0.resolvePathTokens = value } }),
-            .choice("Open code files in",
-                    help: "Only apps installed on this Mac are listed.",
+            .choice(L10n.tr("Open code files in"),
+                    help: L10n.tr("Only apps installed on this Mac are listed."),
                     options: editors.map(\.title),
                     get: {
                         let current = Preferences.shared.values.externalEditor
@@ -734,8 +753,8 @@ enum PreferencesForms {
                         guard editors.indices.contains(index) else { return }
                         Preferences.shared.update { $0.externalEditor = editors[index] }
                     }),
-            .text("Extra sibling folders",
-                  help: "Folder names, separated by commas, scanned one level down from the document. Reopen a document for a change here to reach it.",
+            .text(L10n.tr("Extra sibling folders"),
+                  help: L10n.tr("Folder names, separated by commas, scanned one level down from the document. Reopen a document for a change here to reach it."),
                   get: { Preferences.shared.values.siblingScanDirectories.joined(separator: ", ") },
                   set: { value in
                       Preferences.shared.update {
@@ -748,31 +767,24 @@ enum PreferencesForms {
         ] + systemIntegration()
     }
 
-    /// The first-run setup panel's steps, kept reachable for good.
-    ///
-    /// The panel is shown once and answering "Not now" is meant to stick, so
-    /// this is where someone goes when they change their mind, when Quick Look
-    /// stops working after a macOS update, or when they moved the app and the
-    /// registration went stale.  Rows are rebuilt every time the pane appears,
-    /// so what they say is what is true right now.
     @MainActor
     static func systemIntegration() -> [PreferenceRow] {
-        var rows: [PreferenceRow] = [.section("System integration")]
+        var rows: [PreferenceRow] = [.section(L10n.tr("System integration"))]
 
         if SystemIntegration.isDefaultMarkdownHandler {
-            rows.append(.note("Markdown files open in Downright."))
+            rows.append(.note(L10n.tr("Markdown files open in Downright.")))
         } else {
             rows.append(.note(defaultHandlerDescription()))
-            rows.append(.button("Open Markdown Files with Downright") {
+            rows.append(.button(L10n.tr("Open Markdown Files with Downright")) {
                 Task { @MainActor in
                     let failure = await SystemIntegration.makeDefaultMarkdownHandler()
                     if SystemIntegration.isDefaultMarkdownHandler {
-                        report("Markdown files now open in Downright.", detail: nil)
+                        report(L10n.tr("Markdown files now open in Downright."), detail: nil)
                     } else {
                         report(
-                            "Couldn’t change the default app.",
+                            L10n.tr("Couldn’t change the default app."),
                             detail: failure?.localizedDescription
-                                ?? "Finder’s Get Info → Open With → Change All can set it directly."
+                                ?? L10n.tr("Finder’s Get Info → Open With → Change All can set it directly.")
                         )
                     }
                 }
@@ -782,50 +794,58 @@ enum PreferencesForms {
         if SystemIntegration.commandLineToolIsBundled {
             rows.append(.button(
                 SystemIntegration.isCommandLineToolInstalled
-                    ? "Reinstall the down Command Line Tool"
-                    : "Install the down Command Line Tool"
+                    ? L10n.tr("Reinstall the down Command Line Tool")
+                    : L10n.tr("Install the down Command Line Tool")
             ) {
                 do {
                     let result = try SystemIntegration.installCommandLineTool()
                     guard !result.linked.isEmpty else {
                         report(
-                            "Nothing was installed.",
-                            detail: "Something else already owns \(result.skipped.joined(separator: " and ")) in \(result.directory.path)."
+                            L10n.tr("Nothing was installed."),
+                            detail: L10n.tr(
+                                "Something else already owns %@ in %@.",
+                                result.skipped.joined(separator: L10n.tr(" and ")),
+                                result.directory.path
+                            )
                         )
                         return
                     }
                     report(
-                        "Installed \(result.linked.joined(separator: " and ")) in \(result.directory.path).",
+                        L10n.tr(
+                            "Installed %@ in %@.",
+                            result.linked.joined(separator: L10n.tr(" and ")),
+                            result.directory.path
+                        ),
                         detail: result.isOnPath
                             ? nil
-                            : "That folder isn’t on your PATH — add it to your shell profile to use the command."
+                            : L10n.tr("That folder isn’t on your PATH — add it to your shell profile to use the command.")
                     )
                 } catch {
-                    report("Couldn’t install the command line tool.", detail: error.localizedDescription)
+                    report(L10n.tr("Couldn’t install the command line tool."), detail: error.localizedDescription)
                 }
             })
         }
 
         if SystemIntegration.quickLookExtensionsAreBundled {
-            rows.append(.button("Re-register Quick Look Previews and Icons") {
+            rows.append(.button(L10n.tr("Re-register Quick Look Previews and Icons")) {
                 SystemIntegration.registerWithSystem(resetThumbnailCache: true) { enabled in
                     report(
                         enabled
-                            ? "Quick Look previews and Finder icons are on."
-                            : "Quick Look needs one switch from you.",
+                            ? L10n.tr("Quick Look previews and Finder icons are on.")
+                            : L10n.tr("Quick Look needs one switch from you."),
                         detail: enabled
-                            ? "Press space on a Markdown file to try it."
-                            : "System Settings → General → Login Items & Extensions → Quick Look, then tick Downright."
+                            ? L10n.tr("Press space on a Markdown file to try it.")
+                            : L10n.tr("System Settings → General → Login Items & Extensions → Quick Look, then tick Downright.")
                     )
                 }
             })
-            rows.append(.button("Open Quick Look Settings") {
+            rows.append(.button(L10n.tr("Open Quick Look Settings")) {
                 SystemIntegration.openQuickLookSettings()
             })
         } else {
             // A SwiftPM dev build genuinely cannot carry an `.appex`; saying so
             // beats offering a button that can only ever fail.
-            rows.append(.note("Quick Look previews are available in the installed release of Downright."))
+            rows.append(.note(L10n.tr("Quick Look previews are available in the installed release of Downright.")))
         }
 
         rows.append(contentsOf: agentIntegration())
@@ -833,46 +853,39 @@ enum PreferencesForms {
         return rows
     }
 
-    /// Coding agents rewriting Markdown under the reader is the case this app
-    /// exists for, so the hook that makes them hand the file over belongs beside
-    /// the other system registrations.
-    ///
-    /// Like every row above it, this reads live state rather than a stored
-    /// preference: the truth is in the agent's own settings file, which the user
-    /// may edit by hand or replace entirely.
     @MainActor
     static func agentIntegration() -> [PreferenceRow] {
         // The hook invokes `down` by absolute path, so without the CLI there is
         // nothing to install and a button would only ever fail.
         guard AgentIntegration.executablePath != nil else {
-            return [.note("Install the down command line tool above to let coding agents open Markdown here.")]
+            return [.note(L10n.tr("Install the down command line tool above to let coding agents open Markdown here."))]
         }
 
         guard AgentIntegration.isInstalled else {
             return [
-                .note("Let coding agents open Markdown in Downright as they write it."),
-                .button("Open Agent Edits in Downright") {
+                .note(L10n.tr("Let coding agents open Markdown in Downright as they write it.")),
+                .button(L10n.tr("Open Agent Edits in Downright")) {
                     do {
                         try AgentIntegration.install()
                         report(
-                            "Agent edits now open in Downright.",
-                            detail: "Added to \(AgentIntegration.settingsURL.path)."
+                            L10n.tr("Agent edits now open in Downright."),
+                            detail: L10n.tr("Added to %@.", AgentIntegration.settingsURL.path)
                         )
                     } catch {
-                        report("Couldn’t update the agent settings.", detail: error.localizedDescription)
+                        report(L10n.tr("Couldn’t update the agent settings."), detail: error.localizedDescription)
                     }
                 },
             ]
         }
 
         return [
-            .note("Coding agents open Markdown in Downright as they write it."),
-            .button("Stop Opening Agent Edits") {
+            .note(L10n.tr("Coding agents open Markdown in Downright as they write it.")),
+            .button(L10n.tr("Stop Opening Agent Edits")) {
                 do {
                     try AgentIntegration.uninstall()
-                    report("Agent edits no longer open in Downright.", detail: nil)
+                    report(L10n.tr("Agent edits no longer open in Downright."), detail: nil)
                 } catch {
-                    report("Couldn’t update the agent settings.", detail: error.localizedDescription)
+                    report(L10n.tr("Couldn’t update the agent settings."), detail: error.localizedDescription)
                 }
             },
         ]
@@ -884,9 +897,9 @@ enum PreferencesForms {
     private static func defaultHandlerDescription() -> String {
         guard let type = SystemIntegration.claimedTypes.first,
               let handler = NSWorkspace.shared.urlForApplication(toOpen: type)
-        else { return "No app is set to open Markdown files." }
+        else { return L10n.tr("No app is set to open Markdown files.") }
         let name = FileManager.default.displayName(atPath: handler.path)
-        return "Markdown files currently open in \(name)."
+        return L10n.tr("Markdown files currently open in %@.", name)
     }
 
     @MainActor
@@ -901,9 +914,9 @@ enum PreferencesForms {
     @MainActor
     static func typography() -> [PreferenceRow] {
         [
-            .section("Body"),
-            .choice("Preset", help: "Reading is set in New York, Working in SF Pro Text. A font family chosen below replaces the preset’s face.",
-                    options: TypographyConfig.BodyPreset.allCases.map(\.title),
+            .section(L10n.tr("Body")),
+            .choice(L10n.tr("Preset"), help: L10n.tr("Reading is set in New York, Working in SF Pro Text. A font family chosen below replaces the preset’s face."),
+                    options: TypographyConfig.BodyPreset.allCases.map(L10n.bodyPresetTitle),
                     get: {
                         let presets = TypographyConfig.BodyPreset.allCases
                         let current = Preferences.shared.values.typography.preset
@@ -915,8 +928,8 @@ enum PreferencesForms {
                             $0.typography.preset = TypographyConfig.BodyPreset.allCases[index]
                         }
                     }),
-            .choice("Font family",
-                    help: "Sets body text and headings. Preset Default uses the preset’s face; code keeps the monospace family below.",
+            .choice(L10n.tr("Font family"),
+                    help: L10n.tr("Sets body text and headings. Preset Default uses the preset’s face; code keeps the monospace family below."),
                     options: [BodyFontChoices.presetDefaultTitle] + BodyFontChoices.families(),
                     get: {
                         BodyFontChoices.selection(
@@ -929,14 +942,14 @@ enum PreferencesForms {
                         guard let family = BodyFontChoices.family(at: index, families: families) else { return }
                         Preferences.shared.update { $0.typography.bodyFamily = family }
                     }),
-            .stepper("Size", help: nil, range: 11...24, step: 1,
+            .stepper(L10n.tr("Size"), help: nil, range: 11...24, step: 1,
                      get: { Double(Preferences.shared.values.typography.bodySize) },
                      set: { value in Preferences.shared.update { $0.typography.bodySize = CGFloat(value) } }),
-            .stepper("Text size adjustment", help: "A quick app-wide nudge, also on the View menu.",
+            .stepper(L10n.tr("Text size adjustment"), help: L10n.tr("A quick app-wide nudge, also on the View menu."),
                      range: -4...10, step: 1,
                      get: { Double(Preferences.shared.values.textSizeAdjustment) },
                      set: { value in Preferences.shared.update { $0.textSizeAdjustment = CGFloat(value) } }),
-            .choice("Type scale", help: "One ratio sets every heading size.",
+            .choice(L10n.tr("Type scale"), help: L10n.tr("One ratio sets every heading size."),
                     options: ["1.200", "1.250", "1.333"],
                     get: {
                         let ratio = Preferences.shared.values.typography.scaleRatio
@@ -949,12 +962,12 @@ enum PreferencesForms {
                             $0.typography.scaleRatio = ratios[index]
                         }
                     }),
-            .stepper("Line height", help: nil, range: 1.2...2.0, step: 0.05,
+            .stepper(L10n.tr("Line height"), help: nil, range: 1.2...2.0, step: 0.05,
                      get: { Double(Preferences.shared.values.typography.lineHeightMultiple) },
                      set: { value in Preferences.shared.update { $0.typography.lineHeightMultiple = CGFloat(value) } }),
-            .choice("Line width",
-                    help: "Choose a character measure, or Full width to use the available window. The default remains 70 characters.",
-                    options: TypographyConfig.measureChoices.map(TypographyConfig.measureTitle),
+            .choice(L10n.tr("Line width"),
+                    help: L10n.tr("Choose a character measure, or Full width to use the available window. The default remains 70 characters."),
+                    options: TypographyConfig.measureChoices.map(L10n.measureTitle),
                     get: {
                         let value = TypographyConfig.clampedMeasureCharacters(Preferences.shared.values.typography.measureCharacters)
                         return .index(TypographyConfig.measureChoices.firstIndex(of: value) ?? 10)
@@ -964,8 +977,8 @@ enum PreferencesForms {
                         Preferences.shared.update { $0.typography.measureCharacters = TypographyConfig.measureChoices[index] }
                     }),
 
-            .section("Code"),
-            .choice("Monospace family", help: nil,
+            .section(L10n.tr("Code")),
+            .choice(L10n.tr("Monospace family"), help: nil,
                     options: MonoFontChoices.families(),
                     get: {
                         let fonts = MonoFontChoices.families()
@@ -977,16 +990,16 @@ enum PreferencesForms {
                         guard fonts.indices.contains(index) else { return }
                         Preferences.shared.update { $0.typography.monoFamily = fonts[index] }
                     }),
-            .toggle("Ligatures", help: nil,
+            .toggle(L10n.tr("Ligatures"), help: nil,
                     get: { Preferences.shared.values.typography.monoLigatures },
                     set: { value in Preferences.shared.update { $0.typography.monoLigatures = value } }),
 
-            .section("Detail"),
-            .toggle("Hanging punctuation and optical margins",
-                    help: "Makes text look set rather than merely laid out.",
+            .section(L10n.tr("Detail")),
+            .toggle(L10n.tr("Hanging punctuation and optical margins"),
+                    help: L10n.tr("Makes text look set rather than merely laid out."),
                     get: { Preferences.shared.values.typography.opticalMargins },
                     set: { value in Preferences.shared.update { $0.typography.opticalMargins = value } }),
-            .stepper("Math scale", help: "Sizes formulas to sit evenly against the body text.",
+            .stepper(L10n.tr("Math scale"), help: L10n.tr("Sizes formulas to sit evenly against the body text."),
                      range: 0.8...1.3, step: 0.05,
                      get: { Double(Preferences.shared.values.typography.mathScale) },
                      set: { value in Preferences.shared.update { $0.typography.mathScale = CGFloat(value) } }),
@@ -1001,9 +1014,9 @@ enum PreferencesForms {
         let light = ThemeStore.shared.themes.filter { $0.appearance != .dark }.map(\.name)
         let dark = ThemeStore.shared.themes.filter { $0.appearance != .light }.map(\.name)
         return [
-            .choice("Quick Look appearance",
-                    help: "Preview files in System appearance by default, or keep a fixed Light or Dark surface.",
-                    options: PreviewAppearance.allCases.map(\.title),
+            .choice(L10n.tr("Quick Look appearance"),
+                    help: L10n.tr("Preview files in System appearance by default, or keep a fixed Light or Dark surface."),
+                    options: PreviewAppearance.allCases.map(L10n.previewAppearanceTitle),
                     get: {
                         .index(PreviewAppearance.allCases.firstIndex(of: Preferences.shared.values.previewAppearance) ?? 0)
                     },
@@ -1013,9 +1026,9 @@ enum PreferencesForms {
                             $0.previewAppearance = PreviewAppearance.allCases[index]
                         }
                     }),
-            .section("Themes"),
-            .choice("Light theme", help: "Used when macOS is in Light appearance.",
-                    options: light,
+            .section(L10n.tr("Themes")),
+            .choice(L10n.tr("Light theme"), help: L10n.tr("Used when macOS is in Light appearance."),
+                    options: light.map(L10n.themeDisplayName),
                     get: {
                         let name = Preferences.shared.values.themeName
                         return light.firstIndex(of: name).map { .index($0) } ?? .missing(name)
@@ -1024,8 +1037,8 @@ enum PreferencesForms {
                         guard light.indices.contains(index) else { return }
                         Preferences.shared.update { $0.themeName = light[index] }
                     }),
-            .choice("Dark theme", help: "Used when macOS is in Dark appearance.",
-                    options: dark,
+            .choice(L10n.tr("Dark theme"), help: L10n.tr("Used when macOS is in Dark appearance."),
+                    options: dark.map(L10n.themeDisplayName),
                     get: {
                         let name = Preferences.shared.values.darkThemeName
                         return dark.firstIndex(of: name).map { .index($0) } ?? .missing(name)
@@ -1034,47 +1047,47 @@ enum PreferencesForms {
                         guard dark.indices.contains(index) else { return }
                         Preferences.shared.update { $0.darkThemeName = dark[index] }
                     }),
-            .toggle("Follow system appearance",
-                    help: "Switch between the light and dark themes as macOS does. Turn this off to keep the light theme in both.",
+            .toggle(L10n.tr("Follow system appearance"),
+                    help: L10n.tr("Switch between the light and dark themes as macOS does. Turn this off to keep the light theme in both."),
                     get: { Preferences.shared.values.followsSystemAppearance },
                     set: { value in Preferences.shared.update { $0.followsSystemAppearance = value } }),
             .themePreview,
-            .note("Themes live in the Downright folder in Application Support. Import Theme and Reload Themes are on the View menu."),
+            .note(L10n.tr("Themes live in the Downright folder in Application Support. Import Theme and Reload Themes are on the View menu.")),
         ]
     }
 
     @MainActor
     static func editor() -> [PreferenceRow] {
         [
-            .section("Saving"),
-            .toggle("Autosave while editing",
-                    help: "Writes changes to disk as you type. Turn this off when an agent or external tool is also writing the same file — the default is off for that reason.",
+            .section(L10n.tr("Saving")),
+            .toggle(L10n.tr("Autosave while editing"),
+                    help: L10n.tr("Writes changes to disk as you type. Turn this off when an agent or external tool is also writing the same file — the default is off for that reason."),
                     get: { Preferences.shared.values.autosaveEnabled },
                     set: { value in Preferences.shared.update { $0.autosaveEnabled = value } }),
-            .section("Typing"),
-            .toggle("Typewriter scrolling", help: nil,
+            .section(L10n.tr("Typing")),
+            .toggle(L10n.tr("Typewriter scrolling"), help: nil,
                     get: { Preferences.shared.values.typewriterScrolling },
                     set: { value in Preferences.shared.update { $0.typewriterScrolling = value } }),
-            .toggle("Use typographic substitutions",
-                    help: "Convert straight quotes and dashes while typing. Off keeps Markdown source exact.",
+            .toggle(L10n.tr("Use typographic substitutions"),
+                    help: L10n.tr("Convert straight quotes and dashes while typing. Off keeps Markdown source exact."),
                     get: { Preferences.shared.values.typographicSubstitution },
                     set: { value in Preferences.shared.update { $0.typographicSubstitution = value } }),
-            .section("Display"),
-            .toggle("Show spaces and tabs", help: "Draw whitespace markers in the visible part of the document.",
+            .section(L10n.tr("Display")),
+            .toggle(L10n.tr("Show spaces and tabs"), help: L10n.tr("Draw whitespace markers in the visible part of the document."),
                     get: { Preferences.shared.values.showInvisibles },
                     set: { value in Preferences.shared.update { $0.showInvisibles = value } }),
-            .toggle("Reflow wrapped paragraphs",
-                    help: "Join source-wrapped prose visually without changing a byte of the file.",
+            .toggle(L10n.tr("Reflow wrapped paragraphs"),
+                    help: L10n.tr("Join source-wrapped prose visually without changing a byte of the file."),
                     get: { Preferences.shared.values.reflowHardWrappedParagraphs },
                     set: { value in Preferences.shared.update { $0.reflowHardWrappedParagraphs = value } }),
-            .toggle("Reveal syntax at every cursor", help: "Show inline markers for extra insertion cursors too.",
+            .toggle(L10n.tr("Reveal syntax at every cursor"), help: L10n.tr("Show inline markers for extra insertion cursors too."),
                     get: { Preferences.shared.values.revealMarkersAtAllCursors },
                     set: { value in Preferences.shared.update { $0.revealMarkersAtAllCursors = value } }),
-            .toggle("Focus mode on open", help: "Hide the surrounding chrome and panels for a single-column writing surface.",
+            .toggle(L10n.tr("Focus mode on open"), help: L10n.tr("Hide the surrounding chrome and panels for a single-column writing surface."),
                     get: { Preferences.shared.values.focusMode },
                     set: { value in Preferences.shared.update { $0.focusMode = value } }),
-            .choice("Default mode", help: "How a document looks when you open it.",
-                    options: RenderMode.userFacingModes.map(\.title),
+            .choice(L10n.tr("Default mode"), help: L10n.tr("How a document looks when you open it."),
+                    options: RenderMode.userFacingModes.map(L10n.renderModeTitle),
                     get: {
                         let current = Preferences.shared.values.defaultMode
                         return .index(RenderMode.userFacingModes.firstIndex(of: current) ?? 0)
@@ -1083,9 +1096,9 @@ enum PreferencesForms {
                         guard RenderMode.userFacingModes.indices.contains(index) else { return }
                         Preferences.shared.update { $0.defaultMode = RenderMode.userFacingModes[index] }
                     }),
-            .section("Performance"),
-            .stepper("Large-file threshold",
-                     help: "Megabytes. Above this, Downright estimates the layout from line counts instead of laying out the whole file before showing you anything.",
+            .section(L10n.tr("Performance")),
+            .stepper(L10n.tr("Large-file threshold"),
+                     help: L10n.tr("Megabytes. Above this, Downright estimates the layout from line counts instead of laying out the whole file before showing you anything."),
                      range: 1...1024, step: 1,
                      get: { Double(Preferences.shared.values.largeFileThresholdMegabytes) },
                      set: { value in Preferences.shared.update { $0.largeFileThresholdMegabytes = Int(value) } }),
@@ -1097,22 +1110,22 @@ enum PreferencesForms {
         let coordinator = UpdateCoordinator.shared
         guard coordinator.isUpdateConfigurationPresent else {
             return [
-                .note("This build carries no update configuration, so automatic updates are off. Install a release build to see update settings here."),
+                .note(L10n.tr("This build carries no update configuration, so automatic updates are off. Install a release build to see update settings here.")),
             ]
         }
         return [
-            .section("Updates"),
-            .note("Downright checks a signed update feed over HTTPS. A downloaded update installs when you quit, so an editing session is never interrupted."),
-            .toggle("Automatically check for updates",
-                    help: "Checks about every hour, and watches the release feed while the app is open. The menu command still works while this is off.",
+            .section(L10n.tr("Updates")),
+            .note(L10n.tr("Downright checks a signed update feed over HTTPS. A downloaded update installs when you quit, so an editing session is never interrupted.")),
+            .toggle(L10n.tr("Automatically check for updates"),
+                    help: L10n.tr("Checks about every hour, and watches the release feed while the app is open. The menu command still works while this is off."),
                     get: { UpdateCoordinator.shared.automaticallyChecksForUpdates },
                     set: { value in UpdateCoordinator.shared.automaticallyChecksForUpdates = value }),
-            .toggle("Automatically download and install updates",
-                    help: "Downloads in the background and installs on the next normal quit. Turn it off to review each update first.",
+            .toggle(L10n.tr("Automatically download and install updates"),
+                    help: L10n.tr("Downloads in the background and installs on the next normal quit. Turn it off to review each update first."),
                     get: { UpdateCoordinator.shared.automaticallyDownloadsUpdates },
                     set: { value in UpdateCoordinator.shared.automaticallyDownloadsUpdates = value }),
-            .button("Check Now") { UpdateCoordinator.shared.checkForUpdates() },
-            .section("Status"),
+            .button(L10n.tr("Check Now")) { UpdateCoordinator.shared.checkForUpdates() },
+            .section(L10n.tr("Status")),
             .note(UpdateCoordinator.shared.statusLine()),
         ]
     }
@@ -1125,19 +1138,18 @@ enum PreferencesForms {
             countStyle: .file
         )
         return [
-            .section("Version history"),
-            .note("""
-            Downright keeps a copy of the document every time something else writes to it, \
-            stored locally and deduplicated, so nothing is kept twice. That is where Version \
-            Timeline\(timeline) gets the versions it shows you.
-            """),
-            .stepper("Keep versions for", help: "Days.", range: 1...365, step: 1,
+            .section(L10n.tr("Version history")),
+            .note(L10n.tr(
+                "Downright keeps a copy of the document every time something else writes to it, stored locally and deduplicated, so nothing is kept twice. That is where Version Timeline%@ gets the versions it shows you.",
+                timeline
+            )),
+            .stepper(L10n.tr("Keep versions for"), help: L10n.tr("Days."), range: 1...365, step: 1,
                      get: { Double(Preferences.shared.values.historyMaximumDays) },
                      set: { value in Preferences.shared.update { $0.historyMaximumDays = Int(value) } }),
-            .stepper("Maximum size", help: "Megabytes.", range: 50...5000, step: 50,
+            .stepper(L10n.tr("Maximum size"), help: L10n.tr("Megabytes."), range: 50...5000, step: 50,
                      get: { Double(Preferences.shared.values.historyMaximumMegabytes) },
                      set: { value in Preferences.shared.update { $0.historyMaximumMegabytes = Int(value) } }),
-            .note("Currently using \(used)."),
+            .note(L10n.tr("Currently using %@.", used)),
         ]
     }
 }
@@ -1147,8 +1159,8 @@ enum PreferencesForms {
 @MainActor
 final class KeybindingsPane: NSViewController, PreferenceSearchable {
     private let table = NSTableView()
-    private let recordButton = NSButton(title: "Record Shortcut", target: nil, action: nil)
-    private let resetRowButton = NSButton(title: "Reset Shortcut", target: nil, action: nil)
+    private let recordButton = NSButton(title: L10n.tr("Record Shortcut"), target: nil, action: nil)
+    private let resetRowButton = NSButton(title: L10n.tr("Reset Shortcut"), target: nil, action: nil)
     private let allCommands: [Command] = Command.allCases.sorted {
         ($0.menu.rawValue, $0.title) < ($1.menu.rawValue, $1.title)
     }
@@ -1205,7 +1217,7 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
         table.allowsEmptySelection = true
 
         for (identifier, title, width) in [
-            ("menu", "Menu", 90.0), ("command", "Command", 260.0), ("binding", "Shortcut", 140.0),
+            ("menu", L10n.tr("Menu"), 90.0), ("command", L10n.tr("Command"), 260.0), ("binding", L10n.tr("Shortcut"), 140.0),
         ] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
             column.title = title
@@ -1217,7 +1229,7 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
         scroll.documentView = table
         scroll.hasVerticalScroller = true
 
-        let hint = NSTextField(labelWithString: "Select a command and press Record, or double-click its shortcut. ⌫ clears it, ⎋ stops recording.")
+        let hint = NSTextField(labelWithString: L10n.tr("Select a command and press Record, or double-click its shortcut. ⌫ clears it, ⎋ stops recording."))
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
 
@@ -1225,7 +1237,7 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
         recordButton.action = #selector(toggleRecording)
         resetRowButton.target = self
         resetRowButton.action = #selector(resetSelected)
-        let resetAll = NSButton(title: "Reset All…", target: self, action: #selector(resetAll))
+        let resetAll = NSButton(title: L10n.tr("Reset All…"), target: self, action: #selector(resetAll))
         resetAll.hasDestructiveAction = true
         let footer = NSStackView(views: [NSView(), recordButton, resetRowButton, resetAll])
         footer.orientation = .horizontal
@@ -1335,10 +1347,10 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
                 self.cancelRecording()
                 DispatchQueue.main.async {
                     let alert = NSAlert()
-                    alert.messageText = "\(binding.displayString) is already used"
-                    alert.informativeText = "Assigned to \(conflicts.map(\.title).joined(separator: ", ")). Reassign it?"
-                    alert.addButton(withTitle: "Reassign")
-                    alert.addButton(withTitle: "Cancel")
+                    alert.messageText = L10n.tr("%@ is already used", binding.displayString)
+                    alert.informativeText = L10n.tr("Assigned to %@. Reassign it?", conflicts.map(\.title).joined(separator: ", "))
+                    alert.addButton(withTitle: L10n.tr("Reassign"))
+                    alert.addButton(withTitle: L10n.tr("Cancel"))
                     guard alert.runModal() == .alertFirstButtonReturn else { return }
                     for conflict in conflicts { KeybindingStore.shared.setBinding(nil, for: conflict) }
                     KeybindingStore.shared.setBinding(binding, for: command)
@@ -1371,7 +1383,7 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
 
     private func refreshButtons() {
         let hasSelection = table.selectedRow >= 0 && table.selectedRow < commands.count
-        recordButton.title = recordingRow == nil ? "Record Shortcut" : "Cancel"
+        recordButton.title = recordingRow == nil ? L10n.tr("Record Shortcut") : L10n.tr("Cancel")
         recordButton.isEnabled = recordingRow != nil || hasSelection
         resetRowButton.isEnabled = hasSelection && recordingRow == nil
     }
@@ -1395,11 +1407,11 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
     @objc private func resetAll() {
         cancelRecording()
         let alert = NSAlert()
-        alert.messageText = "Reset every keyboard shortcut?"
-        alert.informativeText = "All of your custom shortcuts go back to the ones Downright ships with. This can't be undone."
+        alert.messageText = L10n.tr("Reset every keyboard shortcut?")
+        alert.informativeText = L10n.tr("All of your custom shortcuts go back to the ones Downright ships with. This can't be undone.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Reset All")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L10n.tr("Reset All"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         KeybindingStore.shared.resetToDefaults()
         table.reloadData()
@@ -1431,7 +1443,7 @@ extension KeybindingsPane: NSTableViewDataSource, NSTableViewDelegate {
         case "command": text = command.title
         default:
             if recordingRow == row {
-                text = "Press a shortcut…"
+                text = L10n.tr("Press a shortcut…")
             } else {
                 text = KeybindingStore.shared.bindings(for: command)
                     .map(\.displayString).joined(separator: "  ")

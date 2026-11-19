@@ -103,9 +103,9 @@ final class FindSession {
 
     var statusText: String {
         guard !query.isEmpty else { return "" }
-        guard !matches.isEmpty else { return "No matches" }
-        guard let currentIndex else { return "\(matches.count) matches" }
-        return "\(currentIndex + 1) of \(matches.count)"
+        guard !matches.isEmpty else { return L10n.tr("No matches") }
+        guard let currentIndex else { return L10n.tr("%lld matches", matches.count) }
+        return L10n.tr("%lld of %lld", currentIndex + 1, matches.count)
     }
 
     var currentMatch: NSRange? {

@@ -1,0 +1,7 @@
+/* Downright Info.plist Simplified Chinese strings */
+"NSAppleEventsUsageDescription" = "Downright 需要通过终端在您的 $EDITOR 中打开文件。";
+"NSHumanReadableCopyright" = "基于 MIT 许可证开源。";
+"Open Markdown in Downright" = "在 Downright 中打开 Markdown";
+"Markdown Document" = "Markdown 文档";
+"Extended Markdown Document" = "扩展 Markdown 文档";
+"Plain Text" = "纯文本";

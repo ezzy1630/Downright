@@ -48,7 +48,7 @@ enum WelcomeDocument {
     static func isTour(_ url: URL) -> Bool { FileIdentity.sameFile(url, materializedURL) }
 
     static var bundled: URL? {
-        Bundle.main.url(forResource: "Welcome", withExtension: "md")
+        L10n.localizedWelcomeTourURL()
     }
 
     static var isAvailable: Bool { bundled != nil }
@@ -456,7 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentOpenFailure(_ error: Error, url: URL) {
         let alert = NSAlert()
-        alert.messageText = "Couldn't open \(url.lastPathComponent)"
+        alert.messageText = L10n.tr("Couldn't open %@", url.lastPathComponent)
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
@@ -467,7 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.allowedContentTypes = DocumentTypes.contentTypes
-        panel.message = "Open a Markdown document"
+        panel.message = L10n.tr("Open a Markdown document")
         guard panel.runModal() == .OK else {
             startWindow?.window?.makeKeyAndOrderFront(nil)
             return
@@ -535,8 +535,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             open(try WelcomeDocument.materialize(), mode: .live, origin: .tour)
         } catch {
             warn(
-                "Couldn't open the tour",
-                "The welcome document couldn't be prepared. \(error.localizedDescription)"
+                L10n.tr("Couldn't open the tour"),
+                L10n.tr("The welcome document couldn't be prepared. %@", error.localizedDescription)
             )
             startWindow?.window?.makeKeyAndOrderFront(nil)
             flushWarnings()
@@ -793,7 +793,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func importTheme(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
-        panel.message = "Choose a VS Code or Shiki theme"
+        panel.message = L10n.tr("Choose a VS Code or Shiki theme")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let theme = try ThemeStore.shared.importVSCodeTheme(at: url)
@@ -810,7 +810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } catch {
             let alert = NSAlert(error: error)
-            alert.messageText = "Couldn't import that theme"
+            alert.messageText = L10n.tr("Couldn't import that theme")
             alert.runModal()
         }
     }
@@ -916,8 +916,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSSavePanel()
         panel.allowedContentTypes = DocumentTypes.contentTypes
         panel.nameFieldStringValue = "Untitled.md"
-        panel.message = "Create a Markdown document"
-        panel.prompt = "Create"
+        panel.message = L10n.tr("Create a Markdown document")
+        panel.prompt = L10n.tr("Create")
         // Cancel leaves the start window key and unchanged — do not dismiss it.
         guard panel.runModal() == .OK, let url = panel.url else {
             startWindow?.window?.makeKeyAndOrderFront(nil)
@@ -937,7 +937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentWriteFailure(_ error: Error, url: URL) {
         let alert = NSAlert()
-        alert.messageText = "Couldn't create \(url.lastPathComponent)"
+        alert.messageText = L10n.tr("Couldn't create %@", url.lastPathComponent)
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
@@ -971,7 +971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu(title: "Downright")
         let recents = DocumentStateStore.shared.recents(limit: 8)
         if recents.isEmpty {
-            let none = NSMenuItem(title: "No recent files", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: L10n.tr("No recent files"), action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
         } else {
@@ -988,7 +988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(.separator())
         let newItem = NSMenuItem(
-            title: "New Document",
+            title: L10n.tr("New Document"),
             action: #selector(performDownrightCommand(_:)),
             keyEquivalent: "n"
         )
@@ -1027,7 +1027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = warning.title
         alert.informativeText = warning.message
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L10n.tr("OK"))
         alert.beginSheetModal(for: window) { [weak self] _ in
             guard let self else { return }
             self.isPresentingWarning = false
@@ -1037,31 +1037,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func reportSettingsWriteFailure(_ error: Error) {
         warn(
-            "Downright can't save your settings",
-            """
-            Your changes are in effect for now, but they won't survive a restart until \
-            Downright can write to its settings file. \(error.localizedDescription)
-            """
+            L10n.tr("Downright can't save your settings"),
+            L10n.tr("Your changes are in effect for now, but they won't survive a restart until Downright can write to its settings file. %@", error.localizedDescription)
         )
     }
 
     private func reportKeybindingsLoadFailure(_ error: Error) {
         warn(
-            "Your keyboard shortcuts file couldn't be read",
-            """
-            Downright is using its default shortcuts. Your file at \
-            \(AppPaths.keybindingsFile.path) was left untouched so you can repair it; \
-            recording a shortcut in Settings replaces it. \(error.localizedDescription)
-            """
+            L10n.tr("Your keyboard shortcuts file couldn't be read"),
+            L10n.tr("Downright is using its default shortcuts. Your file at %@ was left untouched so you can repair it; recording a shortcut in Settings replaces it. %@", AppPaths.keybindingsFile.path, error.localizedDescription)
         )
     }
 
     private func reportSettingsRecovery(backup: URL?) {
-        let whereItWent = backup.map { "The old file is kept as \($0.lastPathComponent)." }
-            ?? "The old file couldn't be kept."
+        let whereItWent = backup.map { L10n.tr("The old file is kept as %@.", $0.lastPathComponent) }
+            ?? L10n.tr("The old file couldn't be kept.")
         warn(
-            "Your settings file couldn't be read",
-            "Downright has started from its defaults. \(whereItWent)"
+            L10n.tr("Your settings file couldn't be read"),
+            L10n.tr("Downright has started from its defaults. %@", whereItWent)
         )
     }
 
@@ -1069,24 +1062,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !failures.isEmpty else { return }
         let lost = failures.map { "• \($0.purpose.featureDescription)" }.joined(separator: "\n")
         warn(
-            "Downright can't use its support folder",
-            """
-            Until this is fixed, Downright can't save:
-
-            \(lost)
-
-            \(failures[0].error.localizedDescription)
-            """
+            L10n.tr("Downright can't use its support folder"),
+            L10n.tr("Until this is fixed, Downright can't save:\n\n%@\n\n%@", lost, failures[0].error.localizedDescription)
         )
     }
 
     private func reportSkippedSessionFiles(_ names: [String]) {
         guard !names.isEmpty else { return }
         let list = names.prefix(6).map { "• \($0)" }.joined(separator: "\n")
-        let more = names.count > 6 ? "\n• and \(names.count - 6) more" : ""
+        let more = names.count > 6 ? L10n.tr("\n• and %lld more", names.count - 6) : ""
         warn(
-            names.count == 1 ? "One file from your last session is gone" : "Some files from your last session are gone",
-            "These weren't reopened because they're no longer where they were:\n\n\(list)\(more)"
+            names.count == 1
+                ? L10n.tr("One file from your last session is gone")
+                : L10n.tr("Some files from your last session are gone"),
+            L10n.tr("These weren't reopened because they're no longer where they were:\n\n%@%@", list, more)
         )
     }
 
@@ -1094,7 +1083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = DocumentTypes.contentTypes
-        panel.message = "Choose two files to compare"
+        panel.message = L10n.tr("Choose two files to compare")
         guard panel.runModal() == .OK, panel.urls.count == 2 else { return }
         let controller = CompareWindowController(left: panel.urls[0], right: panel.urls[1])
         controller.showWindow(nil)

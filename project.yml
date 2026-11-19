@@ -6,6 +6,9 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
   developmentLanguage: en
+  knownRegions:
+    - en
+    - zh-Hans
 settings:
   base:
     DOWNRIGHT_HOST_BUNDLE_IDENTIFIER: com.ezzy.downright

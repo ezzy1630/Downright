@@ -328,13 +328,13 @@ final class FindBarView: NSView {
         // Targets are rebound below; the toggles have to exist before
         // `super.init`, and their real handler needs `self`.
         let placeholder = ButtonAction {}
-        self.regexToggle = PanelButton.toggle(".*", label: "Regular expression", action: placeholder)
-        self.caseToggle = PanelButton.toggle("Aa", label: "Match case", action: placeholder)
-        self.wordToggle = PanelButton.toggle("W", label: "Whole word", action: placeholder)
-        self.scopeToggle = PanelButton.toggle("In Selection", label: "Search in selection", action: placeholder)
+        self.regexToggle = PanelButton.toggle(".*", label: L10n.tr("Regular expression"), action: placeholder)
+        self.caseToggle = PanelButton.toggle("Aa", label: L10n.tr("Match case"), action: placeholder)
+        self.wordToggle = PanelButton.toggle("W", label: L10n.tr("Whole word"), action: placeholder)
+        self.scopeToggle = PanelButton.toggle(L10n.tr("In Selection"), label: L10n.tr("Search in selection"), action: placeholder)
         self.optionsButton = PanelButton.symbol(
             "slider.horizontal.3",
-            label: "Find options",
+            label: L10n.tr("Find options"),
             action: placeholder
         )
 
@@ -401,7 +401,7 @@ final class FindBarView: NSView {
         applyValidity()
         updateControlEnablement()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Find")
+        setAccessibilityLabel(L10n.tr("Find", context: "menu"))
 
         wantsLayer = true
     }
@@ -418,7 +418,7 @@ final class FindBarView: NSView {
     }
 
     private func buildFindRow() {
-        searchField.placeholderString = "Find…"
+        searchField.placeholderString = L10n.tr("Find…")
         searchField.sendsWholeSearchString = false
         searchField.sendsSearchStringImmediately = true
         searchField.delegate = self
@@ -430,7 +430,7 @@ final class FindBarView: NSView {
         searchField.cell?.isBezeled = false
         (searchField.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         searchField.focusRingType = .none
-        searchField.setAccessibilityLabel("Find")
+        searchField.setAccessibilityLabel(L10n.tr("Find", context: "menu"))
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         leadingGlyph.image = NSImage(
@@ -443,9 +443,9 @@ final class FindBarView: NSView {
 
         warningImage.image = NSImage(
             systemSymbolName: "exclamationmark.triangle.fill",
-            accessibilityDescription: "Invalid regular expression"
+            accessibilityDescription: L10n.tr("Invalid regular expression")
         )
-        warningImage.toolTip = "Invalid regular expression"
+        warningImage.toolTip = L10n.tr("Invalid regular expression")
         warningImage.isHidden = true
         // Layer-backed so the invalid-pattern glyph can pop in rather than
         // appear (`setWarningVisible`).
@@ -475,11 +475,11 @@ final class FindBarView: NSView {
         actions.append(contentsOf: [previous, next])
 
         let previousButton = PanelButton.symbol(
-            "chevron.up", label: "Previous match", action: previous,
+            "chevron.up", label: L10n.tr("Previous match"), action: previous,
             pointSize: 14, weight: .regular
         )
         let nextButton = PanelButton.symbol(
-            "chevron.down", label: "Next match", action: next,
+            "chevron.down", label: L10n.tr("Next match"), action: next,
             pointSize: 14, weight: .regular
         )
         self.previousButton = previousButton
@@ -521,7 +521,7 @@ final class FindBarView: NSView {
             }
             actions.append(close)
             let closeButton = PanelButton.symbol(
-                "xmark", label: "Close find bar", action: close,
+                "xmark", label: L10n.tr("Close find bar"), action: close,
                 pointSize: 14, weight: .regular
             )
             self.closeButton = closeButton
@@ -533,28 +533,28 @@ final class FindBarView: NSView {
     }
 
     func makeOptionsMenuForTesting() -> NSMenu {
-        let menu = NSMenu(title: "Find Options")
+        let menu = NSMenu(title: L10n.tr("Find Options"))
         menu.addItem(optionItem(
-            title: "Regular Expression",
+            title: L10n.tr("Regular Expression"),
             action: #selector(toggleRegexOption(_:)),
             state: regexToggle.state,
             enabled: true
         ))
         menu.addItem(optionItem(
-            title: "Match Case",
+            title: L10n.tr("Match Case"),
             action: #selector(toggleCaseOption(_:)),
             state: caseToggle.state,
             enabled: true
         ))
         menu.addItem(optionItem(
-            title: "Whole Word",
+            title: L10n.tr("Whole Word"),
             action: #selector(toggleWordOption(_:)),
             state: wordToggle.state,
             enabled: true
         ))
         menu.addItem(.separator())
         menu.addItem(optionItem(
-            title: "In Selection",
+            title: L10n.tr("In Selection"),
             action: #selector(toggleScopeOption(_:)),
             state: scopeToggle.state,
             enabled: selectionScope != nil
@@ -598,12 +598,12 @@ final class FindBarView: NSView {
     }
 
     private func buildReplaceRow() {
-        replaceField.placeholderString = "Replace"
+        replaceField.placeholderString = L10n.tr("Replace")
         replaceField.font = PanelFont.row
         replaceField.controlSize = .small
         replaceField.focusRingType = .none
         replaceField.delegate = self
-        replaceField.setAccessibilityLabel("Replace with")
+        replaceField.setAccessibilityLabel(L10n.tr("Replace with"))
         replaceField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let replace = ButtonAction { [weak self] in
@@ -616,8 +616,8 @@ final class FindBarView: NSView {
         }
         actions.append(contentsOf: [replace, replaceAll])
 
-        let replaceButton = PanelButton.text("Replace", action: replace)
-        let replaceAllButton = PanelButton.text("All", action: replaceAll)
+        let replaceButton = PanelButton.text(L10n.tr("Replace"), action: replace)
+        let replaceAllButton = PanelButton.text(L10n.tr("All"), action: replaceAll)
         self.replaceButton = replaceButton
         self.replaceAllButton = replaceAllButton
 
@@ -842,7 +842,8 @@ final class FindBarView: NSView {
     /// immediately, so the find-as-you-type debounce never locks the reader
     /// out of the walk.
     private func updateControlEnablement() {
-        let canNavigate = !searchField.stringValue.isEmpty && statusText != "No matches"
+        let noMatches = statusText == "No matches" || statusText == L10n.tr("No matches")
+        let canNavigate = !searchField.stringValue.isEmpty && !noMatches
         previousButton?.isEnabled = canNavigate
         nextButton?.isEnabled = canNavigate
         replaceButton?.isEnabled = canNavigate
@@ -870,7 +871,7 @@ final class FindBarView: NSView {
         optionsDivider.layer?.backgroundColor = styleSheet.rule.cgColor
         leadingGlyph.contentTintColor = styleSheet.accent
         searchField.placeholderAttributedString = NSAttributedString(
-            string: "Find…",
+            string: L10n.tr("Find…"),
             attributes: [
                 .font: PanelFont.system(13.5),
                 .foregroundColor: styleSheet.textSecondary,
@@ -900,12 +901,12 @@ final class FindBarView: NSView {
     /// delete tone; a bare total stays secondary. Replace confirmations read as
     /// success, so they share the accent (§9.4).
     private func applyStatusColor() {
-        switch statusText {
-        case "No matches":
+        if statusText == "No matches" || statusText == L10n.tr("No matches") {
             statusLabel.textColor = styleSheet.changeColor(.deleted)
-        case let t where t.contains(" of ") || t.hasPrefix("Replaced"):
+        } else if statusText.contains(" of ") || statusText.contains(" / ")
+            || statusText.hasPrefix("Replaced") || statusText.hasPrefix(L10n.tr("Replaced", context: "prefix")) {
             statusLabel.textColor = styleSheet.accent
-        default:
+        } else {
             statusLabel.textColor = styleSheet.textSecondary
         }
     }

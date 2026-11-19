@@ -16,13 +16,13 @@ enum DocumentLensTab: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .structure: "Structure"
-        case .health: "Health"
-        case .links: "Links"
-        case .assets: "Assets"
-        case .tasks: "Tasks"
-        case .changes: "Changes"
-        case .renderTarget: "Render Target"
+        case .structure: L10n.tr("Structure")
+        case .health: L10n.tr("Health")
+        case .links: L10n.tr("Links")
+        case .assets: L10n.tr("Assets")
+        case .tasks: L10n.tr("Tasks")
+        case .changes: L10n.tr("Changes")
+        case .renderTarget: L10n.tr("Render Target")
         }
     }
 }

@@ -26,11 +26,11 @@ final class CommandPaletteView: NSView, PanelSurface {
     private let searchField = NSSearchField()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-    private let hintLabel = NSTextField(labelWithString: "↑ ↓ Move   Return Open   Esc Close")
+    private let hintLabel = NSTextField(labelWithString: L10n.tr("↑ ↓ Move   Return Open   Esc Close"))
     /// The prefixes exist and nothing said so.  A filter you cannot discover
     /// is a filter nobody uses (§7.2).
     private let prefixLabel = NSTextField(
-        labelWithString: "> commands   @ symbols   # headings   task: tasks   file:   link:   asset:"
+        labelWithString: L10n.tr("> commands   @ symbols   # headings   task: tasks   file:   link:   asset:")
     )
     private let emptyState = PanelEmptyStateView()
     private var model: CommandPaletteModel
@@ -93,25 +93,25 @@ final class CommandPaletteView: NSView, PanelSurface {
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        searchField.placeholderString = "Search commands, headings, files"
+        searchField.placeholderString = L10n.tr("Search commands, headings, files")
         searchField.sendsSearchStringImmediately = true
         searchField.controlSize = .large
         searchField.font = PanelFont.system(16)
         searchField.isBezeled = false
         searchField.focusRingType = .none
         searchField.delegate = self
-        searchField.setAccessibilityLabel("Search commands and document items")
-        searchField.setAccessibilityHelp("Type a command, heading, task, link, asset, or file")
+        searchField.setAccessibilityLabel(L10n.tr("Search commands and document items"))
+        searchField.setAccessibilityHelp(L10n.tr("Type a command, heading, task, link, asset, or file"))
         searchField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(searchField)
 
         let filterChips: [(title: String, prefix: String)] = [
-            ("All", ""),
-            ("Commands", "> "),
-            ("Headings", "# "),
-            ("Symbols", "@ "),
-            ("Tasks", "task: "),
-            ("Files", "file: ")
+            (L10n.tr("All"), ""),
+            (L10n.tr("Commands"), "> "),
+            (L10n.tr("Headings"), "# "),
+            (L10n.tr("Symbols"), "@ "),
+            (L10n.tr("Tasks"), "task: "),
+            (L10n.tr("Files"), "file: ")
         ]
         let filterStack = NSStackView()
         filterStack.orientation = .horizontal
@@ -210,7 +210,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Command palette")
+        setAccessibilityLabel(L10n.tr("Command palette"))
         applyStyle()
     }
 
@@ -233,7 +233,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         } else {
             tableView.deselectAll(nil)
         }
-        let status = count == 1 ? "1 command" : "\(count) commands"
+        let status = count == 1 ? L10n.tr("1 command") : L10n.tr("%lld commands", count)
         tableView.setAccessibilityValue(status)
         updateEmptyState()
     }
@@ -249,8 +249,8 @@ final class CommandPaletteView: NSView, PanelSurface {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         emptyState.configure(
             symbol: "magnifyingglass",
-            title: query.isEmpty ? "Nothing to open yet" : "No matches for “\(query)”",
-            subtitle: "Try a prefix: `>` for commands,\n`@` for symbols, `#` for headings.",
+            title: query.isEmpty ? L10n.tr("Nothing to open yet") : L10n.tr("No matches for “%@”", query),
+            subtitle: L10n.tr("Try a prefix: `>` for commands,\n`@` for symbols, `#` for headings."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false

@@ -383,7 +383,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             item.view = identity
             toolbarDocumentIdentityView = identity
             item.isBordered = false
-            item.label = "Document"
+            item.label = L10n.tr("Document", context: "renderMode")
             item.visibilityPriority = .high
             return item
 
@@ -396,20 +396,20 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = control
             item.isBordered = false
-            item.label = "Document / Source"
-            item.toolTip = "Switch between rendered Document and Source Focus"
+            item.label = L10n.tr("Document / Source")
+            item.toolTip = L10n.tr("Switch between rendered Document and Source Focus")
             item.visibilityPriority = .high
             wireToolbarAction(
                 item,
-                title: "Toggle Document / Source",
+                title: L10n.tr("Toggle Document / Source"),
                 action: #selector(toolbarToggleSourceFocus(_:))
             )
             return item
 
         case Self.clusterItem:
             let findButton = ToolbarActionButton(
-                symbol: "magnifyingglass", label: "Find",
-                help: "Find in this document",
+                symbol: "magnifyingglass", label: L10n.tr("Find", context: "menu"),
+                help: L10n.tr("Find in this document"),
                 target: self, action: #selector(toolbarShowFind(_:)),
                 usesGlassSurface: true
             )
@@ -431,7 +431,7 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
                 overflowButton,
             ])
             item.isBordered = false
-            item.label = "Actions"
+            item.label = L10n.tr("Actions")
             // The ring is a permanent control — it shows an empty track rather
             // than hiding on a document with no tasks — so the cluster must
             // not be the first item the toolbar drops, and each view's own
@@ -449,18 +449,18 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
             // When the window narrows enough to drop the cluster, the
             // toolbar's overflow chevron shows this in its place; the submenu
             // keeps the panels one reach away.
-            let menuRep = NSMenuItem(title: "Actions", action: nil, keyEquivalent: "")
-            let repMenu = NSMenu(title: "Actions")
+            let menuRep = NSMenuItem(title: L10n.tr("Actions"), action: nil, keyEquivalent: "")
+            let repMenu = NSMenu(title: L10n.tr("Actions"))
             repMenu.addItem(menuItem(
-                title: "Find", symbol: "magnifyingglass",
+                title: L10n.tr("Find", context: "menu"), symbol: "magnifyingglass",
                 action: #selector(toolbarShowFind(_:))
             ))
             repMenu.addItem(menuItem(
-                title: "Tasks", symbol: "checkmark.circle",
+                title: L10n.tr("Tasks"), symbol: "checkmark.circle",
                 action: #selector(toolbarShowTasks(_:))
             ))
             repMenu.addItem(menuItem(
-                title: "Check for Updates…", symbol: "arrow.triangle.2.circlepath",
+                title: L10n.tr("Check for Updates…"), symbol: "arrow.triangle.2.circlepath",
                 action: #selector(toolbarCheckForUpdates(_:))
             ))
             menuRep.submenu = repMenu
@@ -667,34 +667,40 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     }
 
     private func makeOverflowMenu() -> NSMenu {
-        let menu = NSMenu(title: "More")
+        let menu = NSMenu(title: L10n.tr("More"))
         menu.delegate = self
 
-        menu.addItem(sectionHeader("Panels"))
-        menu.addItem(menuItem(title: "Tasks", symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:))))
-        menu.addItem(menuItem(title: "History", symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:))))
+        menu.addItem(sectionHeader(L10n.tr("Panels")))
+        let tasksItem = menuItem(title: L10n.tr("Tasks"), symbol: "checkmark.circle", action: #selector(toolbarShowTasks(_:)))
+        tasksItem.identifier = NSUserInterfaceItemIdentifier("overflow.tasks")
+        menu.addItem(tasksItem)
+        let historyItem = menuItem(title: L10n.tr("History"), symbol: "clock.arrow.circlepath", action: #selector(toolbarShowHistory(_:)))
+        historyItem.identifier = NSUserInterfaceItemIdentifier("overflow.history")
+        menu.addItem(historyItem)
 
-        menu.addItem(sectionHeader("View"))
+        menu.addItem(sectionHeader(L10n.tr("View", context: "menu")))
         addCommands([.sourceMode, .focusMode, .splitView, .pinWindow], to: menu)
 
-        menu.addItem(sectionHeader("Document"))
-        let zoom = NSMenu(title: "Document Detail")
+        menu.addItem(sectionHeader(L10n.tr("Document", context: "menu")))
+        let detailTitle = L10n.tr("Document Detail")
+        let zoom = NSMenu(title: detailTitle)
         addCommands([.zoomLevel1, .zoomLevel2, .zoomLevel3, .zoomLevel4, .zoomLevel5], to: zoom)
         zoom.addItem(.separator())
         addCommands([.zoomIn, .zoomOut], to: zoom)
-        let zoomItem = NSMenuItem(title: "Document Detail", action: nil, keyEquivalent: "")
+        let zoomItem = NSMenuItem(title: detailTitle, action: nil, keyEquivalent: "")
         zoomItem.image = NSImage(systemSymbolName: "text.magnifyingglass", accessibilityDescription: nil)
         zoomItem.submenu = zoom
         menu.addItem(zoomItem)
         addCommands([.tidyDocument, .readerProfiles], to: menu)
 
-        menu.addItem(sectionHeader("Share"))
+        menu.addItem(sectionHeader(L10n.tr("Share", context: "menuSection")))
         // The section header has always said Share; until now everything under
         // it wrote a file the reader then had to go and find.
         addCommands([.share, .shareAsPDF], to: menu)
-        let export = NSMenu(title: "Export")
+        let exportTitle = L10n.tr("Export")
+        let export = NSMenu(title: exportTitle)
         addCommands([.exportPDF, .exportHTML, .exportSelectionAsImage], to: export)
-        let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+        let exportItem = NSMenuItem(title: exportTitle, action: nil, keyEquivalent: "")
         exportItem.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
         exportItem.submenu = export
         menu.addItem(exportItem)
@@ -752,9 +758,9 @@ extension DocumentWindowController: NSToolbarDelegate, NSMenuDelegate, NSToolbar
     func menuNeedsUpdate(_ menu: NSMenu) {
         MainMenu.refreshKeyEquivalents(in: menu)
         for item in menu.items {
-            switch item.title {
-            case "Tasks": item.state = self.isTaskPanelFloating ? .on : .off
-            case "History":
+            switch item.identifier?.rawValue {
+            case "overflow.tasks": item.state = self.isTaskPanelFloating ? .on : .off
+            case "overflow.history":
                 item.state = floatingSurface != nil && inspectorHost?.selectedSection == .history
                     ? .on
                     : .off

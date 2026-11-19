@@ -24,8 +24,8 @@ struct CommandPaletteEntry: Identifiable, Equatable {
 extension CommandScope {
     var paletteTitle: String {
         switch self {
-        case .read, .live: return "Document"
-        case .source: return "Source"
+        case .read, .live: return L10n.tr("Document", context: "scope")
+        case .source: return L10n.tr("Source", context: "scope")
         }
     }
 }
@@ -137,10 +137,15 @@ struct CommandPaletteModel {
     ) {
         self.init(
             entries: commands.map { command in
-                CommandPaletteEntry(
+                let localizedTitle = command.title
+                var synonyms = CommandPaletteSynonyms.values[command] ?? []
+                if localizedTitle != command.englishTitle {
+                    synonyms.append(command.englishTitle)
+                }
+                return CommandPaletteEntry(
                     command: command,
-                    title: command.title,
-                    synonyms: CommandPaletteSynonyms.values[command] ?? [],
+                    title: localizedTitle,
+                    synonyms: synonyms,
                     binding: bindings(command).first?.displayString,
                     scopes: CommandScope.allCases.filter { command.scopes.contains($0) }
                 )

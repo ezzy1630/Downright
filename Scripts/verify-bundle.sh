@@ -105,6 +105,8 @@ check "$([ -f "$CONTENTS/Resources/Downright_MarkdownRender.bundle/Themes/paper-
       "host carries the MarkdownRender themes"
 check "$([ -f "$CONTENTS/Resources/SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf" ] && echo 1 || echo 0)" \
       "host carries the SwiftMath math fonts"
+check "$([ -f "$CONTENTS/Resources/en.lproj/Localizable.strings" ] && [ -f "$CONTENTS/Resources/zh-Hans.lproj/Localizable.strings" ] && echo 1 || echo 0)" \
+      "host carries English and Simplified Chinese localizations"
 
 # --- Spotlight importer -----------------------------------------------------
 # macOS discovers classic MDImporter bundles at this exact location. Keep the

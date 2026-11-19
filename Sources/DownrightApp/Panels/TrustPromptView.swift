@@ -44,15 +44,15 @@ final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
     private let body = TrustPromptBody()
     private let scrollView: NSScrollView
     private let buttons = NSStackView()
-    private let titleLabel = NSTextField(wrappingLabelWithString: "Permission Needed")
+    private let titleLabel = NSTextField(wrappingLabelWithString: L10n.tr("Permission Needed"))
     private let targetLabel = NSTextField(wrappingLabelWithString: "")
     private let consequenceLabel = NSTextField(wrappingLabelWithString: "")
     private let askedByLabel = NSTextField(wrappingLabelWithString: "")
-    private let denyButton = NSButton(title: "Don’t Allow", target: nil, action: nil)
-    private let allowOnceButton = NSButton(title: "Allow Once", target: nil, action: nil)
-    private let allowFileButton = NSButton(title: "Always Allow for This File", target: nil, action: nil)
-    private let allowFolderButton = NSButton(title: "Always Allow for This Folder", target: nil, action: nil)
-    private let revokeButton = NSButton(title: "Revoke Existing Permission", target: nil, action: nil)
+    private let denyButton = NSButton(title: L10n.tr("Don’t Allow"), target: nil, action: nil)
+    private let allowOnceButton = NSButton(title: L10n.tr("Allow Once"), target: nil, action: nil)
+    private let allowFileButton = NSButton(title: L10n.tr("Always Allow for This File"), target: nil, action: nil)
+    private let allowFolderButton = NSButton(title: L10n.tr("Always Allow for This Folder"), target: nil, action: nil)
+    private let revokeButton = NSButton(title: L10n.tr("Revoke Existing Permission"), target: nil, action: nil)
 
     convenience init() { self.init(styleSheet: .current) }
 
@@ -180,7 +180,7 @@ final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
 
     func reload() {
         guard let request else {
-            titleLabel.stringValue = "No pending action"
+            titleLabel.stringValue = L10n.tr("No pending action")
             targetLabel.stringValue = ""
             consequenceLabel.stringValue = ""
             askedByLabel.stringValue = ""
@@ -196,16 +196,16 @@ final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
         targetLabel.stringValue = request.target.displayName
         consequenceLabel.stringValue = Self.consequence(for: request.effect)
         askedByLabel.stringValue = request.documentPath.map {
-            "Requested by \(URL(fileURLWithPath: $0).lastPathComponent)."
-        } ?? "Requested by the current document."
+            L10n.tr("Requested by %@.", URL(fileURLWithPath: $0).lastPathComponent)
+        } ?? L10n.tr("Requested by the current document.")
 
         let fileName = Self.fileGrantName(for: request)
         allowFileButton.isHidden = fileName == nil
-        allowFileButton.title = fileName.map { "Always Allow for \($0)" } ?? "Always Allow for This File"
+        allowFileButton.title = fileName.map { L10n.tr("Always Allow for %@", $0) } ?? L10n.tr("Always Allow for This File")
         // Name the folder.  "Allow for Folder" without the folder is a grant
         // whose scope the reader cannot see.
         allowFolderButton.isHidden = folderName == nil
-        allowFolderButton.title = folderName.map { "Always Allow for “\($0)”" } ?? "Always Allow for This Folder"
+        allowFolderButton.title = folderName.map { L10n.tr("Always Allow for “%@”", $0) } ?? L10n.tr("Always Allow for This Folder")
 
         // The group keeps its name; the specifics are its value, so VoiceOver
         // reads "Permission Needed — Open example.com in your browser?".
@@ -239,30 +239,30 @@ final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
     private static func headline(for request: TrustRequest) -> String {
         switch request.effect {
         case .openExternalLink:
-            return "Open \(host(of: request.target.externalURL) ?? "an external site") in your browser?"
+            return L10n.tr("Open %@ in your browser?", host(of: request.target.externalURL) ?? L10n.tr("an external site"))
         case .loadRemoteAsset:
-            return "Load an image from \(host(of: request.target.externalURL) ?? "an external site")?"
+            return L10n.tr("Load an image from %@?", host(of: request.target.externalURL) ?? L10n.tr("an external site"))
         case .readLocalAsset:
-            return "Read a file from outside this document’s folder?"
+            return L10n.tr("Read a file from outside this document’s folder?")
         case .launchPathOrEditor:
-            return "Open this path in another application?"
+            return L10n.tr("Open this path in another application?")
         case .automationAppIntent:
-            return "Run an app or automation from this document?"
+            return L10n.tr("Run an app or automation from this document?")
         }
     }
 
     private static func consequence(for effect: TrustEffect) -> String {
         switch effect {
         case .openExternalLink:
-            return "Allowing hands the address below to your default browser. Downright does not load it."
+            return L10n.tr("Allowing hands the address below to your default browser. Downright does not load it.")
         case .loadRemoteAsset:
-            return "Allowing contacts the server below and displays its image. The server can observe your IP address."
+            return L10n.tr("Allowing contacts the server below and displays its image. The server can observe your IP address.")
         case .readLocalAsset:
-            return "Allowing lets this document display the file below. Downright reads it; it never writes to it."
+            return L10n.tr("Allowing lets this document display the file below. Downright reads it; it never writes to it.")
         case .launchPathOrEditor:
-            return "Allowing asks macOS to open the path below in the application registered for it."
+            return L10n.tr("Allowing asks macOS to open the path below in the application registered for it.")
         case .automationAppIntent:
-            return "Allowing lets this document ask another application to act on your behalf."
+            return L10n.tr("Allowing lets this document ask another application to act on your behalf.")
         }
     }
 

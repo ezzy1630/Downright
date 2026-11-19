@@ -31,13 +31,13 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private let builtIns = ReaderProfile.builtIns
     private let backdrop: PanelBackdrop
     private let titleLabel = NSTextField(labelWithString: Command.readerProfiles.panelTitle)
-    private let detailLabel = NSTextField(labelWithString: "Presentation settings only")
+    private let detailLabel = NSTextField(labelWithString: L10n.tr("Presentation settings only"))
     private let profilePopup = NSPopUpButton()
     private let nameField = NSTextField()
-    private let saveButton = NSButton(title: "Save as Custom", target: nil, action: nil)
-    private let deleteButton = NSButton(title: "Delete Custom", target: nil, action: nil)
-    private let revertButton = NSButton(title: "Revert", target: nil, action: nil)
-    private let doneButton = NSButton(title: "Done", target: nil, action: nil)
+    private let saveButton = NSButton(title: L10n.tr("Save as Custom"), target: nil, action: nil)
+    private let deleteButton = NSButton(title: L10n.tr("Delete Custom"), target: nil, action: nil)
+    private let revertButton = NSButton(title: L10n.tr("Revert"), target: nil, action: nil)
+    private let doneButton = NSButton(title: L10n.tr("Done"), target: nil, action: nil)
     private let measureChoices = TypographyConfig.measureChoices.map(Int.init)
     private var controls: [NSPopUpButton] = []
     private var isReloading = false
@@ -97,7 +97,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         profilePopup.translatesAutoresizingMaskIntoConstraints = false
         addSubview(profilePopup)
 
-        nameField.placeholderString = "Custom profile name"
+        nameField.placeholderString = L10n.tr("Custom profile name")
         nameField.font = PanelFont.row
         nameField.setAccessibilityLabel("Custom profile name")
         nameField.translatesAutoresizingMaskIntoConstraints = false
@@ -117,10 +117,10 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(deleteButton)
 
-        addControl(label: "Typography scale", titles: ReaderTypographyScale.allCases.map(\.title))
-        addControl(label: "Measure width", titles: measureChoices.map { TypographyConfig.measureTitle(CGFloat($0)) })
-        addControl(label: "Chrome density", titles: ReaderChromeDensity.allCases.map(\.title))
-        addControl(label: "Motion", titles: ReaderMotionPreference.allCases.map(\.title))
+        addControl(label: L10n.tr("Typography scale"), titles: ReaderTypographyScale.allCases.map(\.title))
+        addControl(label: L10n.tr("Measure width"), titles: measureChoices.map { L10n.measureTitle(CGFloat($0)) })
+        addControl(label: L10n.tr("Chrome density"), titles: ReaderChromeDensity.allCases.map(\.title))
+        addControl(label: L10n.tr("Motion"), titles: ReaderMotionPreference.allCases.map(\.title))
 
         // Every control above writes straight into the live style sheet, so the
         // panel owes the reader both a way back and a way out.
@@ -200,7 +200,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private func reloadProfileList() {
         isReloading = true
         profilePopup.removeAllItems()
-        profilePopup.addItems(withTitles: profiles.map(\.name))
+        profilePopup.addItems(withTitles: profiles.map(\.displayName))
         profilePopup.selectItem(at: profiles.firstIndex(where: { $0.id == selectedProfile.id }) ?? 0)
         loadControls()
         isReloading = false

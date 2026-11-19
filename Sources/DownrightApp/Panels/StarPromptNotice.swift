@@ -12,8 +12,8 @@ final class StarPromptNotice: NSObject {
     private var themeObservation: ThemeObservation?
     private var appearanceObservation: NSKeyValueObservation?
     private let body = NSView()
-    private let title = NSTextField(labelWithString: "Enjoying Downright?")
-    private let detail = NSTextField(labelWithString: "A GitHub star helps others discover it.")
+    private let title = NSTextField(labelWithString: L10n.tr("Enjoying Downright?"))
+    private let detail = NSTextField(labelWithString: L10n.tr("A GitHub star helps others discover it."))
     private let close = NSButton(title: "", target: nil, action: nil)
     private let openRepository: () -> Void
 
@@ -35,7 +35,7 @@ final class StarPromptNotice: NSObject {
         panel.animationBehavior = .none
         panel.collectionBehavior = [.transient, .fullScreenAuxiliary]
         panel.setAccessibilityRole(.popover)
-        panel.setAccessibilityLabel("Support Downright")
+        panel.setAccessibilityLabel(L10n.tr("Support Downright"))
 
         body.frame = NSRect(origin: .zero, size: panel.frame.size)
         body.wantsLayer = true
@@ -45,18 +45,18 @@ final class StarPromptNotice: NSObject {
 
         title.font = PanelFont.system(12, weight: .semibold)
         detail.font = PanelFont.system(11.5)
-        let star = NSButton(title: "Star on GitHub", target: self, action: #selector(starClicked))
+        let star = NSButton(title: L10n.tr("Star on GitHub"), target: self, action: #selector(starClicked))
         star.bezelStyle = .rounded
         star.controlSize = .small
         star.image = NSImage(systemSymbolName: "star", accessibilityDescription: nil)
         star.imagePosition = .imageLeading
-        star.setAccessibilityLabel("Star Downright on GitHub")
+        star.setAccessibilityLabel(L10n.tr("Star Downright on GitHub"))
         close.target = self
         close.action = #selector(closeClicked)
-        close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss")
+        close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L10n.tr("Dismiss"))
         close.isBordered = false
-        close.toolTip = "Dismiss — won’t be shown again"
-        close.setAccessibilityLabel("Dismiss GitHub star suggestion")
+        close.toolTip = L10n.tr("Dismiss — won’t be shown again")
+        close.setAccessibilityLabel(L10n.tr("Dismiss GitHub star suggestion"))
 
         for view in [title, detail, star, close] {
             view.translatesAutoresizingMaskIntoConstraints = false

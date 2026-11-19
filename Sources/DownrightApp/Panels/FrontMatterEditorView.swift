@@ -74,8 +74,8 @@ final class FrontMatterEditorView: NSView, PanelSurface {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
-        addButton = PanelButton.text("Add field", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
+        addButton = PanelButton.text(L10n.tr("Add field"), action: ButtonAction { })
+        sourceButton = PanelButton.text(L10n.tr("Open Source Focus"), action: ButtonAction { })
         super.init(frame: .zero)
 
         installBackdrop(backdrop)
@@ -152,14 +152,14 @@ final class FrontMatterEditorView: NSView, PanelSurface {
     }
 
     private func buildAddForm() {
-        addKeyField.placeholderString = "Field name"
+        addKeyField.placeholderString = L10n.tr("Field name")
         addKeyField.font = PanelFont.row
-        addKeyField.setAccessibilityLabel("New field name")
+        addKeyField.setAccessibilityLabel(L10n.tr("New field name"))
         addKeyField.translatesAutoresizingMaskIntoConstraints = false
 
-        addValueField.placeholderString = "Value"
+        addValueField.placeholderString = L10n.tr("Value")
         addValueField.font = PanelFont.row
-        addValueField.setAccessibilityLabel("New field value")
+        addValueField.setAccessibilityLabel(L10n.tr("New field value"))
         addValueField.translatesAutoresizingMaskIntoConstraints = false
 
         addTypePopup.addItems(withTitles: FrontMatterFieldRow.kindTitles)
@@ -237,21 +237,21 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         rows.removeAll(keepingCapacity: true)
 
         guard let front = document.frontMatter else {
-            detailLabel.stringValue = "No front matter block"
+            detailLabel.stringValue = L10n.tr("No front matter block")
             statusLabel.stringValue = ""
             sourceButton.isHidden = false
             addButton.isEnabled = false
             showEmptyState(
                 symbol: "text.alignleft",
-                title: "No front matter",
-                subtitle: "Add a `---` YAML block at the top of\nthe document in Source Focus."
+                title: L10n.tr("No front matter"),
+                subtitle: L10n.tr("Add a `---` YAML block at the top of\nthe document in Source Focus.")
             )
             return
         }
 
         detailLabel.stringValue = front.fields.isEmpty
-            ? "Empty YAML block"
-            : "Flat fields · changes keep source formatting"
+            ? L10n.tr("Empty YAML block")
+            : L10n.tr("Flat fields · changes keep source formatting")
         let fallback = editabilityFallback(front: front)
         let canEdit = fallback == nil
         statusIsWarning = true
@@ -279,8 +279,8 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         if front.fields.isEmpty {
             showEmptyState(
                 symbol: "text.alignleft",
-                title: "Empty front matter",
-                subtitle: "The YAML block has no fields yet.\nAdd one below."
+                title: L10n.tr("Empty front matter"),
+                subtitle: L10n.tr("The YAML block has no fields yet.\nAdd one below.")
             )
         } else {
             emptyState.isHidden = true
@@ -335,12 +335,12 @@ final class FrontMatterEditorView: NSView, PanelSurface {
 
     private func message(for fallback: FrontMatterSourceFallback) -> String {
         switch fallback {
-        case .nestedYAML: return "Nested YAML needs Source Focus."
-        case .commentsNotSupported: return "Comments need Source Focus."
-        case .anchorsOrAliasesNotSupported: return "YAML anchors need Source Focus."
-        case .blockScalarNotSupported: return "Block text needs Source Focus."
-        case .ambiguousField: return "Duplicate fields need Source Focus."
-        default: return "This block needs Source Focus."
+        case .nestedYAML: return L10n.tr("Nested YAML needs Source Focus.")
+        case .commentsNotSupported: return L10n.tr("Comments need Source Focus.")
+        case .anchorsOrAliasesNotSupported: return L10n.tr("YAML anchors need Source Focus.")
+        case .blockScalarNotSupported: return L10n.tr("Block text needs Source Focus.")
+        case .ambiguousField: return L10n.tr("Duplicate fields need Source Focus.")
+        default: return L10n.tr("This block needs Source Focus.")
         }
     }
 
@@ -375,7 +375,9 @@ private final class FrontMatterFieldHost: NSView {
 
 @MainActor
 private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
-    static let kindTitles = ["Text", "Boolean", "Number", "List"]
+    static var kindTitles: [String] {
+        [L10n.tr("Text"), L10n.tr("Boolean"), L10n.tr("Number"), L10n.tr("List")]
+    }
 
     var styleSheet: StyleSheet { didSet { applyStyle() } }
     var isEnabled: Bool = true { didSet { setControlsEnabled() } }
@@ -492,12 +494,12 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
     private func commit() {
         let value = Self.value(from: valueField.stringValue, kindIndex: kindPopup.indexOfSelectedItem)
         if case .number = value, Double(valueField.stringValue) == nil {
-            errorLabel.stringValue = "Enter a number."
+            errorLabel.stringValue = L10n.tr("Enter a number.")
             dirtyDot.isDirty = true
             return
         }
         if case .boolean = value, !["true", "false"].contains(valueField.stringValue.lowercased()) {
-            errorLabel.stringValue = "Enter true or false."
+            errorLabel.stringValue = L10n.tr("Enter true or false.")
             dirtyDot.isDirty = true
             return
         }

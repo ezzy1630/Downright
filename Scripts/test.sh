@@ -18,6 +18,10 @@ case "$#" in
 esac
 
 # Never inherit a development or installed app's support state.
+# Pin the default test locale to English so localized host machines run the
+# existing English UI assertions deterministically; LocalizationTests explicitly
+# exercises other locales via `L10n.withLanguage`.
+export DOWNRIGHT_LANGUAGE="${DOWNRIGHT_LANGUAGE:-en}"
 if ! TEST_SUPPORT_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/downright-test-support.XXXXXX")"; then
     echo "test: could not create an isolated Application Support directory" >&2
     exit 1

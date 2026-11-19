@@ -9,10 +9,10 @@ enum InspectorSection: Int, CaseIterable, Equatable {
 
     var title: String {
         switch self {
-        case .search: "Search"
-        case .tasks: "Tasks"
-        case .history: "History"
-        case .context: "Document"
+        case .search: L10n.tr("Search")
+        case .tasks: L10n.tr("Tasks")
+        case .history: L10n.tr("History")
+        case .context: L10n.tr("Document", context: "renderMode")
         }
     }
 }
@@ -68,7 +68,7 @@ final class InspectorHostView: NSView {
     override init(frame frameRect: NSRect) {
         closeButton = PanelButton.symbol(
             "xmark",
-            label: "Close inspector",
+            label: L10n.tr("Close inspector"),
             action: ButtonAction({}),
             firesOnMouseDown: true
         )

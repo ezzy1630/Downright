@@ -188,7 +188,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         )
 
         present(prefix, url: url)
-        installOpenInAppBar(for: url, note: "Showing part of this large file")
+        installOpenInAppBar(for: url, note: QLL10n.tr("Showing part of this large file"))
     }
 
     /// Keep the rendered prefix bounded in both Foundation's UTF-16 coordinate
@@ -249,7 +249,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         fallbackTextView = textView
         focusPreviewIfNeeded()
         if let sourceURL {
-            installOpenInAppBar(for: sourceURL, note: "Plain text preview — open in Downright for full rendering")
+            installOpenInAppBar(for: sourceURL, note: QLL10n.tr("Plain text preview — open in Downright for full rendering"))
         }
     }
 
@@ -338,7 +338,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let button = NSButton(title: "Open in Downright", target: self, action: #selector(openInApp(_:)))
+        let button = NSButton(title: QLL10n.tr("Open in Downright"), target: self, action: #selector(openInApp(_:)))
         button.bezelStyle = .rounded
         button.controlSize = .small
         button.image = NSImage(systemSymbolName: "arrow.up.forward.app", accessibilityDescription: nil)
@@ -390,7 +390,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
         let wordCount = Metrics.documentWordCount(document)
         let readMinutes = max(1, Int(ceil(Double(wordCount) / Metrics.wordsPerMinute)))
-        gutter.metricsSummary = "\(wordCount.formatted()) words · \(document.length.formatted()) characters · \(readMinutes) min read"
+        gutter.metricsSummary = QLL10n.tr("%@ words · %@ characters · %lld min read", wordCount.formatted(), document.length.formatted(), readMinutes)
 
         let length = CGFloat(max(1, document.length))
         gutter.outlineEntries = document.headings.map { heading in
@@ -581,16 +581,16 @@ extension PreviewViewController: DensityGutterDelegate {
         guard let document = parsedDocument else { return nil }
         let offset = Self.sourceOffset(at: fraction, length: document.length)
         guard let index = document.headings.lastIndex(where: { $0.range.location <= offset }) else {
-            return ("Document start", "", gutter.metricsSummary)
+            return (QLL10n.tr("Document start"), "", gutter.metricsSummary)
         }
         let heading = document.headings[index]
-        let sectionPosition = "Section \(index + 1) of \(document.headings.count)"
+        let sectionPosition = QLL10n.tr("Section %lld of %lld", index + 1, document.headings.count)
         let context = heading.wordCount > 0
-            ? "\(sectionPosition) · \(heading.wordCount) words"
+            ? QLL10n.tr("%@ · %lld words", sectionPosition, heading.wordCount)
             : sectionPosition
         return (
             heading.title,
-            StructuralZoom.sectionPreview(document, headingIndex: index) ?? "Section overview",
+            StructuralZoom.sectionPreview(document, headingIndex: index) ?? QLL10n.tr("Section overview"),
             context
         )
     }

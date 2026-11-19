@@ -59,7 +59,7 @@ final class VersionTimelineView: NSView {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         let action = ButtonAction {}
-        self.restoreButton = PanelButton.text("Restore", action: action)
+        self.restoreButton = PanelButton.text(L10n.tr("Restore"), action: action)
         super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 84))
 
         let restore = ButtonAction { [weak self] in
@@ -167,9 +167,9 @@ final class VersionTimelineView: NSView {
 
     private func kindLabel(_ kind: SnapshotStore.SnapshotKind) -> String {
         switch kind {
-        case .external: "External change"
-        case .local: "Local save"
-        case .baseline: "Baseline"
+        case .external: L10n.tr("External change")
+        case .local: L10n.tr("Local save")
+        case .baseline: L10n.tr("Baseline")
         }
     }
 
@@ -183,7 +183,7 @@ final class VersionTimelineView: NSView {
         NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
 
         guard !versions.isEmpty else {
-            drawCaption("No saved versions yet", at: track.midX, color: styleSheet.textFaint)
+            drawCaption(L10n.tr("No saved versions yet"), at: track.midX, color: styleSheet.textFaint)
             return
         }
 

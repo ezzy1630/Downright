@@ -2100,7 +2100,7 @@ struct SourceLineIndex {
     func caption(for range: NSRange) -> String {
         let first = line(at: range.location)
         let last = line(at: max(range.location, range.upperBound - 1))
-        return first == last ? "Line \(first)" : "Lines \(first)–\(last)"
+        return first == last ? L10n.tr("Line %lld", first) : L10n.tr("Lines %lld–%lld", first, last)
     }
 }
 

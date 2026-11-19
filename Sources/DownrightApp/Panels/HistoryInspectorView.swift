@@ -38,7 +38,7 @@ final class HistoryInspectorView: NSView {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         timeline = VersionTimelineView(styleSheet: styleSheet)
-        openButton = PanelButton.text("Open comparison…", action: ButtonAction({}))
+        openButton = PanelButton.text(L10n.tr("Open comparison…"), action: ButtonAction({}))
         super.init(frame: .zero)
 
         installBackdrop(backdrop)
@@ -83,11 +83,11 @@ final class HistoryInspectorView: NSView {
 
     private func updateCaption() {
         guard let selected = timeline.selectedRecord else {
-            caption.stringValue = "No saved versions yet. Downright records local snapshots when this file changes."
+            caption.stringValue = L10n.tr("No saved versions yet. Downright records local snapshots when this file changes.")
             openButton.isEnabled = false
             return
         }
-        caption.stringValue = "Selected \(RelativeTime.long(selected.date)). Open comparison to review it beside the current document."
+        caption.stringValue = L10n.tr("Selected %@. Open comparison to review it beside the current document.", RelativeTime.long(selected.date))
         openButton.isEnabled = true
     }
 

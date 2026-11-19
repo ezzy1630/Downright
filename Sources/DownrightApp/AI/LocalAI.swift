@@ -12,9 +12,9 @@ enum LocalAITask: String, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .summarize: return "Summarize"
-        case .suggestTitle: return "Suggest Title"
-        case .improveClarity: return "Improve Clarity"
+        case .summarize: return L10n.tr("Summarize")
+        case .suggestTitle: return L10n.tr("Suggest Title")
+        case .improveClarity: return L10n.tr("Improve Clarity")
         }
     }
 }

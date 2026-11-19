@@ -60,8 +60,8 @@ final class LocalAIPanelView: NSView, PanelSurface {
             self.delegate?.localAIPanelDidCancel(self)
         }
         actions = [applyAction, cancelAction]
-        let apply = PanelButton.text("Apply Preview", action: applyAction)
-        let cancel = PanelButton.text("Close", action: cancelAction)
+        let apply = PanelButton.text(L10n.tr("Apply Preview"), action: applyAction)
+        let cancel = PanelButton.text(L10n.tr("Close"), action: cancelAction)
 
         for view in [titleLabel, taskPopup, statusLabel, previewLabel, apply, cancel] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -96,21 +96,21 @@ final class LocalAIPanelView: NSView, PanelSurface {
 
     private func updateStatus() {
         if isRunning {
-            statusLabel.stringValue = "Working on this Mac…"
+            statusLabel.stringValue = L10n.tr("Working on this Mac…")
         } else {
             switch availability {
-            case .available: statusLabel.stringValue = "On-device only. Nothing is sent to a server."
-            case .frameworkUnavailable: statusLabel.stringValue = "Apple on-device AI is not installed."
-            case .systemUnavailable: statusLabel.stringValue = "This Mac does not provide Apple on-device AI."
+            case .available: statusLabel.stringValue = L10n.tr("On-device only. Nothing is sent to a server.")
+            case .frameworkUnavailable: statusLabel.stringValue = L10n.tr("Apple on-device AI is not installed.")
+            case .systemUnavailable: statusLabel.stringValue = L10n.tr("This Mac does not provide Apple on-device AI.")
             }
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
     }
 
     private func updateResult() {
-        guard let result else { previewLabel.stringValue = "Select a task to preview a result."; return }
+        guard let result else { previewLabel.stringValue = L10n.tr("Select a task to preview a result."); return }
         if let preview = result.preview {
-            previewLabel.stringValue = "Original:\n\(preview.originalSource)\n\nProposed:\n\(preview.proposedSource)"
+            previewLabel.stringValue = L10n.tr("Original:\n%@\n\nProposed:\n%@", preview.originalSource, preview.proposedSource)
         } else {
             previewLabel.stringValue = result.text
         }

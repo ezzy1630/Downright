@@ -1,0 +1,7 @@
+/* Downright Info.plist English strings */
+"NSAppleEventsUsageDescription" = "Downright uses Terminal to open files in your $EDITOR.";
+"NSHumanReadableCopyright" = "MIT licensed.";
+"Open Markdown in Downright" = "Open Markdown in Downright";
+"Markdown Document" = "Markdown Document";
+"Extended Markdown Document" = "Extended Markdown Document";
+"Plain Text" = "Plain Text";

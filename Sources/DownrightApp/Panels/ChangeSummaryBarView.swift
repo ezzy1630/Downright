@@ -83,14 +83,16 @@ final class ChangeSummaryBarView: MessageBarView {
         /// amounts of attention.
         var headline: String {
             let parts = [
-                (added, "added"),
-                (rewritten, "rewritten"),
-                (removed, "removed"),
+                (added, L10n.tr("added")),
+                (rewritten, L10n.tr("rewritten")),
+                (removed, L10n.tr("removed")),
             ].filter { $0.0 > 0 }
 
-            guard let first = parts.first else { return "Updated on disk" }
+            guard let first = parts.first else { return L10n.tr("Updated on disk") }
             guard parts.count > 1 else {
-                return "\(first.0) \(first.0 == 1 ? "change" : "changes") \(first.1)"
+                return first.0 == 1
+                    ? L10n.tr("1 change %@", first.1)
+                    : L10n.tr("%lld changes %@", first.0, first.1)
             }
             return parts.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
         }
@@ -98,8 +100,8 @@ final class ChangeSummaryBarView: MessageBarView {
         /// Spoken form.  The same facts the marked-up document gives a sighted
         /// reader — what changed, and where — in words.
         var accessibilityDescription: String {
-            guard total > 0 else { return "Document updated on disk. No unread changes." }
-            var sentence = "Document updated on disk. \(headline)."
+            guard total > 0 else { return L10n.tr("Document updated on disk. No unread changes.") }
+            var sentence = L10n.tr("Document updated on disk. %@.", headline)
             if let spread = distributionDescription { sentence += " \(spread)." }
             return sentence
         }
@@ -111,11 +113,11 @@ final class ChangeSummaryBarView: MessageBarView {
             guard positions.count > 1 else { return nil }
             let fractions = positions.map(\.fraction)
             guard let low = fractions.first, let high = fractions.last else { return nil }
-            guard high - low < 0.34 else { return "Spread through the document" }
+            guard high - low < 0.34 else { return L10n.tr("Spread through the document") }
             let middle = (low + high) / 2
-            if middle < 0.34 { return "Clustered near the start" }
-            if middle > 0.66 { return "Clustered near the end" }
-            return "Clustered in the middle"
+            if middle < 0.34 { return L10n.tr("Clustered near the start") }
+            if middle > 0.66 { return L10n.tr("Clustered near the end") }
+            return L10n.tr("Clustered in the middle")
         }
     }
 
@@ -135,13 +137,13 @@ final class ChangeSummaryBarView: MessageBarView {
         super.init(styleSheet: styleSheet, stripeColor: styleSheet.changeColor(.inserted))
         useReviewBarLayout()
 
-        message = "Updated on disk"
-        let previousButton = addSymbolAction("chevron.up", label: "Previous change") { [weak self] in
+        message = L10n.tr("Updated on disk")
+        let previousButton = addSymbolAction("chevron.up", label: L10n.tr("Previous change")) { [weak self] in
             guard let self else { return }
             self.advancePosition(forward: false)
             self.delegate?.changeSummaryBar(self, didRequestJump: false)
         }
-        let nextButton = addSymbolAction("chevron.down", label: "Next change") { [weak self] in
+        let nextButton = addSymbolAction("chevron.down", label: L10n.tr("Next change")) { [weak self] in
             guard let self else { return }
             self.advancePosition(forward: true)
             self.delegate?.changeSummaryBar(self, didRequestJump: true)
@@ -160,13 +162,13 @@ final class ChangeSummaryBarView: MessageBarView {
 
         let reviewedButton = addSymbolAction(
             "checkmark",
-            label: "Mark changes as reviewed"
+            label: L10n.tr("Mark changes as reviewed")
         ) { [weak self] in
             guard let self else { return }
             self.delegate?.changeSummaryBarDidRequestMarkReviewed(self)
         }
         reviewedButton.isBordered = false
-        reviewedButton.toolTip = "Clear unread change marks"
+        reviewedButton.toolTip = L10n.tr("Clear unread change marks")
         self.reviewedButton = reviewedButton
         onDismiss = { [weak self] in
             guard let self else { return }
@@ -181,7 +183,7 @@ final class ChangeSummaryBarView: MessageBarView {
         layer?.masksToBounds = true
         layer?.cornerRadius = Self.cornerRadius
 
-        setAccessibilityLabel("Document updated on disk")
+        setAccessibilityLabel(L10n.tr("Document updated on disk"))
         // The base's own `applyStyle` ran before these buttons existed, and a
         // host that never reassigns `styleSheet` would otherwise show every
         // glyph at full strength — the hierarchy above is part of setup, not
@@ -251,13 +253,13 @@ final class ChangeSummaryBarView: MessageBarView {
         let canWalk = changeCount > 0
         previousButton?.isEnabled = canWalk
         nextButton?.isEnabled = canWalk
-        let help = canWalk ? "" : " (no unread changes)"
-        previousButton?.toolTip = "Previous change\(help)"
-        nextButton?.toolTip = "Next change\(help)"
+        let help = canWalk ? "" : L10n.tr(" (no unread changes)")
+        previousButton?.toolTip = "\(L10n.tr("Previous change"))\(help)"
+        nextButton?.toolTip = "\(L10n.tr("Next change"))\(help)"
     }
 
     var positionStatusForTesting: String {
-        currentPosition.map { "\($0) of \(changeCount)" } ?? ""
+        currentPosition.map { L10n.tr("%lld of %lld", $0, changeCount) } ?? ""
     }
 
     private func advancePosition(forward: Bool) {

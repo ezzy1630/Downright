@@ -133,20 +133,20 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
             return
         }
         let alert = NSAlert()
-        alert.messageText = kind == .comment ? "Add Comment" : "Suggest Replacement"
-        alert.informativeText = "This review stays in a local sidecar file."
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = kind == .comment ? L10n.tr("Add Comment") : L10n.tr("Suggest Replacement")
+        alert.informativeText = L10n.tr("This review stays in a local sidecar file.")
+        alert.addButton(withTitle: L10n.tr("Add"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
 
         let body = NSTextField(string: "")
-        body.placeholderString = kind == .comment ? "Comment" : "Reason"
-        body.setAccessibilityLabel(body.placeholderString ?? "Review text")
+        body.placeholderString = kind == .comment ? L10n.tr("Comment") : L10n.tr("Reason")
+        body.setAccessibilityLabel(body.placeholderString ?? L10n.tr("Review text"))
         let fields: [NSView]
         let replacement: NSTextField?
         if kind == .suggestion {
             let field = NSTextField(string: "")
-            field.placeholderString = "Replacement text"
-            field.setAccessibilityLabel("Replacement text")
+            field.placeholderString = L10n.tr("Replacement text")
+            field.setAccessibilityLabel(L10n.tr("Replacement text"))
             replacement = field
             fields = [body, field]
         } else {
@@ -163,7 +163,7 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
             let reviewBody = body.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = self?.addReview(
                 kind: kind,
-                body: reviewBody.isEmpty && kind == .suggestion ? "Suggested replacement" : reviewBody,
+                body: reviewBody.isEmpty && kind == .suggestion ? L10n.tr("Suggested replacement") : reviewBody,
                 replacement: replacement?.stringValue
             )
         }

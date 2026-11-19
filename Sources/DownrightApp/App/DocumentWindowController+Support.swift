@@ -120,25 +120,25 @@ extension DocumentWindowController {
         case SaveError.fileMissing, SaveError.fileUnreadable:
             presentSaveRecovery(error)
         default:
-            presentOperationError("Couldn’t save \(markdownDocument.displayName)", error: error)
+            presentOperationError(L10n.tr("Couldn’t save %@", markdownDocument.displayName), error: error)
         }
     }
 
     private func presentSaveRecovery(_ error: Error) {
         guard saveRecoveryAlert == nil else { return }
         let alert = NSAlert()
-        alert.messageText = "The original file can’t be saved safely"
+        alert.messageText = L10n.tr("The original file can’t be saved safely")
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Save a Copy…")
-        alert.addButton(withTitle: "Recreate File")
-        alert.addButton(withTitle: "Discard Changes")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons[0].toolTip = "Write your Markdown to a different path"
-        alert.buttons[1].toolTip = "Explicitly create or replace the original path"
+        alert.addButton(withTitle: L10n.tr("Save a Copy…"))
+        alert.addButton(withTitle: L10n.tr("Recreate File"))
+        alert.addButton(withTitle: L10n.tr("Discard Changes"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
+        alert.buttons[0].toolTip = L10n.tr("Write your Markdown to a different path")
+        alert.buttons[1].toolTip = L10n.tr("Explicitly create or replace the original path")
         alert.buttons[1].isEnabled = (error as? SaveError)?.recreationIntent != nil
-        alert.buttons[2].toolTip = "Stop trying to save these local edits"
-        alert.buttons[3].toolTip = "Keep editing without writing anything"
+        alert.buttons[2].toolTip = L10n.tr("Stop trying to save these local edits")
+        alert.buttons[3].toolTip = L10n.tr("Keep editing without writing anything")
         saveRecoveryAlert = alert
 
         let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
@@ -167,7 +167,7 @@ extension DocumentWindowController {
         alert.messageText = title
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L10n.tr("OK"))
         if let window { alert.beginSheetModal(for: window) }
         else { alert.runModal() }
     }
@@ -183,7 +183,7 @@ extension DocumentWindowController {
             // as a copy should stay exactly that (§3.1).
             try DocumentIO.write(markdownDocument.text, to: url, fidelity: markdownDocument.fidelity)
         } catch {
-            presentOperationError("Couldn’t save a copy", error: error)
+            presentOperationError(L10n.tr("Couldn’t save a copy"), error: error)
             return
         }
         (NSApp.delegate as? AppDelegate)?.open(url, mode: mode)
@@ -208,14 +208,14 @@ extension DocumentWindowController {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.html]
         panel.nameFieldStringValue = markdownDocument.displayName + ".html"
-        panel.message = "Export a self-contained HTML file"
+        panel.message = L10n.tr("Export a self-contained HTML file")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         beginActivity()
         defer { endActivity() }
         do {
             try Data(exporter(forPrint: false).html().utf8).write(to: url)
         } catch {
-            presentOperationError("Couldn’t export HTML", error: error)
+            presentOperationError(L10n.tr("Couldn’t export HTML"), error: error)
         }
     }
 
@@ -229,9 +229,9 @@ extension DocumentWindowController {
         guard PrintRenderer.writePDF(html: exporter(forPrint: true).html(), to: url) else {
             let error = NSError(
                 domain: "Downright.Export", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "The PDF renderer could not write the selected file."]
+                userInfo: [NSLocalizedDescriptionKey: L10n.tr("The PDF renderer could not write the selected file.")]
             )
-            presentOperationError("Couldn’t export PDF", error: error)
+            presentOperationError(L10n.tr("Couldn’t export PDF"), error: error)
             return
         }
     }
@@ -258,7 +258,7 @@ extension DocumentWindowController {
         do {
             try png.write(to: url)
         } catch {
-            presentOperationError("Couldn’t export the selection", error: error)
+            presentOperationError(L10n.tr("Couldn’t export the selection"), error: error)
         }
     }
 
@@ -270,7 +270,7 @@ extension DocumentWindowController {
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 520),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false
         )
-        sheetWindow.title = "Tidy Document"
+        sheetWindow.title = L10n.tr("Tidy Document")
         sheetWindow.minSize = NSSize(width: 560, height: 400)
 
         let sheet = TidySheetView()
