@@ -60,7 +60,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
         summaryView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         summaryView.delegate = self
         summaryView.setAccessibilityRole(.textArea)
-        summaryView.setAccessibilityLabel("Visual debugger details")
+        summaryView.setAccessibilityLabel(L10n.tr("Visual debugger details"))
         summaryView.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.drawsBackground = false
@@ -75,7 +75,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
         copyButton.action = #selector(copySummary(_:))
         copyButton.bezelStyle = .rounded
         copyButton.controlSize = .small
-        copyButton.setAccessibilityLabel("Copy visual debugger summary")
+        copyButton.setAccessibilityLabel(L10n.tr("Copy visual debugger summary"))
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
 
@@ -96,7 +96,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Visual Debugger")
+        setAccessibilityLabel(L10n.tr("Visual Debugger"))
         applyStyle()
         reload()
     }

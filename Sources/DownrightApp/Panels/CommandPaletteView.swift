@@ -158,7 +158,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.selectionHighlightStyle = .regular
         tableView.backgroundColor = .clear
-        tableView.setAccessibilityLabel("Command results")
+        tableView.setAccessibilityLabel(L10n.tr("Command results"))
         tableView.setAccessibilityRole(.list)
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -173,7 +173,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         hintLabel.alignment = .right
         hintLabel.lineBreakMode = .byTruncatingTail
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.setAccessibilityLabel("Keyboard commands: move, open, close")
+        hintLabel.setAccessibilityLabel(L10n.tr("Keyboard commands: move, open, close"))
         addSubview(hintLabel)
 
         prefixLabel.font = PanelFont.system(10.5)
@@ -182,8 +182,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         prefixLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         prefixLabel.translatesAutoresizingMaskIntoConstraints = false
         prefixLabel.setAccessibilityLabel(
-            "Search prefixes: greater-than for commands, at for symbols, hash for headings, "
-                + "hash task for tasks, file colon, link colon, asset colon"
+            L10n.tr("Search prefixes: greater-than for commands, at for symbols, hash for headings, hash task for tasks, file colon, link colon, asset colon")
         )
         addSubview(prefixLabel)
         emptyState.install(in: self, over: scrollView)

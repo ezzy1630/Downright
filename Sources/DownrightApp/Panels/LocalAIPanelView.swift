@@ -44,7 +44,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
         taskPopup.addItems(withTitles: LocalAITask.allCases.map(\.title))
         taskPopup.target = self
         taskPopup.action = #selector(runRequested(_:))
-        taskPopup.setAccessibilityLabel("Local AI task")
+        taskPopup.setAccessibilityLabel(L10n.tr("Local AI task"))
 
         statusLabel.font = PanelFont.secondary
         statusLabel.lineBreakMode = .byWordWrapping
@@ -52,7 +52,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
         previewLabel.font = PanelFont.row
         previewLabel.lineBreakMode = .byWordWrapping
         previewLabel.maximumNumberOfLines = 12
-        previewLabel.setAccessibilityLabel("Local AI preview")
+        previewLabel.setAccessibilityLabel(L10n.tr("Local AI preview"))
 
         let applyAction = ButtonAction { [weak self] in self?.applyRequested() }
         let cancelAction = ButtonAction { [weak self] in
@@ -85,7 +85,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
             cancel.centerYAnchor.constraint(equalTo: apply.centerYAnchor),
         ])
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Local on-device AI")
+        setAccessibilityLabel(L10n.tr("Local on-device AI"))
     }
 
     private func applyStyle() {

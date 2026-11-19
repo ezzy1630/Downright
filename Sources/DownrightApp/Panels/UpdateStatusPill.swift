@@ -144,9 +144,9 @@ final class UpdateStatusPill: NSButton {
         target = self
         action = #selector(clicked(_:))
         setAccessibilityRole(.button)
-        setAccessibilityHelp("Downright update status")
+        setAccessibilityHelp(L10n.tr("Downright update status"))
         // Pointer users get the same sentence VoiceOver does.
-        toolTip = "Install the update and relaunch Downright"
+        toolTip = L10n.tr("Install the update and relaunch Downright")
 
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -486,15 +486,15 @@ final class UpdateStatusPill: NSButton {
     private func accessibilityLabel(for model: UpdatePillModel?) -> String {
         switch model {
         case .updateNow(let version, let isReady):
-            if version.isEmpty { return "Update Now" }
+            if version.isEmpty { return L10n.tr("Update Now") }
             return isReady
-                ? "Update Now. Downright \(version) is ready to install"
-                : "Update Now. Downright \(version) is available"
-        case .restartToUpdate: return "Update ready. Restart Downright to update"
+                ? L10n.tr("Update Now. Downright %@ is ready to install", version)
+                : L10n.tr("Update Now. Downright %@ is available", version)
+        case .restartToUpdate: return L10n.tr("Update ready. Restart Downright to update")
         case .progress(let title, _): return title
-        case .warning: return "Update failed. Open the update panel for details"
-        case .informational(let version): return "Update \(version) information"
-        case .hidden, nil: return "No update status"
+        case .warning: return L10n.tr("Update failed. Open the update panel for details")
+        case .informational(let version): return L10n.tr("Update %@ information", version)
+        case .hidden, nil: return L10n.tr("No update status")
         }
     }
 

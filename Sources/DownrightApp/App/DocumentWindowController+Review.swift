@@ -163,7 +163,7 @@ extension DocumentWindowController: ReviewPanelViewDelegate {
             let reviewBody = body.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = self?.addReview(
                 kind: kind,
-                body: reviewBody.isEmpty && kind == .suggestion ? L10n.tr("Suggested replacement") : reviewBody,
+                body: reviewBody.isEmpty && kind == .suggestion ? "Suggested replacement" : reviewBody,
                 replacement: replacement?.stringValue
             )
         }

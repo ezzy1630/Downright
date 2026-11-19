@@ -167,6 +167,12 @@ window**, **Quit Downright**, and **Do nothing**. The default remains Show start
 window; closing a document with unsaved changes still offers the normal save
 choices.
 
+**Interface language** in **Settings → General → Language** follows macOS by
+default (**System Default**) and supports **English** and **简体中文**
+(Simplified Chinese) across both the host app and Quick Look previews. Changing
+the setting updates the menu bar and start window right away; reopen Downright
+so every open window and system panel refreshes completely.
+
 ## What's new
 
 Every release's changes are listed in the [changelog](CHANGELOG.md) and on the

@@ -1458,9 +1458,13 @@ enum RecentRowCopy {
         let now = Date()
         let year = calendar.component(.year, from: recent.lastOpened)
         let currentYear = calendar.component(.year, from: now)
-        return year == currentYear
-            ? monthDayFormatter.string(from: recent.lastOpened)
-            : monthDayYearFormatter.string(from: recent.lastOpened)
+        let formatter = year == currentYear ? monthDayFormatter : monthDayYearFormatter
+        let targetLocale = Locale(identifier: L10n.currentLanguage)
+        if formatter.locale.identifier != targetLocale.identifier {
+            formatter.locale = targetLocale
+            formatter.setLocalizedDateFormatFromTemplate(year == currentYear ? "MMM d" : "MMM d yyyy")
+        }
+        return formatter.string(from: recent.lastOpened)
     }
 
     static func folder(for recent: RecentDocument) -> String {

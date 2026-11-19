@@ -215,39 +215,59 @@ enum PanelAnimation {
 // MARK: - Time
 
 enum RelativeTime {
-    private static let abbreviatedFormatter: RelativeDateTimeFormatter = {
+    private static let lock = NSLock()
+    private static var abbreviatedFormatters: [String: RelativeDateTimeFormatter] = [:]
+    private static var namedFormatters: [String: RelativeDateTimeFormatter] = [:]
+    private static var stampFormatters: [String: DateFormatter] = [:]
+
+    private static func abbreviatedFormatter(for localeID: String) -> RelativeDateTimeFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = abbreviatedFormatters[localeID] { return cached }
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
+        f.locale = Locale(identifier: localeID)
+        abbreviatedFormatters[localeID] = f
         return f
-    }()
+    }
 
-    private static let namedFormatter: RelativeDateTimeFormatter = {
+    private static func namedFormatter(for localeID: String) -> RelativeDateTimeFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = namedFormatters[localeID] { return cached }
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .full
         f.dateTimeStyle = .named
+        f.locale = Locale(identifier: localeID)
+        namedFormatters[localeID] = f
         return f
-    }()
+    }
 
-    private static let stampFormatter: DateFormatter = {
+    private static func stampFormatter(for localeID: String) -> DateFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = stampFormatters[localeID] { return cached }
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
+        f.locale = Locale(identifier: localeID)
+        stampFormatters[localeID] = f
         return f
-    }()
+    }
 
     /// "2m", "3h" — for a list where the column is a few characters wide.
     static func short(_ date: Date, now: Date = Date()) -> String {
-        if now.timeIntervalSince(date) < 60 { return "now" }
-        return abbreviatedFormatter.localizedString(for: date, relativeTo: now)
+        if now.timeIntervalSince(date) < 60 { return L10n.tr("now") }
+        return abbreviatedFormatter(for: L10n.currentLanguage).localizedString(for: date, relativeTo: now)
     }
 
     /// "3 minutes ago", "yesterday".
     static func long(_ date: Date, now: Date = Date()) -> String {
-        namedFormatter.localizedString(for: date, relativeTo: now)
+        namedFormatter(for: L10n.currentLanguage).localizedString(for: date, relativeTo: now)
     }
 
     static func stamp(_ date: Date) -> String {
-        stampFormatter.string(from: date)
+        stampFormatter(for: L10n.currentLanguage).string(from: date)
     }
 }
 

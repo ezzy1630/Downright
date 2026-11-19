@@ -120,6 +120,31 @@ struct LocalizationTests {
         }
     }
 
+    @Test func quickOpenFootnotesMatchBothChineseAndEnglishUnderChineseLocale() {
+        let doc = MarkdownParser.parse("Text[^note]\n\n[^note]: Body\n")
+        L10n.withLanguage("zh-Hans") {
+            let provider = CurrentDocumentQuickOpenProvider(document: doc)
+            var model = CommandPaletteModel(entries: [], providers: [provider])
+
+            model.updateQuery("脚注")
+            #expect(model.quickResults.contains { $0.kind == .footnote })
+
+            model.updateQuery("footnote")
+            #expect(model.quickResults.contains { $0.kind == .footnote })
+        }
+    }
+
+    @Test func relativeTimeFollowsInAppLanguageOverride() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let yesterday = now.addingTimeInterval(-86_400)
+
+        let english = L10n.withLanguage("en") { RelativeTime.long(yesterday, now: now) }
+        let chinese = L10n.withLanguage("zh-Hans") { RelativeTime.long(yesterday, now: now) }
+
+        #expect(english.lowercased().contains("yesterday"))
+        #expect(chinese.contains("昨天"))
+    }
+
     @Test func preferencesValuesDecodeLegacyJSONWithoutLanguageField() throws {
         let legacyJSON = Data(#"{"themeName":"Paper Light","restoreSession":false}"#.utf8)
         let decoded = try JSONDecoder().decode(Preferences.Values.self, from: legacyJSON)

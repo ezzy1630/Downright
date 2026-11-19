@@ -284,17 +284,20 @@ private final class ReviewRowView: NSTableCellView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func configure(_ review: ReviewItem, status: ReviewAnchorStatus, styleSheet: StyleSheet) {
+        let displayBody = review.body == "Suggested replacement"
+            ? L10n.tr("Suggested replacement")
+            : review.body
         titleLabel.stringValue = review.title
         titleLabel.textColor = styleSheet.text
         bodyLabel.stringValue = review.kind == .suggestion
-            ? "Replace \(quoted(review.anchor.selectedText)) with \(quoted(review.replacement ?? ""))"
-            : review.body
+            ? L10n.tr("Replace %@ with %@", quoted(review.anchor.selectedText), quoted(review.replacement ?? ""))
+            : displayBody
         bodyLabel.textColor = styleSheet.textSecondary
         let state = review.state == .open ? status.rawValue.capitalized : review.state.rawValue.capitalized
         statusLabel.stringValue = state
         statusLabel.textColor = styleSheet.textFaint
-        toolTip = review.body
-        setAccessibilityLabel("\(review.title): \(review.body)")
+        toolTip = displayBody
+        setAccessibilityLabel("\(review.title): \(displayBody)")
         setAccessibilityValue(state)
     }
 

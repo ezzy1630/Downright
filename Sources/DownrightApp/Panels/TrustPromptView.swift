@@ -80,12 +80,12 @@ final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
 
         // Deny is the default and also the Esc key.  Both keys agree, and both
         // agree with the safe answer.
-        configure(denyButton, action: #selector(deny(_:)), label: "Do not allow this action")
+        configure(denyButton, action: #selector(deny(_:)), label: L10n.tr("Do not allow this action"))
         denyButton.keyEquivalent = "\r"
-        configure(allowOnceButton, action: #selector(allowOnce(_:)), label: "Allow this action once")
-        configure(allowFileButton, action: #selector(allowFile(_:)), label: "Always allow this action for this file")
-        configure(allowFolderButton, action: #selector(allowFolder(_:)), label: "Always allow this action for this folder")
-        configure(revokeButton, action: #selector(revoke(_:)), label: "Revoke matching trust")
+        configure(allowOnceButton, action: #selector(allowOnce(_:)), label: L10n.tr("Allow this action once"))
+        configure(allowFileButton, action: #selector(allowFile(_:)), label: L10n.tr("Always allow this action for this file"))
+        configure(allowFolderButton, action: #selector(allowFolder(_:)), label: L10n.tr("Always allow this action for this folder"))
+        configure(revokeButton, action: #selector(revoke(_:)), label: L10n.tr("Revoke matching trust"))
         revokeButton.hasDestructiveAction = true
 
         for button in allButtons { buttons.addArrangedSubview(button) }
@@ -126,7 +126,7 @@ final class TrustPromptView: NSView, PanelSurface, FloatingContentMeasuring {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Permission Needed")
+        setAccessibilityLabel(L10n.tr("Permission Needed"))
         applyStyle()
         reload()
     }

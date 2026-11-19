@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingOpenURLs: [URL] = []
     private var appearanceObservation: NSKeyValueObservation?
     private var warningWindowObserver: NSObjectProtocol?
+    private var lastAppliedLanguage: AppLanguage = Preferences.shared.values.language
     private static let systemThemeChanged = Notification.Name("AppleInterfaceThemeChangedNotification")
 
     // MARK: - Lifecycle
@@ -866,7 +867,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func preferencesDidChange() {
         applySelectedTheme()
-        if let menu = NSApp.mainMenu { MainMenu.refreshKeyEquivalents(in: menu) }
+        let currentLanguage = Preferences.shared.values.language
+        if currentLanguage != lastAppliedLanguage {
+            lastAppliedLanguage = currentLanguage
+            NSApp.mainMenu = MainMenu.build()
+            if let existing = startWindow {
+                let wasVisible = existing.window?.isVisible == true
+                existing.close()
+                startWindow = nil
+                if wasVisible {
+                    showStartWindow()
+                }
+            }
+        } else if let menu = NSApp.mainMenu {
+            MainMenu.refreshKeyEquivalents(in: menu)
+        }
     }
 
     // MARK: - Command routing

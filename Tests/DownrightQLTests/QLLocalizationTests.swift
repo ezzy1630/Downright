@@ -28,4 +28,9 @@ struct QLLocalizationTests {
             #expect(QLL10n.tr("Open in Downright") == "Open in Downright")
         }
     }
+
+    @Test func quickLookLanguageNormalizationHandlesChineseAndEnglish() {
+        #expect(QLL10n.withLanguage("zh-Hans-CN") { QLL10n.currentLanguage } == "zh-Hans")
+        #expect(QLL10n.withLanguage("en-US") { QLL10n.currentLanguage } == "en")
+    }
 }

@@ -137,7 +137,8 @@ struct CurrentDocumentQuickOpenProvider: QuickOpenProvider {
             output += document.footnotes.keys.sorted().compactMap { identifier in
                 guard let block = document.footnotes[identifier] else { return nil }
                 return QuickOpenResult(id: "footnote:\(identifier)", kind: .footnote,
-                                       title: L10n.tr("Footnote %@", identifier), subtitle: L10n.tr("Definition"), action: .select(block.range))
+                                       title: L10n.tr("Footnote %@", identifier), subtitle: L10n.tr("Definition"),
+                                       searchText: "Footnote \(identifier)", action: .select(block.range))
             }
         }
 
@@ -159,7 +160,8 @@ struct CurrentDocumentQuickOpenProvider: QuickOpenProvider {
             case .footnoteReference(let identifier):
                 guard query.filter == .all else { continue }
                 output.append(QuickOpenResult(id: "footnote-ref:\(span.range.location):\(index)", kind: .footnote,
-                                              title: L10n.tr("Footnote %@", identifier), subtitle: L10n.tr("Reference"), action: .select(span.range)))
+                                              title: L10n.tr("Footnote %@", identifier), subtitle: L10n.tr("Reference"),
+                                              searchText: "Footnote \(identifier)", action: .select(span.range)))
             default: continue
             }
         }

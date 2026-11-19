@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownRender
 
 /// Lightweight localization helper for the sandboxed Quick Look extension.
 enum QLL10n {
@@ -59,6 +60,10 @@ enum QLL10n {
         if let env = ProcessInfo.processInfo.environment["DOWNRIGHT_LANGUAGE"],
            !env.isEmpty, env.lowercased() != "system" {
             return normalizedLanguage(env)
+        }
+        if let stored = PreviewAppearanceStore.language,
+           !stored.isEmpty, stored.lowercased() != "system" {
+            return normalizedLanguage(stored)
         }
         let matched = Bundle.preferredLocalizations(
             from: supportedLanguages,

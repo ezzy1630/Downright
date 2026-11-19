@@ -1,11 +1,15 @@
 /* DownrightApp English (Base) Localization */
 
+"\n• and %lld more" = "\n• and %lld more";
 " (no unread changes)" = " (no unread changes)";
 " and " = " and ";
 "$EDITOR (Terminal)" = "$EDITOR (Terminal)";
 "%@ (not available)" = "%@ (not available)";
+"%@ inspector" = "%@ inspector";
 "%@ is already used" = "%@ is already used";
 "%@ of %@  (%lld%%)" = "%@ of %@  (%lld%%)";
+"%@ section" = "%@ section";
+"%@ section, %lld left, %@" = "%@ section, %lld left, %@";
 "%@ · %lld words" = "%@ · %lld words";
 "%@, %@ — Open Tasks" = "%@, %@ — Open Tasks";
 "%lld backlinks" = "%lld backlinks";
@@ -82,6 +86,7 @@
 "All headings" = "All headings";
 "All of your custom shortcuts go back to the ones Downright ships with. This can't be undone." = "All of your custom shortcuts go back to the ones Downright ships with. This can't be undone.";
 "Allow Once" = "Allow Once";
+"Allow this action once" = "Allow this action once";
 "Allowing asks macOS to open the path below in the application registered for it." = "Allowing asks macOS to open the path below in the application registered for it.";
 "Allowing contacts the server below and displays its image. The server can observe your IP address." = "Allowing contacts the server below and displays its image. The server can observe your IP address.";
 "Allowing hands the address below to your default browser. Downright does not load it." = "Allowing hands the address below to your default browser. Downright does not load it.";
@@ -91,6 +96,8 @@
 "Always Allow for This File" = "Always Allow for This File";
 "Always Allow for This Folder" = "Always Allow for This Folder";
 "Always Allow for “%@”" = "Always Allow for “%@”";
+"Always allow this action for this file" = "Always allow this action for this file";
+"Always allow this action for this folder" = "Always allow this action for this folder";
 "Appearance" = "Appearance";
 "Apple on-device AI is not installed." = "Apple on-device AI is not installed.";
 "Applied %lld safe fixes." = "Applied %lld safe fixes.";
@@ -102,6 +109,7 @@
 "Apply 1 Change" = "Apply 1 Change";
 "Apply 1 Safe Fix" = "Apply 1 Safe Fix";
 "Apply Preview" = "Apply Preview";
+"Apply all safe render target fixes" = "Apply all safe render target fixes";
 "Apply safe fixes" = "Apply safe fixes";
 "Asset Doctor" = "Asset Doctor";
 "Assets" = "Assets";
@@ -144,6 +152,7 @@
 "Choose the image path to use." = "Choose the image path to use.";
 "Choose the replacement image." = "Choose the replacement image.";
 "Choose two files to compare" = "Choose two files to compare";
+"Choose which inspector panel is shown" = "Choose which inspector panel is shown";
 "Chrome density" = "Chrome density";
 "Clear Menu" = "Clear Menu";
 "Clear Recent Files…" = "Clear Recent Files…";
@@ -165,6 +174,7 @@
 "Command" = "Command";
 "Command Palette…" = "Command Palette…";
 "Command palette" = "Command palette";
+"Command results" = "Command results";
 "Commands" = "Commands";
 "Comment" = "Comment";
 "Comments and suggestions left beside\nthis document will appear here." = "Comments and suggestions left beside\nthis document will appear here.";
@@ -199,6 +209,7 @@
 "Copy as Markdown" = "Copy as Markdown";
 "Copy as Plain Text" = "Copy as Plain Text";
 "Copy as Rich Text" = "Copy as Rich Text";
+"Copy visual debugger summary" = "Copy visual debugger summary";
 "Correct Spelling Automatically" = "Correct Spelling Automatically";
 "Couldn't create %@" = "Couldn't create %@";
 "Couldn't import that theme" = "Couldn't import that theme";
@@ -249,6 +260,7 @@
 "Dismiss GitHub star suggestion" = "Dismiss GitHub star suggestion";
 "Dismiss — won’t be shown again" = "Dismiss — won’t be shown again";
 "Display" = "Display";
+"Do not allow this action" = "Do not allow this action";
 "Do nothing" = "Do nothing";
 "Document / Source" = "Document / Source";
 "Document Detail" = "Document Detail";
@@ -284,6 +296,7 @@
 "Downright keeps a copy of the document every time something else writes to it, stored locally and deduplicated, so nothing is kept twice. That is where Version Timeline%@ gets the versions it shows you." = "Downright keeps a copy of the document every time something else writes to it, stored locally and deduplicated, so nothing is kept twice. That is where Version Timeline%@ gets the versions it shows you.";
 "Downright needs to quit to finish installing." = "Downright needs to quit to finish installing.";
 "Downright start window" = "Downright start window";
+"Downright update status" = "Downright update status";
 "Downright will relaunch automatically." = "Downright will relaunch automatically.";
 "Draw whitespace markers in the visible part of the document." = "Draw whitespace markers in the visible part of the document.";
 "Duplicate assets" = "Duplicate assets";
@@ -366,6 +379,8 @@
 "Headings — all headings" = "Headings — all headings";
 "Headings, links, and structure all\nlook right from here." = "Headings, links, and structure all\nlook right from here.";
 "Health" = "Health";
+"Hide %lld completed tasks" = "Hide %lld completed tasks";
+"Hide 1 completed task" = "Hide 1 completed task";
 "Hide Downright" = "Hide Downright";
 "Hide Others" = "Hide Others";
 "Hide completed tasks" = "Hide completed tasks";
@@ -386,6 +401,8 @@
 "Insert Row" = "Insert Row";
 "Insert Table of Contents" = "Insert Table of Contents";
 "Insert a - [ ] checkbox into this document" = "Insert a - [ ] checkbox into this document";
+"Inspector" = "Inspector";
+"Inspector sections" = "Inspector sections";
 "Install Downright %@ and relaunch" = "Install Downright %@ and relaunch";
 "Install the down Command Line Tool" = "Install the down Command Line Tool";
 "Install the down command line tool" = "Install the down command line tool";
@@ -404,6 +421,7 @@
 "Keep editing without writing anything" = "Keep editing without writing anything";
 "Keep versions for" = "Keep versions for";
 "Keyboard Shortcuts…" = "Keyboard Shortcuts…";
+"Keyboard commands: move, open, close" = "Keyboard commands: move, open, close";
 "Keys" = "Keys";
 "Language" = "Language";
 "Large files" = "Large files";
@@ -433,6 +451,9 @@
 "Load the version on disk, discarding your unsaved edits." = "Load the version on disk, discarding your unsaved edits.";
 "Loading release notes from %@…" = "Loading release notes from %@…";
 "Local AI could not complete this task." = "Local AI could not complete this task.";
+"Local AI preview" = "Local AI preview";
+"Local AI task" = "Local AI task";
+"Local on-device AI" = "Local on-device AI";
 "Local save" = "Local save";
 "Looking through the workspace\nfiles for that text." = "Looking through the workspace\nfiles for that text.";
 "Make Lower Case" = "Make Lower Case";
@@ -502,6 +523,7 @@
 "No front matter" = "No front matter";
 "No front matter block" = "No front matter block";
 "No images" = "No images";
+"No inspector section" = "No inspector section";
 "No issues" = "No issues";
 "No links" = "No links";
 "No matches" = "No matches";
@@ -522,6 +544,7 @@
 "No tasks" = "No tasks";
 "No tasks yet" = "No tasks yet";
 "No tasks — Open Tasks" = "No tasks — Open Tasks";
+"No update status" = "No update status";
 "No workspace file links to\nthis document yet." = "No workspace file links to\nthis document yet.";
 "None" = "None";
 "Normalise list markers" = "Normalise list markers";
@@ -643,9 +666,14 @@
 "Rename…" = "Rename…";
 "Render Target" = "Render Target";
 "Render Targets" = "Render Targets";
+"Render target" = "Render target";
+"Render target findings" = "Render target findings";
+"Render target source change preview" = "Render target source change preview";
+"Render targets" = "Render targets";
 "Rendered document" = "Rendered document";
 "Renumber ordered lists" = "Renumber ordered lists";
 "Replace" = "Replace";
+"Replace %@ with %@" = "Replace %@ with %@";
 "Replace with" = "Replace with";
 "Replaced %lld" = "Replaced %lld";
 "Replaced 1" = "Replaced 1";
@@ -674,6 +702,7 @@
 "Review" = "Review";
 "Review text" = "Review text";
 "Revoke Existing Permission" = "Revoke Existing Permission";
+"Revoke matching trust" = "Revoke matching trust";
 "Right" = "Right";
 "Run an app or automation from this document?" = "Run an app or automation from this document?";
 "Save" = "Save";
@@ -695,6 +724,7 @@
 "Search commands and document items" = "Search commands and document items";
 "Search commands, headings, files" = "Search commands, headings, files";
 "Search in selection" = "Search in selection";
+"Search prefixes: greater-than for commands, at for symbols, hash for headings, hash task for tasks, file colon, link colon, asset colon" = "Search prefixes: greater-than for commands, at for symbols, hash for headings, hash task for tasks, file colon, link colon, asset colon";
 "Search settings" = "Search settings";
 "Search the workspace" = "Search the workspace";
 "Search workspace" = "Search workspace";
@@ -720,6 +750,8 @@
 "Share as PDF…" = "Share as PDF…";
 "Share…" = "Share…";
 "Shortcut" = "Shortcut";
+"Show %lld completed tasks" = "Show %lld completed tasks";
+"Show 1 completed task" = "Show 1 completed task";
 "Show All" = "Show All";
 "Show Completed" = "Show Completed";
 "Show Less Detail" = "Show Less Detail";
@@ -756,6 +788,7 @@
 "Sort List by Checkbox" = "Sort List by Checkbox";
 "Source Focus" = "Source Focus";
 "Source Focus — show raw Markdown" = "Source Focus — show raw Markdown";
+"Source change preview: replace %@ with %@" = "Source change preview: replace %@ with %@";
 "Speak Selection or Document" = "Speak Selection or Document";
 "Speech" = "Speech";
 "Spelling and Grammar" = "Spelling and Grammar";
@@ -816,8 +849,8 @@
 "This Mac does not provide Apple on-device AI." = "This Mac does not provide Apple on-device AI.";
 "This block needs Source Focus." = "This block needs Source Focus.";
 "This build carries no update configuration, so automatic updates are off. Install a release build to see update settings here." = "This build carries no update configuration, so automatic updates are off. Install a release build to see update settings here.";
-"This document already follows every rule Tidy checks." = "This document already follows every rule Tidy checks.";
 "This document already follows every\ntidy rule." = "This document already follows every\ntidy rule.";
+"This document already follows every rule Tidy checks." = "This document already follows every rule Tidy checks.";
 "This document has no image\nreferences." = "This document has no image\nreferences.";
 "This document links nowhere yet." = "This document links nowhere yet.";
 "This folder" = "This folder";
@@ -863,14 +896,19 @@
 "Until this is fixed, Downright can't save:\n\n%@\n\n%@" = "Until this is fixed, Downright can't save:\n\n%@\n\n%@";
 "Update" = "Update";
 "Update %@" = "Update %@";
+"Update %@ information" = "Update %@ information";
 "Update & Relaunch" = "Update & Relaunch";
 "Update Downright to %@" = "Update Downright to %@";
 "Update Failed" = "Update Failed";
 "Update Now" = "Update Now";
+"Update Now. Downright %@ is available" = "Update Now. Downright %@ is available";
+"Update Now. Downright %@ is ready to install" = "Update Now. Downright %@ is ready to install";
 "Update available" = "Update available";
 "Update failed" = "Update failed";
 "Update failed — click for details" = "Update failed — click for details";
+"Update failed. Open the update panel for details" = "Update failed. Open the update panel for details";
 "Update information" = "Update information";
+"Update ready. Restart Downright to update" = "Update ready. Restart Downright to update";
 "Update unavailable" = "Update unavailable";
 "Updated on disk" = "Updated on disk";
 "Updates" = "Updates";
@@ -883,6 +921,7 @@
 "Version Timeline" = "Version Timeline";
 "Version history" = "Version history";
 "Visual Debugger" = "Visual Debugger";
+"Visual debugger details" = "Visual debugger details";
 "Watch files for external changes" = "Watch files for external changes";
 "Welcome to Downright" = "Welcome to Downright";
 "What's New" = "What's New";
@@ -906,7 +945,6 @@
 "Your settings file couldn't be read" = "Your settings file couldn't be read";
 "Yours" = "Yours";
 "Zoom" = "Zoom";
-"\n• and %lld more" = "\n• and %lld more";
 "added" = "added";
 "all done" = "all done";
 "an external site" = "an external site";
@@ -917,7 +955,9 @@
 "chromeDensity::Comfortable" = "Comfortable";
 "chromeDensity::Compact" = "Compact";
 "chromeDensity::Spacious" = "Spacious";
+"collapsed" = "collapsed";
 "days" = "days";
+"expanded" = "expanded";
 "externalEditor::System Default" = "System Default";
 "language::System Default" = "System Default";
 "macOS declined the change. Finder’s Get Info → Open With can set it." = "macOS declined the change. Finder’s Get Info → Open With can set it.";
@@ -931,6 +971,7 @@
 "menu::View" = "View";
 "menu::Window" = "Window";
 "menuSection::Share" = "Share";
+"now" = "now";
 "prefix::Replaced" = "Replaced";
 "readerProfile::Academic" = "Academic";
 "readerProfile::Documentation" = "Documentation";

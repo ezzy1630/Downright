@@ -1644,7 +1644,12 @@ private final class TaskSectionRowView: TaskRowSurfaceView {
         statusLabel.stringValue = openCount > 0 ? L10n.tr("%lld left", openCount) : L10n.tr("All done")
         statusLabel.textColor = styleSheet.textFaint
         setAccessibilityRole(.button)
-        setAccessibilityLabel("\(title) section, \(openCount) left, \(collapsed ? "collapsed" : "expanded")")
+        setAccessibilityLabel(L10n.tr(
+            "%@ section, %lld left, %@",
+            title,
+            openCount,
+            collapsed ? L10n.tr("collapsed") : L10n.tr("expanded")
+        ))
         updateSurface(animated: false)
     }
 
@@ -1741,7 +1746,11 @@ private final class TaskPileRowView: TaskRowSurfaceView {
         setChevron(open: expanded, animated: window != nil)
         label.stringValue = count == 1 ? L10n.tr("1 completed") : L10n.tr("%lld completed", count)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(expanded ? "Hide \(count) completed tasks" : "Show \(count) completed tasks")
+        setAccessibilityLabel(
+            expanded
+                ? (count == 1 ? L10n.tr("Hide 1 completed task") : L10n.tr("Hide %lld completed tasks", count))
+                : (count == 1 ? L10n.tr("Show 1 completed task") : L10n.tr("Show %lld completed tasks", count))
+        )
         applyStyle(animated: false)
     }
 

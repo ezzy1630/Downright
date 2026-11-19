@@ -105,7 +105,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         targetControl.font = PanelFont.secondary
         targetControl.target = self
         targetControl.action = #selector(targetChanged(_:))
-        targetControl.setAccessibilityLabel("Render target")
+        targetControl.setAccessibilityLabel(L10n.tr("Render target"))
         targetControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(targetControl)
 
@@ -114,7 +114,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Render target findings")
+        table.setAccessibilityLabel(L10n.tr("Render target findings"))
         addSubview(scroll)
 
         previewLabel.font = PanelFont.secondary
@@ -125,7 +125,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         preview.isRichText = false
         preview.font = PanelFont.monospaced(10)
         preview.textContainerInset = NSSize(width: 6, height: 5)
-        preview.setAccessibilityLabel("Render target source change preview")
+        preview.setAccessibilityLabel(L10n.tr("Render target source change preview"))
         preview.translatesAutoresizingMaskIntoConstraints = false
         addSubview(preview)
 
@@ -133,7 +133,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         applyAction = apply
         applyButton.target = apply
         applyButton.action = #selector(ButtonAction.fire(_:))
-        applyButton.setAccessibilityLabel("Apply all safe render target fixes")
+        applyButton.setAccessibilityLabel(L10n.tr("Apply all safe render target fixes"))
         let source = ButtonAction { [weak self] in
             guard let self else { return }
             self.delegate?.renderTargetsViewWantsSourceMode(self)
@@ -141,7 +141,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source Focus")
+        sourceButton.setAccessibilityLabel(L10n.tr("Open Source Focus"))
         for button in [applyButton, sourceButton] {
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
@@ -183,7 +183,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         NSLayoutConstraint.activate(previewConstraints)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Render targets")
+        setAccessibilityLabel(L10n.tr("Render targets"))
         rebuildTargetControl()
         applyStyle()
         reload()
@@ -365,7 +365,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         let before = (sourceText as NSString).substring(with: proposal.range)
         previewLabel.stringValue = L10n.tr("Preview · %@", proposal.summary)
         preview.string = "− \(before)\n+ \(proposal.replacement)"
-        preview.setAccessibilityLabel("Source change preview: replace \(before) with \(proposal.replacement)")
+        preview.setAccessibilityLabel(L10n.tr("Source change preview: replace %@ with %@", before, proposal.replacement))
         setPreviewVisible(true)
     }
 

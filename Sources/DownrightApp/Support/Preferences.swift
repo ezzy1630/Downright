@@ -215,7 +215,8 @@ final class Preferences {
             appearance: values.previewAppearance,
             lightThemeName: values.themeName,
             darkThemeName: values.darkThemeName,
-            measureCharacters: values.typography.measureCharacters
+            measureCharacters: values.typography.measureCharacters,
+            language: values.language.rawValue
         )
         SnapshotStore.shared.maximumAge = TimeInterval(values.historyMaximumDays) * 86_400
         SnapshotStore.shared.maximumBytes = values.historyMaximumMegabytes * 1024 * 1024
@@ -269,7 +270,8 @@ final class Preferences {
                 appearance: values.previewAppearance,
                 lightThemeName: values.themeName,
                 darkThemeName: values.darkThemeName,
-                measureCharacters: values.typography.measureCharacters
+                measureCharacters: values.typography.measureCharacters,
+                language: values.language.rawValue
             )
             lastPersistenceError = nil
         } catch {
