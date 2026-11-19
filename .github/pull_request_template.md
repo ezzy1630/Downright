@@ -14,6 +14,9 @@
 - [ ] New behaviour has a test, or the reason it cannot have one is in the
       description.
 - [ ] No new compiler warnings.
+- [ ] Anything this change adds that must stay in sync with other code has a
+      check that fails when it drifts (see `CONTRIBUTING.md`).
+- [ ] Cross-cutting changes link the issue where scope was agreed.
 - [ ] User-visible changes appear under `[Unreleased]` in `CHANGELOG.md`, or
       in the matching version section when preparing a release
       (see `Docs/RELEASE.md`).
