@@ -167,6 +167,13 @@ cp "$ROOT/Resources/Welcome.md" "$RESOURCES/Welcome.md"
 # be declared per bundle.  Xcode builds get this via project.yml resources;
 # the SwiftPM bundle copies it here so both pipelines ship the same manifest.
 cp "$ROOT/Resources/PrivacyInfo.xcprivacy" "$RESOURCES/PrivacyInfo.xcprivacy"
+# Localization bundles (`en.lproj`, `zh-Hans.lproj`, ...). Xcode builds get
+# these automatically via XcodeGen's variant groups; copy them here so both
+# pipelines ship the same localized UI and InfoPlist strings.
+for lproj in "$ROOT/Sources/DownrightApp/Resources"/*.lproj; do
+    [ -d "$lproj" ] || continue
+    cp -R "$lproj" "$RESOURCES/"
+done
 
 echo "==> Embedding Sparkle.framework"
 FRAMEWORKS="$CONTENTS/Frameworks"

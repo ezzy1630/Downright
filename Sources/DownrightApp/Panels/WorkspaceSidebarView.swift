@@ -58,6 +58,14 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         case files = "Files"
         case search = "Search"
         case backlinks = "Backlinks"
+
+        var title: String {
+            switch self {
+            case .files: return L10n.tr("Files")
+            case .search: return L10n.tr("Search")
+            case .backlinks: return L10n.tr("Backlinks")
+            }
+        }
     }
 
     private enum Row {
@@ -73,7 +81,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
         tabControl = PanelSegmentedControl(
-            items: WorkspaceSidebarTab.allCases.map(\.rawValue),
+            items: WorkspaceSidebarTab.allCases.map(\.title),
             styleSheet: styleSheet
         )
         super.init(frame: .zero)
@@ -99,17 +107,17 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
             guard let tab = WorkspaceSidebarTab.allCases.element(at: index) else { return }
             self?.selectedTab = tab
         }
-        tabControl.setAccessibilityLabel("Workspace sections")
+        tabControl.setAccessibilityLabel(L10n.tr("Workspace sections"))
         tabControl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tabControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabControl)
 
-        searchField.placeholderString = "Search workspace"
+        searchField.placeholderString = L10n.tr("Search workspace")
         searchField.font = PanelFont.row
         searchField.delegate = self
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
-        searchField.setAccessibilityLabel("Search workspace files")
+        searchField.setAccessibilityLabel(L10n.tr("Search workspace files"))
         searchField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(searchField)
 
@@ -118,7 +126,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Workspace results")
+        table.setAccessibilityLabel(L10n.tr("Workspace results"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
 
@@ -146,7 +154,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Workspace")
+        setAccessibilityLabel(L10n.tr("Workspace"))
         syncTab()
         applyStyle()
         reload()
@@ -187,24 +195,24 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
                 groups[folder, default: []].append(index)
             }
             for folder in order {
-                if order.count > 1 { rows.append(.group(folder == "." ? "This folder" : folder)) }
+                if order.count > 1 { rows.append(.group(folder == "." ? L10n.tr("This folder") : folder)) }
                 rows.append(contentsOf: groups[folder, default: []].map { .file($0) })
             }
             countLabel.stringValue = isBusy
-                ? "Scanning…"
-                : "\(entries.count) file\(entries.count == 1 ? "" : "s")"
+                ? L10n.tr("Scanning…")
+                : (entries.count == 1 ? L10n.tr("1 file") : L10n.tr("%lld files", entries.count))
         case .search:
             rows = searchResults.indices.map { .result($0) }
             countLabel.stringValue = isBusy
-                ? "Searching…"
+                ? L10n.tr("Searching…")
                 : (searchResults.isEmpty
-                    ? "No matches"
-                    : "\(searchResults.count) match\(searchResults.count == 1 ? "" : "es")")
+                    ? L10n.tr("No matches")
+                    : (searchResults.count == 1 ? L10n.tr("1 match") : L10n.tr("%lld matches", searchResults.count)))
         case .backlinks:
             rows = backlinks.indices.map { .backlink($0) }
             countLabel.stringValue = backlinks.isEmpty
-                ? "No backlinks"
-                : "\(backlinks.count) backlink\(backlinks.count == 1 ? "" : "s")"
+                ? L10n.tr("No backlinks")
+                : (backlinks.count == 1 ? L10n.tr("1 backlink") : L10n.tr("%lld backlinks", backlinks.count))
         }
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         if isBusy { spinner.begin() } else { spinner.end() }
@@ -221,20 +229,20 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         }
         let state: (symbol: String, title: String, subtitle: String)
         if let errorMessage {
-            state = ("exclamationmark.triangle", "Workspace unavailable", errorMessage)
+            state = ("exclamationmark.triangle", L10n.tr("Workspace unavailable"), errorMessage)
         } else { switch (selectedTab, isBusy) {
         case (.files, true):
-            state = ("folder", "Scanning the folder", "Listing the Markdown files\nnext to this document.")
+            state = ("folder", L10n.tr("Scanning the folder"), L10n.tr("Listing the Markdown files\nnext to this document."))
         case (.files, false):
-            state = ("folder", "No Markdown files", "This workspace folder has no\nother Markdown documents.")
+            state = ("folder", L10n.tr("No Markdown files"), L10n.tr("This workspace folder has no\nother Markdown documents."))
         case (.search, true):
-            state = ("magnifyingglass", "Searching", "Looking through the workspace\nfiles for that text.")
+            state = ("magnifyingglass", L10n.tr("Searching"), L10n.tr("Looking through the workspace\nfiles for that text."))
         case (.search, false) where searchField.stringValue.isEmpty:
-            state = ("magnifyingglass", "Search the workspace", "Type above to search every\nMarkdown file in this folder.")
+            state = ("magnifyingglass", L10n.tr("Search the workspace"), L10n.tr("Type above to search every\nMarkdown file in this folder."))
         case (.search, false):
-            state = ("magnifyingglass", "No matches", "Nothing in this workspace\ncontains “\(searchField.stringValue)”.")
+            state = ("magnifyingglass", L10n.tr("No matches"), L10n.tr("Nothing in this workspace\ncontains “%@”.", searchField.stringValue))
         case (.backlinks, _):
-            state = ("arrow.triangle.branch", "No backlinks", "No workspace file links to\nthis document yet.")
+            state = ("arrow.triangle.branch", L10n.tr("No backlinks"), L10n.tr("No workspace file links to\nthis document yet."))
         } }
         emptyState.configure(symbol: state.symbol, title: state.title, subtitle: state.subtitle, styleSheet: styleSheet)
         emptyState.isHidden = false
@@ -242,6 +250,9 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     }
 
     @objc private func searchChanged(_ sender: Any?) {
+        if let editor = searchField.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return
+        }
         guard selectedTab == .search || !searchField.stringValue.isEmpty else { return }
         isSearching = !searchField.stringValue.isEmpty
         selectedTab = .search
@@ -319,7 +330,7 @@ extension WorkspaceSidebarView: NSTableViewDataSource, NSTableViewDelegate {
             return makeRow(in: tableView, id: "workspaceFile", title: entry.relativePath, detail: headingSummary(entry), color: styleSheet.textSecondary)
         case .result(let index) where index < searchResults.count:
             let result = searchResults[index]
-            return makeRow(in: tableView, id: "workspaceSearch", title: result.relativePath, detail: "Line \(result.line) · \(result.contextText)", color: styleSheet.textSecondary)
+            return makeRow(in: tableView, id: "workspaceSearch", title: result.relativePath, detail: L10n.tr("Line %lld · %@", result.line, result.contextText), color: styleSheet.textSecondary)
         case .backlink(let index) where index < backlinks.count:
             let backlink = backlinks[index]
             return makeRow(in: tableView, id: "workspaceBacklink", title: URL(fileURLWithPath: backlink.sourceFile).lastPathComponent, detail: backlink.destination, color: styleSheet.textSecondary)
@@ -329,7 +340,7 @@ extension WorkspaceSidebarView: NSTableViewDataSource, NSTableViewDelegate {
 
     private func headingSummary(_ entry: WorkspaceIndexEntry) -> String {
         if let heading = entry.headings.first { return heading.title }
-        return "Markdown file"
+        return L10n.tr("Markdown file")
     }
 
     /// Reuse rather than a fresh cell per `viewFor`: this table reloads on every

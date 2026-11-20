@@ -205,7 +205,7 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
     private lazy var scroll = PanelList.makeScrollView(documentView: table)
     private let emptyState = PanelEmptyStateView()
     private let emptyAddButton = TaskImmediateActionButton(
-        title: "Add Markdown task", target: nil, action: nil
+        title: L10n.tr("Add Markdown task"), target: nil, action: nil
     )
     private let undoPill = TaskUndoPillView()
 
@@ -265,7 +265,7 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
         updateScrollInsetsForUndoPill()
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Tasks")
+        setAccessibilityLabel(L10n.tr("Tasks"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -368,14 +368,14 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
         emptyAddButton.font = PanelFont.system(12, weight: .semibold)
         emptyAddButton.image = NSImage(
             systemSymbolName: "plus",
-            accessibilityDescription: "Add task"
+            accessibilityDescription: L10n.tr("Add task")
         )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
         emptyAddButton.imagePosition = .imageLeading
         emptyAddButton.target = self
         emptyAddButton.action = #selector(addTaskFromEmptyState(_:))
         emptyAddButton.setAccessibilityRole(.button)
-        emptyAddButton.setAccessibilityLabel("Add Markdown task")
-        emptyAddButton.toolTip = "Insert a - [ ] checkbox into this document"
+        emptyAddButton.setAccessibilityLabel(L10n.tr("Add Markdown task"))
+        emptyAddButton.toolTip = L10n.tr("Insert a - [ ] checkbox into this document")
         emptyAddButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyAddButton)
         NSLayoutConstraint.activate([
@@ -517,17 +517,17 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
     private func configureEmptyState() {
         emptyState.configure(
             symbol: "checklist",
-            title: "No tasks yet",
-            subtitle: "Tasks are Markdown checkboxes. Add one here or type “- [ ]”.",
+            title: L10n.tr("No tasks yet"),
+            subtitle: L10n.tr("Tasks are Markdown checkboxes. Add one here or type “- [ ]”."),
             styleSheet: styleSheet
         )
     }
 
     private func updateAccessibility() {
         if editingAddSection != nil {
-            setAccessibilityValue("New task title")
+            setAccessibilityValue(L10n.tr("New task title"))
         } else {
-            setAccessibilityValue(worklist.statusLine.isEmpty ? "No tasks" : worklist.statusLine)
+            setAccessibilityValue(worklist.statusLine.isEmpty ? L10n.tr("No tasks") : worklist.statusLine)
         }
     }
 
@@ -818,23 +818,23 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
             let task = tasks[index]
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             let menu = NSMenu()
-            menu.addItem(item("Jump to Source") { [weak self] in
+            menu.addItem(item(L10n.tr("Jump to Source")) { [weak self] in
                 guard let self else { return }
                 self.delegate?.taskPanel(self, didSelectTaskAt: task.contentRange.location)
             })
-            menu.addItem(item(task.isChecked ? "Mark Incomplete" : "Mark Complete") { [weak self] in
+            menu.addItem(item(task.isChecked ? L10n.tr("Mark Incomplete") : L10n.tr("Mark Complete")) { [weak self] in
                 self?.toggleTask(task)
             })
             menu.addItem(.separator())
-            menu.addItem(item("Copy Task Text") {
+            menu.addItem(item(L10n.tr("Copy Task Text")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(task.text, forType: .string)
             })
-            menu.addItem(item("Copy Status Report") { [weak self] in self?.copyStatusReport() })
+            menu.addItem(item(L10n.tr("Copy Status Report")) { [weak self] in self?.copyStatusReport() })
             return menu
         case .section:
             let menu = NSMenu()
-            menu.addItem(item("Copy Status Report") { [weak self] in self?.copyStatusReport() })
+            menu.addItem(item(L10n.tr("Copy Status Report")) { [weak self] in self?.copyStatusReport() })
             return menu
         case .pile(let section):
             // The pile is a disclosure control; its menu is the same fold,
@@ -842,7 +842,7 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
             let key = sectionKey(for: section)
             let expanded = expandedPiles.contains(key)
             let menu = NSMenu()
-            menu.addItem(item(expanded ? "Collapse Completed" : "Show Completed") { [weak self] in
+            menu.addItem(item(expanded ? L10n.tr("Collapse Completed") : L10n.tr("Show Completed")) { [weak self] in
                 guard let self else { return }
                 if expanded {
                     self.expandedPiles.remove(key)
@@ -851,7 +851,7 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
                 }
                 self.rebuildRows(animated: true)
             })
-            menu.addItem(item("Copy Status Report") { [weak self] in self?.copyStatusReport() })
+            menu.addItem(item(L10n.tr("Copy Status Report")) { [weak self] in self?.copyStatusReport() })
             return menu
         default:
             return nil
@@ -1371,7 +1371,7 @@ private final class TaskRowView: TaskRowSurfaceView {
 
         jumpGlyph.image = NSImage(
             systemSymbolName: "chevron.right",
-            accessibilityDescription: "Jump to task"
+            accessibilityDescription: L10n.tr("Jump to task")
         )
         jumpGlyph.contentTintColor = .clear
         jumpGlyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
@@ -1416,8 +1416,8 @@ private final class TaskRowView: TaskRowSurfaceView {
 
         checkbox.setStyleSheet(styleSheet)
         checkbox.setChecked(task.isChecked, animated: false)
-        checkbox.setAccessibilityLabel(task.isChecked ? "Mark incomplete: \(task.text)" : "Mark complete: \(task.text)")
-        checkbox.setAccessibilityValue(task.isChecked ? "Completed" : "Incomplete")
+        checkbox.setAccessibilityLabel(task.isChecked ? L10n.tr("Mark incomplete: %@", task.text) : L10n.tr("Mark complete: %@", task.text))
+        checkbox.setAccessibilityValue(task.isChecked ? L10n.tr("Completed") : L10n.tr("Incomplete"))
 
         jumpGlyph.contentTintColor = styleSheet.textFaint
 
@@ -1429,7 +1429,7 @@ private final class TaskRowView: TaskRowSurfaceView {
             .foregroundColor: styleSheet.text,
         ])
         setAccessibilityRole(.row)
-        setAccessibilityLabel("\(task.isChecked ? "Completed" : "Incomplete") task: \(text), in \(sectionTitle)")
+        setAccessibilityLabel(task.isChecked ? L10n.tr("Completed task: %@, in %@", text, sectionTitle) : L10n.tr("Incomplete task: %@, in %@", text, sectionTitle))
         // Reuse: a row handed back to the pool must not keep a half-run
         // completion sweep from a previous life.
         isPressed = false
@@ -1636,21 +1636,20 @@ private final class TaskSectionRowView: TaskRowSurfaceView {
 
     func configure(title: String, openCount: Int, collapsed: Bool, styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
-        chevron.setAccessibilityLabel(collapsed ? "Expand section" : "Collapse section")
+        chevron.setAccessibilityLabel(collapsed ? L10n.tr("Expand section") : L10n.tr("Collapse section"))
         chevron.contentTintColor = styleSheet.textFaint
         setChevron(open: !collapsed, animated: window != nil)
         titleLabel.stringValue = title
         titleLabel.textColor = styleSheet.textSecondary
-        // Both states speak in the same voice.  "All done" used to be drawn in
-        // the accent while "3 left" sat in the faint tier, so one section's
-        // status read as a button and its neighbour's read as a caption —
-        // accent in this panel means *progress*, and the section bar and the
-        // checkboxes already own it.  Status is status: one colour, whatever
-        // it says.
-        statusLabel.stringValue = openCount > 0 ? "\(openCount) left" : "All done"
+        statusLabel.stringValue = openCount > 0 ? L10n.tr("%lld left", openCount) : L10n.tr("All done")
         statusLabel.textColor = styleSheet.textFaint
         setAccessibilityRole(.button)
-        setAccessibilityLabel("\(title) section, \(openCount) left, \(collapsed ? "collapsed" : "expanded")")
+        setAccessibilityLabel(L10n.tr(
+            "%@ section, %lld left, %@",
+            title,
+            openCount,
+            collapsed ? L10n.tr("collapsed") : L10n.tr("expanded")
+        ))
         updateSurface(animated: false)
     }
 
@@ -1743,11 +1742,15 @@ private final class TaskPileRowView: TaskRowSurfaceView {
 
     func configure(count: Int, expanded: Bool, styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
-        chevron.setAccessibilityLabel(expanded ? "Hide completed tasks" : "Show completed tasks")
+        chevron.setAccessibilityLabel(expanded ? L10n.tr("Hide completed tasks") : L10n.tr("Show completed tasks"))
         setChevron(open: expanded, animated: window != nil)
-        label.stringValue = count == 1 ? "1 completed" : "\(count) completed"
+        label.stringValue = count == 1 ? L10n.tr("1 completed") : L10n.tr("%lld completed", count)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(expanded ? "Hide \(count) completed tasks" : "Show \(count) completed tasks")
+        setAccessibilityLabel(
+            expanded
+                ? (count == 1 ? L10n.tr("Hide 1 completed task") : L10n.tr("Hide %lld completed tasks", count))
+                : (count == 1 ? L10n.tr("Show 1 completed task") : L10n.tr("Show %lld completed tasks", count))
+        )
         applyStyle(animated: false)
     }
 
@@ -1815,7 +1818,7 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
     var onCancel: (() -> Void)?
 
     private let plusGlyph = NSImageView()
-    private let hintLabel = NSTextField(labelWithString: "Add task")
+    private let hintLabel = NSTextField(labelWithString: L10n.tr("Add task"))
     let textField = NSTextField()
     private var styleSheet: StyleSheet = .current
     private var editing = false
@@ -1831,7 +1834,7 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(identifier: identifier, ownsBackgroundFade: true)
 
-        plusGlyph.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add task")
+        plusGlyph.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L10n.tr("Add task"))
         plusGlyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
         plusGlyph.translatesAutoresizingMaskIntoConstraints = false
         addSubview(plusGlyph)
@@ -1845,7 +1848,7 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
         textField.drawsBackground = false
         textField.focusRingType = .none
         textField.lineBreakMode = .byTruncatingTail
-        textField.placeholderString = "New task"
+        textField.placeholderString = L10n.tr("New task")
         textField.delegate = self
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.isHidden = true
@@ -1882,7 +1885,7 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
         swapEditorChrome(editing: editing, animated: wasEditing != editing)
         if !editing { textField.stringValue = "" }
         setAccessibilityRole(editing ? nil : .button)
-        setAccessibilityLabel(editing ? "New task title" : "Add task")
+        setAccessibilityLabel(editing ? L10n.tr("New task title") : L10n.tr("Add task"))
         applyStyle(animated: false)
     }
 
@@ -1946,6 +1949,7 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
     // MARK: - Editing
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
         if command == #selector(NSResponder.cancelOperation(_:)) {
             guard editing else { return true }
             cancelled = true
@@ -2055,12 +2059,12 @@ private final class TaskUndoPillView: NSView {
         undoAction = action
         undoButton.target = action
         undoButton.action = #selector(ButtonAction.fire(_:))
-        undoButton.title = "Undo"
+        undoButton.title = L10n.tr("Undo")
         undoButton.isBordered = false
         undoButton.font = PanelFont.system(11.5, weight: .semibold)
         undoButton.setAccessibilityRole(.button)
-        undoButton.setAccessibilityLabel("Undo")
-        undoButton.toolTip = "Undo completing this task"
+        undoButton.setAccessibilityLabel(L10n.tr("Undo"))
+        undoButton.toolTip = L10n.tr("Undo completing this task")
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setContentHuggingPriority(.required, for: .horizontal)
         addSubview(undoButton)
@@ -2092,7 +2096,7 @@ private final class TaskUndoPillView: NSView {
 
     func present(title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespaces)
-        label.stringValue = "Completed ‘\(trimmed)’"
+        label.stringValue = L10n.tr("Completed ‘%@’", trimmed)
         invalidateIntrinsicContentSize()
         armDismiss(after: 4)
         wantsVisible = true

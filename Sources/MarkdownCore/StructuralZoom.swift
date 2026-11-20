@@ -32,7 +32,7 @@ public enum StructuralZoom {
             .joined(separator: " ")
         guard !prose.isEmpty else { return artifactSummary(in: doc, range: range) }
 
-        let tokenizer = NLTokenizer(unit: .sentence)
+        let tokenizer = Metrics.makeSentenceTokenizer()
         tokenizer.string = prose
         var sentences: [String] = []
         tokenizer.enumerateTokens(in: prose.startIndex..<prose.endIndex) { token, _ in
@@ -168,7 +168,7 @@ public enum StructuralZoom {
         // loop runs once per heading, and a 500-heading document paid both
         // costs 500 times over.
         let text = doc.text as NSString
-        let tokenizer = NLTokenizer(unit: .sentence)
+        let tokenizer = Metrics.makeSentenceTokenizer()
 
         doc.root.walkPruning { block in
             switch block.content {

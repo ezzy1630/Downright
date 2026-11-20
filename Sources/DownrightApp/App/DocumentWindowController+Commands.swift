@@ -407,8 +407,8 @@ extension DocumentWindowController: CommandResponder {
         let edits = TidyDocument.plan(markdownDocument.parsed)
         guard !edits.isEmpty else {
             let alert = NSAlert()
-            alert.messageText = "Nothing to tidy"
-            alert.informativeText = "This markdownDocument already follows every rule Tidy checks."
+            alert.messageText = L10n.tr("Nothing to tidy")
+            alert.informativeText = L10n.tr("This document already follows every rule Tidy checks.")
             alert.runModal()
             return
         }
@@ -510,15 +510,15 @@ extension DocumentWindowController: CommandResponder {
         markdownDocument.ensureParsedCurrent()
         let totalLines = markdownDocument.parsed.lineStarts.count
         let alert = NSAlert()
-        alert.messageText = "Go to Line"
-        alert.informativeText = "Enter a line number (1–\(totalLines)):"
+        alert.messageText = L10n.tr("Go to Line")
+        alert.informativeText = L10n.tr("Enter a line number (1–%lld):", totalLines)
         alert.alertStyle = .informational
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        input.placeholderString = "Line number"
+        input.placeholderString = L10n.tr("Line number")
         input.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         alert.accessoryView = input
-        alert.addButton(withTitle: "Go")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L10n.tr("Go"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
         alert.window.initialFirstResponder = input
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         guard let lineNumber = Int(input.stringValue.trimmingCharacters(in: .whitespaces)),

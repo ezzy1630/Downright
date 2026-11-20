@@ -74,7 +74,7 @@ extension DocumentWindowController: @preconcurrency NSServicesMenuRequestor {
             // document already references.
             try payload.data.write(to: directory.appendingPathComponent(fileName), options: .withoutOverwriting)
         } catch {
-            presentOperationError("Couldn’t save the captured image", error: error)
+            presentOperationError(L10n.tr("Couldn’t save the captured image"), error: error)
             return false
         }
 

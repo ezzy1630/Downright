@@ -108,7 +108,7 @@ private final class LightboxContentView: NSView {
         self.reduceTransparency = reduceTransparency
         super.init(frame: .zero)
         setAccessibilityRole(.image)
-        setAccessibilityLabel(self.caption ?? "Image")
+        setAccessibilityLabel(self.caption ?? L10n.tr("Image"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

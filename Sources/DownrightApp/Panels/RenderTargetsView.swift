@@ -88,8 +88,8 @@ final class RenderTargetsView: NSView, PanelSurface {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
-        applyButton = PanelButton.text("Apply safe fixes", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
+        applyButton = PanelButton.text(L10n.tr("Apply safe fixes"), action: ButtonAction { })
+        sourceButton = PanelButton.text(L10n.tr("Open Source Focus"), action: ButtonAction { })
         super.init(frame: .zero)
 
         installBackdrop(backdrop)
@@ -105,7 +105,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         targetControl.font = PanelFont.secondary
         targetControl.target = self
         targetControl.action = #selector(targetChanged(_:))
-        targetControl.setAccessibilityLabel("Render target")
+        targetControl.setAccessibilityLabel(L10n.tr("Render target"))
         targetControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(targetControl)
 
@@ -114,7 +114,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Render target findings")
+        table.setAccessibilityLabel(L10n.tr("Render target findings"))
         addSubview(scroll)
 
         previewLabel.font = PanelFont.secondary
@@ -125,7 +125,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         preview.isRichText = false
         preview.font = PanelFont.monospaced(10)
         preview.textContainerInset = NSSize(width: 6, height: 5)
-        preview.setAccessibilityLabel("Render target source change preview")
+        preview.setAccessibilityLabel(L10n.tr("Render target source change preview"))
         preview.translatesAutoresizingMaskIntoConstraints = false
         addSubview(preview)
 
@@ -133,7 +133,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         applyAction = apply
         applyButton.target = apply
         applyButton.action = #selector(ButtonAction.fire(_:))
-        applyButton.setAccessibilityLabel("Apply all safe render target fixes")
+        applyButton.setAccessibilityLabel(L10n.tr("Apply all safe render target fixes"))
         let source = ButtonAction { [weak self] in
             guard let self else { return }
             self.delegate?.renderTargetsViewWantsSourceMode(self)
@@ -141,13 +141,13 @@ final class RenderTargetsView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source Focus")
+        sourceButton.setAccessibilityLabel(L10n.tr("Open Source Focus"))
         for button in [applyButton, sourceButton] {
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         let actions = NSStackView(views: [applyButton, sourceButton])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
+        actions.orientation = .vertical
+        actions.alignment = .leading
         actions.spacing = 5
         actions.translatesAutoresizingMaskIntoConstraints = false
         addSubview(actions)
@@ -160,8 +160,9 @@ final class RenderTargetsView: NSView, PanelSurface {
             countLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
             targetControl.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            targetControl.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             targetControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
-            targetControl.widthAnchor.constraint(equalToConstant: 176),
+            targetControl.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: targetControl.bottomAnchor, constant: 6),
@@ -183,7 +184,7 @@ final class RenderTargetsView: NSView, PanelSurface {
         NSLayoutConstraint.activate(previewConstraints)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Render targets")
+        setAccessibilityLabel(L10n.tr("Render targets"))
         rebuildTargetControl()
         applyStyle()
         reload()
@@ -241,8 +242,8 @@ final class RenderTargetsView: NSView, PanelSurface {
             rows.append(contentsOf: indices.map(Row.diagnostic))
         }
         countLabel.stringValue = report.diagnostics.isEmpty
-            ? "Compatible"
-            : "\(report.diagnostics.count) issue\(report.diagnostics.count == 1 ? "" : "s")"
+            ? L10n.tr("Compatible")
+            : (report.diagnostics.count == 1 ? L10n.tr("1 issue") : L10n.tr("%lld issues", report.diagnostics.count))
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         table.reloadData()
         restoreSelection()
@@ -278,8 +279,8 @@ final class RenderTargetsView: NSView, PanelSurface {
         }
         emptyState.configure(
             symbol: "checkmark.seal",
-            title: "Compatible with \(selectedProfile.name)",
-            subtitle: "Everything in this document renders\non the selected target.",
+            title: L10n.tr("Compatible with %@", selectedProfile.name),
+            subtitle: L10n.tr("Everything in this document renders\non the selected target."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false
@@ -288,7 +289,7 @@ final class RenderTargetsView: NSView, PanelSurface {
 
     private func updateActionState() {
         let count = safeEdits.count
-        applyButton.title = count == 1 ? "Apply 1 Safe Fix" : "Apply \(count) Safe Fixes"
+        applyButton.title = count == 1 ? L10n.tr("Apply 1 Safe Fix") : L10n.tr("Apply %lld Safe Fixes", count)
         applyButton.isEnabled = count > 0
         applyButton.setAccessibilityLabel(applyButton.title)
     }
@@ -323,7 +324,9 @@ final class RenderTargetsView: NSView, PanelSurface {
     private func applySafeFixes() {
         let edits = safeEdits
         guard !edits.isEmpty else { return }
-        actionStatus = "Applied \(edits.count) safe fix\(edits.count == 1 ? "" : "es")."
+        actionStatus = edits.count == 1
+            ? L10n.tr("Applied 1 safe fix.")
+            : L10n.tr("Applied %lld safe fixes.", edits.count)
         isApplyingFixes = true
         defer { isApplyingFixes = false }
         delegate?.renderTargetsView(self, didApply: edits)
@@ -356,14 +359,14 @@ final class RenderTargetsView: NSView, PanelSurface {
               let proposal = report.diagnostics[selectedIndex].proposal,
               proposal.range.location >= 0,
               proposal.range.upperBound <= (sourceText as NSString).length else {
-            previewLabel.stringValue = "Select a finding to preview a safe source change."
+            previewLabel.stringValue = L10n.tr("Select a finding to preview a safe source change.")
             setPreviewVisible(false)
             return
         }
         let before = (sourceText as NSString).substring(with: proposal.range)
-        previewLabel.stringValue = "Preview · \(proposal.summary)"
+        previewLabel.stringValue = L10n.tr("Preview · %@", proposal.summary)
         preview.string = "− \(before)\n+ \(proposal.replacement)"
-        preview.setAccessibilityLabel("Source change preview: replace \(before) with \(proposal.replacement)")
+        preview.setAccessibilityLabel(L10n.tr("Source change preview: replace %@ with %@", before, proposal.replacement))
         setPreviewVisible(true)
     }
 

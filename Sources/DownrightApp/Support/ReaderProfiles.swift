@@ -29,10 +29,10 @@ enum ReaderTypographyScale: String, Codable, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .compact: "Compact"
-        case .standard: "Standard"
-        case .large: "Large"
-        case .extraLarge: "Extra large"
+        case .compact: L10n.tr("Compact", context: "typographyScale")
+        case .standard: L10n.tr("Standard", context: "typographyScale")
+        case .large: L10n.tr("Large", context: "typographyScale")
+        case .extraLarge: L10n.tr("Extra large", context: "typographyScale")
         }
     }
 }
@@ -44,9 +44,9 @@ enum ReaderChromeDensity: String, Codable, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .compact: "Compact"
-        case .comfortable: "Comfortable"
-        case .spacious: "Spacious"
+        case .compact: L10n.tr("Compact", context: "chromeDensity")
+        case .comfortable: L10n.tr("Comfortable", context: "chromeDensity")
+        case .spacious: L10n.tr("Spacious", context: "chromeDensity")
         }
     }
 }
@@ -58,9 +58,9 @@ enum ReaderMotionPreference: String, Codable, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .followSystem: "Follow system"
-        case .reduced: "Reduced"
-        case .full: "Full"
+        case .followSystem: L10n.tr("Follow system")
+        case .reduced: L10n.tr("Reduced")
+        case .full: L10n.tr("Full")
         }
     }
 }
@@ -90,6 +90,19 @@ struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.measureCharacters = TypographyConfig.clampedMeasureCharacters(measureCharacters)
         self.chromeDensity = chromeDensity
         self.motionPreference = motionPreference
+    }
+
+    var displayName: String {
+        guard isBuiltIn else { return name }
+        switch id {
+        case ReaderProfileID.documentation.rawValue: return L10n.tr("Documentation", context: "readerProfile")
+        case ReaderProfileID.longForm.rawValue: return L10n.tr("Long-form", context: "readerProfile")
+        case ReaderProfileID.academic.rawValue: return L10n.tr("Academic", context: "readerProfile")
+        case ReaderProfileID.specification.rawValue: return L10n.tr("Specification", context: "readerProfile")
+        case ReaderProfileID.github.rawValue: return L10n.tr("GitHub", context: "readerProfile")
+        case ReaderProfileID.presentation.rawValue: return L10n.tr("Presentation", context: "readerProfile")
+        default: return name
+        }
     }
 
     static let builtIns: [ReaderProfile] = [

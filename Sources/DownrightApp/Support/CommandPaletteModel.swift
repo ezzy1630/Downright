@@ -24,8 +24,8 @@ struct CommandPaletteEntry: Identifiable, Equatable {
 extension CommandScope {
     var paletteTitle: String {
         switch self {
-        case .read, .live: return "Document"
-        case .source: return "Source"
+        case .read, .live: return L10n.tr("Document", context: "scope")
+        case .source: return L10n.tr("Source", context: "scope")
         }
     }
 }
@@ -137,10 +137,15 @@ struct CommandPaletteModel {
     ) {
         self.init(
             entries: commands.map { command in
-                CommandPaletteEntry(
+                let localizedTitle = command.title
+                var synonyms = CommandPaletteSynonyms.values[command] ?? []
+                if localizedTitle != command.englishTitle {
+                    synonyms.append(command.englishTitle)
+                }
+                return CommandPaletteEntry(
                     command: command,
-                    title: command.title,
-                    synonyms: CommandPaletteSynonyms.values[command] ?? [],
+                    title: localizedTitle,
+                    synonyms: synonyms,
                     binding: bindings(command).first?.displayString,
                     scopes: CommandScope.allCases.filter { command.scopes.contains($0) }
                 )
@@ -170,7 +175,7 @@ struct CommandPaletteModel {
             let left = lhs.command.flatMap { recents.firstIndex(of: $0) } ?? .max
             let right = rhs.command.flatMap { recents.firstIndex(of: $0) } ?? .max
             if left != right { return left < right }
-            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            return L10n.compareForDisplay(lhs.title, rhs.title) == .orderedAscending
         }
         .map(\.value)
     }
@@ -270,7 +275,7 @@ struct CommandPaletteModel {
             let leftKind = QuickOpenProviderKind.allCases.firstIndex(of: lhs.kind) ?? Int.max
             let rightKind = QuickOpenProviderKind.allCases.firstIndex(of: rhs.kind) ?? Int.max
             if leftKind != rightKind { return leftKind < rightKind }
-            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            return L10n.compareForDisplay(lhs.title, rhs.title) == .orderedAscending
         })
     }
 

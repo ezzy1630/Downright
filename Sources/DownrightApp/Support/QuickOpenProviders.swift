@@ -122,14 +122,14 @@ struct CurrentDocumentQuickOpenProvider: QuickOpenProvider {
         if wantsHeadings {
             output += document.headings.map {
                 QuickOpenResult(id: "heading:\($0.range.location)", kind: .heading,
-                                title: $0.title, subtitle: "Heading \($0.level)", action: .select($0.range))
+                                title: $0.title, subtitle: L10n.tr("Heading %lld", $0.level), action: .select($0.range))
             }
         }
         let wantsTasks = query.filter == .all || query.filter == .tasks
         if wantsTasks {
             output += document.tasks.map {
                 QuickOpenResult(id: "task:\($0.markRange.location)", kind: .task,
-                                title: $0.text, subtitle: $0.isChecked ? "Done" : "Task", action: .select($0.contentRange))
+                                title: $0.text, subtitle: $0.isChecked ? L10n.tr("Done") : L10n.tr("Task"), action: .select($0.contentRange))
             }
         }
         let wantsFootnotes = query.filter == .all
@@ -137,7 +137,8 @@ struct CurrentDocumentQuickOpenProvider: QuickOpenProvider {
             output += document.footnotes.keys.sorted().compactMap { identifier in
                 guard let block = document.footnotes[identifier] else { return nil }
                 return QuickOpenResult(id: "footnote:\(identifier)", kind: .footnote,
-                                       title: "Footnote \(identifier)", subtitle: "Definition", action: .select(block.range))
+                                       title: L10n.tr("Footnote %@", identifier), subtitle: L10n.tr("Definition"),
+                                       searchText: "Footnote \(identifier)", action: .select(block.range))
             }
         }
 
@@ -159,7 +160,8 @@ struct CurrentDocumentQuickOpenProvider: QuickOpenProvider {
             case .footnoteReference(let identifier):
                 guard query.filter == .all else { continue }
                 output.append(QuickOpenResult(id: "footnote-ref:\(span.range.location):\(index)", kind: .footnote,
-                                              title: "Footnote \(identifier)", subtitle: "Reference", action: .select(span.range)))
+                                              title: L10n.tr("Footnote %@", identifier), subtitle: L10n.tr("Reference"),
+                                              searchText: "Footnote \(identifier)", action: .select(span.range)))
             default: continue
             }
         }

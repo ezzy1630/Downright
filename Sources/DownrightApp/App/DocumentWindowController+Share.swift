@@ -34,7 +34,7 @@ extension DocumentWindowController: @preconcurrency NSSharingServicePickerDelega
             // Never translate an I/O failure into "nothing happened": the
             // reader chose Share and would otherwise be left watching a menu
             // close on silence.
-            presentOperationError("Couldn’t prepare this document for sharing", error: error)
+            presentOperationError(L10n.tr("Couldn’t prepare this document for sharing"), error: error)
             return
         }
         presentSharingPicker(items: [url])
@@ -51,15 +51,15 @@ extension DocumentWindowController: @preconcurrency NSSharingServicePickerDelega
         do {
             url = try DocumentShareStaging.pdfURL(displayName: markdownDocument.displayName)
         } catch {
-            presentOperationError("Couldn’t prepare this document for sharing", error: error)
+            presentOperationError(L10n.tr("Couldn’t prepare this document for sharing"), error: error)
             return
         }
         guard PrintRenderer.writePDF(html: exporter.html(), to: url) else {
             presentOperationError(
-                "Couldn’t prepare this document for sharing",
+                L10n.tr("Couldn’t prepare this document for sharing"),
                 error: NSError(
                     domain: "Downright.Export", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The PDF renderer could not produce a file to share."]
+                    userInfo: [NSLocalizedDescriptionKey: L10n.tr("The PDF renderer could not produce a file to share.")]
                 )
             )
             return

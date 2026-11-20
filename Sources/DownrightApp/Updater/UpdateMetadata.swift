@@ -33,17 +33,19 @@ struct UpdateFailure: Equatable {
     var code: Int
     var retryable: Bool
 
-    static let generic = UpdateFailure(
-        message: "Downright couldn't update.",
-        technicalDetail: nil,
-        code: -1,
-        retryable: true
-    )
+    static var generic: UpdateFailure {
+        UpdateFailure(
+            message: L10n.tr("Downright couldn't update."),
+            technicalDetail: nil,
+            code: -1,
+            retryable: true
+        )
+    }
 
     init(error: Error) {
         let nsError = error as NSError
         message = nsError.localizedDescription.isEmpty
-            ? "Downright couldn't update."
+            ? L10n.tr("Downright couldn't update.")
             : nsError.localizedDescription
         technicalDetail = nsError.localizedRecoverySuggestion
             ?? nsError.localizedFailureReason

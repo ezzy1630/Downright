@@ -26,11 +26,11 @@ final class CommandPaletteView: NSView, PanelSurface {
     private let searchField = NSSearchField()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-    private let hintLabel = NSTextField(labelWithString: "↑ ↓ Move   Return Open   Esc Close")
+    private let hintLabel = NSTextField(labelWithString: L10n.tr("↑ ↓ Move   Return Open   Esc Close"))
     /// The prefixes exist and nothing said so.  A filter you cannot discover
     /// is a filter nobody uses (§7.2).
     private let prefixLabel = NSTextField(
-        labelWithString: "> commands   @ symbols   # headings   task: tasks   file:   link:   asset:"
+        labelWithString: L10n.tr("> commands   @ symbols   # headings   task: tasks   file:   link:   asset:")
     )
     private let emptyState = PanelEmptyStateView()
     private var model: CommandPaletteModel
@@ -93,25 +93,25 @@ final class CommandPaletteView: NSView, PanelSurface {
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        searchField.placeholderString = "Search commands, headings, files"
+        searchField.placeholderString = L10n.tr("Search commands, headings, files")
         searchField.sendsSearchStringImmediately = true
         searchField.controlSize = .large
         searchField.font = PanelFont.system(16)
         searchField.isBezeled = false
         searchField.focusRingType = .none
         searchField.delegate = self
-        searchField.setAccessibilityLabel("Search commands and document items")
-        searchField.setAccessibilityHelp("Type a command, heading, task, link, asset, or file")
+        searchField.setAccessibilityLabel(L10n.tr("Search commands and document items"))
+        searchField.setAccessibilityHelp(L10n.tr("Type a command, heading, task, link, asset, or file"))
         searchField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(searchField)
 
         let filterChips: [(title: String, prefix: String)] = [
-            ("All", ""),
-            ("Commands", "> "),
-            ("Headings", "# "),
-            ("Symbols", "@ "),
-            ("Tasks", "task: "),
-            ("Files", "file: ")
+            (L10n.tr("All"), ""),
+            (L10n.tr("Commands"), "> "),
+            (L10n.tr("Headings"), "# "),
+            (L10n.tr("Symbols"), "@ "),
+            (L10n.tr("Tasks"), "task: "),
+            (L10n.tr("Files"), "file: ")
         ]
         let filterStack = NSStackView()
         filterStack.orientation = .horizontal
@@ -158,7 +158,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.selectionHighlightStyle = .regular
         tableView.backgroundColor = .clear
-        tableView.setAccessibilityLabel("Command results")
+        tableView.setAccessibilityLabel(L10n.tr("Command results"))
         tableView.setAccessibilityRole(.list)
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -173,7 +173,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         hintLabel.alignment = .right
         hintLabel.lineBreakMode = .byTruncatingTail
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.setAccessibilityLabel("Keyboard commands: move, open, close")
+        hintLabel.setAccessibilityLabel(L10n.tr("Keyboard commands: move, open, close"))
         addSubview(hintLabel)
 
         prefixLabel.font = PanelFont.system(10.5)
@@ -182,8 +182,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         prefixLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         prefixLabel.translatesAutoresizingMaskIntoConstraints = false
         prefixLabel.setAccessibilityLabel(
-            "Search prefixes: greater-than for commands, at for symbols, hash for headings, "
-                + "hash task for tasks, file colon, link colon, asset colon"
+            L10n.tr("Search prefixes: greater-than for commands, at for symbols, hash for headings, hash task for tasks, file colon, link colon, asset colon")
         )
         addSubview(prefixLabel)
         emptyState.install(in: self, over: scrollView)
@@ -210,7 +209,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Command palette")
+        setAccessibilityLabel(L10n.tr("Command palette"))
         applyStyle()
     }
 
@@ -233,7 +232,7 @@ final class CommandPaletteView: NSView, PanelSurface {
         } else {
             tableView.deselectAll(nil)
         }
-        let status = count == 1 ? "1 command" : "\(count) commands"
+        let status = count == 1 ? L10n.tr("1 command") : L10n.tr("%lld commands", count)
         tableView.setAccessibilityValue(status)
         updateEmptyState()
     }
@@ -249,8 +248,8 @@ final class CommandPaletteView: NSView, PanelSurface {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         emptyState.configure(
             symbol: "magnifyingglass",
-            title: query.isEmpty ? "Nothing to open yet" : "No matches for “\(query)”",
-            subtitle: "Try a prefix: `>` for commands,\n`@` for symbols, `#` for headings.",
+            title: query.isEmpty ? L10n.tr("Nothing to open yet") : L10n.tr("No matches for “%@”", query),
+            subtitle: L10n.tr("Try a prefix: `>` for commands,\n`@` for symbols, `#` for headings."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false
@@ -269,8 +268,27 @@ final class CommandPaletteView: NSView, PanelSurface {
         keyMonitor = nil
     }
 
+    private var isComposingMarkedText: Bool {
+        if let editor = searchField.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return true
+        }
+        if let responder = window?.firstResponder as? NSTextView, responder.hasMarkedText() {
+            return true
+        }
+        return false
+    }
+
+    var searchFieldForTesting: NSSearchField { searchField }
+    var currentQueryForTesting: String { model.query }
+
+    @discardableResult
+    func handleKeyForTesting(_ event: NSEvent) -> Bool { handleKey(event) }
+
     @discardableResult
     private func handleKey(_ event: NSEvent) -> Bool {
+        // Never intercept Return, Escape, or arrow keys while an input method
+        // is composing marked text (e.g. Pinyin candidate selection).
+        guard !isComposingMarkedText else { return false }
         switch event.keyCode {
         case 125: model.moveSelection(by: 1); reloadResults(); return true
         case 126: model.moveSelection(by: -1); reloadResults(); return true
@@ -305,8 +323,14 @@ final class CommandPaletteView: NSView, PanelSurface {
 @MainActor
 extension CommandPaletteView: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
+        guard !isComposingMarkedText else { return }
         model.updateQuery(searchField.stringValue)
         reloadResults()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if textView.hasMarkedText() { return false }
+        return false
     }
 }
 

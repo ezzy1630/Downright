@@ -27,32 +27,32 @@ final class ConflictBarView: MessageBarView {
     init(styleSheet: StyleSheet) {
         super.init(styleSheet: styleSheet, stripeColor: styleSheet.changeColor(.modified))
 
-        message = "Changed on disk while you were editing"
+        message = L10n.tr("Changed on disk while you were editing")
 
         // Both resolutions throw one version away, and neither verb says which:
         // "Keep Mine" writes over the agent's file, "Take Theirs" drops your
         // unsaved edits.  A two-word button cannot carry that, so the help text
         // does — named consequences rather than named actions, because this is
         // the one moment in the app where guessing wrong costs work.
-        let review = addAction("Review") { [weak self] in
+        let review = addAction(L10n.tr("Review")) { [weak self] in
             guard let self else { return }
             self.delegate?.conflictBarDidRequestReview(self)
         }
-        describe(review, "Compare your version with the one on disk. Changes nothing.")
+        describe(review, L10n.tr("Compare your version with the one on disk. Changes nothing."))
 
-        let keepMine = addAction("Keep Mine") { [weak self] in
+        let keepMine = addAction(L10n.tr("Keep Mine")) { [weak self] in
             guard let self else { return }
             self.delegate?.conflictBarDidRequestKeepMine(self)
         }
         keepMine.hasDestructiveAction = true
-        describe(keepMine, "Save your version over the file, discarding the change on disk.")
+        describe(keepMine, L10n.tr("Save your version over the file, discarding the change on disk."))
 
-        let takeTheirs = addAction("Take Theirs") { [weak self] in
+        let takeTheirs = addAction(L10n.tr("Take Theirs")) { [weak self] in
             guard let self else { return }
             self.delegate?.conflictBarDidRequestTakeTheirs(self)
         }
         takeTheirs.hasDestructiveAction = true
-        describe(takeTheirs, "Load the version on disk, discarding your unsaved edits.")
+        describe(takeTheirs, L10n.tr("Load the version on disk, discarding your unsaved edits."))
 
         onDismiss = { [weak self] in
             guard let self else { return }
@@ -60,9 +60,7 @@ final class ConflictBarView: MessageBarView {
         }
 
         setAccessibilityLabel(
-            "File changed on disk while you were editing. "
-                + "Review compares the two versions. Keep Mine saves yours over the file. "
-                + "Take Theirs loads the file and discards your unsaved edits."
+            L10n.tr("File changed on disk while you were editing. Review compares the two versions. Keep Mine saves yours over the file. Take Theirs loads the file and discards your unsaved edits.")
         )
     }
 

@@ -57,7 +57,7 @@ enum WelcomeTour {
         }
         switch parts[0] {
         case "shortcut":
-            return binding(command)?.displayString ?? "Unassigned"
+            return binding(command)?.displayString ?? L10n.tr("Unassigned")
         case "command":
             return command.title
         default:

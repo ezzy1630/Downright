@@ -603,18 +603,18 @@ final class TaskProgressRing: NSView {
     /// remainder to arithmetic, so it names what is left as well.
     private func updateAccessibility() {
         guard progress.total > 0 else {
-            setAccessibilityLabel("No tasks")
-            setAccessibilityValueDescription("No tasks")
-            toolTip = "No tasks — Open Tasks"
+            setAccessibilityLabel(L10n.tr("No tasks"))
+            setAccessibilityValueDescription(L10n.tr("No tasks"))
+            toolTip = L10n.tr("No tasks — Open Tasks")
             return
         }
-        let progressLabel = "\(progress.done) of \(progress.total) tasks complete"
+        let progressLabel = L10n.tr("%lld of %lld tasks complete", progress.done, progress.total)
         let tail = isComplete
-            ? "all done"
-            : (remaining == 1 ? "1 left" : "\(remaining) left")
+            ? L10n.tr("all done")
+            : (remaining == 1 ? L10n.tr("1 left") : L10n.tr("%lld left", remaining))
         setAccessibilityLabel(progressLabel)
         setAccessibilityValueDescription(progressLabel)
-        toolTip = "\(progressLabel), \(tail) — Open Tasks"
+        toolTip = L10n.tr("%@, %@ — Open Tasks", progressLabel, tail)
     }
 
     override func viewDidChangeEffectiveAppearance() {

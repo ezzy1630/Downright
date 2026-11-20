@@ -127,7 +127,7 @@ final class BreadcrumbView: NSView {
         addSubview(zoomButton)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Current section")
+        setAccessibilityLabel(L10n.tr("Current section"))
         // Keep the lane in layout even when the cue itself is absent. Toggling
         // `isHidden` here would move the whole document at the first scroll.
         isHidden = false
@@ -150,7 +150,7 @@ final class BreadcrumbView: NSView {
             sectionButton.isHidden = true
             sectionButton.attributedTitle = NSAttributedString()
             sectionButton.image = nil
-            setAccessibilityLabel("Current section")
+            setAccessibilityLabel(L10n.tr("Current section"))
             hideCurrentSection()
             needsLayout = true
             return
@@ -165,12 +165,11 @@ final class BreadcrumbView: NSView {
         )?.withSymbolConfiguration(.init(pointSize: 8, weight: .semibold))
         sectionButton.contentTintColor = styleSheet.textFaint
         sectionButton.toolTip = trail.map(\.title).joined(separator: " › ")
-        sectionButton.setAccessibilityLabel("Current section: \(current.title)")
+        sectionButton.setAccessibilityLabel(L10n.tr("Current section: %@", current.title))
         sectionButton.setAccessibilityHelp(
-            "Jump to this section or an ancestor. Path: "
-                + trail.map(\.title).joined(separator: ", ")
+            L10n.tr("Jump to this section or an ancestor. Path: %@", trail.map(\.title).joined(separator: ", "))
         )
-        setAccessibilityLabel("Current section: \(current.title)")
+        setAccessibilityLabel(L10n.tr("Current section: %@", current.title))
         needsLayout = true
     }
 
@@ -259,11 +258,11 @@ final class BreadcrumbView: NSView {
         }
         zoomButton.isHidden = false
         let label = switch zoomLevel {
-        case .h1: "Top level"
-        case .h2: "Two levels"
-        case .headings: "Headings"
-        case .skeleton: "Skeleton"
-        case .everything: "Everything"
+        case .h1: L10n.tr("Top level")
+        case .h2: L10n.tr("Two levels")
+        case .headings: L10n.tr("Headings")
+        case .skeleton: L10n.tr("Skeleton")
+        case .everything: L10n.tr("Everything")
         }
         zoomButton.attributedTitle = NSAttributedString(string: "\(label)", attributes: [
             .font: PanelFont.system(11.5, weight: .medium),
@@ -271,11 +270,11 @@ final class BreadcrumbView: NSView {
         ])
         zoomButton.image = NSImage(
             systemSymbolName: "line.3.horizontal.decrease.circle.fill",
-            accessibilityDescription: "Structural Zoom"
+            accessibilityDescription: L10n.tr("Structural Zoom")
         )?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
         zoomButton.contentTintColor = styleSheet.accent
-        zoomButton.toolTip = "Structural Zoom active (\(label)). Click to switch or restore all content."
-        zoomButton.setAccessibilityLabel("Structural zoom: \(label)")
+        zoomButton.toolTip = L10n.tr("Structural Zoom active (%@). Click to switch or restore all content.", label)
+        zoomButton.setAccessibilityLabel(L10n.tr("Structural zoom: %@", label))
     }
 
     // MARK: - Layout
@@ -324,14 +323,14 @@ final class BreadcrumbView: NSView {
         let menu = NSMenu()
         for level in ZoomLevel.allCases {
             let name: String = switch level {
-            case .h1: "Top Level (H1)"
-            case .h2: "Two Levels (H1–H2)"
-            case .headings: "All Headings"
-            case .skeleton: "Skeleton (Headings, First Sentences, Artifacts)"
-            case .everything: "Everything (Full Document)"
+            case .h1: L10n.tr("Top Level (H1)")
+            case .h2: L10n.tr("Two Levels (H1–H2)")
+            case .headings: L10n.tr("All Headings")
+            case .skeleton: L10n.tr("Skeleton (Headings, First Sentences, Artifacts)")
+            case .everything: L10n.tr("Everything (Full Document)")
             }
             let item = NSMenuItem(
-                title: "Level \(level.rawValue) — \(name)",
+                title: L10n.tr("Level %lld — %@", level.rawValue, name),
                 action: #selector(selectZoomItem(_:)),
                 keyEquivalent: ""
             )

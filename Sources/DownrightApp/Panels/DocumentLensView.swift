@@ -112,7 +112,7 @@ final class DocumentLensView: NSView, PanelSurface {
         tabControl.font = PanelFont.row
         tabControl.target = self
         tabControl.action = #selector(tabChanged(_:))
-        tabControl.setAccessibilityLabel("Contents and Outline sections")
+        tabControl.setAccessibilityLabel(L10n.tr("Contents and Outline sections"))
         tabControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabControl)
 
@@ -120,7 +120,7 @@ final class DocumentLensView: NSView, PanelSurface {
         targetControl.target = self
         targetControl.action = #selector(targetChanged(_:))
         targetControl.font = PanelFont.secondary
-        targetControl.setAccessibilityLabel("Render target")
+        targetControl.setAccessibilityLabel(L10n.tr("Render target"))
         targetControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(targetControl)
 
@@ -148,7 +148,7 @@ final class DocumentLensView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Document Lens items")
+        table.setAccessibilityLabel(L10n.tr("Document Lens items"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
         NSLayoutConstraint.activate([
@@ -164,8 +164,8 @@ final class DocumentLensView: NSView, PanelSurface {
         rows = section.groups.flatMap { group in
             [.group(group)] + group.items.map(Row.item)
         }
-        countLabel.stringValue = section.count == 0 ? "None" : "\(section.count)"
-        countLabel.setAccessibilityLabel("\(section.count) items")
+        countLabel.stringValue = section.count == 0 ? L10n.tr("None") : "\(section.count)"
+        countLabel.setAccessibilityLabel(L10n.tr("%lld items", section.count))
         for (index, tab) in DocumentLensTab.allCases.enumerated() {
             let count = model.section(tab).count
             tabControl.item(at: index)?.title = count == 0 ? tab.title : "\(tab.title)  ·  \(count)"
@@ -220,25 +220,25 @@ final class DocumentLensView: NSView, PanelSurface {
 
     private static func emptyTitle(for tab: DocumentLensTab) -> String {
         switch tab {
-        case .structure: "No structure yet"
-        case .health: "No findings"
-        case .links: "No links"
-        case .assets: "No images"
-        case .tasks: "No tasks"
-        case .changes: "No changes"
-        case .renderTarget: "Compatible"
+        case .structure: L10n.tr("No structure yet")
+        case .health: L10n.tr("No findings")
+        case .links: L10n.tr("No links")
+        case .assets: L10n.tr("No images")
+        case .tasks: L10n.tr("No tasks")
+        case .changes: L10n.tr("No changes")
+        case .renderTarget: L10n.tr("Compatible")
         }
     }
 
     private static func emptySubtitle(for tab: DocumentLensTab) -> String {
         switch tab {
-        case .structure: "Add a heading to give this\ndocument a shape."
-        case .health: "Nothing in this document looks\nwrong from here."
-        case .links: "This document links nowhere yet."
-        case .assets: "This document has no image\nreferences."
-        case .tasks: "Add `- [ ]` to start a worklist."
-        case .changes: "Nothing has changed since\nyou last looked."
-        case .renderTarget: "Everything here renders on\nthe selected target."
+        case .structure: L10n.tr("Add a heading to give this\ndocument a shape.")
+        case .health: L10n.tr("Nothing in this document looks\nwrong from here.")
+        case .links: L10n.tr("This document links nowhere yet.")
+        case .assets: L10n.tr("This document has no image\nreferences.")
+        case .tasks: L10n.tr("Add `- [ ]` to start a worklist.")
+        case .changes: L10n.tr("Nothing has changed since\nyou last looked.")
+        case .renderTarget: L10n.tr("Everything here renders on\nthe selected target.")
         }
     }
 

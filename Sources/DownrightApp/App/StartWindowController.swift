@@ -311,7 +311,7 @@ private final class StartView: NSView {
         wantsLayer = true
         registerForDraggedTypes([.fileURL])
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Downright start window")
+        setAccessibilityLabel(L10n.tr("Downright start window"))
 
         let canvas = StartCanvasView()
         canvas.translatesAutoresizingMaskIntoConstraints = false
@@ -671,17 +671,17 @@ private final class StartHeroView: NSView {
         self.isReturning = isReturning
         let guideLeads = guide == .primary
         openButton = StartActionButton(
-            title: "Open File", icon: "folder", command: .open,
+            title: L10n.tr("Open File"), icon: "folder", command: .open,
             kind: .secondary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.openPanel(_:))
         )
         newButton = StartActionButton(
-            title: "New Document", icon: "doc", command: .newDocument,
+            title: L10n.tr("New Document"), icon: "doc", command: .newDocument,
             kind: guideLeads ? .secondary : .primary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.newDocument(_:))
         )
         guideButton = guide == .unavailable ? nil : StartActionButton(
-            title: "Take the Tour", icon: "sparkles", command: nil,
+            title: L10n.tr("Take the Tour"), icon: "sparkles", command: nil,
             kind: guideLeads ? .primary : .secondary, sheet: sheet, target: owner,
             action: #selector(StartWindowController.openGuide(_:))
         )
@@ -761,7 +761,7 @@ private final class StartHeroView: NSView {
 
         apply(sheet: sheet)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Downright welcome")
+        setAccessibilityLabel(L10n.tr("Downright welcome"))
     }
 
     required init?(coder: NSCoder) { nil }
@@ -793,14 +793,14 @@ private final class StartHeroView: NSView {
         let subheadline: String
         switch (guide, isReturning) {
         case (.primary, _):
-            headline = "Welcome to Downright"
-            subheadline = "The tour is a real document. It explains the reading tools while you read it."
+            headline = L10n.tr("Welcome to Downright")
+            subheadline = L10n.tr("The tour is a real document. It explains the reading tools while you read it.")
         case (_, true):
-            headline = "Pick up where you left off"
-            subheadline = "Read, edit, and review — all in one focused place."
+            headline = L10n.tr("Pick up where you left off")
+            subheadline = L10n.tr("Read, edit, and review — all in one focused place.")
         case (_, false):
-            headline = "Open a Markdown file"
-            subheadline = "Read, edit, and review it in one focused place."
+            headline = L10n.tr("Open a Markdown file")
+            subheadline = L10n.tr("Read, edit, and review it in one focused place.")
         }
         titleLabel.attributedStringValue = NSAttributedString(
             string: headline,
@@ -832,7 +832,7 @@ private func configurePassiveLabel(_ field: NSTextField) {
 /// stay in a stable trailing rail.
 private final class RecentDocumentsPanel: NSView {
     private weak var owner: StartWindowController?
-    private let headerLabel = NSTextField(labelWithString: "Recent files")
+    private let headerLabel = NSTextField(labelWithString: L10n.tr("Recent files"))
     private let countLabel = NSTextField(labelWithString: "")
     private let divider = NSView()
     private let list = NSStackView()
@@ -894,7 +894,7 @@ private final class RecentDocumentsPanel: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Recent Markdown documents")
+        setAccessibilityLabel(L10n.tr("Recent Markdown documents"))
         apply(sheet: sheet)
         rebuild(recents: recents)
     }
@@ -991,9 +991,9 @@ private final class RecentDocumentsPanel: NSView {
         let menu = NSMenu()
         if let recentPath {
             let rowActions: [(String, Selector)] = [
-                ("Show in Finder", #selector(StartWindowController.showRecentInFinder(_:))),
-                ("Copy Path", #selector(StartWindowController.copyRecentPath(_:))),
-                ("Remove from Recents", #selector(StartWindowController.removeRecent(_:))),
+                (L10n.tr("Show in Finder"), #selector(StartWindowController.showRecentInFinder(_:))),
+                (L10n.tr("Copy Path"), #selector(StartWindowController.copyRecentPath(_:))),
+                (L10n.tr("Remove from Recents"), #selector(StartWindowController.removeRecent(_:))),
             ]
             for (title, action) in rowActions {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -1004,7 +1004,7 @@ private final class RecentDocumentsPanel: NSView {
             menu.addItem(.separator())
         }
         let clear = NSMenuItem(
-            title: "Clear Recent Files…",
+            title: L10n.tr("Clear Recent Files…"),
             action: #selector(StartWindowController.clearRecents(_:)),
             keyEquivalent: ""
         )
@@ -1039,12 +1039,12 @@ private final class RecentEmptyState: NSView {
         icon.contentTintColor = sheet.textSecondary
         iconWell.addSubview(icon)
 
-        let title = NSTextField(labelWithString: "No recent files")
+        let title = NSTextField(labelWithString: L10n.tr("No recent files"))
         title.font = .systemFont(ofSize: 13.5, weight: .semibold)
         title.textColor = sheet.text
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let detail = NSTextField(wrappingLabelWithString: "Open a Markdown file to see it here.")
+        let detail = NSTextField(wrappingLabelWithString: L10n.tr("Open a Markdown file to see it here."))
         detail.font = .systemFont(ofSize: 12, weight: .regular)
         detail.textColor = sheet.textSecondary
         detail.alignment = .center
@@ -1397,18 +1397,6 @@ private final class StartActionButton: NSButton {
 // MARK: - Recent row
 
 enum RecentRowCopy {
-    private static let monthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.setLocalizedDateFormatFromTemplate("MMM d")
-        return formatter
-    }()
-    private static let monthDayYearFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.setLocalizedDateFormatFromTemplate("MMM d yyyy")
-        return formatter
-    }()
 
     private static let genericHeadings: Set<String> = [
         "title", "untitled", "heading", "document", "readme",
@@ -1453,14 +1441,12 @@ enum RecentRowCopy {
 
     static func timestamp(for recent: RecentDocument) -> String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(recent.lastOpened) { return "Today" }
-        if calendar.isDateInYesterday(recent.lastOpened) { return "Yesterday" }
+        if calendar.isDateInToday(recent.lastOpened) { return L10n.tr("Today") }
+        if calendar.isDateInYesterday(recent.lastOpened) { return L10n.tr("Yesterday") }
         let now = Date()
         let year = calendar.component(.year, from: recent.lastOpened)
         let currentYear = calendar.component(.year, from: now)
-        return year == currentYear
-            ? monthDayFormatter.string(from: recent.lastOpened)
-            : monthDayYearFormatter.string(from: recent.lastOpened)
+        return L10n.formatDateTemplate(recent.lastOpened, template: year == currentYear ? "MMM d" : "MMM d yyyy")
     }
 
     static func folder(for recent: RecentDocument) -> String {
@@ -1577,9 +1563,9 @@ private final class RecentDocumentButton: NSButton {
         self.title = ""
         focusRingType = .none
         setAccessibilityRole(.button)
-        setAccessibilityLabel("Open \(title)")
+        setAccessibilityLabel(L10n.tr("Open %@", title))
         setAccessibilityValue("\(subtitleLabel.stringValue), \(detailLabel.stringValue)")
-        setAccessibilityHelp(ordinal <= 9 ? "Press ⌘\(ordinal) to open" : nil)
+        setAccessibilityHelp(ordinal <= 9 ? L10n.tr("Press ⌘%lld to open", ordinal) : nil)
         wantsLayer = true
         toolTip = recent.path
 
@@ -1593,12 +1579,12 @@ private final class RecentDocumentButton: NSButton {
         documentIcon.translatesAutoresizingMaskIntoConstraints = false
         documentIcon.image = NSImage(
             systemSymbolName: "doc.text",
-            accessibilityDescription: "Markdown document"
+            accessibilityDescription: L10n.tr("Markdown document")
         )
         documentIcon.symbolConfiguration = NSImage.SymbolConfiguration(
             pointSize: 14, weight: .regular
         )
-        documentIcon.setAccessibilityLabel("Markdown document")
+        documentIcon.setAccessibilityLabel(L10n.tr("Markdown document"))
         shell.addSubview(documentIcon)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1629,7 +1615,7 @@ private final class RecentDocumentButton: NSButton {
         shortcutLabel.stringValue = ordinal <= 9 ? "⌘\(ordinal)" : ""
         shortcutLabel.setMinWidth(28)
         shortcutLabel.isHidden = ordinal > 9
-        shortcutLabel.setAccessibilityLabel("Keyboard shortcut \(shortcutLabel.stringValue)")
+        shortcutLabel.setAccessibilityLabel(L10n.tr("Keyboard shortcut %@", shortcutLabel.stringValue))
 
         let trailingStack = NSStackView(views: [detailLabel, shortcutLabel])
         trailingStack.orientation = .horizontal
@@ -1826,7 +1812,7 @@ private final class BrandMarkView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setAccessibilityRole(.image)
-        setAccessibilityLabel("Downright app icon")
+        setAccessibilityLabel(L10n.tr("Downright app icon"))
     }
 
     required init?(coder: NSCoder) { nil }

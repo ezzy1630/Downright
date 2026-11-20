@@ -24,7 +24,7 @@ final class VersionTimelineWindowController: NSWindowController {
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered, defer: false
         )
-        window.title = "History — \(markdownDocument.displayName)"
+        window.title = L10n.tr("History — %@", markdownDocument.displayName)
         super.init(window: window)
         build()
     }
@@ -68,16 +68,17 @@ final class VersionTimelineWindowController: NSWindowController {
     }
 
     private func showEmptyState(in root: NSView) {
-        let label = NSTextField(labelWithString: """
+        let label = NSTextField(wrappingLabelWithString: L10n.tr("""
         No history yet.
 
         Downright snapshots this file every time something outside the app \
         rewrites it. Come back after an agent has touched it.
-        """)
+        """))
         label.alignment = .center
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         label.maximumNumberOfLines = 0
+        label.preferredMaxLayoutWidth = 384
         root.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: root.centerXAnchor),
@@ -122,14 +123,13 @@ extension VersionTimelineWindowController: VersionTimelineDelegate {
 
     func versionTimeline(_ view: VersionTimelineView, didRequestRestore record: SnapshotStore.VersionRecord) {
         let alert = NSAlert()
-        alert.messageText = "Restore this version?"
-        alert.informativeText = """
-        The current text is replaced with the version from \
-        \(record.date.formatted(date: .abbreviated, time: .shortened)). \
-        This is an ordinary edit — ⌘Z undoes it.
-        """
-        alert.addButton(withTitle: "Restore")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L10n.tr("Restore this version?")
+        alert.informativeText = L10n.tr(
+            "The current text is replaced with the version from %@. This is an ordinary edit — ⌘Z undoes it.",
+            L10n.formatDate(record.date, dateStyle: .medium, timeStyle: .short)
+        )
+        alert.addButton(withTitle: L10n.tr("Restore"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         markdownDocument.restore(version: record)
         close()

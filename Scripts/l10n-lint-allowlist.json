@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Sources/DownrightApp/App/AppDelegate.swift",
+    "literal": "Downright",
+    "reason": "Product brand name in Dock menu title."
+  },
+  {
+    "path": "Sources/DownrightApp/App/PreferencesWindowController.swift",
+    "literal": "downright.md",
+    "reason": "Sample Markdown filename shown inside the Appearance theme preview card."
+  },
+  {
+    "path": "Sources/DownrightApp/App/StartWindowController.swift",
+    "literal": "Downright",
+    "reason": "Product brand name in Start window title."
+  },
+  {
+    "path": "Sources/DownrightApp/Panels/FindBarView.swift",
+    "literal": "Aa",
+    "reason": "Iconic typographic glyph for the Match Case toggle (accessibility label and tooltip are localized)."
+  },
+  {
+    "path": "Sources/DownrightApp/Panels/FindBarView.swift",
+    "literal": "W",
+    "reason": "Iconic typographic glyph for the Whole Words toggle (accessibility label and tooltip are localized)."
+  },
+  {
+    "path": "Sources/DownrightApp/Panels/UpdateNotesPopover.swift",
+    "literal": "Downright \\(metadata.displayVersionString)",
+    "reason": "Product brand name paired directly with a semantic version number."
+  }
+]

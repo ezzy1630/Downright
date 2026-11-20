@@ -54,6 +54,7 @@ let testLinkerSettings: [LinkerSetting] = needsCLTTestPaths
 
 let package = Package(
     name: "Downright",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "MarkdownCore", targets: ["MarkdownCore"]),
@@ -145,6 +146,7 @@ let package = Package(
                 "drdownright",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // The §12 budget, made runnable: `swift run -c release drbench`.
@@ -172,6 +174,7 @@ let package = Package(
         .target(
             name: "DownrightQL",
             dependencies: ["MarkdownCore", "MarkdownRender"],
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

@@ -1,0 +1,10 @@
+/* DownrightQL Simplified Chinese (zh-Hans) Localization */
+
+"%@ words · %@ characters · %lld min read" = "%@ 字 · %@ 字符 · 约 %lld 分钟阅读";
+"%@ · %lld words" = "%@ · %lld 字";
+"Document start" = "文档开头";
+"Open in Downright" = "在 Downright 中打开";
+"Plain text preview — open in Downright for full rendering" = "纯文本预览 — 在 Downright 中打开以获得完整渲染";
+"Section %lld of %lld" = "第 %lld / %lld 节";
+"Section overview" = "章节概览";
+"Showing part of this large file" = "文件较大，当前仅预览开头部分";

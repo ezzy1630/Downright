@@ -34,7 +34,7 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Updates"
+        window.title = L10n.tr("Updates")
         window.titlebarAppearsTransparent = true
         // The panel has its own branded header. Leaving the native title visible
         // puts a second "Updates" label directly above it in the full-content
@@ -255,14 +255,14 @@ private final class UpdatePanelHeader: NSView {
         }
 
         if let target {
-            titleLabel.stringValue = "Update Downright to \(target.0)"
-            versionsLabel.stringValue = "Installed \(installed) (\(build))  →  \(target.0) (\(target.1))"
+            titleLabel.stringValue = L10n.tr("Update Downright to %@", target.0)
+            versionsLabel.stringValue = L10n.tr("Installed %@ (%@)  →  %@ (%@)", installed, build, target.0, target.1)
         } else if case .upToDate = coordinator.phase {
-            titleLabel.stringValue = "Downright is Up to Date"
-            versionsLabel.stringValue = "Version \(installed) (\(build))"
+            titleLabel.stringValue = L10n.tr("Downright is Up to Date")
+            versionsLabel.stringValue = L10n.tr("Version %@ (%@)", installed, build)
         } else {
-            titleLabel.stringValue = "Downright Updates"
-            versionsLabel.stringValue = "Version \(installed) (\(build))"
+            titleLabel.stringValue = L10n.tr("Downright Updates")
+            versionsLabel.stringValue = L10n.tr("Version %@ (%@)", installed, build)
         }
     }
 }
@@ -333,49 +333,49 @@ final class UpdatePanelFooter: NSView {
 
         switch coordinator.phase {
         case .checking:
-            addTrailing(title: "Cancel", action: { coordinator.userDidCancelCheck() })
+            addTrailing(title: L10n.tr("Cancel"), action: { coordinator.userDidCancelCheck() })
         case .idle where coordinator.downloadedUpdate != nil:
-            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
-            addTrailing(title: "Update & Relaunch", kind: .primary) {
+            addTrailing(title: L10n.tr("Later")) { coordinator.userDidChooseLater() }
+            addTrailing(title: L10n.tr("Update & Relaunch"), kind: .primary) {
                 coordinator.userDidChooseInstall()
             }
         case .available(let metadata, let stage):
             if !metadata.isCritical {
-                addLeading(title: "Skip This Version") { coordinator.userDidChooseSkip() }
+                addLeading(title: L10n.tr("Skip This Version")) { coordinator.userDidChooseSkip() }
             }
-            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
-            let installTitle = stage == .notDownloaded ? "Update" : "Update & Relaunch"
+            addTrailing(title: L10n.tr("Later")) { coordinator.userDidChooseLater() }
+            let installTitle = stage == .notDownloaded ? L10n.tr("Update") : L10n.tr("Update & Relaunch")
             addTrailing(title: installTitle, kind: .primary) {
                 coordinator.userDidChooseInstall()
             }
         case .downloading:
-            addTrailing(title: "Cancel Download") { coordinator.userDidCancelDownload() }
+            addTrailing(title: L10n.tr("Cancel Download")) { coordinator.userDidCancelDownload() }
         case .extracting:
             break
         case .readyToRelaunch:
-            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
-            addTrailing(title: "Update & Relaunch", kind: .primary) {
+            addTrailing(title: L10n.tr("Later")) { coordinator.userDidChooseLater() }
+            addTrailing(title: L10n.tr("Update & Relaunch"), kind: .primary) {
                 coordinator.userDidChooseInstall()
             }
         case .waitingForTermination:
-            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
-            addTrailing(title: "Retry Quit", kind: .primary) {
+            addTrailing(title: L10n.tr("Later")) { coordinator.userDidChooseLater() }
+            addTrailing(title: L10n.tr("Retry Quit"), kind: .primary) {
                 coordinator.userDidRetryTermination()
             }
         case .installing:
             break
         case .informational(let metadata):
-            addLeading(title: "Skip This Version") { coordinator.userDidChooseSkip() }
-            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
-            addTrailing(title: "Learn More", kind: .primary) {
+            addLeading(title: L10n.tr("Skip This Version")) { coordinator.userDidChooseSkip() }
+            addTrailing(title: L10n.tr("Later")) { coordinator.userDidChooseLater() }
+            addTrailing(title: L10n.tr("Learn More"), kind: .primary) {
                 coordinator.userDidRequestLearnMore(metadata)
             }
         case .upToDate:
-            addTrailing(title: "OK", kind: .primary) { coordinator.userDidChooseLater() }
+            addTrailing(title: L10n.tr("OK"), kind: .primary) { coordinator.userDidChooseLater() }
         case .failed(_, let retryable):
-            addTrailing(title: "Later") { coordinator.userDidChooseLater() }
+            addTrailing(title: L10n.tr("Later")) { coordinator.userDidChooseLater() }
             if retryable {
-                addTrailing(title: "Retry", kind: .primary) { coordinator.userDidRetry() }
+                addTrailing(title: L10n.tr("Retry"), kind: .primary) { coordinator.userDidRetry() }
             }
         case .idle:
             break
@@ -396,7 +396,7 @@ final class UpdatePanelFooter: NSView {
 // MARK: - Content
 
 @MainActor
-private final class UpdatePanelContent {
+final class UpdatePanelContent {
     enum Kind: Equatable {
         case checking, available, downloading, extracting, ready, waiting, installing,
              informational, upToDate, failed
@@ -441,8 +441,8 @@ private final class UpdatePanelContent {
         switch kind {
         case .checking:
             return UpdateStatusMessageView(
-                text: "Checking for updates…",
-                detail: "Connecting to the update server…",
+                text: L10n.tr("Checking for updates…"),
+                detail: L10n.tr("Connecting to the update server…"),
                 spinner: true,
                 sheet: sheet
             )
@@ -452,15 +452,15 @@ private final class UpdatePanelContent {
             return UpdateProgressView(received: received, expected: expected, sheet: sheet)
         case .extracting:
             return UpdateStatusMessageView(
-                text: "Extracting the update…",
-                detail: "This usually takes a moment.",
+                text: L10n.tr("Extracting the update…"),
+                detail: L10n.tr("This usually takes a moment."),
                 spinner: true,
                 sheet: sheet
             )
         case .waiting:
             return UpdateStatusMessageView(
-                text: "Downright needs to quit to finish installing.",
-                detail: "If a document still has unsaved changes, save it and the update continues on quit. Retry Quit asks again now.",
+                text: L10n.tr("Downright needs to quit to finish installing."),
+                detail: L10n.tr("If a document still has unsaved changes, save it and the update continues on quit. Retry Quit asks again now."),
                 spinner: false,
                 iconName: "clock.arrow.circlepath",
                 iconColor: sheet.accent,
@@ -468,18 +468,18 @@ private final class UpdatePanelContent {
             )
         case .installing:
             return UpdateStatusMessageView(
-                text: "Installing the update…",
-                detail: "Downright will relaunch automatically.",
+                text: L10n.tr("Installing the update…"),
+                detail: L10n.tr("Downright will relaunch automatically."),
                 spinner: true,
                 sheet: sheet
             )
         case .upToDate:
             let lastCheck = coordinator.lastUpdateCheckDate
             return UpdateStatusMessageView(
-                text: "Downright is up to date.",
+                text: L10n.tr("Downright is up to date."),
                 detail: lastCheck.map {
-                    "You're on the latest version. Last check: \(UpdatePanelDateFormatter.string(from: $0))"
-                } ?? "You're on the latest version.",
+                    L10n.tr("You're on the latest version. Last check: %@", UpdatePanelDateFormatter.string(from: $0))
+                } ?? L10n.tr("You're on the latest version."),
                 spinner: false,
                 iconName: "checkmark.circle.fill",
                 iconColor: sheet.accent,
@@ -528,13 +528,13 @@ final class UpdateNotesView: NSView {
         }
 
         if case .informational = coordinator.phase {
-            let info = NSTextField(wrappingLabelWithString: "This update is informational — there is nothing to download. The details are below, or open the full announcement in your browser.")
+            let info = NSTextField(wrappingLabelWithString: L10n.tr("This update is informational — there is nothing to download. The details are below, or open the full announcement in your browser."))
             info.font = PanelFont.row
             info.textColor = sheet.textSecondary
             stack.addArrangedSubview(info)
         }
 
-        let notesTitle = NSTextField(labelWithString: "What's New")
+        let notesTitle = NSTextField(labelWithString: L10n.tr("What's New"))
         notesTitle.font = PanelFont.header
         notesTitle.textColor = sheet.textSecondary
         stack.addArrangedSubview(notesTitle)
@@ -575,7 +575,7 @@ final class UpdateNotesView: NSView {
         case .loaded(let data):
             scroll.documentView = UpdateNotesView.releaseNotesTextView(for: data, sheet: sheet)
         case .failed:
-            let failed = NSTextField(wrappingLabelWithString: "Release notes couldn't be downloaded.")
+            let failed = NSTextField(wrappingLabelWithString: L10n.tr("Release notes couldn't be downloaded."))
             failed.font = PanelFont.row
             failed.textColor = sheet.textFaint
             stack.addArrangedSubview(failed)
@@ -583,12 +583,12 @@ final class UpdateNotesView: NSView {
             if let markdown = metadata?.itemDescription, !markdown.isEmpty {
                 scroll.documentView = UpdateNotesView.markdownTextView(for: markdown, sheet: sheet)
             } else if let url = metadata?.releaseNotesURL {
-                let loading = NSTextField(wrappingLabelWithString: "Loading release notes from \(url.host ?? "")…")
+                let loading = NSTextField(wrappingLabelWithString: L10n.tr("Loading release notes from %@…", url.host ?? ""))
                 loading.font = PanelFont.row
                 loading.textColor = sheet.textFaint
                 stack.addArrangedSubview(loading)
             } else {
-                let empty = NSTextField(wrappingLabelWithString: "No release notes for this update.")
+                let empty = NSTextField(wrappingLabelWithString: L10n.tr("No release notes for this update."))
                 empty.font = PanelFont.row
                 empty.textColor = sheet.textFaint
                 stack.addArrangedSubview(empty)
@@ -600,7 +600,7 @@ final class UpdateNotesView: NSView {
 
     private static func sizeText(_ bytes: UInt64) -> String {
         guard bytes > 0 else { return "" }
-        return "Download size: \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))"
+        return L10n.tr("Download size: %@", L10n.formatByteCount(Int64(bytes)))
     }
 
     /// Release notes embedded as Markdown in the appcast description — the
@@ -713,7 +713,7 @@ private final class UpdateProgressView: NSView {
         container.layer?.borderColor = sheet.rule.withAlphaComponent(contrast ? 0.75 : 0.50).cgColor
         addSubview(container)
 
-        let title = NSTextField(labelWithString: "Downloading update…")
+        let title = NSTextField(labelWithString: L10n.tr("Downloading update…"))
         title.font = .systemFont(ofSize: 14, weight: .semibold)
         title.textColor = sheet.text
         title.translatesAutoresizingMaskIntoConstraints = false
@@ -757,16 +757,16 @@ private final class UpdateProgressView: NSView {
         if let expected, expected > 0 {
             let fraction = min(1, Double(received) / Double(expected))
             bar.doubleValue = fraction * 100
-            let formatted = ByteCountFormatter.string(fromByteCount: Int64(received), countStyle: .file)
-            let total = ByteCountFormatter.string(fromByteCount: Int64(expected), countStyle: .file)
-            detailLabel.stringValue = "\(formatted) of \(total)  (\(Int(fraction * 100))%)"
-            setAccessibilityValue("\(Int(fraction * 100)) percent downloaded")
+            let formatted = L10n.formatByteCount(Int64(received))
+            let total = L10n.formatByteCount(Int64(expected))
+            detailLabel.stringValue = L10n.tr("%@ of %@  (%lld%%)", formatted, total, Int(fraction * 100))
+            setAccessibilityValue(L10n.tr("%lld percent downloaded", Int(fraction * 100)))
         } else {
             bar.isIndeterminate = true
             bar.startAnimation(nil)
-            let formatted = ByteCountFormatter.string(fromByteCount: Int64(received), countStyle: .file)
-            detailLabel.stringValue = "Downloaded \(formatted) so far"
-            setAccessibilityValue("Downloading, \(formatted) received")
+            let formatted = L10n.formatByteCount(Int64(received))
+            detailLabel.stringValue = L10n.tr("Downloaded %@ so far", formatted)
+            setAccessibilityValue(L10n.tr("Downloading, %@ received", formatted))
         }
     }
 }
@@ -892,7 +892,7 @@ private final class UpdateStatusMessageView: NSView {
 
 @MainActor
 private final class UpdateFailureView: NSView {
-    private let detailDisclosure = NSButton(title: "Technical Details", target: nil, action: nil)
+    private let detailDisclosure = NSButton(title: L10n.tr("Technical Details"), target: nil, action: nil)
     private let detailPanel = NSView()
     private let detailLabel = NSTextField(labelWithString: "")
 
@@ -916,12 +916,12 @@ private final class UpdateFailureView: NSView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(
             systemSymbolName: "exclamationmark.triangle.fill",
-            accessibilityDescription: "Update unavailable"
+            accessibilityDescription: L10n.tr("Update unavailable")
         )
         icon.contentTintColor = danger
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
         icon.setAccessibilityRole(.image)
-        icon.setAccessibilityLabel("Update unavailable")
+        icon.setAccessibilityLabel(L10n.tr("Update unavailable"))
         iconWell.addSubview(icon)
         NSLayoutConstraint.activate([
             iconWell.widthAnchor.constraint(equalToConstant: 40),
@@ -930,7 +930,7 @@ private final class UpdateFailureView: NSView {
             icon.centerYAnchor.constraint(equalTo: iconWell.centerYAnchor),
         ])
 
-        let status = NSTextField(labelWithString: "Update unavailable")
+        let status = NSTextField(labelWithString: L10n.tr("Update unavailable"))
         status.font = PanelFont.header
         status.textColor = danger
 
@@ -940,7 +940,7 @@ private final class UpdateFailureView: NSView {
         summary.maximumNumberOfLines = 2
         summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let reassurance = NSTextField(wrappingLabelWithString: "Your files are safe. Nothing was changed on disk.")
+        let reassurance = NSTextField(wrappingLabelWithString: L10n.tr("Your files are safe. Nothing was changed on disk."))
         reassurance.font = PanelFont.row
         reassurance.textColor = sheet.textSecondary
         reassurance.maximumNumberOfLines = 2
@@ -957,7 +957,7 @@ private final class UpdateFailureView: NSView {
         hero.alignment = .centerY
         hero.spacing = 12
 
-        detailLabel.stringValue = failure.technicalDetail ?? "Error code \(failure.code)"
+        detailLabel.stringValue = failure.technicalDetail ?? L10n.tr("Error code %lld", failure.code)
         detailLabel.font = PanelFont.monospaced(10.5)
         detailLabel.textColor = sheet.textFaint
         detailLabel.lineBreakMode = .byCharWrapping
@@ -994,12 +994,12 @@ private final class UpdateFailureView: NSView {
         detailDisclosure.contentTintColor = sheet.textSecondary
         detailDisclosure.image = NSImage(
             systemSymbolName: "chevron.right",
-            accessibilityDescription: "Show technical details"
+            accessibilityDescription: L10n.tr("Show technical details")
         )
         detailDisclosure.imagePosition = .imageLeading
         detailDisclosure.imageHugsTitle = true
         detailDisclosure.alignment = .left
-        detailDisclosure.toolTip = "Show technical details"
+        detailDisclosure.toolTip = L10n.tr("Show technical details")
         detailDisclosure.wantsLayer = true
         detailDisclosure.layer?.cornerRadius = 7
         detailDisclosure.layer?.cornerCurve = .continuous
@@ -1021,14 +1021,14 @@ private final class UpdateFailureView: NSView {
         detailDisclosure.target = self
         detailDisclosure.action = #selector(toggleDetail)
 
-        let copy = UpdatePanelButton(title: "Copy Diagnostics", kind: .secondary) {
+        let copy = UpdatePanelButton(title: L10n.tr("Copy Diagnostics"), kind: .secondary) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(
                 UpdatePanelContent.diagnostics(coordinator: coordinator, failure: failure),
                 forType: .string
             )
         }
-        copy.setAccessibilityLabel("Copy diagnostics")
+        copy.setAccessibilityLabel(L10n.tr("Copy diagnostics"))
 
         let diagnosticsActions = NSStackView(views: [detailDisclosure, copy])
         diagnosticsActions.orientation = .horizontal
@@ -1063,12 +1063,12 @@ private final class UpdateFailureView: NSView {
         detailDisclosure.image = NSImage(
             systemSymbolName: detailPanel.isHidden ? "chevron.right" : "chevron.down",
             accessibilityDescription: detailPanel.isHidden
-                ? "Show technical details"
-                : "Hide technical details"
+                ? L10n.tr("Show technical details")
+                : L10n.tr("Hide technical details")
         )
         detailDisclosure.toolTip = detailPanel.isHidden
-            ? "Show technical details"
-            : "Hide technical details"
+            ? L10n.tr("Show technical details")
+            : L10n.tr("Hide technical details")
         needsLayout = true
         superview?.needsLayout = true
     }
@@ -1092,7 +1092,7 @@ extension UpdatePanelContent {
             lines.append("Detail: \(detail)")
         }
         if let lastCheck = coordinator.lastUpdateCheckDate {
-            lines.append("Last check: \(UpdatePanelDateFormatter.string(from: lastCheck))")
+            lines.append("Last check: \(ISO8601DateFormatter().string(from: lastCheck))")
         }
         return lines.joined(separator: "\n")
     }
@@ -1228,7 +1228,7 @@ final class UpdatePanelButton: NSButton {
 
 private enum UpdatePanelDateFormatter {
     static func string(from date: Date) -> String {
-        DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+        L10n.formatDate(date, dateStyle: .medium, timeStyle: .short)
     }
 }
 

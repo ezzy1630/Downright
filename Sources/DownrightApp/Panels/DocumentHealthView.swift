@@ -74,9 +74,9 @@ final class DocumentHealthView: NSView, PanelSurface {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
-        applyButton = PanelButton.text("Apply safe fixes", action: ButtonAction { })
-        ignoreButton = PanelButton.text("Ignore", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
+        applyButton = PanelButton.text(L10n.tr("Apply safe fixes"), action: ButtonAction { })
+        ignoreButton = PanelButton.text(L10n.tr("Ignore"), action: ButtonAction { })
+        sourceButton = PanelButton.text(L10n.tr("Open Source Focus"), action: ButtonAction { })
         super.init(frame: .zero)
 
         installBackdrop(backdrop)
@@ -94,7 +94,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Document health findings")
+        table.setAccessibilityLabel(L10n.tr("Document health findings"))
         addSubview(scroll)
 
         previewLabel.font = PanelFont.secondary
@@ -106,7 +106,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         preview.font = PanelFont.monospaced(10)
         preview.drawsBackground = true
         preview.textContainerInset = NSSize(width: 6, height: 5)
-        preview.setAccessibilityLabel("Source change preview")
+        preview.setAccessibilityLabel(L10n.tr("Source change preview"))
         preview.translatesAutoresizingMaskIntoConstraints = false
         addSubview(preview)
 
@@ -114,13 +114,13 @@ final class DocumentHealthView: NSView, PanelSurface {
         applyAction = apply
         applyButton.target = apply
         applyButton.action = #selector(ButtonAction.fire(_:))
-        applyButton.setAccessibilityLabel("Apply all safe health fixes")
+        applyButton.setAccessibilityLabel(L10n.tr("Apply all safe health fixes"))
 
         let ignore = ButtonAction { [weak self] in self?.ignoreSelection() }
         ignoreAction = ignore
         ignoreButton.target = ignore
         ignoreButton.action = #selector(ButtonAction.fire(_:))
-        ignoreButton.setAccessibilityLabel("Ignore selected health finding")
+        ignoreButton.setAccessibilityLabel(L10n.tr("Ignore selected health finding"))
 
         let source = ButtonAction { [weak self] in
             guard let self else { return }
@@ -129,7 +129,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source Focus")
+        sourceButton.setAccessibilityLabel(L10n.tr("Open Source Focus"))
 
         // Two short rows rather than one 305pt row: the inspector can be
         // narrower than three buttons side by side, and a control that runs off
@@ -177,7 +177,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         NSLayoutConstraint.activate(previewConstraints)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Document health")
+        setAccessibilityLabel(L10n.tr("Document health"))
         applyStyle()
         reload()
     }
@@ -215,8 +215,8 @@ final class DocumentHealthView: NSView, PanelSurface {
             rows.append(contentsOf: indices.map(Row.diagnostic))
         }
         countLabel.stringValue = visibleDiagnostics.isEmpty
-            ? "No issues"
-            : "\(visibleDiagnostics.count) finding\(visibleDiagnostics.count == 1 ? "" : "s")"
+            ? L10n.tr("No issues")
+            : (visibleDiagnostics.count == 1 ? L10n.tr("1 finding") : L10n.tr("%lld findings", visibleDiagnostics.count))
         countLabel.setAccessibilityLabel(countLabel.stringValue)
         table.reloadData()
         restoreSelection()
@@ -253,10 +253,10 @@ final class DocumentHealthView: NSView, PanelSurface {
         }
         emptyState.configure(
             symbol: "checkmark.seal",
-            title: "No findings",
+            title: L10n.tr("No findings"),
             subtitle: diagnostics.isEmpty
-                ? "Headings, links, and structure all\nlook right from here."
-                : "Every finding in this document\nhas been ignored.",
+                ? L10n.tr("Headings, links, and structure all\nlook right from here.")
+                : L10n.tr("Every finding in this document\nhas been ignored."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false
@@ -303,7 +303,9 @@ final class DocumentHealthView: NSView, PanelSurface {
         let fixes = safeFixes
         guard !fixes.isEmpty else { return }
         // Say what happened.  Rows vanishing is not feedback (§11.4).
-        actionStatus = "Applied \(fixes.count) safe fix\(fixes.count == 1 ? "" : "es")."
+        actionStatus = fixes.count == 1
+            ? L10n.tr("Applied 1 safe fix.")
+            : L10n.tr("Applied %lld safe fixes.", fixes.count)
         isApplyingFixes = true
         defer { isApplyingFixes = false }
         delegate?.documentHealthView(self, didApply: fixes)
@@ -324,7 +326,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         let ignored = diagnostics[selectedIndex]
         ignoredIDs.insert(ignored.id)
         selectedDiagnosticID = nil
-        actionStatus = "Ignored “\(ignored.message)”."
+        actionStatus = L10n.tr("Ignored “%@”.", ignored.message)
         isApplyingFixes = true
         defer { isApplyingFixes = false }
         reload()
@@ -347,14 +349,14 @@ final class DocumentHealthView: NSView, PanelSurface {
               let fix = diagnostics[selectedIndex].fix,
               fix.range.location >= 0,
               fix.range.upperBound <= (sourceText as NSString).length else {
-            previewLabel.stringValue = "Select a finding to preview a safe source change."
+            previewLabel.stringValue = L10n.tr("Select a finding to preview a safe source change.")
             setPreviewVisible(false)
             return
         }
         let before = (sourceText as NSString).substring(with: fix.range)
-        previewLabel.stringValue = "Preview · \(fix.summary)"
+        previewLabel.stringValue = L10n.tr("Preview · %@", fix.summary)
         preview.string = "− \(before)\n+ \(fix.replacement)"
-        preview.setAccessibilityLabel("Source change preview: replace \(before) with \(fix.replacement)")
+        preview.setAccessibilityLabel(L10n.tr("Source change preview: replace %@ with %@", before, fix.replacement))
         setPreviewVisible(true)
     }
 
@@ -368,7 +370,7 @@ final class DocumentHealthView: NSView, PanelSurface {
     private func updateActionState() {
         let count = safeFixes.count
         // The button says how much it will do before it does it (§11.4).
-        applyButton.title = count == 1 ? "Apply 1 Safe Fix" : "Apply \(count) Safe Fixes"
+        applyButton.title = count == 1 ? L10n.tr("Apply 1 Safe Fix") : L10n.tr("Apply %lld Safe Fixes", count)
         applyButton.isEnabled = count > 0
         applyButton.setAccessibilityLabel(applyButton.title)
         ignoreButton.isEnabled = selectedIndex != nil

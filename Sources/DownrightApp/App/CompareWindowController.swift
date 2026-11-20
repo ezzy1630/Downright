@@ -172,7 +172,7 @@ extension CompareWindowController: NSToolbarDelegate {
     ) -> NSToolbarItem? {
         guard identifier == Self.lockItem else { return nil }
         let button = NSButton(
-            image: NSImage(systemSymbolName: "link", accessibilityDescription: "Scroll lock") ?? NSImage(),
+            image: NSImage(systemSymbolName: "link", accessibilityDescription: L10n.tr("Scroll lock")) ?? NSImage(),
             target: self, action: #selector(toggleScrollLock(_:))
         )
         button.setButtonType(.pushOnPushOff)
@@ -180,7 +180,7 @@ extension CompareWindowController: NSToolbarDelegate {
         button.bezelStyle = .texturedRounded
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.view = button
-        item.label = "Scroll Lock"
+        item.label = L10n.tr("Scroll Lock")
         return item
     }
 }

@@ -9,10 +9,10 @@ enum InspectorSection: Int, CaseIterable, Equatable {
 
     var title: String {
         switch self {
-        case .search: "Search"
-        case .tasks: "Tasks"
-        case .history: "History"
-        case .context: "Document"
+        case .search: L10n.tr("Search")
+        case .tasks: L10n.tr("Tasks")
+        case .history: L10n.tr("History")
+        case .context: L10n.tr("Document", context: "renderMode")
         }
     }
 }
@@ -68,7 +68,7 @@ final class InspectorHostView: NSView {
     override init(frame frameRect: NSRect) {
         closeButton = PanelButton.symbol(
             "xmark",
-            label: "Close inspector",
+            label: L10n.tr("Close inspector"),
             action: ButtonAction({}),
             firesOnMouseDown: true
         )
@@ -105,8 +105,8 @@ final class InspectorHostView: NSView {
             guard let section = Self.switcherSections.element(at: index) else { return }
             self?.select(section)
         }
-        sectionControl.setAccessibilityLabel("Inspector sections")
-        sectionControl.setAccessibilityHelp("Choose which inspector panel is shown")
+        sectionControl.setAccessibilityLabel(L10n.tr("Inspector sections"))
+        sectionControl.setAccessibilityHelp(L10n.tr("Choose which inspector panel is shown"))
         for index in Self.switcherSections.indices {
             sectionControl.setEnabled(false, forSegment: index)
         }
@@ -165,7 +165,7 @@ final class InspectorHostView: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Inspector")
+        setAccessibilityLabel(L10n.tr("Inspector"))
         applyStyle()
     }
 
@@ -251,7 +251,7 @@ final class InspectorHostView: NSView {
             sectionControl.setSelectedIndex(index)
         }
         for (candidate, view) in views { view.isHidden = candidate != section }
-        setAccessibilityValue("\(section.title) section")
+        setAccessibilityValue(L10n.tr("%@ section", section.title))
         if selectionChanged { onSelectionChange?(section) }
     }
 
@@ -334,7 +334,7 @@ final class InspectorHostView: NSView {
             || !Self.switcherSections.contains(section)
 
         titleLabel.stringValue = title
-        titleLabel.setAccessibilityLabel("\(title) inspector")
+        titleLabel.setAccessibilityLabel(L10n.tr("%@ inspector", title))
         titleLabel.isHidden = !titleVisible
         titleHeight.constant = titleVisible ? Metrics.titleRowHeight : 0
         sectionControl.isHidden = !switcherVisible
@@ -363,7 +363,7 @@ final class InspectorHostView: NSView {
         else {
             selectedSection = nil
             updateHeaderChrome()
-            setAccessibilityValue("No inspector section")
+            setAccessibilityValue(L10n.tr("No inspector section"))
             onSelectionChange?(nil)
         }
     }
