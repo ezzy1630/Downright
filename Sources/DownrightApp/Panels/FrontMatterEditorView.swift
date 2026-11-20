@@ -87,7 +87,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         reload()
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Front matter editor")
+        setAccessibilityLabel(L10n.tr("Front matter editor"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -165,14 +165,14 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         addTypePopup.addItems(withTitles: FrontMatterFieldRow.kindTitles)
         addTypePopup.selectItem(at: 0)
         addTypePopup.font = PanelFont.secondary
-        addTypePopup.setAccessibilityLabel("New field type")
+        addTypePopup.setAccessibilityLabel(L10n.tr("New field type"))
         addTypePopup.translatesAutoresizingMaskIntoConstraints = false
 
         let action = ButtonAction { [weak self] in self?.addField() }
         addAction = action
         addButton.target = action
         addButton.action = #selector(ButtonAction.fire(_:))
-        addButton.setAccessibilityLabel("Add front matter field")
+        addButton.setAccessibilityLabel(L10n.tr("Add front matter field"))
 
         let source = ButtonAction { [weak self] in
             guard let self else { return }
@@ -181,7 +181,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source Focus to edit front matter")
+        sourceButton.setAccessibilityLabel(L10n.tr("Open Source Focus to edit front matter"))
 
         // Two short lines rather than one long one: a single row of name,
         // value, type, and button needs about 313pt and the inspector can be
@@ -222,7 +222,7 @@ final class FrontMatterEditorView: NSView, PanelSurface {
             valueRow.widthAnchor.constraint(equalTo: form.widthAnchor),
             addKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
             addValueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
-            addTypePopup.widthAnchor.constraint(equalToConstant: 78),
+            addTypePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),
             sourceButton.leadingAnchor.constraint(equalTo: form.leadingAnchor),
             sourceButton.topAnchor.constraint(equalTo: form.bottomAnchor, constant: 8),
             sourceButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
@@ -404,7 +404,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
         self.committedValue = field.value
         keyField = NSTextField(string: field.key)
         valueField = NSTextField(string: field.value)
-        removeButton = PanelButton.symbol("trash", label: "Remove field", action: ButtonAction { })
+        removeButton = PanelButton.symbol("trash", label: L10n.tr("Remove field"), action: ButtonAction { })
         super.init(frame: .zero)
 
         keyField.isEditable = false
@@ -412,14 +412,14 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
         keyField.drawsBackground = false
         keyField.font = PanelFont.rowEmphasised
         keyField.lineBreakMode = .byTruncatingTail
-        keyField.setAccessibilityLabel("Field name: \(field.key)")
+        keyField.setAccessibilityLabel(L10n.tr("Field name: %@", field.key))
         valueField.font = PanelFont.row
         valueField.delegate = self
-        valueField.setAccessibilityLabel("Value for \(field.key)")
+        valueField.setAccessibilityLabel(L10n.tr("Value for %@", field.key))
         kindPopup.addItems(withTitles: Self.kindTitles)
         kindPopup.selectItem(at: Self.kindIndex(for: field.value))
         kindPopup.font = PanelFont.secondary
-        kindPopup.setAccessibilityLabel("Type for \(field.key)")
+        kindPopup.setAccessibilityLabel(L10n.tr("Type for %@", field.key))
 
         let kind = ButtonAction { [weak self] in self?.commit() }
         kindAction = kind
@@ -463,7 +463,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
             controls.topAnchor.constraint(equalTo: topAnchor),
             keyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
             valueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
-            kindPopup.widthAnchor.constraint(equalToConstant: 74),
+            kindPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),
             dirtyDot.widthAnchor.constraint(equalToConstant: 8),
             removeButton.widthAnchor.constraint(equalToConstant: 28),
             errorLabel.leadingAnchor.constraint(equalTo: controls.leadingAnchor),
@@ -472,7 +472,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
             errorLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Front matter field \(field.key)")
+        setAccessibilityLabel(L10n.tr("Front matter field %@", field.key))
         applyStyle()
     }
 

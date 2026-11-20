@@ -146,8 +146,8 @@ final class RenderTargetsView: NSView, PanelSurface {
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         let actions = NSStackView(views: [applyButton, sourceButton])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
+        actions.orientation = .vertical
+        actions.alignment = .leading
         actions.spacing = 5
         actions.translatesAutoresizingMaskIntoConstraints = false
         addSubview(actions)
@@ -160,8 +160,9 @@ final class RenderTargetsView: NSView, PanelSurface {
             countLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
             targetControl.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            targetControl.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             targetControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
-            targetControl.widthAnchor.constraint(equalToConstant: 176),
+            targetControl.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: targetControl.bottomAnchor, constant: 6),

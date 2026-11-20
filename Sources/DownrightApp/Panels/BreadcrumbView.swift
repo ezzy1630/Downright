@@ -127,7 +127,7 @@ final class BreadcrumbView: NSView {
         addSubview(zoomButton)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Current section")
+        setAccessibilityLabel(L10n.tr("Current section"))
         // Keep the lane in layout even when the cue itself is absent. Toggling
         // `isHidden` here would move the whole document at the first scroll.
         isHidden = false
@@ -150,7 +150,7 @@ final class BreadcrumbView: NSView {
             sectionButton.isHidden = true
             sectionButton.attributedTitle = NSAttributedString()
             sectionButton.image = nil
-            setAccessibilityLabel("Current section")
+            setAccessibilityLabel(L10n.tr("Current section"))
             hideCurrentSection()
             needsLayout = true
             return
@@ -165,12 +165,11 @@ final class BreadcrumbView: NSView {
         )?.withSymbolConfiguration(.init(pointSize: 8, weight: .semibold))
         sectionButton.contentTintColor = styleSheet.textFaint
         sectionButton.toolTip = trail.map(\.title).joined(separator: " › ")
-        sectionButton.setAccessibilityLabel("Current section: \(current.title)")
+        sectionButton.setAccessibilityLabel(L10n.tr("Current section: %@", current.title))
         sectionButton.setAccessibilityHelp(
-            "Jump to this section or an ancestor. Path: "
-                + trail.map(\.title).joined(separator: ", ")
+            L10n.tr("Jump to this section or an ancestor. Path: %@", trail.map(\.title).joined(separator: ", "))
         )
-        setAccessibilityLabel("Current section: \(current.title)")
+        setAccessibilityLabel(L10n.tr("Current section: %@", current.title))
         needsLayout = true
     }
 

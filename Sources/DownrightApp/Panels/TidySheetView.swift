@@ -80,7 +80,7 @@ final class TidySheetView: NSView {
         applyStyle()
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Tidy Document changes")
+        setAccessibilityLabel(L10n.tr("Tidy Document changes"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -144,7 +144,7 @@ final class TidySheetView: NSView {
     private func buildTable() {
         table.dataSource = self
         table.delegate = self
-        table.setAccessibilityLabel("Proposed changes")
+        table.setAccessibilityLabel(L10n.tr("Proposed changes"))
 
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
@@ -426,7 +426,7 @@ private final class TidyGroupRowView: NSView {
         )
         let next = checkedCount != count
         checkbox.onToggle = { [weak self] in self?.onToggle?(next) }
-        checkbox.setAccessibilityLabel("\(title), \(checkedCount) of \(count) selected")
+        checkbox.setAccessibilityLabel(L10n.tr("%@, %lld of %lld selected", title, checkedCount, count))
     }
 }
 
@@ -454,7 +454,7 @@ private final class TidyProposalRowView: NSView {
     private static let textInset: CGFloat = 38
 
     init(identifier: NSUserInterfaceItemIdentifier) {
-        expandButton = PanelButton.symbol("chevron.down", label: "Show the whole change", action: ButtonAction {})
+        expandButton = PanelButton.symbol("chevron.down", label: L10n.tr("Show the whole change"), action: ButtonAction {})
         super.init(frame: .zero)
         self.identifier = identifier
 
@@ -546,7 +546,7 @@ private final class TidyProposalRowView: NSView {
         expandButton.contentTintColor = styleSheet.textFaint
         toolTip = isTruncated ? "− \(before)\n+ \(after)" : nil
 
-        setAccessibilityLabel("\(summary). Before: \(before). After: \(after)")
+        setAccessibilityLabel(L10n.tr("%@. Before: %@. After: %@", summary, before, after))
         needsDisplay = true
     }
 

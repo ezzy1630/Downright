@@ -56,7 +56,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         reloadProfileList()
         applyStyle()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Reader profile picker")
+        setAccessibilityLabel(L10n.tr("Reader profile picker"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -93,27 +93,27 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
 
         profilePopup.target = self
         profilePopup.action = #selector(profileChanged(_:))
-        profilePopup.setAccessibilityLabel("Reader profile")
+        profilePopup.setAccessibilityLabel(L10n.tr("Reader profile"))
         profilePopup.translatesAutoresizingMaskIntoConstraints = false
         addSubview(profilePopup)
 
         nameField.placeholderString = L10n.tr("Custom profile name")
         nameField.font = PanelFont.row
-        nameField.setAccessibilityLabel("Custom profile name")
+        nameField.setAccessibilityLabel(L10n.tr("Custom profile name"))
         nameField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(nameField)
 
         saveButton.bezelStyle = .rounded
         saveButton.target = self
         saveButton.action = #selector(saveCustom(_:))
-        saveButton.setAccessibilityLabel("Save reader profile as custom")
+        saveButton.setAccessibilityLabel(L10n.tr("Save reader profile as custom"))
         saveButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(saveButton)
 
         deleteButton.bezelStyle = .rounded
         deleteButton.target = self
         deleteButton.action = #selector(deleteCustom(_:))
-        deleteButton.setAccessibilityLabel("Delete custom reader profile")
+        deleteButton.setAccessibilityLabel(L10n.tr("Delete custom reader profile"))
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(deleteButton)
 
@@ -128,13 +128,13 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
         revertButton.controlSize = .small
         revertButton.target = self
         revertButton.action = #selector(revert(_:))
-        revertButton.setAccessibilityLabel("Revert to the profile that was active")
+        revertButton.setAccessibilityLabel(L10n.tr("Revert to the profile that was active"))
         doneButton.bezelStyle = .rounded
         doneButton.controlSize = .small
         doneButton.keyEquivalent = "\r"
         doneButton.target = self
         doneButton.action = #selector(finish(_:))
-        doneButton.setAccessibilityLabel("Close the reader profile picker")
+        doneButton.setAccessibilityLabel(L10n.tr("Close the reader profile picker"))
 
         let dismissRow = NSStackView(views: [revertButton, doneButton])
         dismissRow.orientation = .horizontal
@@ -175,12 +175,15 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
     private func addControl(label: String, titles: [String]) {
         let name = NSTextField(labelWithString: label)
         name.font = PanelFont.row
+        name.lineBreakMode = .byTruncatingTail
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.translatesAutoresizingMaskIntoConstraints = false
         let popup = NSPopUpButton()
         popup.addItems(withTitles: titles)
         popup.target = self
         popup.action = #selector(controlChanged(_:))
         popup.setAccessibilityLabel(label)
+        popup.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         popup.translatesAutoresizingMaskIntoConstraints = false
         controls.append(popup)
         addSubview(name)
@@ -193,7 +196,7 @@ final class ReaderProfilePickerView: NSView, PanelSurface {
             popup.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             popup.centerYAnchor.constraint(equalTo: name.centerYAnchor),
             popup.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 8),
-            popup.widthAnchor.constraint(equalToConstant: 150),
+            popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
         ])
     }
 

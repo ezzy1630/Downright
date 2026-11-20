@@ -761,7 +761,7 @@ private final class StartHeroView: NSView {
 
         apply(sheet: sheet)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Downright welcome")
+        setAccessibilityLabel(L10n.tr("Downright welcome"))
     }
 
     required init?(coder: NSCoder) { nil }
@@ -894,7 +894,7 @@ private final class RecentDocumentsPanel: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Recent Markdown documents")
+        setAccessibilityLabel(L10n.tr("Recent Markdown documents"))
         apply(sheet: sheet)
         rebuild(recents: recents)
     }
@@ -1397,18 +1397,6 @@ private final class StartActionButton: NSButton {
 // MARK: - Recent row
 
 enum RecentRowCopy {
-    private static let monthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.setLocalizedDateFormatFromTemplate("MMM d")
-        return formatter
-    }()
-    private static let monthDayYearFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.setLocalizedDateFormatFromTemplate("MMM d yyyy")
-        return formatter
-    }()
 
     private static let genericHeadings: Set<String> = [
         "title", "untitled", "heading", "document", "readme",
@@ -1458,13 +1446,7 @@ enum RecentRowCopy {
         let now = Date()
         let year = calendar.component(.year, from: recent.lastOpened)
         let currentYear = calendar.component(.year, from: now)
-        let formatter = year == currentYear ? monthDayFormatter : monthDayYearFormatter
-        let targetLocale = Locale(identifier: L10n.currentLanguage)
-        if formatter.locale.identifier != targetLocale.identifier {
-            formatter.locale = targetLocale
-            formatter.setLocalizedDateFormatFromTemplate(year == currentYear ? "MMM d" : "MMM d yyyy")
-        }
-        return formatter.string(from: recent.lastOpened)
+        return L10n.formatDateTemplate(recent.lastOpened, template: year == currentYear ? "MMM d" : "MMM d yyyy")
     }
 
     static func folder(for recent: RecentDocument) -> String {
@@ -1633,7 +1615,7 @@ private final class RecentDocumentButton: NSButton {
         shortcutLabel.stringValue = ordinal <= 9 ? "⌘\(ordinal)" : ""
         shortcutLabel.setMinWidth(28)
         shortcutLabel.isHidden = ordinal > 9
-        shortcutLabel.setAccessibilityLabel("Keyboard shortcut \(shortcutLabel.stringValue)")
+        shortcutLabel.setAccessibilityLabel(L10n.tr("Keyboard shortcut %@", shortcutLabel.stringValue))
 
         let trailingStack = NSStackView(views: [detailLabel, shortcutLabel])
         trailingStack.orientation = .horizontal
@@ -1830,7 +1812,7 @@ private final class BrandMarkView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setAccessibilityRole(.image)
-        setAccessibilityLabel("Downright app icon")
+        setAccessibilityLabel(L10n.tr("Downright app icon"))
     }
 
     required init?(coder: NSCoder) { nil }

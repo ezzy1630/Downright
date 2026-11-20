@@ -265,7 +265,7 @@ final class TaskPanelView: NSView, PanelSurface, FloatingContentMeasuring {
         updateScrollInsetsForUndoPill()
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Tasks")
+        setAccessibilityLabel(L10n.tr("Tasks"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -1371,7 +1371,7 @@ private final class TaskRowView: TaskRowSurfaceView {
 
         jumpGlyph.image = NSImage(
             systemSymbolName: "chevron.right",
-            accessibilityDescription: "Jump to task"
+            accessibilityDescription: L10n.tr("Jump to task")
         )
         jumpGlyph.contentTintColor = .clear
         jumpGlyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
@@ -1416,8 +1416,8 @@ private final class TaskRowView: TaskRowSurfaceView {
 
         checkbox.setStyleSheet(styleSheet)
         checkbox.setChecked(task.isChecked, animated: false)
-        checkbox.setAccessibilityLabel(task.isChecked ? "Mark incomplete: \(task.text)" : "Mark complete: \(task.text)")
-        checkbox.setAccessibilityValue(task.isChecked ? "Completed" : "Incomplete")
+        checkbox.setAccessibilityLabel(task.isChecked ? L10n.tr("Mark incomplete: %@", task.text) : L10n.tr("Mark complete: %@", task.text))
+        checkbox.setAccessibilityValue(task.isChecked ? L10n.tr("Completed") : L10n.tr("Incomplete"))
 
         jumpGlyph.contentTintColor = styleSheet.textFaint
 
@@ -1429,7 +1429,7 @@ private final class TaskRowView: TaskRowSurfaceView {
             .foregroundColor: styleSheet.text,
         ])
         setAccessibilityRole(.row)
-        setAccessibilityLabel("\(task.isChecked ? "Completed" : "Incomplete") task: \(text), in \(sectionTitle)")
+        setAccessibilityLabel(task.isChecked ? L10n.tr("Completed task: %@, in %@", text, sectionTitle) : L10n.tr("Incomplete task: %@, in %@", text, sectionTitle))
         // Reuse: a row handed back to the pool must not keep a half-run
         // completion sweep from a previous life.
         isPressed = false
@@ -1949,6 +1949,7 @@ private final class TaskAddRowView: TaskRowSurfaceView, NSTextFieldDelegate {
     // MARK: - Editing
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
         if command == #selector(NSResponder.cancelOperation(_:)) {
             guard editing else { return true }
             cancelled = true

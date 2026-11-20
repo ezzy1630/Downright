@@ -49,7 +49,7 @@ protocol PreferenceSearchable: AnyObject {
 /// The keys pane is generated from the `Command` table, so a command added
 /// anywhere in the app is remappable here without touching this file.
 @MainActor
-final class PreferencesWindowController: NSWindowController {
+final class PreferencesWindowController: NSWindowController, NSSearchFieldDelegate {
     private let tabs: NSTabViewController
     private var panes: [(pane: SettingsPane, controller: NSViewController)] = []
     private let searchField = NSSearchField()
@@ -121,6 +121,15 @@ final class PreferencesWindowController: NSWindowController {
     /// The names the tab toolbar shows, for the regression test that keeps a
     /// pane from advertising its class name.
     var tabLabelsForTesting: [String] { tabs.tabViewItems.map(\.label) }
+    var searchFieldForTesting: NSSearchField { searchField }
+    var activeSearchQueryForTesting: String {
+        (panes.first(where: { $0.pane == .keys })?.controller as? PreferenceSearchable)?.searchQuery ?? ""
+    }
+
+    var selectedPane: SettingsPane? {
+        let index = tabs.selectedTabViewItemIndex
+        return panes.indices.contains(index) ? panes[index].pane : nil
+    }
 
     func select(_ pane: SettingsPane) {
         guard let index = panes.firstIndex(where: { $0.pane == pane }) else { return }
@@ -155,6 +164,7 @@ final class PreferencesWindowController: NSWindowController {
         searchField.placeholderString = L10n.tr("Search settings")
         searchField.sendsSearchStringImmediately = false
         searchField.sendsWholeSearchString = false
+        searchField.delegate = self
         searchField.target = self
         searchField.action = #selector(searchChanged)
 
@@ -174,8 +184,28 @@ final class PreferencesWindowController: NSWindowController {
         window.addTitlebarAccessoryViewController(accessory)
     }
 
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSSearchField, field === searchField else { return }
+        if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return
+        }
+        applySearchQuery(field.stringValue)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if textView.hasMarkedText() { return false }
+        return false
+    }
+
     @objc private func searchChanged(_ sender: NSSearchField) {
-        let query = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        if let editor = sender.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return
+        }
+        applySearchQuery(sender.stringValue)
+    }
+
+    private func applySearchQuery(_ rawQuery: String) {
+        let query = rawQuery.trimmingCharacters(in: .whitespaces)
         for entry in panes {
             (entry.controller as? PreferenceSearchable)?.searchQuery = query
         }
@@ -611,9 +641,11 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
     }
 
     private func formRow(title: String, controls: [NSView]) -> NSView {
-        let label = NSTextField(labelWithString: title)
+        let label = NSTextField(wrappingLabelWithString: title)
         label.alignment = .right
-        label.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        label.maximumNumberOfLines = 2
+        label.preferredMaxLayoutWidth = 176
+        label.widthAnchor.constraint(equalToConstant: 176).isActive = true
         let row = NSStackView(views: [label] + controls)
         row.orientation = .horizontal
         row.alignment = .firstBaseline
@@ -624,13 +656,13 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
     private static func unit(for title: String) -> String? {
         switch title {
         case "Size", "Text size adjustment", L10n.tr("Size"), L10n.tr("Text size adjustment"):
-            return "pt"
+            return L10n.tr("pt")
         case "Line height", "Math scale", L10n.tr("Line height"), L10n.tr("Math scale"):
             return "×"
         case "Measure (characters)", L10n.tr("Measure (characters)"):
             return L10n.tr("characters")
         case "Large-file threshold", "Maximum size", L10n.tr("Large-file threshold"), L10n.tr("Maximum size"):
-            return "MB"
+            return L10n.tr("MB")
         case "Keep versions for", L10n.tr("Keep versions for"):
             return L10n.tr("days")
         default:
@@ -642,6 +674,7 @@ final class PreferencesPane: NSViewController, PreferenceSearchable {
     static func numberFormatter(range: ClosedRange<Double>, step: Double) -> NumberFormatter {
         let digits = step > 0 ? max(0, Int(ceil(-log10(step)))) : 0
         let formatter = NumberFormatter()
+        formatter.locale = L10n.locale
         formatter.numberStyle = .decimal
         formatter.usesGroupingSeparator = false
         formatter.allowsFloats = digits > 0
@@ -721,7 +754,7 @@ enum PreferencesForms {
 
             .section(L10n.tr("Language")),
             .choice(L10n.tr("Interface language"),
-                    help: L10n.tr("Follows macOS by default. Reopen Downright after changing this setting so every window updates."),
+                    help: L10n.tr("Follows macOS by default. Menus, Settings, and new windows update immediately; reopen open documents, and relaunch Downright for system panels and updater dialogs."),
                     options: AppLanguage.allCases.map(\.title),
                     get: {
                         .index(AppLanguage.allCases.firstIndex(of: Preferences.shared.values.language) ?? 0)
@@ -1133,10 +1166,7 @@ enum PreferencesForms {
     @MainActor
     static func history() -> [PreferenceRow] {
         let timeline = shortcut(for: .versionTimeline).map { " (\($0))" } ?? ""
-        let used = ByteCountFormatter.string(
-            fromByteCount: Int64(SnapshotStore.shared.totalBytes()),
-            countStyle: .file
-        )
+        let used = L10n.formatByteCount(Int64(SnapshotStore.shared.totalBytes()))
         return [
             .section(L10n.tr("Version history")),
             .note(L10n.tr(
@@ -1161,9 +1191,7 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
     private let table = NSTableView()
     private let recordButton = NSButton(title: L10n.tr("Record Shortcut"), target: nil, action: nil)
     private let resetRowButton = NSButton(title: L10n.tr("Reset Shortcut"), target: nil, action: nil)
-    private let allCommands: [Command] = Command.allCases.sorted {
-        ($0.menu.rawValue, $0.title) < ($1.menu.rawValue, $1.title)
-    }
+    private let allCommands: [Command] = KeybindingsPane.sortedCommands()
     private var commands: [Command] = []
     private var recordingRow: Int?
     private var keyMonitor: Any?
@@ -1190,14 +1218,27 @@ final class KeybindingsPane: NSViewController, PreferenceSearchable {
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    /// Commands whose menu, name, or current shortcut matches every word typed.
+    /// Orders commands by menu bar section, then locale-aware display title
+    /// (Pinyin order under `zh-Hans`).
+    static func sortedCommands(_ commands: [Command] = Command.allCases) -> [Command] {
+        let menuOrder = Dictionary(uniqueKeysWithValues: Command.Menu.allCases.enumerated().map { ($1, $0) })
+        return commands.sorted { lhs, rhs in
+            let leftMenu = menuOrder[lhs.menu] ?? .max
+            let rightMenu = menuOrder[rhs.menu] ?? .max
+            if leftMenu != rightMenu { return leftMenu < rightMenu }
+            return L10n.compareForDisplay(lhs.title, rhs.title) == .orderedAscending
+        }
+    }
+
+    /// Commands whose menu, localized or English name, or current shortcut
+    /// matches every word typed.
     static func filtered(_ commands: [Command], query: String) -> [Command] {
         let words = query.lowercased().split(separator: " ").map(String.init)
         guard !words.isEmpty else { return commands }
         return commands.filter { command in
             let bindings = KeybindingStore.shared.bindings(for: command)
                 .map(\.displayString).joined(separator: " ")
-            let text = "\(command.menu.title) \(command.title) \(bindings)".lowercased()
+            let text = "\(command.menu.title) \(command.title) \(command.englishTitle) \(bindings)".lowercased()
             return words.allSatisfy(text.contains)
         }
     }

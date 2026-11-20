@@ -164,7 +164,7 @@ struct DocumentLensModel: Sendable {
             case .heading(let level):
                 let title = document.substring(block.contentRange).trimmingCharacters(in: .whitespacesAndNewlines)
                 items.append(DocumentLensItem(
-                    id: "heading:\(block.range.location)", title: title.isEmpty ? "Untitled heading" : title,
+                    id: "heading:\(block.range.location)", title: title.isEmpty ? L10n.tr("Untitled heading") : title,
                     detail: "H\(level)", range: block.range, kind: .heading
                 ))
             case .document:
@@ -178,11 +178,11 @@ struct DocumentLensModel: Sendable {
                 blockOrdinal += 1
             }
         }
-        return DocumentLensSection(tab: .structure, groups: [DocumentLensGroup(id: "structure", title: "Document", items: items)])
+        return DocumentLensSection(tab: .structure, groups: [DocumentLensGroup(id: "structure", title: L10n.tr("Document", context: "lensGroup"), items: items)])
     }
 
     private static func health(_ diagnostics: [DocumentHealthDiagnostic]) -> DocumentLensSection {
-        let groups = grouped(diagnostics, key: { $0.category.rawValue.capitalized }) { diagnostic in
+        let groups = grouped(diagnostics, key: { healthCategoryTitle($0.category) }) { diagnostic in
             DocumentLensItem(
                 id: "health:\(diagnostic.id):\(diagnostic.range.location)", title: diagnostic.message,
                 detail: diagnostic.explanation, range: diagnostic.range, kind: .health,
@@ -191,7 +191,7 @@ struct DocumentLensModel: Sendable {
         }
         return DocumentLensSection(
             tab: .health,
-            groups: groups.isEmpty ? [DocumentLensGroup(id: "health", title: "No issues", items: [])] : groups
+            groups: groups.isEmpty ? [DocumentLensGroup(id: "health", title: L10n.tr("No issues"), items: [])] : groups
         )
     }
 
@@ -205,12 +205,12 @@ struct DocumentLensModel: Sendable {
                     case .link(let destination, let title):
                         item = DocumentLensItem(
                             id: "link:\(span.range.location)", title: destination,
-                            detail: title ?? "Link", range: span.range, kind: .link
+                            detail: title ?? L10n.tr("Link"), range: span.range, kind: .link
                         )
                     case .autolink(let destination):
                         item = DocumentLensItem(
                             id: "link:\(span.range.location)", title: destination,
-                            detail: "Autolink", range: span.range, kind: .link
+                            detail: L10n.tr("Autolink"), range: span.range, kind: .link
                         )
                     case .wikilink(let target, let label):
                         item = DocumentLensItem(
@@ -220,7 +220,7 @@ struct DocumentLensModel: Sendable {
                     case .image(let source, let alt):
                         item = DocumentLensItem(
                             id: "image:\(span.range.location)", title: source,
-                            detail: alt.isEmpty ? "No alt text" : alt, range: span.range, kind: .image
+                            detail: alt.isEmpty ? L10n.tr("No alt text") : alt, range: span.range, kind: .image
                         )
                     default:
                         item = nil
@@ -232,9 +232,9 @@ struct DocumentLensModel: Sendable {
         let linkItems = links.filter { $0.kind == .link }
         let imageItems = links.filter { $0.kind == .image }
         var groups: [DocumentLensGroup] = []
-        if !linkItems.isEmpty { groups.append(DocumentLensGroup(id: "links", title: "Links", items: linkItems)) }
-        if !imageItems.isEmpty { groups.append(DocumentLensGroup(id: "images", title: "Images", items: imageItems)) }
-        if groups.isEmpty { groups = [DocumentLensGroup(id: "links", title: "Links", items: [])] }
+        if !linkItems.isEmpty { groups.append(DocumentLensGroup(id: "links", title: L10n.tr("Links"), items: linkItems)) }
+        if !imageItems.isEmpty { groups.append(DocumentLensGroup(id: "images", title: L10n.tr("Images"), items: imageItems)) }
+        if groups.isEmpty { groups = [DocumentLensGroup(id: "links", title: L10n.tr("Links"), items: [])] }
         return DocumentLensSection(tab: .links, groups: groups)
     }
 
@@ -244,8 +244,8 @@ struct DocumentLensModel: Sendable {
                 diagnostic.reference.imageRange == reference.imageRange ||
                     diagnostic.range.intersection(reference.imageRange) != nil
             }
-            let detail = diagnostic.map { "\($0.message) · \(reference.altText.isEmpty ? "No alt text" : reference.altText)" }
-                ?? (reference.altText.isEmpty ? "No alt text" : reference.altText)
+            let alt = reference.altText.isEmpty ? L10n.tr("No alt text") : reference.altText
+            let detail = diagnostic.map { "\($0.message) · \(alt)" } ?? alt
             return DocumentLensItem(
                 id: "asset:\(reference.imageRange.location)", title: reference.source,
                 detail: detail, range: reference.imageRange, kind: .image,
@@ -260,10 +260,10 @@ struct DocumentLensModel: Sendable {
                 )
             }
         }
-        let groups = items.isEmpty ? [] : [DocumentLensGroup(id: "assets", title: "Images", items: items)]
+        let groups = items.isEmpty ? [] : [DocumentLensGroup(id: "assets", title: L10n.tr("Images"), items: items)]
         return DocumentLensSection(
             tab: .assets,
-            groups: groups.isEmpty ? [DocumentLensGroup(id: "assets", title: "No asset issues", items: [])] : groups
+            groups: groups.isEmpty ? [DocumentLensGroup(id: "assets", title: L10n.tr("No asset issues"), items: [])] : groups
         )
     }
 
@@ -271,30 +271,30 @@ struct DocumentLensModel: Sendable {
         let items = document.tasks.enumerated().map { index, task in
             DocumentLensItem(
                 id: "task:\(task.markRange.location):\(index)", title: task.text,
-                detail: task.isChecked ? "Done" : "Open", range: task.contentRange,
+                detail: task.isChecked ? L10n.tr("Done") : L10n.tr("Open"), range: task.contentRange,
                 kind: .task, isResolved: task.isChecked
             )
         }
-        return DocumentLensSection(tab: .tasks, groups: [DocumentLensGroup(id: "tasks", title: "Tasks", items: items)])
+        return DocumentLensSection(tab: .tasks, groups: [DocumentLensGroup(id: "tasks", title: L10n.tr("Tasks"), items: items)])
     }
 
     private static func changes(_ changes: [DocumentLensChange]) -> DocumentLensSection {
         let items = changes.map {
             DocumentLensItem(
-                id: "change:\($0.id)", title: $0.kind.rawValue.capitalized,
-                detail: $0.wordRanges.isEmpty ? "Changed source" : "Changed words",
+                id: "change:\($0.id)", title: changeKindTitle($0.kind),
+                detail: $0.wordRanges.isEmpty ? L10n.tr("Changed source") : L10n.tr("Changed words"),
                 range: $0.range, kind: .change
             )
         }
         return DocumentLensSection(
             tab: .changes,
-            groups: [DocumentLensGroup(id: "changes", title: items.isEmpty ? "No recent changes" : "Recent changes", items: items)]
+            groups: [DocumentLensGroup(id: "changes", title: items.isEmpty ? L10n.tr("No recent changes") : L10n.tr("Recent changes"), items: items)]
         )
     }
 
     private static func renderTarget(_ report: CompatibilityReport?) -> DocumentLensSection {
         guard let report else {
-            return DocumentLensSection(tab: .renderTarget, groups: [DocumentLensGroup(id: "target", title: "No target selected", items: [])])
+            return DocumentLensSection(tab: .renderTarget, groups: [DocumentLensGroup(id: "target", title: L10n.tr("No target selected"), items: [])])
         }
         let items = report.diagnostics.map {
             DocumentLensItem(
@@ -334,22 +334,43 @@ struct DocumentLensModel: Sendable {
         }
     }
 
+    private static func healthCategoryTitle(_ category: DocumentHealthCategory) -> String {
+        switch category {
+        case .structure: L10n.tr("Structure")
+        case .accessibility: L10n.tr("Accessibility")
+        case .references: L10n.tr("References")
+        case .links: L10n.tr("Links")
+        case .media: L10n.tr("Media")
+        case .syntax: L10n.tr("Syntax")
+        case .prose: L10n.tr("Prose")
+        }
+    }
+
+    private static func changeKindTitle(_ kind: ChangeKind) -> String {
+        switch kind {
+        case .inserted: L10n.tr("Inserted")
+        case .deleted: L10n.tr("Deleted")
+        case .modified: L10n.tr("Modified")
+        }
+    }
+
     private static func blockLabel(_ content: BlockContent) -> String {
         switch content {
-        case .paragraph: "Paragraph"
-        case .blockQuote: "Block quote"
-        case .callout(let kind, _): "Callout · \(kind.rawValue.capitalized)"
-        case .list: "List"
-        case .listItem: "List item"
-        case .codeBlock(let language, _, _): "Code\(language.map { " · \($0)" } ?? "")"
-        case .mermaid: "Mermaid diagram"
-        case .mathBlock: "Math block"
-        case .table: "Table"
-        case .thematicBreak: "Divider"
-        case .htmlBlock: "HTML block"
-        case .frontMatter: "Front matter"
-        case .footnoteDefinition(let identifier): "Footnote · \(identifier)"
-        case .document, .heading: "Block"
+        case .paragraph: L10n.tr("Paragraph")
+        case .blockQuote: L10n.tr("Block quote")
+        case .callout(let kind, _): L10n.tr("Callout · %@", kind.rawValue.capitalized)
+        case .list: L10n.tr("List")
+        case .listItem: L10n.tr("List item")
+        case .codeBlock(let language, _, _):
+            language.map { L10n.tr("Code · %@", $0) } ?? L10n.tr("Code")
+        case .mermaid: L10n.tr("Mermaid diagram")
+        case .mathBlock: L10n.tr("Math block")
+        case .table: L10n.tr("Table")
+        case .thematicBreak: L10n.tr("Divider")
+        case .htmlBlock: L10n.tr("HTML block")
+        case .frontMatter: L10n.tr("Front matter")
+        case .footnoteDefinition(let identifier): L10n.tr("Footnote · %@", identifier)
+        case .document, .heading: L10n.tr("Block")
         }
     }
 }

@@ -789,7 +789,7 @@ final class UpdateCoordinator: UpdateDriverHost {
             let fraction = expected.map { expected in Double(received) / Double(max(1, expected)) }
             return .progress(updateLabel, fraction)
         case .extracting(let progress):
-            return .progress("Updating…", progress)
+            return .progress(L10n.tr("Updating…"), progress)
         case .readyToRelaunch:
             return .updateNow(version: readyVersionString, isReady: true)
         case .waitingForTermination:
@@ -827,12 +827,12 @@ final class UpdateCoordinator: UpdateDriverHost {
     /// a generic "Updating…".
     private var updateLabel: String {
         if case .available(let metadata, _) = machine.phase {
-            return "Update \(metadata.displayVersionString)"
+            return L10n.tr("Update %@", metadata.displayVersionString)
         }
         if let downloadedUpdate {
-            return "Update \(downloadedUpdate.displayVersionString)"
+            return L10n.tr("Update %@", downloadedUpdate.displayVersionString)
         }
-        return "Updating…"
+        return L10n.tr("Updating…")
     }
 
     /// "Version 1.0.0 (42) · Last check: …" for the Updates settings pane.
@@ -841,9 +841,9 @@ final class UpdateCoordinator: UpdateDriverHost {
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
         let check = lastUpdateCheckDate.map { date in
-            DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
-        } ?? "never"
-        return "Version \(version) (\(build)) · Last check: \(check)"
+            L10n.formatDate(date, dateStyle: .medium, timeStyle: .short)
+        } ?? L10n.tr("never")
+        return L10n.tr("Version %@ (%@) · Last check: %@", version, build, check)
     }
 
     private func notifyStateChanged() {
@@ -853,8 +853,8 @@ final class UpdateCoordinator: UpdateDriverHost {
     private func presentDisabledAlert() {
         guard !suppressUIForTesting else { return }
         let alert = NSAlert()
-        alert.messageText = "Updates aren't available for this build."
-        alert.informativeText = "This copy of Downright doesn't carry the production update configuration."
+        alert.messageText = L10n.tr("Updates aren't available for this build.")
+        alert.informativeText = L10n.tr("This copy of Downright doesn't carry the production update configuration.")
         alert.alertStyle = .informational
         alert.runModal()
     }

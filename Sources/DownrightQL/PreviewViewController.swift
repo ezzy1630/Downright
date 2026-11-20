@@ -390,7 +390,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
         let wordCount = Metrics.documentWordCount(document)
         let readMinutes = max(1, Int(ceil(Double(wordCount) / Metrics.wordsPerMinute)))
-        gutter.metricsSummary = QLL10n.tr("%@ words · %@ characters · %lld min read", wordCount.formatted(), document.length.formatted(), readMinutes)
+        gutter.metricsSummary = QLL10n.tr("%@ words · %@ characters · %lld min read", QLL10n.formatNumber(wordCount), QLL10n.formatNumber(document.length), readMinutes)
 
         let length = CGFloat(max(1, document.length))
         gutter.outlineEntries = document.headings.map { heading in

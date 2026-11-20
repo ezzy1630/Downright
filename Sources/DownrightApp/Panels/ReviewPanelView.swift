@@ -63,7 +63,7 @@ final class ReviewPanelView: NSView, PanelSurface {
         applyStyle()
         reload()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Reviews")
+        setAccessibilityLabel(L10n.tr("Reviews"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -120,7 +120,7 @@ final class ReviewPanelView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Review items")
+        table.setAccessibilityLabel(L10n.tr("Review items"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
         // Anchored under the buttons rather than 70pt below the title: a magic

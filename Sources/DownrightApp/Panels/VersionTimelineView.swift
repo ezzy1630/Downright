@@ -75,12 +75,12 @@ final class VersionTimelineView: NSView {
         NSLayoutConstraint.activate([
             restoreButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
             restoreButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            restoreButton.widthAnchor.constraint(equalToConstant: restoreWidth),
+            restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: restoreWidth),
         ])
 
         setAccessibilityElement(true)
         setAccessibilityRole(.slider)
-        setAccessibilityLabel("Version timeline")
+        setAccessibilityLabel(L10n.tr("Version timeline"))
         updateAccessibility()
     }
 
@@ -123,7 +123,7 @@ final class VersionTimelineView: NSView {
         NSRect(
             x: horizontalInset,
             y: 26,
-            width: max(40, bounds.width - horizontalInset * 2 - restoreWidth - 12),
+            width: max(40, bounds.width - horizontalInset * 2 - max(restoreWidth, restoreButton.fittingSize.width) - 12),
             height: trackHeight
         )
     }
@@ -304,7 +304,7 @@ final class VersionTimelineView: NSView {
             let kind = kindLabel(record.kind)
             if let selected = selectedRecord {
                 let diff = Int(record.date.timeIntervalSince(selected.date))
-                let deltaStr = diff == 0 ? "selected" : (diff > 0 ? "+\(diff)s" : "\(diff)s")
+                let deltaStr = diff == 0 ? L10n.tr("selected") : (diff > 0 ? L10n.tr("+%llds", diff) : L10n.tr("%llds", diff))
                 return "\(kind) (\(deltaStr)) · \(RelativeTime.stamp(record.date)) · \(RelativeTime.long(record.date))"
             }
             return "\(kind) · \(RelativeTime.stamp(record.date)) · \(RelativeTime.long(record.date))"

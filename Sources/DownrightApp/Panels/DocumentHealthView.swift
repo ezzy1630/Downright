@@ -94,7 +94,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Document health findings")
+        table.setAccessibilityLabel(L10n.tr("Document health findings"))
         addSubview(scroll)
 
         previewLabel.font = PanelFont.secondary
@@ -106,7 +106,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         preview.font = PanelFont.monospaced(10)
         preview.drawsBackground = true
         preview.textContainerInset = NSSize(width: 6, height: 5)
-        preview.setAccessibilityLabel("Source change preview")
+        preview.setAccessibilityLabel(L10n.tr("Source change preview"))
         preview.translatesAutoresizingMaskIntoConstraints = false
         addSubview(preview)
 
@@ -114,13 +114,13 @@ final class DocumentHealthView: NSView, PanelSurface {
         applyAction = apply
         applyButton.target = apply
         applyButton.action = #selector(ButtonAction.fire(_:))
-        applyButton.setAccessibilityLabel("Apply all safe health fixes")
+        applyButton.setAccessibilityLabel(L10n.tr("Apply all safe health fixes"))
 
         let ignore = ButtonAction { [weak self] in self?.ignoreSelection() }
         ignoreAction = ignore
         ignoreButton.target = ignore
         ignoreButton.action = #selector(ButtonAction.fire(_:))
-        ignoreButton.setAccessibilityLabel("Ignore selected health finding")
+        ignoreButton.setAccessibilityLabel(L10n.tr("Ignore selected health finding"))
 
         let source = ButtonAction { [weak self] in
             guard let self else { return }
@@ -129,7 +129,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source Focus")
+        sourceButton.setAccessibilityLabel(L10n.tr("Open Source Focus"))
 
         // Two short rows rather than one 305pt row: the inspector can be
         // narrower than three buttons side by side, and a control that runs off
@@ -177,7 +177,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         NSLayoutConstraint.activate(previewConstraints)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Document health")
+        setAccessibilityLabel(L10n.tr("Document health"))
         applyStyle()
         reload()
     }
@@ -356,7 +356,7 @@ final class DocumentHealthView: NSView, PanelSurface {
         let before = (sourceText as NSString).substring(with: fix.range)
         previewLabel.stringValue = L10n.tr("Preview · %@", fix.summary)
         preview.string = "− \(before)\n+ \(fix.replacement)"
-        preview.setAccessibilityLabel("Source change preview: replace \(before) with \(fix.replacement)")
+        preview.setAccessibilityLabel(L10n.tr("Source change preview: replace %@ with %@", before, fix.replacement))
         setPreviewVisible(true)
     }
 

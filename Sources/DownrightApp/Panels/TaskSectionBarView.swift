@@ -81,7 +81,7 @@ final class TaskSectionBarView: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityRole(.progressIndicator)
-        setAccessibilityLabel("Progress by section")
+        setAccessibilityLabel(L10n.tr("Progress by section"))
         focusRingType = .default
     }
 

@@ -89,7 +89,7 @@ final class SearchInspectorView: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Search")
+        setAccessibilityLabel(L10n.tr("Search"))
     }
 
     required init?(coder: NSCoder) { nil }

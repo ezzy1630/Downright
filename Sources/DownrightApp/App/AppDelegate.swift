@@ -879,6 +879,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     showStartWindow()
                 }
             }
+            if let existing = preferencesWindow as? PreferencesWindowController {
+                let wasVisible = existing.window?.isVisible == true
+                let frame = existing.window?.frame
+                let pane = existing.selectedPane
+                if !wasVisible {
+                    existing.close()
+                    preferencesWindow = nil
+                } else {
+                    // Defer past the popup action currently tracking on the window.
+                    DispatchQueue.main.async { [weak self, weak existing] in
+                        guard let self, let existing, self.preferencesWindow === existing else { return }
+                        existing.close()
+                        self.preferencesWindow = nil
+                        let rebuilt = PreferencesWindowController()
+                        self.preferencesWindow = rebuilt
+                        if let pane { rebuilt.select(pane) }
+                        if let frame { rebuilt.window?.setFrame(frame, display: false) }
+                        rebuilt.showWindow(nil)
+                        rebuilt.window?.makeKeyAndOrderFront(nil)
+                    }
+                }
+            }
+            if let existing = preferencesWindow as? PreferencesWindowController {
+                let wasVisible = existing.window?.isVisible == true
+                let frame = existing.window?.frame
+                let pane = existing.selectedPane
+                if !wasVisible {
+                    existing.close()
+                    preferencesWindow = nil
+                } else {
+                    // Defer past the popup action currently tracking on the window.
+                    DispatchQueue.main.async { [weak self, weak existing] in
+                        guard let self, let existing, self.preferencesWindow === existing else { return }
+                        existing.close()
+                        self.preferencesWindow = nil
+                        let rebuilt = PreferencesWindowController()
+                        self.preferencesWindow = rebuilt
+                        if let pane { rebuilt.select(pane) }
+                        if let frame { rebuilt.window?.setFrame(frame, display: false) }
+                        rebuilt.showWindow(nil)
+                        rebuilt.window?.makeKeyAndOrderFront(nil)
+                    }
+                }
+            }
         } else if let menu = NSApp.mainMenu {
             MainMenu.refreshKeyEquivalents(in: menu)
         }

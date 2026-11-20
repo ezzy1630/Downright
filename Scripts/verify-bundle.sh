@@ -105,8 +105,8 @@ check "$([ -f "$CONTENTS/Resources/Downright_MarkdownRender.bundle/Themes/paper-
       "host carries the MarkdownRender themes"
 check "$([ -f "$CONTENTS/Resources/SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf" ] && echo 1 || echo 0)" \
       "host carries the SwiftMath math fonts"
-check "$([ -f "$CONTENTS/Resources/en.lproj/Localizable.strings" ] && [ -f "$CONTENTS/Resources/zh-Hans.lproj/Localizable.strings" ] && echo 1 || echo 0)" \
-      "host carries English and Simplified Chinese localizations"
+check "$([ -f "$CONTENTS/Resources/en.lproj/InfoPlist.strings" ] && [ ! -f "$CONTENTS/Resources/en.lproj/Localizable.strings" ] && [ -f "$CONTENTS/Resources/zh-Hans.lproj/InfoPlist.strings" ] && [ -f "$CONTENTS/Resources/zh-Hans.lproj/Localizable.strings" ] && echo 1 || echo 0)" \
+      "host carries English InfoPlist and Simplified Chinese localizations without duplicate en Localizable.strings"
 
 # --- Spotlight importer -----------------------------------------------------
 # macOS discovers classic MDImporter bundles at this exact location. Keep the
@@ -182,6 +182,10 @@ if [ -d "$CONTENTS/PlugIns" ]; then
         # SwiftMath opens first so it cannot regress unnoticed.
         check "$([ -n "$(appex_resource "$appex" SwiftMath_SwiftMath.bundle/mathFonts.bundle/latinmodern-math.otf)" ] && echo 1 || echo 0)" \
               "$NAME carries the SwiftMath math fonts"
+        if [ "$NAME" = "DownrightQL.appex" ]; then
+            check "$([ -n "$(appex_resource "$appex" zh-Hans.lproj/Localizable.strings)" ] && [ -z "$(appex_resource "$appex" en.lproj/Localizable.strings)" ] && echo 1 || echo 0)" \
+                  "$NAME carries Simplified Chinese localization without duplicate en table"
+        fi
         check "$([ "$(appex_entitlement "$appex" com.apple.security.app-sandbox)" = "true" ] && echo 1 || echo 0)" \
               "$NAME retains App Sandbox entitlement"
         check "$([ "$(appex_entitlement "$appex" com.apple.security.get-task-allow)" != "true" ] && echo 1 || echo 0)" \

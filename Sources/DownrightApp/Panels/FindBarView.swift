@@ -197,7 +197,7 @@ final class FindBarView: NSView {
         didSet {
             guard statusText != oldValue else { return }
             setStatusLabelText(statusText)
-            statusLabel.setAccessibilityLabel(statusText.isEmpty ? "No search" : statusText)
+            statusLabel.setAccessibilityLabel(statusText.isEmpty ? L10n.tr("No search") : statusText)
             applyStatusColor()
             updateControlEnablement()
         }
@@ -970,6 +970,7 @@ final class FindBarView: NSView {
 
     var hasCloseButtonForTesting: Bool { closeButton != nil }
     var leadingGlyphIsAccessibleForTesting: Bool { leadingGlyph.isAccessibilityElement() }
+    var searchFieldForTesting: NSSearchField { searchField }
     var searchFieldIsBezeledForTesting: Bool { searchField.isBezeled }
     var findRowFrameForTesting: NSRect { convert(findRow.bounds, from: findRow) }
     var replaceRowFrameForTesting: NSRect { convert(replaceRow.bounds, from: replaceRow) }
@@ -987,6 +988,9 @@ final class FindBarView: NSView {
 extension FindBarView: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         guard (notification.object as? NSSearchField) === searchField else { return }
+        if let editor = searchField.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return
+        }
         updateControlEnablement()
         emitQuery()
     }
@@ -1008,6 +1012,7 @@ extension FindBarView: NSSearchFieldDelegate {
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
             if control === replaceField {

@@ -175,7 +175,7 @@ struct CommandPaletteModel {
             let left = lhs.command.flatMap { recents.firstIndex(of: $0) } ?? .max
             let right = rhs.command.flatMap { recents.firstIndex(of: $0) } ?? .max
             if left != right { return left < right }
-            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            return L10n.compareForDisplay(lhs.title, rhs.title) == .orderedAscending
         }
         .map(\.value)
     }
@@ -275,7 +275,7 @@ struct CommandPaletteModel {
             let leftKind = QuickOpenProviderKind.allCases.firstIndex(of: lhs.kind) ?? Int.max
             let rightKind = QuickOpenProviderKind.allCases.firstIndex(of: rhs.kind) ?? Int.max
             if leftKind != rightKind { return leftKind < rightKind }
-            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            return L10n.compareForDisplay(lhs.title, rhs.title) == .orderedAscending
         })
     }
 

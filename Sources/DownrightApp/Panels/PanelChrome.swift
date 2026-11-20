@@ -258,16 +258,16 @@ enum RelativeTime {
     /// "2m", "3h" — for a list where the column is a few characters wide.
     static func short(_ date: Date, now: Date = Date()) -> String {
         if now.timeIntervalSince(date) < 60 { return L10n.tr("now") }
-        return abbreviatedFormatter(for: L10n.currentLanguage).localizedString(for: date, relativeTo: now)
+        return abbreviatedFormatter(for: L10n.locale.identifier).localizedString(for: date, relativeTo: now)
     }
 
     /// "3 minutes ago", "yesterday".
     static func long(_ date: Date, now: Date = Date()) -> String {
-        namedFormatter(for: L10n.currentLanguage).localizedString(for: date, relativeTo: now)
+        namedFormatter(for: L10n.locale.identifier).localizedString(for: date, relativeTo: now)
     }
 
     static func stamp(_ date: Date) -> String {
-        stampFormatter(for: L10n.currentLanguage).string(from: date)
+        stampFormatter(for: L10n.locale.identifier).string(from: date)
     }
 }
 
@@ -896,7 +896,7 @@ class MessageBarView: NSView {
 
         let dismiss = ButtonAction { [weak self] in self?.onDismiss?() }
         actions.append(dismiss)
-        let close = PanelButton.symbol("xmark", label: "Dismiss", action: dismiss)
+        let close = PanelButton.symbol("xmark", label: L10n.tr("Dismiss"), action: dismiss)
         closeButton = close
         addSubview(close)
 
@@ -1541,7 +1541,7 @@ final class PanelCheckbox: NSView {
         focusRingType = .default
         setAccessibilityElement(true)
         setAccessibilityRole(.checkBox)
-        setAccessibilityValue("Unchecked")
+        setAccessibilityValue(L10n.tr("Unchecked"))
     }
 
     // MARK: - Pointer target
@@ -1831,7 +1831,7 @@ final class PanelCheckbox: NSView {
     func performToggle() {
         state = state == .on ? .off : .on
         applyVisual(animated: true)
-        setAccessibilityValue(state == .on ? "Checked" : (state == .mixed ? "Mixed" : "Unchecked"))
+        setAccessibilityValue(state == .on ? L10n.tr("Checked") : (state == .mixed ? L10n.tr("Mixed") : L10n.tr("Unchecked")))
         if isFilled {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             pulseRipple()

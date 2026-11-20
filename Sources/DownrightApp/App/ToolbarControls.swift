@@ -287,7 +287,7 @@ final class ToolbarDocumentIdentityView: NSView {
     private func updateProxyIcon(for url: URL?) {
         guard let url, FileManager.default.fileExists(atPath: url.path) else {
             proxyButton.image = NSImage(
-                systemSymbolName: "doc.text", accessibilityDescription: "Document path"
+                systemSymbolName: "doc.text", accessibilityDescription: L10n.tr("Document path")
             )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
             proxyButton.contentTintColor = hostWindow?.isKeyWindow == true
                 ? .secondaryLabelColor
@@ -1014,7 +1014,7 @@ private final class ToolbarModeButton: ToolbarInteractiveButton {
         didSet {
             guard isSelected != oldValue else { return }
             updateTitle()
-            setAccessibilityValue(isSelected ? "Selected" : "Not selected")
+            setAccessibilityValue(isSelected ? L10n.tr("Selected") : L10n.tr("Not selected"))
             refreshInteractionFeedback(animated: true)
         }
     }

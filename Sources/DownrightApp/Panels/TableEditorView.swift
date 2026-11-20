@@ -128,7 +128,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         tableView.allowsEmptySelection = true
         tableView.target = self
         tableView.action = #selector(cellClicked(_:))
-        tableView.setAccessibilityLabel("Editable markdown table")
+        tableView.setAccessibilityLabel(L10n.tr("Editable markdown table"))
         scrollView.hasHorizontalScroller = true
         addSubview(scrollView)
 
@@ -138,7 +138,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
 
         sourceButton.bezelStyle = .rounded
         sourceButton.controlSize = .small
-        sourceButton.setAccessibilityLabel("Edit table source")
+        sourceButton.setAccessibilityLabel(L10n.tr("Edit table source"))
         sourceButton.target = self
         sourceButton.action = #selector(requestSource(_:))
         sourceButton.isHidden = true
@@ -175,7 +175,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Table editor")
+        setAccessibilityLabel(L10n.tr("Table editor"))
         applyStyle()
         updateOperationAvailability()
     }
@@ -185,14 +185,14 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         cancelButton.target = self
         cancelButton.action = #selector(cancel(_:))
         cancelButton.keyEquivalent = "\u{1b}"
-        cancelButton.setAccessibilityLabel("Close the table editor")
+        cancelButton.setAccessibilityLabel(L10n.tr("Close the table editor"))
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
 
         doneButton.bezelStyle = .rounded
         doneButton.target = self
         doneButton.action = #selector(finish(_:))
         doneButton.keyEquivalent = "\r"
-        doneButton.setAccessibilityLabel("Finish editing the table")
+        doneButton.setAccessibilityLabel(L10n.tr("Finish editing the table"))
         doneButton.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [cancelButton, doneButton])
@@ -347,7 +347,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
     private func propose(_ operation: TableEditOperation) {
         let result = TableEditing.propose(document, tableIndex: tableIndex, operation: operation)
         guard let proposal = result.proposal else {
-            statusLabel.stringValue = "Source edit is not available"
+            statusLabel.stringValue = L10n.tr("Source edit is not available")
             return
         }
         appliedEditCount += 1
@@ -519,7 +519,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
             guard let self, let field else { return }
             self.advanceDown(from: field)
         }
-        field.setAccessibilityLabel("Table row \(row + 1), column \(column + 1)")
+        field.setAccessibilityLabel(L10n.tr("Table row %lld, column %lld", row + 1, column + 1))
         field.setAccessibilityRole(.textField)
         return field
     }

@@ -7,9 +7,9 @@ enum DocumentTrustState: String, Codable, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .standard: "Standard"
-        case .trustedFolder: "Trusted Folder"
-        case .rawSource: "Raw Source"
+        case .standard: L10n.tr("Standard", context: "trustState")
+        case .trustedFolder: L10n.tr("Trusted Folder")
+        case .rawSource: L10n.tr("Raw Source")
         }
     }
 }
@@ -23,11 +23,11 @@ enum TrustEffect: String, Codable, CaseIterable, Hashable, Sendable {
 
     var title: String {
         switch self {
-        case .openExternalLink: "Open an external link"
-        case .loadRemoteAsset: "Load a remote image"
-        case .readLocalAsset: "Read a local asset"
-        case .launchPathOrEditor: "Open a path or editor"
-        case .automationAppIntent: "Run an app or automation intent"
+        case .openExternalLink: L10n.tr("Open an external link")
+        case .loadRemoteAsset: L10n.tr("Load a remote image")
+        case .readLocalAsset: L10n.tr("Read a local asset")
+        case .launchPathOrEditor: L10n.tr("Open a path or editor")
+        case .automationAppIntent: L10n.tr("Run an app or automation intent")
         }
     }
 }

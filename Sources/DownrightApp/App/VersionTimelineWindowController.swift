@@ -68,16 +68,17 @@ final class VersionTimelineWindowController: NSWindowController {
     }
 
     private func showEmptyState(in root: NSView) {
-        let label = NSTextField(labelWithString: """
+        let label = NSTextField(wrappingLabelWithString: L10n.tr("""
         No history yet.
 
         Downright snapshots this file every time something outside the app \
         rewrites it. Come back after an agent has touched it.
-        """)
+        """))
         label.alignment = .center
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         label.maximumNumberOfLines = 0
+        label.preferredMaxLayoutWidth = 384
         root.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: root.centerXAnchor),
@@ -125,7 +126,7 @@ extension VersionTimelineWindowController: VersionTimelineDelegate {
         alert.messageText = L10n.tr("Restore this version?")
         alert.informativeText = L10n.tr(
             "The current text is replaced with the version from %@. This is an ordinary edit — ⌘Z undoes it.",
-            record.date.formatted(date: .abbreviated, time: .shortened)
+            L10n.formatDate(record.date, dateStyle: .medium, timeStyle: .short)
         )
         alert.addButton(withTitle: L10n.tr("Restore"))
         alert.addButton(withTitle: L10n.tr("Cancel"))

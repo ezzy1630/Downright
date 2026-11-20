@@ -114,7 +114,7 @@ final class SetupWindowController: NSWindowController {
         return SetupWindowController(steps: applicable)
     }
 
-    private init(steps: [Step]) {
+    init(steps: [Step]) {
         self.steps = steps
         self.sheet = StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
 

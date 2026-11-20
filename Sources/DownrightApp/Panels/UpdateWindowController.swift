@@ -396,7 +396,7 @@ final class UpdatePanelFooter: NSView {
 // MARK: - Content
 
 @MainActor
-private final class UpdatePanelContent {
+final class UpdatePanelContent {
     enum Kind: Equatable {
         case checking, available, downloading, extracting, ready, waiting, installing,
              informational, upToDate, failed
@@ -600,7 +600,7 @@ final class UpdateNotesView: NSView {
 
     private static func sizeText(_ bytes: UInt64) -> String {
         guard bytes > 0 else { return "" }
-        return L10n.tr("Download size: %@", ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))
+        return L10n.tr("Download size: %@", L10n.formatByteCount(Int64(bytes)))
     }
 
     /// Release notes embedded as Markdown in the appcast description — the
@@ -757,14 +757,14 @@ private final class UpdateProgressView: NSView {
         if let expected, expected > 0 {
             let fraction = min(1, Double(received) / Double(expected))
             bar.doubleValue = fraction * 100
-            let formatted = ByteCountFormatter.string(fromByteCount: Int64(received), countStyle: .file)
-            let total = ByteCountFormatter.string(fromByteCount: Int64(expected), countStyle: .file)
+            let formatted = L10n.formatByteCount(Int64(received))
+            let total = L10n.formatByteCount(Int64(expected))
             detailLabel.stringValue = L10n.tr("%@ of %@  (%lld%%)", formatted, total, Int(fraction * 100))
             setAccessibilityValue(L10n.tr("%lld percent downloaded", Int(fraction * 100)))
         } else {
             bar.isIndeterminate = true
             bar.startAnimation(nil)
-            let formatted = ByteCountFormatter.string(fromByteCount: Int64(received), countStyle: .file)
+            let formatted = L10n.formatByteCount(Int64(received))
             detailLabel.stringValue = L10n.tr("Downloaded %@ so far", formatted)
             setAccessibilityValue(L10n.tr("Downloading, %@ received", formatted))
         }
@@ -916,12 +916,12 @@ private final class UpdateFailureView: NSView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(
             systemSymbolName: "exclamationmark.triangle.fill",
-            accessibilityDescription: "Update unavailable"
+            accessibilityDescription: L10n.tr("Update unavailable")
         )
         icon.contentTintColor = danger
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
         icon.setAccessibilityRole(.image)
-        icon.setAccessibilityLabel("Update unavailable")
+        icon.setAccessibilityLabel(L10n.tr("Update unavailable"))
         iconWell.addSubview(icon)
         NSLayoutConstraint.activate([
             iconWell.widthAnchor.constraint(equalToConstant: 40),
@@ -957,7 +957,7 @@ private final class UpdateFailureView: NSView {
         hero.alignment = .centerY
         hero.spacing = 12
 
-        detailLabel.stringValue = failure.technicalDetail ?? "Error code \(failure.code)"
+        detailLabel.stringValue = failure.technicalDetail ?? L10n.tr("Error code %lld", failure.code)
         detailLabel.font = PanelFont.monospaced(10.5)
         detailLabel.textColor = sheet.textFaint
         detailLabel.lineBreakMode = .byCharWrapping
@@ -994,12 +994,12 @@ private final class UpdateFailureView: NSView {
         detailDisclosure.contentTintColor = sheet.textSecondary
         detailDisclosure.image = NSImage(
             systemSymbolName: "chevron.right",
-            accessibilityDescription: "Show technical details"
+            accessibilityDescription: L10n.tr("Show technical details")
         )
         detailDisclosure.imagePosition = .imageLeading
         detailDisclosure.imageHugsTitle = true
         detailDisclosure.alignment = .left
-        detailDisclosure.toolTip = "Show technical details"
+        detailDisclosure.toolTip = L10n.tr("Show technical details")
         detailDisclosure.wantsLayer = true
         detailDisclosure.layer?.cornerRadius = 7
         detailDisclosure.layer?.cornerCurve = .continuous
@@ -1028,7 +1028,7 @@ private final class UpdateFailureView: NSView {
                 forType: .string
             )
         }
-        copy.setAccessibilityLabel("Copy diagnostics")
+        copy.setAccessibilityLabel(L10n.tr("Copy diagnostics"))
 
         let diagnosticsActions = NSStackView(views: [detailDisclosure, copy])
         diagnosticsActions.orientation = .horizontal
@@ -1063,12 +1063,12 @@ private final class UpdateFailureView: NSView {
         detailDisclosure.image = NSImage(
             systemSymbolName: detailPanel.isHidden ? "chevron.right" : "chevron.down",
             accessibilityDescription: detailPanel.isHidden
-                ? "Show technical details"
-                : "Hide technical details"
+                ? L10n.tr("Show technical details")
+                : L10n.tr("Hide technical details")
         )
         detailDisclosure.toolTip = detailPanel.isHidden
-            ? "Show technical details"
-            : "Hide technical details"
+            ? L10n.tr("Show technical details")
+            : L10n.tr("Hide technical details")
         needsLayout = true
         superview?.needsLayout = true
     }
@@ -1092,7 +1092,7 @@ extension UpdatePanelContent {
             lines.append("Detail: \(detail)")
         }
         if let lastCheck = coordinator.lastUpdateCheckDate {
-            lines.append("Last check: \(UpdatePanelDateFormatter.string(from: lastCheck))")
+            lines.append("Last check: \(ISO8601DateFormatter().string(from: lastCheck))")
         }
         return lines.joined(separator: "\n")
     }
@@ -1228,7 +1228,7 @@ final class UpdatePanelButton: NSButton {
 
 private enum UpdatePanelDateFormatter {
     static func string(from date: Date) -> String {
-        DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+        L10n.formatDate(date, dateStyle: .medium, timeStyle: .short)
     }
 }
 

@@ -60,7 +60,11 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         case backlinks = "Backlinks"
 
         var title: String {
-            L10n.tr(rawValue)
+            switch self {
+            case .files: return L10n.tr("Files")
+            case .search: return L10n.tr("Search")
+            case .backlinks: return L10n.tr("Backlinks")
+            }
         }
     }
 
@@ -103,7 +107,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
             guard let tab = WorkspaceSidebarTab.allCases.element(at: index) else { return }
             self?.selectedTab = tab
         }
-        tabControl.setAccessibilityLabel("Workspace sections")
+        tabControl.setAccessibilityLabel(L10n.tr("Workspace sections"))
         tabControl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tabControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabControl)
@@ -113,7 +117,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         searchField.delegate = self
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
-        searchField.setAccessibilityLabel("Search workspace files")
+        searchField.setAccessibilityLabel(L10n.tr("Search workspace files"))
         searchField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(searchField)
 
@@ -122,7 +126,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Workspace results")
+        table.setAccessibilityLabel(L10n.tr("Workspace results"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
 
@@ -150,7 +154,7 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Workspace")
+        setAccessibilityLabel(L10n.tr("Workspace"))
         syncTab()
         applyStyle()
         reload()
@@ -246,6 +250,9 @@ final class WorkspaceSidebarView: NSView, PanelSurface {
     }
 
     @objc private func searchChanged(_ sender: Any?) {
+        if let editor = searchField.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return
+        }
         guard selectedTab == .search || !searchField.stringValue.isEmpty else { return }
         isSearching = !searchField.stringValue.isEmpty
         selectedTab = .search

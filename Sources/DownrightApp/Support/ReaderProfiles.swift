@@ -94,7 +94,15 @@ struct ReaderProfile: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     var displayName: String {
         guard isBuiltIn else { return name }
-        return L10n.tr(name, context: "readerProfile")
+        switch id {
+        case ReaderProfileID.documentation.rawValue: return L10n.tr("Documentation", context: "readerProfile")
+        case ReaderProfileID.longForm.rawValue: return L10n.tr("Long-form", context: "readerProfile")
+        case ReaderProfileID.academic.rawValue: return L10n.tr("Academic", context: "readerProfile")
+        case ReaderProfileID.specification.rawValue: return L10n.tr("Specification", context: "readerProfile")
+        case ReaderProfileID.github.rawValue: return L10n.tr("GitHub", context: "readerProfile")
+        case ReaderProfileID.presentation.rawValue: return L10n.tr("Presentation", context: "readerProfile")
+        default: return name
+        }
     }
 
     static let builtIns: [ReaderProfile] = [

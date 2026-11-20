@@ -74,7 +74,7 @@ final class HistoryInspectorView: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Version history")
+        setAccessibilityLabel(L10n.tr("Version history"))
         applyStyle()
         updateCaption()
     }

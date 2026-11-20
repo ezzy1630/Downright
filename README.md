@@ -170,8 +170,9 @@ choices.
 **Interface language** in **Settings → General → Language** follows macOS by
 default (**System Default**) and supports **English** and **简体中文**
 (Simplified Chinese) across both the host app and Quick Look previews. Changing
-the setting updates the menu bar and start window right away; reopen Downright
-so every open window and system panel refreshes completely.
+the setting updates menus, Settings, the start window, and newly opened windows
+or previews right away; reopen already-open document windows, and relaunch
+Downright so macOS system panels and updater dialogs refresh completely.
 
 ## What's new
 

@@ -73,7 +73,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Asset diagnostics")
+        table.setAccessibilityLabel(L10n.tr("Asset diagnostics"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
 
@@ -90,7 +90,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Asset Doctor")
+        setAccessibilityLabel(L10n.tr("Asset Doctor"))
         applyStyle()
         reload()
     }
@@ -309,7 +309,7 @@ private final class AssetDiagnosticRowView: NSView {
     }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
-        actionsButton = PanelButton.symbol("ellipsis.circle", label: "Asset actions", action: ButtonAction {})
+        actionsButton = PanelButton.symbol("ellipsis.circle", label: L10n.tr("Asset actions"), action: ButtonAction {})
         super.init(frame: .zero)
         self.identifier = identifier
 
@@ -381,8 +381,8 @@ private final class AssetDiagnosticRowView: NSView {
         menu = makeActionsMenu()
 
         let destination = diagnostic.reference.source
-        let severity = diagnostic.severity.rawValue.capitalized
-        setAccessibilityLabel("\(severity), line \(diagnostic.reference.line): \(diagnostic.message). Asset \(destination)")
+        let severity = diagnostic.severity == .error ? L10n.tr("Error") : L10n.tr("Warning")
+        setAccessibilityLabel(L10n.tr("%@, line %lld: %@. Asset %@", severity, diagnostic.reference.line, diagnostic.message, destination))
         toolTip = destination
     }
 

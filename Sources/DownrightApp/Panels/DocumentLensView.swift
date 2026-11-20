@@ -112,7 +112,7 @@ final class DocumentLensView: NSView, PanelSurface {
         tabControl.font = PanelFont.row
         tabControl.target = self
         tabControl.action = #selector(tabChanged(_:))
-        tabControl.setAccessibilityLabel("Contents and Outline sections")
+        tabControl.setAccessibilityLabel(L10n.tr("Contents and Outline sections"))
         tabControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tabControl)
 
@@ -120,7 +120,7 @@ final class DocumentLensView: NSView, PanelSurface {
         targetControl.target = self
         targetControl.action = #selector(targetChanged(_:))
         targetControl.font = PanelFont.secondary
-        targetControl.setAccessibilityLabel("Render target")
+        targetControl.setAccessibilityLabel(L10n.tr("Render target"))
         targetControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(targetControl)
 
@@ -148,7 +148,7 @@ final class DocumentLensView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Document Lens items")
+        table.setAccessibilityLabel(L10n.tr("Document Lens items"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
         NSLayoutConstraint.activate([

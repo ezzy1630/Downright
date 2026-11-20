@@ -151,7 +151,7 @@ final class UpdateNotesPopover {
         panel.collectionBehavior = [.moveToActiveSpace, .transient]
         panel.animationBehavior = .none
         panel.setAccessibilityRole(.popover)
-        panel.setAccessibilityLabel("Release notes for \(metadata.displayVersionString)")
+        panel.setAccessibilityLabel(L10n.tr("Release notes for %@", metadata.displayVersionString))
 
         let root = UpdateNotesRootView(liveInset: Layout.shadowMargin)
         root.frame = NSRect(origin: .zero, size: windowSize)
@@ -544,9 +544,7 @@ private final class UpdateNotesContentView: NSView {
     private static func statusText(_ metadata: UpdateMetadata, isReady: Bool) -> String {
         if isReady { return L10n.tr("Ready to install") }
         guard metadata.contentLength > 0 else { return "" }
-        return ByteCountFormatter.string(
-            fromByteCount: Int64(metadata.contentLength), countStyle: .file
-        )
+        return L10n.formatByteCount(Int64(metadata.contentLength))
     }
 
 }

@@ -243,7 +243,7 @@ final class ChangeSummaryBarView: MessageBarView {
         updatePositionStatus()
         updateNavigationState()
         invalidateIntrinsicContentSize()
-        setAccessibilityLabel("\(message). \(changeCount) unread changes")
+        setAccessibilityLabel(L10n.tr("%@. %lld unread changes", message, changeCount))
         needsDisplay = true
     }
 

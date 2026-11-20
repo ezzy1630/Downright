@@ -63,26 +63,35 @@ final class LocalAIPanelView: NSView, PanelSurface {
         let apply = PanelButton.text(L10n.tr("Apply Preview"), action: applyAction)
         let cancel = PanelButton.text(L10n.tr("Close"), action: cancelAction)
 
-        for view in [titleLabel, taskPopup, statusLabel, previewLabel, apply, cancel] {
+        let buttonRow = NSStackView(views: [cancel, apply])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 6
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        for button in [cancel, apply] {
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+
+        for view in [titleLabel, taskPopup, statusLabel, previewLabel, buttonRow] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
+            taskPopup.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             taskPopup.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            taskPopup.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            taskPopup.widthAnchor.constraint(equalToConstant: 150),
+            taskPopup.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
             statusLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            statusLabel.topAnchor.constraint(equalTo: taskPopup.bottomAnchor, constant: 10),
             previewLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             previewLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 10),
-            cancel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            apply.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 12),
-            apply.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
-            cancel.centerYAnchor.constraint(equalTo: apply.centerYAnchor),
+            buttonRow.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            buttonRow.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
+            buttonRow.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 12),
         ])
         setAccessibilityRole(.group)
         setAccessibilityLabel(L10n.tr("Local on-device AI"))

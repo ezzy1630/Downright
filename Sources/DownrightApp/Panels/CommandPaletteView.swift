@@ -268,8 +268,27 @@ final class CommandPaletteView: NSView, PanelSurface {
         keyMonitor = nil
     }
 
+    private var isComposingMarkedText: Bool {
+        if let editor = searchField.currentEditor() as? NSTextView, editor.hasMarkedText() {
+            return true
+        }
+        if let responder = window?.firstResponder as? NSTextView, responder.hasMarkedText() {
+            return true
+        }
+        return false
+    }
+
+    var searchFieldForTesting: NSSearchField { searchField }
+    var currentQueryForTesting: String { model.query }
+
+    @discardableResult
+    func handleKeyForTesting(_ event: NSEvent) -> Bool { handleKey(event) }
+
     @discardableResult
     private func handleKey(_ event: NSEvent) -> Bool {
+        // Never intercept Return, Escape, or arrow keys while an input method
+        // is composing marked text (e.g. Pinyin candidate selection).
+        guard !isComposingMarkedText else { return false }
         switch event.keyCode {
         case 125: model.moveSelection(by: 1); reloadResults(); return true
         case 126: model.moveSelection(by: -1); reloadResults(); return true
@@ -304,8 +323,14 @@ final class CommandPaletteView: NSView, PanelSurface {
 @MainActor
 extension CommandPaletteView: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
+        guard !isComposingMarkedText else { return }
         model.updateQuery(searchField.stringValue)
         reloadResults()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if textView.hasMarkedText() { return false }
+        return false
     }
 }
 

@@ -86,7 +86,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Search results")
+        table.setAccessibilityLabel(L10n.tr("Search results"))
         addSubview(scroll)
         // Lifted past the geometric centre: with the header row (and, in the
         // inspector, the find bar) pinning the eye to the top, exact centre
@@ -109,7 +109,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
 
         applyStyle()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Search results")
+        setAccessibilityLabel(L10n.tr("Search results"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
