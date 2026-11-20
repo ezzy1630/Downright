@@ -4,6 +4,14 @@ Downright is a native macOS Markdown reader and editor. Contributions should
 keep the product file-first, source-preserving, offline by default, and useful
 for ordinary Markdown files that people and coding agents change together.
 
+## Before you start
+
+Open an issue before building anything cross-cutting: a new language, a new
+dependency, a new setting or subsystem, or a change that spans much of the
+app. Agree on scope and ongoing maintenance there first; a large pull request
+that arrives unannounced may be closed or sent back for changes it could have
+avoided.
+
 ## Before opening an issue
 
 - Search existing issues and read [README.md](README.md) and the known gaps
@@ -73,6 +81,11 @@ checks you ran. Keep commits focused. Update `CHANGELOG.md` under
 `[Unreleased]` for user-visible behavior, and include screenshots or a short
 recording only when the change is visual and the document itself cannot prove
 it.
+
+If your change creates something that must stay in sync with other code (a
+translation table, a generated file, a mirrored list), include the check that
+fails when it drifts. Keeping it in sync must not depend on anyone
+remembering.
 
 Do not add a sync service, vault database, plugin runtime, remote model
 dependency, or chat panel without first changing the product contract and
