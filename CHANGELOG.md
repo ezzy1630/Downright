@@ -16,12 +16,10 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
-- Tables, diagrams, images and front matter now switch to Markdown as soon as
-  you click or arrow into them, and back to their rendered form as soon as you
-  leave. Before, a table could stay stuck as raw Markdown after you switched
-  from Source Focus back to Document view, or after you moved elsewhere in the
-  document, until you toggled the view again. Clicking an image still just
-  opens it; Option-click edits its Markdown.
+- Tables and diagrams show their Markdown when you click or arrow into them.
+  When the caret leaves a table, diagram, image or front matter, it returns to
+  its rendered form immediately, including after switching back from Source
+  Focus. Clicking an image opens it. Option-clicking reveals its Markdown.
   ([#68](https://github.com/ezzy1630/Downright/issues/68))
 - Math inside table cells is typeset like math in a paragraph, in both the
   column and the stacked table layouts, instead of showing its LaTeX. Rows and

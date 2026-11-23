@@ -559,7 +559,11 @@ extension MarkdownTextView {
         if mode == .live, let activatedImage, sourceSelectedRange.length == 0,
            sourceSelectedRange.location > activatedImage.location,
            sourceSelectedRange.location < activatedImage.upperBound {
-            setSourceSelectedRanges([NSRange(location: activatedImage.location, length: 0)])
+            // The leading `![` is hidden, so this offset and the first visible
+            // one share a TextKit position; keep the exact source caret or it
+            // reads back inside the image.
+            setSourceSelectedRanges([NSRange(location: activatedImage.location, length: 0)],
+                                    preservingEditCaret: true)
         }
 
         if case .scoped(let focus) = sourceFocus {
