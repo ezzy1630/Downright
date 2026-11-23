@@ -205,19 +205,26 @@ extension MathScanner {
         }
         // Walk in from each `$$` over blanks and breaks; at least one break
         // on each side, and the expression is what remains between them.
+        // `breaks` is in source order, so each side consumes it from its own
+        // end with an index: every break is looked at once.
         var start = whole.location + 2
         var leadingBreaks = 0
         while start < whole.upperBound - 2 {
             if isBlank(start) { start += 1 }
-            else if let tag = breaks.first(where: { $0.location == start }) { start = tag.upperBound; leadingBreaks += 1 }
-            else { break }
+            else if leadingBreaks < breaks.count, breaks[leadingBreaks].location == start {
+                start = breaks[leadingBreaks].upperBound
+                leadingBreaks += 1
+            } else { break }
         }
         var end = whole.upperBound - 2
         var trailingBreaks = 0
         while end > start {
+            let next = breaks.count - 1 - trailingBreaks
             if isBlank(end - 1) { end -= 1 }
-            else if let tag = breaks.first(where: { $0.upperBound == end }) { end = tag.location; trailingBreaks += 1 }
-            else { break }
+            else if next >= leadingBreaks, breaks[next].upperBound == end {
+                end = breaks[next].location
+                trailingBreaks += 1
+            } else { break }
         }
         let body = NSRange(location: start, length: end - start)
         guard leadingBreaks > 0, trailingBreaks > 0, body.length > 0,
