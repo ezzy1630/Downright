@@ -44,9 +44,9 @@ struct MathRasterDensityTests {
         drawNSImage(padded, in: CGRect(origin: .zero, size: padded.size), in: paddedCanvas)
         let difference = try inkAlphaDifference(controlCanvas, paddedCanvas)
         #expect(difference.inkPixels > 0, "Neither drawing produced ink at \(scale)x")
-        #expect(difference.mean <= 16,
+        #expect(difference.mean <= 16, Comment(rawValue:
                 "Padded block math differs from the directly drawn formula by \(difference.mean)/255 on "
-                    + "\(difference.inkPixels) ink pixels at \(scale)x; \(environment)")
+                    + "\(difference.inkPixels) ink pixels at \(scale)x; \(environment)"))
     }
 
     // MARK: - Bitmaps
