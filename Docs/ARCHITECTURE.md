@@ -122,8 +122,9 @@ also registers missing symbols with their TeX classes, once, before the first
 parse, because SwiftMath's symbol table is an unsynchronized static dictionary.
 A construct with no faithful spelling is left unchanged, so the formula falls
 back to dimmed source text rather than rendering something else. Current
-examples are `\overset`, `\underbrace`, `\xrightarrow`, and `aligned` with more
-than two columns.
+examples are `\overset`, `\overbrace`, `\xrightarrow`, and `aligned` with more
+than two columns. `\underbrace` is a vendored typesetter patch, not a dialect
+rewrite (PATCHES.md, patch 7).
 
 Non-ASCII characters are drawn, not dropped. A typed `α` or `≤` becomes its
 command's atom, and other text, such as CJK inside `\text{}`, uses Core Text

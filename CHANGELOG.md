@@ -16,6 +16,15 @@ every release; Sparkle orders updates by it.
 
 ### Fixed
 
+- Display math written across line breaks in a table cell, as
+  `$$ <br> … <br> $$`, is typeset instead of showing its LaTeX and the `<br>`
+  tags. Only a cell holding exactly one such formula changes.
+- `\underbrace{…}_{…}` draws a brace under its expression with the label
+  centred below it, instead of the "Formula could not be typeset" box.
+- The Front Matter editor keeps the Add Field controls on separate rows in
+  short windows. The field list scrolls to make room.
+- Block math stays sharp on Retina displays instead of drawing at half
+  resolution.
 - Tables and diagrams show their Markdown when you click or arrow into them.
   When the caret leaves a table, diagram, image or front matter, it returns to
   its rendered form immediately, including after switching back from Source

@@ -156,10 +156,15 @@ protocol FloatingContentMeasuring: NSView {
     /// A pending decision may cover more of the document than a browsing
     /// panel; the usual cap keeps the document readable beside a list.
     var prefersFullFloatingHeight: Bool { get }
+    /// The shortest height at which every required control still has its own
+    /// place. The window cap may not squeeze the panel below it; zero means
+    /// the panel scrolls or clips gracefully at any height.
+    var minimumFloatingContentHeight: CGFloat { get }
 }
 
 extension FloatingContentMeasuring {
     var prefersFullFloatingHeight: Bool { false }
+    var minimumFloatingContentHeight: CGFloat { 0 }
 }
 
 // MARK: - Type

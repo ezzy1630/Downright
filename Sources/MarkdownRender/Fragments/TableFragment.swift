@@ -90,10 +90,13 @@ enum TableCellPresentation {
     ) -> [(range: NSRange, attachment: NSTextAttachment)] {
         var result: [(range: NSRange, attachment: NSTextAttachment)] = []
         func visit(_ span: InlineSpan) {
-            if case .inlineMath = span.kind {
+            if case .inlineMath(let latex) = span.kind {
+                // The parsed LaTeX, not the span: SwiftMath ignores `$`, and a
+                // cell's `$$ <br> … <br> $$` breaks are table syntax.
                 guard span.range.length > 0, span.range.upperBound <= storage.length,
+                      latex.length > 0, latex.upperBound <= storage.length,
                       let typeset = MathRenderer.inlineAttachment(
-                        latex: (storage.string as NSString).substring(with: span.range),
+                        latex: (storage.string as NSString).substring(with: latex),
                         pointSize: styleSheet.mathPointSize,
                         color: styleSheet.text,
                         font: styleSheet.bodyFont()),

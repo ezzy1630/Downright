@@ -1894,12 +1894,17 @@ final class DocumentWindowController: NSWindowController {
     private func floatingHeightCap(in target: NSView, for surface: FloatingPanelSurface) -> CGFloat {
         let availableHeight = max(0, target.bounds.height - target.safeAreaInsets.top)
         let fraction = surface.prefersFullHeight ? 1 : FloatingPanelSurface.Top.windowHeightFraction
+        let ceiling = availableHeight - 2 * PanelMetrics.floatingMargin
+        // A form whose required controls need more than the fraction may
+        // reach further down the window, never past it.
+        let required = min(surface.minimumFittedHeight, ceiling)
         return max(
             40,
             min(
                 fraction * availableHeight,
                 availableHeight
-            ) - 2 * PanelMetrics.floatingMargin
+            ) - 2 * PanelMetrics.floatingMargin,
+            required
         )
     }
 
@@ -2054,8 +2059,10 @@ final class DocumentWindowController: NSWindowController {
     /// `title` names the surface after the command that opened it; without one
     /// the header keeps the section's generic name.
     func installTrailing(_ view: NSView, title: String? = nil) {
-        showInInspector(view, section: .context)
-        if let title { inspectorHost?.setTitle(title, for: .context) }
+        // The title must be in place before the surface measures its header:
+        // with Tasks mounted, the switcher hides a generic title row but not
+        // a command name, and a title set afterwards left the body 22pt short.
+        showInInspector(view, section: .context, title: title)
     }
 
     func dismissTrailing(_ view: NSView) {
@@ -2064,7 +2071,7 @@ final class DocumentWindowController: NSWindowController {
         else { refreshToolbarSelectionState() }
     }
 
-    func showInInspector(_ view: NSView, section: InspectorSection) {
+    func showInInspector(_ view: NSView, section: InspectorSection, title: String? = nil) {
         // A close can still be springing toward the toolbar when the command
         // is invoked again. That surface will remove itself on arrival, so it
         // cannot safely host the reopened panel; retire it and create a fresh
@@ -2092,14 +2099,14 @@ final class DocumentWindowController: NSWindowController {
         }
         if floatingSurface == nil {
             floatingFocusRestoreView = window?.firstResponder as? NSView
-            host.setContent(view, section: section)
+            host.setContent(view, section: section, title: title)
             let surface = FloatingPanelSurface(styleSheet: activeStyleSheet, content: host)
             surface.onClose = { [weak self] in self?.closeInspector() }
             presentFloatingSurface(surface)
         } else {
             // Switching sections reuses the same glass body and header. The
             // document never enters a split-view resize path.
-            host.setContent(view, section: section)
+            host.setContent(view, section: section, title: title)
             floatingSurface?.layoutSubtreeIfNeeded()
             refitFloatingSurface()
             focusFloatingSurface(floatingSurface!)

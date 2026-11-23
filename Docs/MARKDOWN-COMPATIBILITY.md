@@ -24,9 +24,12 @@ Click a display formula in the editable Document view to reveal its LaTeX.
 Drag or extend the selection with Shift and the arrow keys to select the raw
 text. Source view shows all Markdown and LaTeX at once.
 
-Inline math inside a table cell is typeset as it is in prose. `$$` written
-around `<br>` inside a cell is not recognized as math, because the HTML break
-splits the text.
+Inline math inside a table cell is typeset as it is in prose. A cell cannot
+hold a line break, so display math in a cell is often written
+`$$ <br> expression <br> $$`; a cell that holds exactly that, with `<br>`,
+`<br/>` or `<br />` between each `$$` and the expression, is typeset as one
+formula. Any other HTML in the cell, or a `<br>` inside the expression, keeps
+the cell as written.
 
 Most LaTeX written for KaTeX, MathJax, Typora, and Obsidian renders, including
 `align`, `equation`, `gathered`, `cases`, matrix and `array` blocks, `\dfrac`,
@@ -34,8 +37,9 @@ Most LaTeX written for KaTeX, MathJax, Typora, and Obsidian renders, including
 `\text{}` may use any script, including Chinese, Japanese, and Korean. A few
 decorations render approximately: `\big` delimiters keep their normal size,
 `\boxed` drops its frame, and `\tag{n}` appears as "(n)" at the end of the
-formula. `\overset`, `\underset`, `\stackrel`, `\xrightarrow`, `\overbrace`,
-`\underbrace`, `\phantom`, and `\hspace` are not supported yet; a formula that
+formula. `\underbrace{…}_{label}` draws a brace under the expression with
+its label centred below. `\overset`, `\underset`, `\stackrel`, `\xrightarrow`,
+`\overbrace`, `\phantom`, and `\hspace` are not supported yet; a formula that
 uses them shows its source text instead of rendering incorrectly.
 
 ## Raw HTML

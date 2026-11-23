@@ -14,7 +14,7 @@ protocol FrontMatterEditorDelegate: AnyObject {
 }
 
 @MainActor
-final class FrontMatterEditorView: NSView, PanelSurface {
+final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasuring {
     weak var delegate: FrontMatterEditorDelegate?
 
     var styleSheet: StyleSheet {
@@ -29,6 +29,24 @@ final class FrontMatterEditorView: NSView, PanelSurface {
     }
 
     var preferredWidth: CGFloat { PanelMetrics.detailWidth }
+
+    /// The field list's preferred viewport, and the least it may shrink to
+    /// (about one field row) when the window caps the panel. Below the
+    /// preferred height the list scrolls; the add form never gives up room.
+    private enum FieldViewport {
+        static let preferred: CGFloat = 176
+        static let minimum: CGFloat = 48
+    }
+
+    var fittedContentHeight: CGFloat {
+        let fitted = fittingSize.height
+        return fitted.isFinite && fitted > 0 ? fitted : frame.height
+    }
+
+    var minimumFloatingContentHeight: CGFloat {
+        guard !fieldScroll.isHidden else { return fittedContentHeight }
+        return max(0, fittedContentHeight - (FieldViewport.preferred - FieldViewport.minimum))
+    }
 
     var renderedFieldCount: Int { rows.count }
     var showsSourceModePrompt: Bool { !sourceButton.isHidden }
@@ -143,8 +161,15 @@ final class FrontMatterEditorView: NSView, PanelSurface {
             fieldScroll.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 12),
             // NSScrollView has no useful vertical intrinsic size. Without an
             // explicit viewport it collapsed to zero: AX exposed every field,
-            // while the panel showed only the pinned Add Field footer.
-            fieldScroll.heightAnchor.constraint(equalToConstant: 176),
+            // while the panel showed only the pinned Add Field footer. A
+            // capped panel shrinks the list, not the required form below it.
+            fieldScroll.heightAnchor.constraint(lessThanOrEqualToConstant: FieldViewport.preferred),
+            fieldScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: FieldViewport.minimum),
+            {
+                let preferred = fieldScroll.heightAnchor.constraint(equalToConstant: FieldViewport.preferred)
+                preferred.priority = .defaultHigh - 1
+                return preferred
+            }(),
             statusLabel.leadingAnchor.constraint(equalTo: fieldScroll.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: fieldScroll.trailingAnchor),
             statusLabel.topAnchor.constraint(equalTo: fieldScroll.bottomAnchor, constant: 10),

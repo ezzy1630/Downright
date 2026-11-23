@@ -594,6 +594,10 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         (content as? InspectorHostView)?.selectedContentPrefersFullHeight ?? false
     }
 
+    var minimumFittedHeight: CGFloat {
+        (content as? InspectorHostView)?.floatingMinimumHeight ?? 0
+    }
+
     /// The frame the surface is actually resting at — the single source of
     /// truth for where a morph flight should land. The floating host's
     /// re-derivation of this frame can drift a few points from it (minimum
