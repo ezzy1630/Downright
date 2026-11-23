@@ -44,6 +44,11 @@ struct BlockObjectRevealTests {
                              "Clicking the rendered row put the caret at \(caret), outside table \(table)")
                 try expect(.source, table, in: ui, "With the caret at \(caret.location) inside it, the table")
 
+                // A selection is observation: made inside the revealed table, it keeps the source.
+                try ui.doubleClick(onText: "P50")
+                ui.check(ui.selectedSourceText == "P50", "Double-click selected \(ui.selectedSourceRange)")
+                try expect(.source, table, in: ui, "With P50 selected inside it, the table")
+
                 try ui.click(onText: exit)
                 try expectCaret(beforeMiddleOf: exit, in: ui)
                 try expect(.rendered, table, in: ui, "After clicking \(exit.debugDescription), the table")
@@ -54,6 +59,46 @@ struct BlockObjectRevealTests {
             let settled = try ui.point(onText: "Paragraph before.")
             ui.check(abs(settled.y - anchor.y) < 1,
                      "The paragraph above the table moved from y \(anchor.y) to \(settled.y)")
+        }
+    }
+
+    /// Document replacement sets the selection without a caret presentation.
+    /// Going Back must not leave the returning document's table drawn as
+    /// source from the caret the sibling's table held at the same offsets.
+    @Test func goingBackDoesNotRevealFromTheSiblingsCaret() async throws {
+        let original = "[Open](sibling.md)\n\n" + issueTable + "\n\nOriginal after.\n"
+        let sibling = "[Back](origin.md)\n\n" + issueTable + "\n\nSibling after.\n"
+        try await UIDriver.withDocument(original, files: ["sibling.md": Data(sibling.utf8)]) { ui in
+            try ui.click(onText: "Open")
+            try #require(ui.source == sibling, "The link did not open the sibling in this window")
+            ui.layout()
+            let siblingTable = try ui.range(of: issueTable)
+            let row = try ui.range(of: "| Latency P50")
+            let fragment = try #require(try layoutFragment(at: row.location, in: ui.textView) as? TableRowFragment,
+                                        "The sibling's body row is not drawn as a table row")
+            let frame = fragment.layoutFragmentFrame
+            let origin = ui.textView.textContainerOrigin
+            try ui.input.click(at: ui.textView.convert(NSPoint(x: origin.x + frame.minX + 24,
+                                                               y: origin.y + frame.midY), to: nil))
+            try expect(.source, siblingTable, in: ui, "With the caret inside it, the sibling's table")
+
+            try ui.press("[", modifiers: [.command, .control])
+            try #require(ui.source == original, "Back did not return to the original document")
+            ui.layout()
+            let table = try ui.range(of: issueTable)
+            let selection = ui.selectedSourceRange
+            let inside = selection.length == 0 && selection.location > table.location && selection.location < table.upperBound
+            // Navigation never reveals its destination, so a restored caret
+            // inside the table may leave it rendered.  Source with the caret
+            // elsewhere is the stale reveal this guards against.
+            let fragments = try lineFragments(in: table, of: ui)
+            let rendered = fragments.allSatisfy { !($0 is ProseFragment) }
+            let source = fragments.allSatisfy { $0 is ProseFragment }
+            ui.check(rendered || (source && inside),
+                     "After Back with the selection at \(selection), the original table's lines are "
+                        + describe(table, in: ui))
+            ui.check(Data(ui.source.utf8) == Data(original.utf8) && !ui.isDirty,
+                     "Navigating changed the original's source or dirty state")
         }
     }
 
@@ -77,6 +122,9 @@ struct BlockObjectRevealTests {
         static let all: [RevealCase] = [
             RevealCase(name: "table", object: issueTable, insideText: "Latency P50",
                        leadsDocument: false, needsImage: false),
+            // The caret lands on an inline-math payload that overlaps the table's.
+            RevealCase(name: "table with math cell", object: "| Symbol | Meaning |\n|---|---|\n| $\\alpha$ | angle |",
+                       insideText: "alpha", leadsDocument: false, needsImage: false),
             RevealCase(name: "image line", object: "![Pixel](pixel.png)", insideText: "Pixel",
                        leadsDocument: false, needsImage: true),
             RevealCase(name: "mermaid", object: "```mermaid\ngraph TD\n  Alpha --> Beta\n```", insideText: "Alpha",

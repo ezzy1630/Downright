@@ -12,6 +12,23 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-11-22
+
+### Fixed
+
+- Tables, diagrams, images and front matter now switch to Markdown as soon as
+  you click or arrow into them, and back to their rendered form as soon as you
+  leave. Before, a table could stay stuck as raw Markdown after you switched
+  from Source Focus back to Document view, or after you moved elsewhere in the
+  document, until you toggled the view again. Clicking an image still just
+  opens it; Option-click edits its Markdown.
+  ([#68](https://github.com/ezzy1630/Downright/issues/68))
+- Math inside table cells is typeset like math in a paragraph, in both the
+  column and the stacked table layouts, instead of showing its LaTeX. Rows and
+  columns size to the formula. A formula Downright can't typeset still shows
+  its LaTeX, and so does a formula in a column heading when a narrow table
+  shows its headings as field labels.
+
 ## [1.0.24] - 2026-11-18
 
 ### Added

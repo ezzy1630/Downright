@@ -396,6 +396,7 @@ extension MarkdownTextView {
             return
         }
         var activateAfterTracking: (() -> Void)?
+        var activatedImage: NSRange?
 
         if sourceFocusDoneRect?.insetBy(dx: -4, dy: -4).contains(point) == true {
             clearSourceFocus()
@@ -487,6 +488,12 @@ extension MarkdownTextView {
                modifiers: modifiers,
                clickCount: event.clickCount
            ) {
+            // Only while it is drawn as a picture: once Option-click has
+            // revealed its source, a click there places the caret.
+            if !fragmentContext.revealsObject(.image, at: payload.sourceRange),
+               !fragmentContext.isSourceFocused(payload.sourceRange) {
+                activatedImage = payload.sourceRange
+            }
             activateAfterTracking = { [weak self] in
                 guard let self else { return }
                 // §7.1: click an image → lightbox. The render package owns no
@@ -515,11 +522,13 @@ extension MarkdownTextView {
         }
         let trackingEvent = link == nil ? event : linkSelectionEvent(event, modifiers: modifiers)
         trackTextMouseSelection(
-            with: trackingEvent, mathSelection: mathSelection, activateAfterTracking: activateAfterTracking)
+            with: trackingEvent, mathSelection: mathSelection,
+            activatedImage: activatedImage, activateAfterTracking: activateAfterTracking)
     }
 
     private func trackTextMouseSelection(
-        with event: NSEvent, mathSelection: NSRange?, activateAfterTracking: (() -> Void)? = nil
+        with event: NSEvent, mathSelection: NSRange?, activatedImage: NSRange? = nil,
+        activateAfterTracking: (() -> Void)? = nil
     ) {
         // `super` owns the whole click/drag gesture.  Make the target first
         // responder explicitly; relying on the window's default mouse routing
@@ -540,6 +549,17 @@ extension MarkdownTextView {
         // to the formula source after AppKit finishes tracking the gesture.
         if let mathSelection, event.clickCount > 1 || sourceSelectedRange.length == 0 {
             setSourceSelectedRanges([mathSelection])
+        }
+
+        // A plain click on an image opens it; it is not edit intent.  Its
+        // source glyphs are invisible under the left of the picture, so the
+        // click can resolve inside them and would swap the image to source
+        // behind the lightbox.  Keep the caret on the image's leading edge,
+        // where the image stays drawn.  Option-click still edits.
+        if mode == .live, let activatedImage, sourceSelectedRange.length == 0,
+           sourceSelectedRange.location > activatedImage.location,
+           sourceSelectedRange.location < activatedImage.upperBound {
+            setSourceSelectedRanges([NSRange(location: activatedImage.location, length: 0)])
         }
 
         if case .scoped(let focus) = sourceFocus {

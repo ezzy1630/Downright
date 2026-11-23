@@ -90,6 +90,28 @@ view invalidates all paragraphs of a display formula when it switches between
 typeset and source, even when the `DisplayMap` is unchanged. Inline math uses
 the paragraph-local map to keep the selected LaTeX visible.
 
+Tables, Mermaid and PlantUML diagrams, image-only lines and front matter follow
+the same rule through one tracked reveal in `FragmentContext`. The view
+resolves the caret's object per paragraph, as `FragmentProvider` does, so an
+inline payload inside it (math in a table cell) cannot hide it; it records the
+object on every caret presentation and full rebuild, including the return
+from Source Focus, and invalidates every paragraph of the object it enters or
+leaves. Identity is the object's kind and start offset, so typing inside a
+table does not re-render it. A selection made inside the revealed object keeps
+it revealed but never reveals one. Programmatic selection (navigation, history,
+document replacement) retires a reveal it moves away from without revealing
+its destination. A plain click that opens an image keeps the caret on the
+image's leading edge, so the image stays drawn behind the lightbox;
+Option-click edits it.
+
+Table cells typeset inline math with the same attachment prose uses.
+`TableCellPresentation` supplies it to both the column and stacked row
+drawing, and `TableLayout` measures widths and heights from that content, so a
+row grows to hold a tall formula instead of clipping it. Stacked-layout field
+labels and numeric-column detection keep reading the LaTeX text. A table
+without math measures exactly as before: only cells holding math carry typeset
+content into `TableLayout`.
+
 `SwiftMathDialect` converts the LaTeX people write for KaTeX, MathJax, Typora,
 and Obsidian into the subset SwiftMath parses. Examples include `\dfrac`,
 `\not=`, `\tag`, `\label`, `\big`, `align*`, `equation`, `gathered`, and

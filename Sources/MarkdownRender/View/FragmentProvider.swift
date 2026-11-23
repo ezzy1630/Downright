@@ -62,8 +62,12 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         guard context.mode != .source else { return plain() }
         // §6.2: a caret inside an object or an explicit scoped source lens
         // swaps only that object to source.  Surrounding blocks stay rendered.
-        let editing = context.mode == .live
-            && (context.isCaretInside(payload.sourceRange) || context.isSourceFocused(payload.sourceRange))
+        let focused = context.isSourceFocused(payload.sourceRange)
+        let editing = context.mode == .live && (context.isCaretInside(payload.sourceRange) || focused)
+        // The other objects follow the view's tracked reveal, which applies the
+        // same caret rule and also keeps a selection made inside the object.
+        let revealed = context.mode == .live
+            && (context.revealsObject(payload.kind, at: payload.sourceRange) || focused)
 
         switch payload.kind {
         case .codeBlock, .collapsedCodeBlock:
@@ -71,7 +75,7 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
                                 source: source, payload: payload, storage: storage)
 
         case .table:
-            guard !editing else { return plain() }
+            guard !revealed else { return plain() }
             // The `|---|:--:|` row is syntax, not data: it collapses rather
             // than leaving a blank band where a row should be.
             if let delimiter = payload.tableData?.delimiterRange, delimiter.contains(offset: source.location) {
@@ -85,19 +89,19 @@ final class FragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             return MathFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
 
         case .mermaid:
-            guard !editing else { return plain() }
+            guard !revealed else { return plain() }
             return MermaidFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
 
         case .plantUML:
-            guard !editing else { return plain() }
+            guard !revealed else { return plain() }
             return PlantUMLFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
 
         case .image:
-            guard !editing else { return plain() }
+            guard !revealed else { return plain() }
             return ImageFragment(textElement: textElement, range: elementRange, payload: payload, context: context)
 
         case .frontMatter:
-            guard !editing, !context.frontMatterFields.isEmpty else { return plain() }
+            guard !revealed, !context.frontMatterFields.isEmpty else { return plain() }
             return FrontMatterFragment(textElement: textElement, range: elementRange, payload: payload,
                                        context: context, fields: context.frontMatterFields)
 

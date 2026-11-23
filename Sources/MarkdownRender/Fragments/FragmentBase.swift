@@ -90,6 +90,10 @@ public final class FragmentContext {
     public var caret: Int?
     /// Display math whose source is visible for the current Live selection.
     var mathSourcePayload: FragmentPayload?
+    /// Table, diagram, image line or front matter swapped to source by the
+    /// Live caret.  Maintained by the view on every caret presentation, so
+    /// the provider and the view's invalidation always agree.
+    var caretRevealedObject: CaretRevealedObject?
     /// Width of the text column, for objects that fill the measure.
     public var contentWidth: CGFloat = 640
     /// Directory images and diagrams resolve against (§3.4 — unsandboxed, so
@@ -150,6 +154,10 @@ public final class FragmentContext {
     func isCaretInside(_ range: NSRange) -> Bool {
         guard let caret, range.length > 0 else { return false }
         return caret > range.location && caret < range.upperBound
+    }
+
+    func revealsObject(_ kind: FragmentKind, at range: NSRange) -> Bool {
+        caretRevealedObject.map { $0.kind == kind && $0.range.location == range.location } ?? false
     }
 
     func isSourceFocused(_ range: NSRange) -> Bool {
@@ -442,9 +450,10 @@ extension NSAttributedString {
                   CharacterSet.whitespacesAndNewlines.contains(last) {
                 head.deleteCharacters(in: NSRange(location: head.length - 1, length: 1))
             }
-            head.append(NSAttributedString(
-                string: "…",
-                attributes: attributes(at: Swift.max(0, Swift.min(prefix, length - 1)), effectiveRange: nil)))
+            // A cut beside a typeset formula must not hand its image to the ellipsis.
+            var ellipsis = attributes(at: Swift.max(0, Swift.min(prefix, length - 1)), effectiveRange: nil)
+            ellipsis[.attachment] = nil
+            head.append(NSAttributedString(string: "…", attributes: ellipsis))
             return head
         }
 

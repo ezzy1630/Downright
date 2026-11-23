@@ -24,6 +24,10 @@ Click a display formula in the editable Document view to reveal its LaTeX.
 Drag or extend the selection with Shift and the arrow keys to select the raw
 text. Source view shows all Markdown and LaTeX at once.
 
+Inline math inside a table cell is typeset as it is in prose. `$$` written
+around `<br>` inside a cell is not recognized as math, because the HTML break
+splits the text.
+
 Most LaTeX written for KaTeX, MathJax, Typora, and Obsidian renders, including
 `align`, `equation`, `gathered`, `cases`, matrix and `array` blocks, `\dfrac`,
 `\operatorname`, `\boldsymbol`, `\not`, and typed Unicode symbols. Text inside

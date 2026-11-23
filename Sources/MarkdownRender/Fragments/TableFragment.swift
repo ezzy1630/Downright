@@ -8,9 +8,13 @@ import MarkdownCore
 /// map hides.  Keep that projection local and pure: decoration attributes stay
 /// intact, only the inline marker characters are removed.
 enum TableCellPresentation {
+    /// With a style sheet, inline math is typeset to the same attachment prose
+    /// uses, so the cell draws and measures the formula rather than its LaTeX.
+    /// Without one (labels, numeric detection) the LaTeX stays as text.
     static func attributedContent(
         for cell: TableCell,
-        in storage: NSAttributedString
+        in storage: NSAttributedString,
+        styleSheet: StyleSheet? = nil
     ) -> NSAttributedString {
         guard cell.contentRange.length > 0,
               cell.contentRange.upperBound <= storage.length else {
@@ -20,18 +24,30 @@ enum TableCellPresentation {
         let content = NSMutableAttributedString(
             attributedString: storage.attributedSubstring(from: cell.contentRange)
         )
-        let markers = markerRanges(in: cell.inlines)
-            .compactMap { marker -> NSRange? in
-                let intersection = NSIntersectionRange(marker, cell.contentRange)
-                guard intersection.length > 0 else { return nil }
-                return NSRange(
-                    location: intersection.location - cell.contentRange.location,
-                    length: intersection.length
-                )
+        // A typeset formula replaces its whole span, delimiters included.
+        // Markers merge where they touch (`**$` in `**$x$**`), so only the
+        // formula's own characters leave the marker set.  Every edit is in
+        // source coordinates and applied from the end, so none moves another.
+        let math = (styleSheet.map { typesetMath(in: cell.inlines, storage: storage, styleSheet: $0) } ?? [])
+            .filter { NSIntersectionRange($0.range, cell.contentRange).length == $0.range.length }
+        let typeset = math.map(\.range)
+        var edits: [(range: NSRange, attachment: NSTextAttachment?)] = math.map { ($0.range, $0.attachment) }
+        for marker in markerRanges(in: cell.inlines) {
+            for piece in typeset.isEmpty ? [marker] : subtracting(typeset, from: marker) {
+                let clipped = NSIntersectionRange(piece, cell.contentRange)
+                if clipped.length > 0 { edits.append((clipped, nil)) }
             }
-            .sorted { $0.location > $1.location }
-        for marker in markers where marker.upperBound <= content.length {
-            content.deleteCharacters(in: marker)
+        }
+        for edit in edits.sorted(by: { $0.range.location > $1.range.location }) {
+            let local = NSRange(location: edit.range.location - cell.contentRange.location, length: edit.range.length)
+            guard local.upperBound <= content.length else { continue }
+            if let attachment = edit.attachment {
+                var attributes = content.attributes(at: local.location, effectiveRange: nil)
+                attributes[.attachment] = attachment
+                content.replaceCharacters(in: local, with: NSAttributedString(string: "\u{FFFC}", attributes: attributes))
+            } else {
+                content.deleteCharacters(in: local)
+            }
         }
         // A cell with no inlines has no span to bound its content, so the
         // parser falls back to the cell's whole source range — which for an
@@ -64,6 +80,61 @@ enum TableCellPresentation {
         }
         for span in spans { collect(span) }
         return RangeSet.normalized(result)
+    }
+
+    /// The same attachment `InlineMathDisplay` substitutes in prose, keyed by
+    /// the same source text, so a formula looks identical in and out of a table.
+    /// A formula SwiftMath cannot typeset keeps today's delimiter-free LaTeX.
+    private static func typesetMath(
+        in spans: [InlineSpan], storage: NSAttributedString, styleSheet: StyleSheet
+    ) -> [(range: NSRange, attachment: NSTextAttachment)] {
+        var result: [(range: NSRange, attachment: NSTextAttachment)] = []
+        func visit(_ span: InlineSpan) {
+            if case .inlineMath = span.kind {
+                guard span.range.length > 0, span.range.upperBound <= storage.length,
+                      let typeset = MathRenderer.inlineAttachment(
+                        latex: (storage.string as NSString).substring(with: span.range),
+                        pointSize: styleSheet.mathPointSize,
+                        color: styleSheet.text,
+                        font: styleSheet.bodyFont()),
+                      let attachment = typeset.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+                else { return }
+                result.append((span.range, attachment))
+                return
+            }
+            span.children.forEach(visit)
+        }
+        spans.forEach(visit)
+        return result
+    }
+
+    private static func subtracting(_ removed: [NSRange], from range: NSRange) -> [NSRange] {
+        var pieces = [range]
+        for cut in removed {
+            var next: [NSRange] = []
+            for piece in pieces {
+                guard NSIntersectionRange(piece, cut).length > 0 else {
+                    next.append(piece)
+                    continue
+                }
+                if cut.location > piece.location {
+                    next.append(NSRange(location: piece.location, length: cut.location - piece.location))
+                }
+                if piece.upperBound > cut.upperBound {
+                    next.append(NSRange(location: cut.upperBound, length: piece.upperBound - cut.upperBound))
+                }
+            }
+            pieces = next
+        }
+        return pieces
+    }
+
+    static func containsMath(_ cell: TableCell) -> Bool {
+        func visit(_ span: InlineSpan) -> Bool {
+            if case .inlineMath = span.kind { return true }
+            return span.children.contains(where: visit)
+        }
+        return cell.inlines.contains(where: visit)
     }
 }
 
@@ -105,6 +176,16 @@ struct TableLayout {
         let cellText: [[String]] = data.rows.map { row in
             row.cells.prefix(columns).map { TableCellPresentation.plainText(for: $0, in: storage) }
         }
+        // Every width and height below measures what the row draws.  Only a
+        // cell holding math differs from its text, and a table without math
+        // measures exactly as before.
+        let hasMath = data.rows.contains { $0.cells.prefix(columns).contains(where: TableCellPresentation.containsMath) }
+        let cellContent = Cells(text: cellText, typeset: hasMath ? data.rows.map { row in
+            row.cells.prefix(columns).map { cell in
+                TableCellPresentation.containsMath(cell)
+                    ? TableCellPresentation.attributedContent(for: cell, in: storage, styleSheet: style) : nil
+            }
+        } : nil)
 
         let gaps = RenderMetrics.tableColumnGap * CGFloat(columns - 1)
         // Tables are drawn inside the existing text container. A table may
@@ -114,7 +195,7 @@ struct TableLayout {
         let floor = min(28, available / CGFloat(columns))
 
         var scale: CGFloat = 1
-        var demand = columnDemand(rows: data.rows, cellText: cellText, columns: columns,
+        var demand = columnDemand(rows: data.rows, content: cellContent, columns: columns,
                                   style: style, scale: scale)
         var widths = demand.minimums.map { max(floor, $0) }
         // Label or prose is a property of the cell, not of the size it is being
@@ -148,7 +229,7 @@ struct TableLayout {
             var sizes = [max(estimate, smallest), smallest].filter { $0 < body }
             if sizes.count == 2, sizes[0] == sizes[1] { sizes.removeLast() }
             for size in sizes {
-                let tighter = columnDemand(rows: data.rows, cellText: cellText, columns: columns,
+                let tighter = columnDemand(rows: data.rows, content: cellContent, columns: columns,
                                            style: style, scale: size / body, prose: prose)
                 let tighterWidths = tighter.minimums.map { max(floor, $0) }
                 // Smaller type earns its place by saving the columns.  Failing
@@ -209,7 +290,7 @@ struct TableLayout {
         // whenever there are labels to stack under.  Checked only when the table
         // was degraded, so a table that simply fits pays nothing for it.
         if degraded, !isStacked, canStack,
-           !fitsWithoutClipping(rows: data.rows, cellText: cellText, widths: widths,
+           !fitsWithoutClipping(rows: data.rows, content: cellContent, widths: widths,
                                 style: style, scale: scale) {
             isStacked = true
             widths = [CGFloat](repeating: available / CGFloat(columns), count: columns)
@@ -238,11 +319,16 @@ struct TableLayout {
                 let cellsHeight = cellText[rowIndex].enumerated()
                     .reduce(CGFloat.zero) { partial, entry in
                         let hasLabel = entry.offset < labels.count && labels[entry.offset] != nil
+                        let valueWidth = stackedField(hasLabel: hasLabel,
+                                                      labelWidth: stackedLabelWidth,
+                                                      in: width).valueWidth
+                        if let typeset = cellContent.content(rowIndex, entry.offset) {
+                            return partial + stackedCellHeight(typeset: typeset, width: valueWidth,
+                                                               font: style.bodyFont(), style: style)
+                        }
                         return partial + stackedCellHeight(
                             value: entry.element,
-                            width: stackedField(hasLabel: hasLabel,
-                                                labelWidth: stackedLabelWidth,
-                                                in: width).valueWidth,
+                            width: valueWidth,
                             font: style.bodyFont(),
                             style: style
                         )
@@ -254,10 +340,10 @@ struct TableLayout {
                 continue
             }
             var lines: CGFloat = 1
-            for (index, value) in cellText[rowIndex].enumerated() where index < widths.count {
-                let rect = (value as NSString).boundingRect(
-                    with: CGSize(width: widths[index], height: style.lineHeight * 3),
-                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+            for index in cellText[rowIndex].indices where index < widths.count {
+                let rect = cellContent.boundingRect(
+                    rowIndex, index,
+                    size: CGSize(width: widths[index], height: style.lineHeight * 3),
                     attributes: row.isHeader ? headerAttributes : cellAttributes
                 )
                 lines = max(lines, min(3, ceil(rect.height / max(1, style.lineHeight))))
@@ -320,6 +406,41 @@ struct TableLayout {
         return [.font: label.font, .kern: label.kern]
     }
 
+    /// Cell text for measuring, plus the typeset content of cells holding
+    /// math.  A plain cell measures its string under the cell font, exactly
+    /// as tables always have; a math cell keeps its formula attachments so it
+    /// measures at its drawn size.
+    struct Cells {
+        let text: [[String]]
+        let typeset: [[NSAttributedString?]]?
+
+        func content(_ row: Int, _ column: Int) -> NSAttributedString? {
+            guard let typeset, row < typeset.count, column < typeset[row].count else { return nil }
+            return typeset[row][column]
+        }
+
+        /// The plain path is the original `NSString` measurement, unchanged.
+        func boundingRect(_ row: Int, _ column: Int, size: CGSize,
+                          attributes: [NSAttributedString.Key: Any]) -> CGRect {
+            let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+            guard let content = content(row, column) else {
+                return (text[row][column] as NSString).boundingRect(with: size, options: options, attributes: attributes)
+            }
+            return TableLayout.measurable(content, attributes: attributes).boundingRect(with: size, options: options)
+        }
+    }
+
+    static func measurable(
+        _ content: NSAttributedString, attributes: [NSAttributedString.Key: Any]
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: content.string, attributes: attributes)
+        content.enumerateAttribute(.attachment, in: NSRange(location: 0, length: content.length),
+                                   options: []) { value, range, _ in
+            if let value { result.addAttribute(.attachment, value: value, range: range) }
+        }
+        return result
+    }
+
     /// `prose` is the verdict taken by the body-size pass; passing it back in is
     /// what keeps the ladder monotonic.  Deciding per trial size instead let a
     /// cell that had just dropped under the threshold stop counting its longest
@@ -328,7 +449,7 @@ struct TableLayout {
     /// the ladder skipped the gentle rung that would have saved the columns.
     static func columnDemand(
         rows: [TableRow],
-        cellText: [[String]],
+        content cells: Cells,
         columns: Int,
         style: StyleSheet,
         scale: CGFloat,
@@ -339,6 +460,7 @@ struct TableLayout {
         var minimums = [CGFloat](repeating: 0, count: columns)
         // Verdicts are shaped like `cellText`, and the ladder hands back the ones
         // the body-size pass took, so both passes index them the same way.
+        let cellText = cells.text
         var verdicts = prose ?? cellText.map { [Bool](repeating: false, count: $0.count) }
         let decide = prose == nil
         let proseWidth = style.averageCharacterWidth * proseCharacters
@@ -347,10 +469,11 @@ struct TableLayout {
         for (rowIndex, row) in rows.enumerated() where rowIndex < cellText.count {
             let attributes = row.isHeader ? headerAttributes : cellAttributes
             for (index, text) in cellText[rowIndex].enumerated() where index < columns {
+                let typeset = cells.content(rowIndex, index).map { measurable($0, attributes: attributes) }
                 // Core Text's fractional advance is not a safe clipping width.
                 // Column separation is accounted for separately below.
                 let measured = ceil(
-                    NSAttributedString(string: text, attributes: attributes).size().width
+                    (typeset ?? NSAttributedString(string: text, attributes: attributes)).size().width
                 ) + measurementSafety
                 natural[index] = max(natural[index], measured)
                 let hasVerdict = rowIndex < verdicts.count && index < verdicts[rowIndex].count
@@ -361,13 +484,20 @@ struct TableLayout {
                 }
                 // Only prose pays for the token scan: a table of labels is the
                 // common case and it is on the keystroke path (§12).
-                let longestToken = text
-                    .split(whereSeparator: \.isWhitespace)
-                    .map {
-                        ceil(NSAttributedString(string: String($0), attributes: attributes).size().width)
-                            + measurementSafety
-                    }
-                    .max() ?? 0
+                let longestToken: CGFloat
+                if let typeset {
+                    longestToken = tokenRanges(in: typeset.string)
+                        .map { ceil(typeset.attributedSubstring(from: $0).size().width) + measurementSafety }
+                        .max() ?? 0
+                } else {
+                    longestToken = text
+                        .split(whereSeparator: \.isWhitespace)
+                        .map {
+                            ceil(NSAttributedString(string: String($0), attributes: attributes).size().width)
+                                + measurementSafety
+                        }
+                        .max() ?? 0
+                }
                 minimums[index] = max(minimums[index], longestToken)
             }
         }
@@ -393,21 +523,38 @@ struct TableLayout {
         style: StyleSheet,
         scale: CGFloat
     ) -> Bool {
+        fitsWithoutClipping(rows: rows, content: Cells(text: cellText, typeset: nil),
+                            widths: widths, style: style, scale: scale)
+    }
+
+    static func fitsWithoutClipping(
+        rows: [TableRow],
+        content cells: Cells,
+        widths: [CGFloat],
+        style: StyleSheet,
+        scale: CGFloat
+    ) -> Bool {
         let cap = style.lineHeight * 3 + 0.5
         let cellAttributes: [NSAttributedString.Key: Any] = [.font: bodyFont(style: style, scale: scale)]
         let headerAttributes = self.headerAttributes(style: style, scale: scale)
-        for (rowIndex, row) in rows.enumerated() where rowIndex < cellText.count {
-            for (index, value) in cellText[rowIndex].enumerated()
+        for (rowIndex, row) in rows.enumerated() where rowIndex < cells.text.count {
+            for (index, value) in cells.text[rowIndex].enumerated()
             where index < widths.count && !value.isEmpty {
-                let rect = (value as NSString).boundingRect(
-                    with: CGSize(width: widths[index], height: .greatestFiniteMagnitude),
-                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                let rect = cells.boundingRect(
+                    rowIndex, index,
+                    size: CGSize(width: widths[index], height: .greatestFiniteMagnitude),
                     attributes: row.isHeader ? headerAttributes : cellAttributes
                 )
                 if rect.height > cap { return false }
             }
         }
         return true
+    }
+
+    /// The same whitespace-separated words the plain-text scan used, as ranges
+    /// into the measurable string so a formula keeps its typeset width.
+    private static func tokenRanges(in string: String) -> [NSRange] {
+        string.split(whereSeparator: \.isWhitespace).map { NSRange($0.startIndex..<$0.endIndex, in: string) }
     }
 
     private static func squeezed(_ widths: [CGFloat], into available: CGFloat, floor: CGFloat) -> [CGFloat] {
@@ -490,6 +637,21 @@ struct TableLayout {
             with: CGSize(width: width, height: style.lineHeight * 4),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font]
+        )
+        let lines = min(CGFloat(4), max(1, ceil(rect.height / max(1, style.lineHeight))))
+        return lines * style.lineHeight + style.baselineGrid
+    }
+
+    /// A math cell's height, from its typeset content under the cell font.
+    static func stackedCellHeight(
+        typeset content: NSAttributedString,
+        width: CGFloat,
+        font: NSFont,
+        style: StyleSheet
+    ) -> CGFloat {
+        let rect = measurable(content, attributes: [.font: font]).boundingRect(
+            with: CGSize(width: width, height: style.lineHeight * 4),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         let lines = min(CGFloat(4), max(1, ceil(rect.height / max(1, style.lineHeight))))
         return lines * style.lineHeight + style.baselineGrid
@@ -597,7 +759,7 @@ final class TableRowFragment: DownrightFragment {
         for (index, cell) in row.cells.enumerated() where index < layout.columnX.count {
             let source: NSAttributedString
             if let storage = context?.storage {
-                source = TableCellPresentation.attributedContent(for: cell, in: storage)
+                source = TableCellPresentation.attributedContent(for: cell, in: storage, styleSheet: style)
             } else {
                 source = NSAttributedString()
             }
@@ -713,15 +875,13 @@ final class TableRowFragment: DownrightFragment {
             let valueX = frame.minX + field.valueOffset
             let valueWidth = field.valueWidth
             let value = NSMutableAttributedString(
-                attributedString: TableCellPresentation.attributedContent(for: cell, in: storage)
+                attributedString: TableCellPresentation.attributedContent(for: cell, in: storage, styleSheet: style)
             )
-            let valueString = value.string
-            let cellHeight = TableLayout.stackedCellHeight(
-                value: valueString,
-                width: valueWidth,
-                font: style.bodyFont(),
-                style: style
-            )
+            let cellHeight = TableCellPresentation.containsMath(cell)
+                ? TableLayout.stackedCellHeight(typeset: value, width: valueWidth,
+                                                font: style.bodyFont(), style: style)
+                : TableLayout.stackedCellHeight(value: value.string, width: valueWidth,
+                                                font: style.bodyFont(), style: style)
 
             // Same rule as the wide layout: the author's casing is the label.
             // A missing one is left out rather than filled in with `Column 3`,
