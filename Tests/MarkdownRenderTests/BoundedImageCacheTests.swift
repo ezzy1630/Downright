@@ -1,5 +1,7 @@
 import AppKit
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 
 @testable import MarkdownRender
 
@@ -88,6 +90,59 @@ struct BoundedImageCacheTests {
         #expect(loaded != nil)
         // The decode is now cached under the same identity the draw path uses.
         #expect(cache.cachedImage(for: url, maxPixelDimension: 16) != nil)
+    }
+
+    @Test("JPEG layout uses full oriented dimensions with a bounded bitmap", arguments: [
+        (.up, false), (.upMirrored, false), (.down, false), (.downMirrored, false),
+        (.leftMirrored, true), (.right, true), (.rightMirrored, true), (.left, true),
+        (nil, false),
+    ] as [(CGImagePropertyOrientation?, Bool)])
+    func jpegLayoutMatchesOrientation(orientation: CGImagePropertyOrientation?, swapsAxes: Bool) async throws {
+        let data = try makeJPEG(orientation: orientation)
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        try #require(properties[kCGImagePropertyPixelWidth] as? Int == 320)
+        try #require(properties[kCGImagePropertyPixelHeight] as? Int == 120)
+        if let orientation {
+            try #require(properties[kCGImagePropertyOrientation] as? UInt32 == orientation.rawValue)
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("downright-image-cache-\(UUID().uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try data.write(to: url)
+
+        let cache = ImageRenderCache()
+        let loaded = await withCheckedContinuation { continuation in
+            cache.loadImageAsync(for: url, maxPixelDimension: 160) { image in
+                continuation.resume(returning: image)
+            }
+        }
+        let image = try #require(loaded)
+        let cached = try #require(cache.cachedImage(for: url, maxPixelDimension: 160))
+        let bitmap = try #require(cached.representations.first as? NSBitmapImageRep)
+        let naturalSize = swapsAxes ? CGSize(width: 120, height: 320) : CGSize(width: 320, height: 120)
+        let thumbnailSize = swapsAxes ? CGSize(width: 60, height: 160) : CGSize(width: 160, height: 60)
+        #expect(image.size == naturalSize)
+        #expect(cache.cachedSize(for: url) == naturalSize)
+        #expect(cached.size == naturalSize)
+        #expect(bitmap.size == naturalSize)
+        #expect(CGSize(width: bitmap.pixelsWide, height: bitmap.pixelsHigh) == thumbnailSize)
+    }
+
+    private func makeJPEG(orientation: CGImagePropertyOrientation?) throws -> Data {
+        let context = try #require(CGContext(
+            data: nil, width: 320, height: 120, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 320, height: 120))
+        let image = try #require(context.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil))
+        let properties: [CFString: Any] = orientation.map { [kCGImagePropertyOrientation: $0.rawValue] } ?? [:]
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        try #require(CGImageDestinationFinalize(destination))
+        return data as Data
     }
 
     @Test("concurrent requests for one image share the load and both complete")

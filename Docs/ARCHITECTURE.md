@@ -466,9 +466,10 @@ column width, including in wide documents. Offscreen TextKit rendering surfaces
 do not request pixels until their picture intersects the view's viewport. Local
 decode failures become missing-image presentations and can recover on a later
 draw after the file is repaired.
-Local raster images retain an explicit thumbnail bitmap representation alongside
-their natural layout size, so cache admission counts decoded pixels rather than
-the original source dimensions.
+Local raster images use their full orientation-corrected dimensions for layout.
+If either source dimension is unavailable or invalid, layout uses both dimensions
+of the transformed thumbnail. The explicit thumbnail bitmap representation keeps
+cache admission based on decoded pixels.
 
 The renderer never makes network requests. View > Load Remote Images installs
 a host-owned loader for the current Mac document; opening another file revokes

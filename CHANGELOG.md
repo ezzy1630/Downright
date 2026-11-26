@@ -12,6 +12,12 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-11-26
+
+### Fixed
+
+- Local photos with rotation metadata keep the correct proportions in the document.
+
 ## [1.0.25] - 2026-11-22
 
 ### Fixed
