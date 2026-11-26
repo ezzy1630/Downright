@@ -158,9 +158,10 @@ steps: it signs every nested executable individually (Sparkle framework and its
 XPC helpers, the Spotlight importer, both Quick Look extensions, the `down` CLI, then the host — never
 `codesign --deep`), verifies each, notarises with `notarytool`, staples, and
 runs the `codesign`/`spctl`/`stapler validate` battery. Set `NO_NOTARIZE=1` to
-sign with a real identity without submitting, and `MAKE_DMG=1` to additionally
-notarise and staple the DMG. Credentials come from either a stored
-`notarytool` keychain profile or the App Store Connect API key variables.
+sign and verify only the app. For a full manual release, set `MAKE_DMG=1` to
+also build, sign, notarise, staple, and verify the DMG. Credentials come from
+either a stored `notarytool` keychain profile or the App Store Connect API key
+variables.
 
 The GitHub Actions pipeline (`.github/workflows/release.yml`) is the supported
 path for the production channel: explicitly dispatch `release.yml` on `main`.
@@ -175,8 +176,9 @@ configuration-specific cache. Only then can the reviewed commit become the
 newest customer-facing build. See [CI.md](CI.md) for logs, cache provenance and coverage boundaries. Feature branches can run
 CI manually with `workflow_dispatch` and do not publish. The pipeline signs every nested executable
 individually (no `codesign --deep`), notarises with the App Store Connect API key, staples, runs
-`codesign --verify --deep --strict` / `spctl` / `stapler validate`, publishes
-the GitHub Release, and deploys the appcast to GitHub Pages.
+`codesign --verify --deep --strict` / `spctl` / `stapler validate` on the app,
+and signs and notarises the DMG before publishing the GitHub Release and deploying
+the appcast to GitHub Pages.
 
 ## One-line release installers
 
@@ -252,11 +254,11 @@ the exact 720×450 Finder canvas so the cute lettering and drag gesture stay
 aligned with the icons, and persists the icon positions plus `/Applications`
 alias when Finder is available. Set `DMG_LAYOUT=0` for a headless/default-window
 package; the image remains a valid drag installer either way.
-Run it on the *signed and notarised* app. Gatekeeper trusts the ticket stapled
-inside the app, and the release workflow additionally notarises and staples the
-DMG itself so users can run straight from the image. The DMG is a convenience
-for humans; **Sparkle's update archives are always the zip**, so the DMG is
-never part of the update feed.
+For distribution, run it on the signed and notarised app. Both release paths
+sign the finished read-only DMG with the same Developer ID Application identity,
+a secure timestamp, and the identifier `com.ezzy.downright.dmg`. After notarising
+and stapling the image, both paths verify its signature against the app's team
+and validate the stapled ticket. Sparkle uses the zip for updates.
 
 ### How the appcast is built
 
@@ -381,8 +383,8 @@ tag and unique versioned asset names. The `latest` GitHub Release alias and
 tags remain available for milestone references but are not required for routine
 publishing.
 
-For a release that must not go through CI, the manual path is
-`bundle-xcode-app.sh` → `sign-and-notarize.sh` → `make-dmg.sh` above; run
+For a manual release, run `bundle-xcode-app.sh` and then
+`MAKE_DMG=1 Scripts/sign-and-notarize.sh` with the credentials above. Run
 `Scripts/verify-bundle.sh Downright.app --production` before distributing.
 
 ## Update failure policy

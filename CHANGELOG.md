@@ -12,6 +12,12 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-11-26
+
+### Fixed
+
+- The Downright disk image is now signed so macOS can verify the download itself.
+
 ## [1.0.26] - 2026-11-26
 
 ### Fixed
