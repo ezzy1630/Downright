@@ -12,12 +12,16 @@ every release; Sparkle orders updates by it.
 
 ## [Unreleased]
 
+## [1.0.28]
+
 ### Added
 
 - Simplified Chinese (`zh-Hans`) localization for the macOS app and Quick Look
   preview extension, including menus, settings, panels, alerts, and bilingual
   Command Palette search. Downright follows the macOS language by default and
   adds an explicit language selector in Settings → General → Language.
+- Thanks to [@DHKun](https://github.com/DHKun) for the translation and
+  localization work.
 
 ## [1.0.27] - 2026-11-26
 
