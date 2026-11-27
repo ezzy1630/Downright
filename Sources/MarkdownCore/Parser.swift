@@ -591,7 +591,11 @@ struct BlockBuilder {
             guard let cell = child as? Markdown.Table.Cell,
                   let range = map.range(cell.range, lineOffset: lineOffset)
             else { return nil }
-            let spans = inlines.spans(for: cell, bounds: range)
+            var spans = inlines.spans(for: cell, bounds: range)
+            if runExtensions, options.detectMath,
+               let math = MathScanner.breakPaddedCellMath(spans, in: text) {
+                spans = [math]
+            }
             let content = spans.isEmpty
                 ? emptyCellContentRange(in: range)
                 : NSRange(

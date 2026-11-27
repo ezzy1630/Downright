@@ -19,6 +19,42 @@ every release; Sparkle orders updates by it.
   Command Palette search. Downright follows the macOS language by default and
   adds an explicit language selector in Settings → General → Language.
 
+## [1.0.27] - 2026-11-26
+
+### Fixed
+
+- The Downright disk image is now signed so macOS can verify the download itself.
+
+## [1.0.26] - 2026-11-26
+
+### Fixed
+
+- Local photos with rotation metadata keep the correct proportions in the document.
+
+## [1.0.25] - 2026-11-22
+
+### Fixed
+
+- Display math written across line breaks in a table cell, as
+  `$$ <br> … <br> $$`, is typeset instead of showing its LaTeX and the `<br>`
+  tags. Only a cell holding exactly one such formula changes.
+- `\underbrace{…}_{…}` draws a brace under its expression with the label
+  centred below it, instead of the "Formula could not be typeset" box.
+- The Front Matter editor keeps the Add Field controls on separate rows in
+  short windows. The field list scrolls to make room.
+- Block math stays sharp on Retina displays instead of drawing at half
+  resolution.
+- Tables and diagrams show their Markdown when you click or arrow into them.
+  When the caret leaves a table, diagram, image or front matter, it returns to
+  its rendered form immediately, including after switching back from Source
+  Focus. Clicking an image opens it. Option-clicking reveals its Markdown.
+  ([#68](https://github.com/ezzy1630/Downright/issues/68))
+- Math inside table cells is typeset like math in a paragraph, in both the
+  column and the stacked table layouts, instead of showing its LaTeX. Rows and
+  columns size to the formula. A formula Downright can't typeset still shows
+  its LaTeX, and so does a formula in a column heading when a narrow table
+  shows its headings as field labels.
+
 ## [1.0.24] - 2026-11-18
 
 ### Added

@@ -22,8 +22,8 @@
 #     or the three APPLE_API_* vars below (App Store Connect API key)
 #
 # Optional env:
-#   MAKE_DMG=1      also build Downright-<version>.dmg and notarize+staple it
-#   NO_NOTARIZE=1   sign and verify only (real identity, no notary step)
+#   MAKE_DMG=1      also build, sign, notarize, and staple Downright-<version>.dmg
+#   NO_NOTARIZE=1   sign and verify the app only (real identity, no notary step)
 #
 # Example:
 #   IDENTITY="Developer ID Application: Jane Doe (TEAMID12345)" \
@@ -139,11 +139,18 @@ rm -f "$ZIP"
 ditto -c -k --keepParent --sequesterRsrc "$APP" "$ZIP"
 
 if [ "${MAKE_DMG:-0}" = "1" ]; then
-    echo "==> Building and notarizing the DMG"
+    echo "==> Building, signing, and notarizing the DMG"
+    TEAM_ID="$(codesign --display --verbose=4 "$APP" 2>&1 | sed -n 's/^TeamIdentifier=\([A-Z0-9]\{10\}\)$/\1/p')"
+    : "${TEAM_ID:?missing Developer ID team on signed app}"
+    DMG_IDENTIFIER=com.ezzy.downright.dmg
     DMG="$ROOT/dist/Downright-$MARKETING_VERSION.dmg"
     OUT_DIR="$ROOT/dist" Scripts/make-dmg.sh "$APP"
+    codesign --sign "$IDENTITY" --timestamp --identifier "$DMG_IDENTIFIER" "$DMG"
     xcrun notarytool submit "$DMG" "${NOTARY[@]}" --wait --timeout 20m
     xcrun stapler staple "$DMG"
+    codesign --verify --strict --verbose=2 \
+        -R="identifier \"$DMG_IDENTIFIER\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$TEAM_ID\"" \
+        "$DMG"
     xcrun stapler validate "$DMG"
 fi
 

@@ -626,6 +626,58 @@ final class DownrightActivatedAppTests: XCTestCase {
         XCTAssertTrue(survivingValue?.contains("!") == true)
     }
 
+    /// Reddit report: with Find open and Tasks mounted, the Front Matter
+    /// panel drew its new-field type popup over its Add Field button. The
+    /// SwiftPM geometry test cannot capture native controls over glass, so this
+    /// drives the packaged app with real input and keeps a screen capture.
+    func testFrontMatterAddFormStaysUsableOverTasksAndFind() throws {
+        let original = Data("---\nkind: notes\nupdated: 2026-01-01\n---\n\n# Notes\n\n- [ ] First task\n- [ ] Second task\n".utf8)
+        try original.write(to: fixture)
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.textViews["Document editor"].waitForExistence(timeout: 15))
+
+        app.typeKey("f", modifierFlags: .command)
+        app.typeKey("3", modifierFlags: [.command, .option, .shift])
+        let documentMenu = app.menuBars.menuBarItems["Document"]
+        XCTAssertTrue(documentMenu.waitForExistence(timeout: 10), "the Document menu was not built")
+        documentMenu.click()
+        let frontMatter = app.menuItems["Front Matter"]
+        XCTAssertTrue(frontMatter.waitForExistence(timeout: 10), "the Front Matter command is missing")
+        frontMatter.click()
+
+        // The floating panel is its own child window in the AX tree.
+        let type = app.popUpButtons["New field type"]
+        let addField = app.buttons["Add front matter field"]
+        XCTAssertTrue(type.waitForExistence(timeout: 10), app.windows.debugDescription)
+        XCTAssertTrue(addField.waitForExistence(timeout: 10), app.windows.debugDescription)
+
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        capture.name = "Front Matter over Tasks with Find"
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        let typeFrame = type.frame, addFrame = addField.frame
+        XCTAssertGreaterThan(typeFrame.height, 0)
+        XCTAssertGreaterThan(addFrame.height, 0)
+        XCTAssertFalse(typeFrame.insetBy(dx: 0.5, dy: 0.5).intersects(addFrame.insetBy(dx: 0.5, dy: 0.5)),
+                       "type \(typeFrame) overlaps Add Field \(addFrame)")
+        XCTAssertTrue(typeFrame.minY >= addFrame.maxY - 0.5 || addFrame.minY >= typeFrame.maxY - 0.5,
+                      "type \(typeFrame) and Add Field \(addFrame) share a row")
+        XCTAssertTrue(type.isHittable, "the type popup is covered: \(typeFrame)")
+        XCTAssertTrue(addField.isHittable, "Add Field is covered: \(addFrame)")
+        // Real pointer input reaches each control on its own.
+        type.click()
+        let menu = app.menuItems["Boolean"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "clicking the type popup did not open its menu")
+        app.typeKey(.escape, modifierFlags: [])
+        addField.hover()
+        XCTAssertTrue(addField.isHittable)
+        XCTAssertEqual(try Data(contentsOf: fixture), original)
+    }
+
     /// Release-only smoke coverage for the path that previously crashed:
     /// launch a production-configured app built as an older version, invoke
     /// the real menu command, let Sparkle drive the custom panel through its

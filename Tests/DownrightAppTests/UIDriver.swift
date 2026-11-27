@@ -209,7 +209,11 @@ final class UIDriver {
                 .map { URL(fileURLWithPath: $0, isDirectory: true) }
                 ?? FileManager.default.temporaryDirectory.appendingPathComponent("downright-ui-failures", isDirectory: true)
             try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
-            let url = artifacts.appendingPathComponent("\(test)-\(UUID()).png")
+            // `#function` names a parameterized test `name(_:)`; CI's artifact
+            // upload rejects `:` and its other reserved path characters.
+            let reserved = CharacterSet(charactersIn: "\":<>|*?\\/\r\n")
+            let name = String(test.unicodeScalars.map { reserved.contains($0) ? "-" : Character($0) })
+            let url = artifacts.appendingPathComponent("\(name)-\(UUID()).png")
             try snapshot().write(to: url)
             failureSnapshot = url
             print("Downright UI failure snapshot: \(url.path)")

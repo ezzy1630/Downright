@@ -57,6 +57,26 @@ enum ContentResizePolicy {
     }
 }
 
+/// The block object a Live caret has swapped to source.  Identity is the kind
+/// and start offset: an edit inside a table keeps its start while the range
+/// grows, and that must not count as leaving and re-entering it.
+struct CaretRevealedObject: Equatable {
+    let kind: FragmentKind
+    let range: NSRange
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.kind == rhs.kind && lhs.range.location == rhs.range.location
+    }
+
+    /// The rule `FragmentContext.isCaretInside` applies to a caret, extended
+    /// to a selection the way display math treats one: it must lie within.
+    func keepsReveal(for selection: NSRange) -> Bool {
+        selection.length == 0
+            ? selection.location > range.location && selection.location < range.upperBound
+            : selection.location >= range.location && selection.upperBound <= range.upperBound
+    }
+}
+
 /// One text surface with an editable document view and explicit source view.
 ///
 /// Not a viewer with an edit button and not an editor with a preview pane: a
@@ -913,6 +933,7 @@ public final class MarkdownTextView: NSTextView {
         fragmentContext.sourceFocusRange = sourceFocus.range
         fragmentContext.caret = source.fragmentContext.caret
         fragmentContext.mathSourcePayload = source.fragmentContext.mathSourcePayload
+        fragmentContext.caretRevealedObject = source.fragmentContext.caretRevealedObject
         fragmentContext.elision = source.fragmentContext.elision
         fragmentContext.cueElision = source.fragmentContext.cueElision
         fragmentContext.collapseOverrides = codeCollapseOverrides
@@ -2174,19 +2195,27 @@ public final class MarkdownTextView: NSTextView {
         let previousMathSource = fragmentContext.mathSourcePayload
         fragmentContext.mathSourcePayload = mode == .live ? mathPayload(for: selection, kind: .blockMath) : nil
         let currentMathSource = fragmentContext.mathSourcePayload
+        // Tables, diagrams, image lines and front matter have no hidden-marker
+        // substitutions, so the display-map diff below cannot see the caret
+        // cross their edge; this tracked reveal does, and `FragmentProvider`
+        // draws from it.  A full refresh records it without invalidating: that
+        // pass already rebuilds every fragment.
+        let previousObject = fragmentContext.caretRevealedObject
+        fragmentContext.caretRevealedObject = mode == .live
+            ? revealedObject(caret: fragmentContext.caret, selection: selection, previous: previousObject) : nil
+        let currentObject = fragmentContext.caretRevealedObject
         defer {
-            // Math fragments change even when the display map is identical.
-            // Invalidate the whole formula so multiline fences switch together.
+            // Math and block-object fragments change even when the display map
+            // is identical.  Invalidate the whole object so every physical line
+            // of a multiline fence or table switches together.
+            var objectRanges: [NSRange] = []
             if !fullRefresh, previousMathSource !== currentMathSource {
-                for payload in [previousMathSource, currentMathSource].compactMap({ $0 }) {
-                    guard let range = clampToStorage(payload.sourceRange) else { continue }
-                    contentStorage.performEditingTransaction {
-                        contentStorage.invalidateElements(in: range)
-                        textStorage?.edited(.editedAttributes, range: range, changeInLength: 0)
-                    }
-                    invalidateFragments(in: range, includingRendering: true)
-                }
+                objectRanges += [previousMathSource, currentMathSource].compactMap { $0?.sourceRange }
             }
+            if !fullRefresh, previousObject != currentObject {
+                objectRanges += [previousObject, currentObject].compactMap { $0?.range }
+            }
+            for objectRange in objectRanges { invalidateObjectFragments(objectRange) }
         }
         var hidden = baseHiddenRanges
         var revealedForAttributes: [NSRange] = []
@@ -2369,6 +2398,64 @@ public final class MarkdownTextView: NSTextView {
             return selection.location > math.location && selection.location < math.upperBound ? payload : nil
         }
         return selection.location >= math.location && selection.upperBound <= math.upperBound ? payload : nil
+    }
+
+    /// Rebuilds every physical line of one object, so a table, fence or front
+    /// matter block switches between source and rendered as a whole.
+    private func invalidateObjectFragments(_ objectRange: NSRange) {
+        guard let range = clampToStorage(objectRange) else { return }
+        contentStorage.performEditingTransaction {
+            contentStorage.invalidateElements(in: range)
+            textStorage?.edited(.editedAttributes, range: range, changeInLength: 0)
+        }
+        invalidateFragments(in: range, includingRendering: true)
+    }
+
+    /// Palette, Lens and review navigation, history and document replacement
+    /// set the selection without a caret presentation, which deliberately leaves the destination
+    /// unrevealed.  They must still retire an object the previous caret had
+    /// swapped to source, or it stays stuck as Markdown with the caret gone.
+    /// Never reveals anything; a real caret gesture still does that.
+    private func retireObjectReveal(leftBy selection: NSRange) {
+        guard !isPerformingSourceEdit, let object = fragmentContext.caretRevealedObject,
+              !object.keepsReveal(for: selection) else { return }
+        // Clear the caret too, or the next parse commit re-reveals the object
+        // from the stale offset.  It feeds only object reveal.
+        fragmentContext.caret = nil
+        fragmentContext.caretRevealedObject = nil
+        invalidateObjectFragments(object.range)
+    }
+
+    /// The block object `FragmentProvider` draws as source for this caret.
+    /// Resolved per paragraph exactly as the provider does, so an inline
+    /// payload inside the object (math in a table cell) cannot hide it.
+    private func revealedObject(
+        caret: Int?, selection: NSRange?, previous: CaretRevealedObject?
+    ) -> CaretRevealedObject? {
+        guard let caret else {
+            // A selection is observation, not edit intent: it never reveals
+            // an object, and never hides the one it was made inside.
+            guard let previous, let selection, selection.length > 0,
+                  previous.keepsReveal(for: selection) else { return nil }
+            return previous
+        }
+        guard let storage = textStorage, caret < storage.length else { return nil }
+        // The index can trail the storage for one pass during an edit.
+        let paragraph = NSIntersectionRange(paragraphIndex.paragraphRange(containing: caret),
+                                            NSRange(location: 0, length: storage.length))
+        guard paragraph.length > 0,
+              let payload = FragmentProvider.payload(in: storage, paragraph: paragraph) else { return nil }
+        switch payload.kind {
+        case .table, .mermaid, .plantUML, .image, .frontMatter:
+            break
+        default:
+            // Display math keeps its selection-aware reveal above; code,
+            // callouts and the rest never swap to source on the caret.
+            return nil
+        }
+        let object = CaretRevealedObject(kind: payload.kind, range: payload.sourceRange)
+        guard object.keepsReveal(for: NSRange(location: caret, length: 0)) else { return nil }
+        return object
     }
 
     /// `drHidden` mirrors the map so anything reading the storage (rich-text
@@ -2898,6 +2985,7 @@ public final class MarkdownTextView: NSTextView {
             let location = min(max(0, range.location), storage.length)
             return NSRange(location: location, length: min(max(0, range.length), storage.length - location))
         }
+        retireObjectReveal(leftBy: bounded[0])
         let converted = bounded.map { NSValue(range: displayMap.textKitRange(forSource: $0)) }
         // A non-empty range can start or end in hidden syntax, or project
         // entirely to one insertion point. Keep the source endpoints until

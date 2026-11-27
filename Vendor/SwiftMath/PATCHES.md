@@ -9,7 +9,7 @@
 | Copied from | `.build/checkouts/SwiftMath` at that tag, verbatim (minus `.git`) |
 
 Everything here is upstream source except the two items under **The patch**
-and the four under **Rendering patches**. Every patched line carries a
+and the five under **Rendering patches**. Every patched line carries a
 `Downright patch` comment; `grep -rn 'Downright patch' Vendor/SwiftMath/Sources`
 lists them.
 
@@ -102,9 +102,9 @@ Obsidian. Most of that is a different spelling of something SwiftMath already
 draws, and `Sources/MarkdownRender/Fragments/SwiftMathDialect.swift` handles
 it outside the package: it rewrites the string handed to SwiftMath and
 registers missing symbols through the public
-`MTMathAtomFactory.add(latexSymbol:value:)`. The four changes below are what
-cannot be done from outside. Each is a parser-level bug or gap, and none
-touches layout or fonts.
+`MTMathAtomFactory.add(latexSymbol:value:)`. The changes below are what
+cannot be done from outside. Patches 3–6 are parser-level bugs or gaps that
+touch no layout or fonts; patch 7 adds one layout construct.
 
 **3. Non-ASCII characters become atoms** (`MTMathAtomFactory.atom(forCharacter:)`).
 Upstream returns `nil` for any non-ASCII character outside a small accented
@@ -164,8 +164,29 @@ single-character command list omitted it, so `\&` failed as "Invalid command".
 
 (Comment lines omitted from the diff above; they are in the source.)
 
-`Tests/MarkdownRenderTests/MathDialectTests.swift` covers all four patches and
-the dialect. After an upstream update, a rendering patch that upstream now
+**7. `\underbrace{…}_{label}`** (`MTUnderBrace` in `MTMathList.swift`; the
+`underbrace` command in both `atomForCommand` sites; `copy()`;
+`mathListToString`; `makeUnderBrace`, `underBraceGlyph` and
+`assembledUnderBrace` in `MTTypesetter.swift`; one condition in
+`addLimitsToDisplay`). Upstream 1.7.3 has no `\underbrace`, so a formula
+using it fell back to its source. As in TeX it is an operator with limits:
+the nucleus is the argument over a centred U+23DF brace, and a following
+`_{…}` is set centred under the brace in every style, by the existing
+large-operator limits layout. The brace is the smallest horizontal variant
+as wide as the argument. Past the widest variant (4 em in Latin Modern) the
+brace is assembled by the existing `constructGlyphWithParts`. SwiftMath's
+plist has no horizontal assembly table, so the five parts are recorded from
+Latin Modern Math's OpenType MATH table: `uni23DF.lft`, `.ex`, `.md`, `.ex`,
+`.rt` with connector lengths 0/497, 994/994, 497/497, 994/994, 497/0 and
+advances 1002, 994, 2003, 994, 1001 font units. A font whose piece glyphs are
+missing or differently sized keeps the widest variant instead, and a font
+with no U+23DF draws the argument and its label without a brace; no path
+drops the argument. `\overbrace` is not added. iosMath 2.1's `MTMathStack` (MIT) was the design reference; no
+code is copied from it.
+
+`Tests/MarkdownRenderTests/MathDialectTests.swift` covers patches 3–6 and
+the dialect; `Tests/MarkdownRenderTests/ReportedMathConstructTests.swift`
+covers patch 7. After an upstream update, a rendering patch that upstream now
 covers can be dropped if that suite still passes. `SwiftMathDialect` registers
 a symbol only when SwiftMath lacks it, so upstream definitions take precedence
 automatically, with one deliberate exception: `\square` is always replaced,

@@ -161,3 +161,90 @@ enum MathScanner {
         ch == 0x20 || ch == 0x09 || ch == 0x0A || ch == 0x0D
     }
 }
+
+// MARK: - Display math in a table cell
+//
+// A table cell cannot hold a newline, so display math there is written
+// `$$ <br> expression <br> $$`. cmark makes each `<br>` inline HTML before
+// the math pass, which scans one text span at a time, so neither `$$` sees
+// its partner. Only a whole cell of exactly that shape is math: the breaks
+// must sit between the delimiters and the expression, the expression must be
+// plain text, and anything else (other HTML, code, a second formula) keeps
+// the cell as written.
+
+extension MathScanner {
+    /// One display-math span for a cell made only of `$$`, breaks, a plain
+    /// expression, breaks and `$$`; nil for any other cell. Linear in the
+    /// cell, and a plain cell leaves at the first check.
+    static func breakPaddedCellMath(_ spans: [InlineSpan], in text: NSString) -> InlineSpan? {
+        // `$$` text, a break, the expression, a break, `$$` text: five spans at least.
+        guard spans.count >= 5, let first = spans.first, let last = spans.last,
+              case .text = first.kind, case .text = last.kind,
+              spans.contains(where: { if case .inlineHTML = $0.kind { return true }; return false })
+        else { return nil }
+        let whole = NSRange(location: first.range.location,
+                            length: last.range.upperBound - first.range.location)
+        guard whole.length >= 6, whole.upperBound <= text.length,
+              text.character(at: whole.location) == 0x24, text.character(at: whole.location + 1) == 0x24,
+              text.character(at: whole.upperBound - 1) == 0x24, text.character(at: whole.upperBound - 2) == 0x24
+        else { return nil }
+
+        // cmark decides what is HTML; only a break may be, and only as padding.
+        var breaks: [NSRange] = []
+        for span in spans {
+            switch span.kind {
+            case .text: continue
+            case .inlineHTML where isLineBreakTag(text.substring(with: span.range)):
+                breaks.append(span.range)
+            default: return nil
+            }
+        }
+        func isBlank(_ offset: Int) -> Bool {
+            let ch = text.character(at: offset)
+            return ch == 0x20 || ch == 0x09
+        }
+        // Walk in from each `$$` over blanks and breaks; at least one break
+        // on each side, and the expression is what remains between them.
+        // `breaks` is in source order, so each side consumes it from its own
+        // end with an index: every break is looked at once.
+        var start = whole.location + 2
+        var leadingBreaks = 0
+        while start < whole.upperBound - 2 {
+            if isBlank(start) { start += 1 }
+            else if leadingBreaks < breaks.count, breaks[leadingBreaks].location == start {
+                start = breaks[leadingBreaks].upperBound
+                leadingBreaks += 1
+            } else { break }
+        }
+        var end = whole.upperBound - 2
+        var trailingBreaks = 0
+        while end > start {
+            let next = breaks.count - 1 - trailingBreaks
+            if isBlank(end - 1) { end -= 1 }
+            else if next >= leadingBreaks, breaks[next].upperBound == end {
+                end = breaks[next].location
+                trailingBreaks += 1
+            } else { break }
+        }
+        let body = NSRange(location: start, length: end - start)
+        guard leadingBreaks > 0, trailingBreaks > 0, body.length > 0,
+              breaks.allSatisfy({ NSIntersectionRange($0, body).length == 0 }),
+              text.range(of: "$$", options: .literal, range: body).location == NSNotFound
+        else { return nil }
+        return InlineSpan(
+            kind: .inlineMath(latexRange: body),
+            range: whole,
+            contentRange: body,
+            leadingMarkerRange: NSRange(location: whole.location, length: body.location - whole.location),
+            trailingMarkerRange: NSRange(location: body.upperBound, length: whole.upperBound - body.upperBound)
+        )
+    }
+
+    /// `<br>`, `<br/>` or `<br />`, in any case.
+    private static func isLineBreakTag(_ tag: String) -> Bool {
+        let lower = tag.lowercased()
+        guard lower.hasPrefix("<br"), lower.hasSuffix(">"), lower.count >= 4 else { return false }
+        let inside = lower.dropFirst(3).dropLast().trimmingCharacters(in: .whitespaces)
+        return inside.isEmpty || inside == "/"
+    }
+}

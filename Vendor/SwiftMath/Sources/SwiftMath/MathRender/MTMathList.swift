@@ -218,6 +218,8 @@ public class MTMathAtom: NSObject {
     public func copy() -> MTMathAtom {
         switch self.type {
             case .largeOperator:
+                // Downright patch (see PATCHES.md): keep the brace's argument.
+                if let brace = self as? MTUnderBrace { return MTUnderBrace(brace) }
                 return MTLargeOperator(self as? MTLargeOperator)
             case .fraction:
                 return MTFraction(self as? MTFraction)
@@ -442,6 +444,30 @@ public class MTLargeOperator: MTMathAtom {
     init(value: String, limits: Bool) {
         super.init(type: .largeOperator, value: value)
         self.limits = limits
+    }
+}
+
+// MARK: - MTUnderBrace
+/** Downright patch (see PATCHES.md): `\underbrace{…}`. As in TeX, an operator
+ whose nucleus is its argument over a stretched brace, so a following `_{…}`
+ is set centred under the brace as a limit. */
+public class MTUnderBrace: MTLargeOperator {
+    public var innerList: MTMathList?
+
+    override public var finalized: MTMathAtom {
+        let brace = super.finalized as! MTUnderBrace
+        brace.innerList = brace.innerList?.finalized
+        return brace
+    }
+
+    init(_ brace: MTUnderBrace?) {
+        super.init(brace)
+        self.innerList = MTMathList(brace?.innerList)
+    }
+
+    init(innerList: MTMathList?) {
+        super.init(value: "", limits: true)
+        self.innerList = innerList
     }
 }
 

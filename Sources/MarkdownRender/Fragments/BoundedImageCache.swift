@@ -154,7 +154,7 @@ enum MarkdownFragmentImageCaches {
 }
 
 /// Loads only the pixels needed by the image viewport.  The returned image
-/// keeps the source pixel dimensions as its point size so layout remains
+/// uses the full oriented source dimensions as its point size so layout remains
 /// stable even though its decoded representation is downsampled.
 ///
 /// Decoding is a background job.  The draw path may only call `cachedImage`,
@@ -310,8 +310,17 @@ final class ImageRenderCache {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        let naturalSize = CGSize(width: sourceWidth ?? CGFloat(cgImage.width),
-                                 height: sourceHeight ?? CGFloat(cgImage.height))
+        let naturalSize: CGSize
+        if let sourceWidth, let sourceHeight,
+           sourceWidth.isFinite, sourceHeight.isFinite, sourceWidth > 0, sourceHeight > 0 {
+            // EXIF orientations 5–8 swap axes when ImageIO transforms the thumbnail.
+            let orientation = properties?[kCGImagePropertyOrientation] as? Int ?? 1
+            naturalSize = (5...8).contains(orientation)
+                ? CGSize(width: sourceHeight, height: sourceWidth)
+                : CGSize(width: sourceWidth, height: sourceHeight)
+        } else {
+            naturalSize = CGSize(width: cgImage.width, height: cgImage.height)
+        }
         // NSImage(cgImage:size:) reports the natural canvas as its snapshot
         // representation's pixel size. Keep an explicit bitmap representation
         // so the cache charges for the thumbnail while layout keeps the source size.

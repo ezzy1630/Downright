@@ -232,9 +232,12 @@ final class InspectorHostView: NSView {
         return (views[selectedSection] as? FloatingContentMeasuring)?.prefersFullFloatingHeight ?? false
     }
 
-    func setContent(_ view: NSView, section: InspectorSection) {
+    /// `title` names the surface before the header is laid out, so a floating
+    /// body measured right after this already counts a command-named row.
+    func setContent(_ view: NSView, section: InspectorSection, title: String? = nil) {
         if let old = views[section], old !== view { old.removeFromSuperview() }
         views[section] = view
+        if let title { sectionTitles[section] = title }
         if let index = Self.switcherSections.firstIndex(of: section) {
             sectionControl.setEnabled(true, forSegment: index)
         }
@@ -276,6 +279,16 @@ final class InspectorHostView: NSView {
             contentHeight = 0
         }
         return max(0, headerFittingHeight + contentHeight)
+    }
+
+    /// The header plus the selected panel's declared minimum, or zero when
+    /// the panel declares none.
+    var floatingMinimumHeight: CGFloat {
+        guard let section = selectedSection,
+              let measured = views[section] as? FloatingContentMeasuring,
+              measured.minimumFloatingContentHeight > 0
+        else { return 0 }
+        return headerFittingHeight + measured.minimumFloatingContentHeight
     }
 
     private var headerFittingHeight: CGFloat {

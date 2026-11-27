@@ -601,7 +601,14 @@ class MTTypesetter {
                     }
                     self.addInterElementSpace(prevNode, currentType:atom.type)
                     let op = atom as! MTLargeOperator?
-                    let display = self.makeLargeOp(op)
+                    // Downright patch (see PATCHES.md): \underbrace has its own
+                    // nucleus; the large-operator path would draw its empty one.
+                    let display: MTDisplay?
+                    if let brace = op as? MTUnderBrace {
+                        display = self.makeUnderBrace(brace)
+                    } else {
+                        display = self.makeLargeOp(op)
+                    }
                     displayAtoms.append(display!)
                     
                 case .inner:
@@ -1322,7 +1329,9 @@ class MTTypesetter {
             currentPosition.x += display!.width
             return display;
         }
-        if op.limits && style == .display {
+        // Downright patch (see PATCHES.md): a brace's label goes under it in
+        // every style, as TeX's \underbrace is \mathop with \limits.
+        if op.limits && (style == .display || op is MTUnderBrace) {
             // make limits
             var superScript:MTMathListDisplay? = nil, subScript:MTMathListDisplay? = nil
             if op.superScript != nil {
@@ -1352,6 +1361,107 @@ class MTTypesetter {
         }
     }
     
+    // MARK: - Underbrace (Downright patch, see PATCHES.md)
+
+    /// The argument with a bottom curly bracket (U+23DF) under it, centred,
+    /// and any label under that. Never drops the argument: a font with no
+    /// brace glyph draws the argument and its label without the brace.
+    func makeUnderBrace(_ brace: MTUnderBrace) -> MTDisplay? {
+        // `createLineForMathList` unwraps its list; an absent argument is empty.
+        let argument = brace.innerList ?? MTMathList()
+        let base = MTTypesetter.createLineForMathList(argument, font: font, style: style, cramped: cramped)
+            ?? MTMathListDisplay(withDisplays: [], range: brace.indexRange)
+        var parts: [MTDisplay] = [base]
+        var width = base.width
+        if let glyph = underBraceGlyph(covering: base.width, range: brace.indexRange),
+           let table = styleFont.mathTable {
+            width = max(width, glyph.width)
+            glyph.position = CGPointMake((width - glyph.width) / 2,
+                                         -(base.descent + table.stretchStackGapBelowMin + glyph.ascent))
+            parts.append(glyph)
+        }
+        base.position = CGPointMake((width - base.width) / 2, 0)
+        let nucleus = MTMathListDisplay(withDisplays: parts, range: brace.indexRange)
+        nucleus.position = currentPosition
+        return self.addLimitsToDisplay(nucleus, forOperator: brace, delta: 0)
+    }
+
+    /// The smallest brace variant at least `width` wide; past the largest,
+    /// the font's own brace pieces joined by `constructGlyphWithParts`.
+    func underBraceGlyph(covering width: CGFloat, range: NSRange) -> MTDisplayDS? {
+        let brace = "\u{23DF}"
+        let glyph = self.findGlyphForCharacterAtIndex(brace.startIndex, inString: brace)
+        guard glyph != 0, let table = styleFont.mathTable else { return nil }
+        var variants = table.getHorizontalVariantsForGlyph(glyph).compactMap { $0?.uint16Value }
+        if variants.isEmpty { variants = [glyph] }
+        var advances = [CGSize](repeating: .zero, count: variants.count)
+        CTFontGetAdvancesForGlyphs(styleFont.ctFont, .horizontal, &variants, &advances, variants.count)
+        let fitting = advances.firstIndex { $0.width >= width }
+        if fitting == nil, let assembled = assembledUnderBrace(width: width, range: range) {
+            return assembled
+        }
+        let index = fitting ?? variants.count - 1
+        var chosen = variants[index]
+        let bounds = CTFontGetBoundingRectsForGlyphs(styleFont.ctFont, .horizontal, &chosen, nil, 1)
+        var ascent = CGFloat(0), descent = CGFloat(0)
+        getBboxDetails(bounds, ascent: &ascent, descent: &descent)
+        let display = MTGlyphDisplay(withGlpyh: chosen, range: range, font: styleFont)
+        display.ascent = ascent
+        display.descent = descent
+        display.width = advances[index].width
+        return display
+    }
+
+    /// SwiftMath's font tables carry no horizontal assembly, so the parts are
+    /// the brace's OpenType MATH assembly (Latin Modern: left, extender,
+    /// middle, extender, right), in font units. A font whose piece glyphs are
+    /// missing or differently sized returns nil and keeps the largest variant.
+    func assembledUnderBrace(width: CGFloat, range: NSRange) -> MTDisplayDS? {
+        guard let table = styleFont.mathTable else { return nil }
+        let pieces: [(name: String, start: Int, end: Int, advance: Int, extender: Bool)] = [
+            ("uni23DF.lft", 0, 497, 1002, false),
+            ("uni23DF.ex", 994, 994, 994, true),
+            ("uni23DF.md", 497, 497, 2003, false),
+            ("uni23DF.ex", 994, 994, 994, true),
+            ("uni23DF.rt", 497, 0, 1001, false),
+        ]
+        var parts = [GlyphPart]()
+        for piece in pieces {
+            var glyph = styleFont.get(glyphWithName: piece.name)
+            guard glyph != 0 else { return nil }
+            let advance = CGFloat(CTFontGetAdvancesForGlyphs(styleFont.ctFont, .horizontal, &glyph, nil, 1))
+            guard abs(advance - table.fontUnitsToPt(piece.advance)) < 0.5 else { return nil }
+            var part = GlyphPart()
+            part.glyph = glyph
+            part.fullAdvance = table.fontUnitsToPt(piece.advance)
+            part.startConnectorLength = table.fontUnitsToPt(piece.start)
+            part.endConnectorLength = table.fontUnitsToPt(piece.end)
+            part.isExtender = piece.extender
+            parts.append(part)
+        }
+        var glyphs = [NSNumber](), offsets = [NSNumber]()
+        var length = CGFloat(0)
+        self.constructGlyphWithParts(parts, glyphHeight: width, glyphs: &glyphs, offsets: &offsets, height: &length)
+        guard !glyphs.isEmpty else { return nil }
+        let display = MTGlyphConstructionDisplay(withGlyphs: glyphs, offsets: offsets, font: styleFont)
+        // The shared assembly lays parts along y; a brace runs along x.
+        display.positions = offsets.map { CGPointMake(CGFloat($0.floatValue), 0) }
+        var ascent = CGFloat(0), descent = CGFloat(0)
+        for number in glyphs {
+            var glyph = number.uint16Value
+            let bounds = CTFontGetBoundingRectsForGlyphs(styleFont.ctFont, .horizontal, &glyph, nil, 1)
+            var partAscent = CGFloat(0), partDescent = CGFloat(0)
+            getBboxDetails(bounds, ascent: &partAscent, descent: &partDescent)
+            ascent = max(ascent, partAscent)
+            descent = max(descent, partDescent)
+        }
+        display.ascent = ascent
+        display.descent = descent
+        display.width = length
+        display.range = range
+        return display
+    }
+
     // MARK: - Large delimiters
     
     // Delimiter shortfall from plain.tex

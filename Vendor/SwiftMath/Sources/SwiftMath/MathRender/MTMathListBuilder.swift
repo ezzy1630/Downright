@@ -446,6 +446,9 @@ public struct MTMathListBuilder {
                     if let accent = atom as? MTAccent {
                         str += "\\\(MTMathAtomFactory.accentName(accent)!){\(mathListToString(accent.innerList!))}"
                     }
+                } else if let brace = atom as? MTUnderBrace {
+                    // Downright patch (see PATCHES.md): no symbol name to look up.
+                    str += "\\underbrace{\(mathListToString(brace.innerList ?? MTMathList()))}"
                 } else if atom.type == .largeOperator {
                     let op = atom as! MTLargeOperator
                     let command = MTMathAtomFactory.latexSymbolName(for: atom)
@@ -591,6 +594,9 @@ public struct MTMathListBuilder {
             let over = MTOverLine()
             over.innerList = self.buildInternal(true)
             return over
+        } else if command == "underbrace" {
+            // Downright patch (see PATCHES.md): one argument, the braced list.
+            return MTUnderBrace(innerList: self.buildInternal(true))
         } else if command == "underline" {
             // The underline command has 1 arguments
             let under = MTUnderLine()
@@ -840,6 +846,9 @@ public struct MTMathListBuilder {
             over.innerList = self.buildInternal(true)
             
             return over
+        } else if command == "underbrace" {
+            // Downright patch (see PATCHES.md): one argument, the braced list.
+            return MTUnderBrace(innerList: self.buildInternal(true))
         } else if command == "underline" {
             let under = MTUnderLine()
             under.innerList = self.buildInternal(true)

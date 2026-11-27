@@ -16,10 +16,9 @@
 #   DMG_LAYOUT set to 0 to skip the optional Finder window arrangement
 #
 # Produces OUT_DIR/Downright-<MARKETING_VERSION>.dmg containing the app and an
-# /Applications symlink, so double-click → drag to Applications.  Run this on
-# the signed+notarized app (see RELEASE.md); the DMG is a container, so the
-# ticket inside the app is what Gatekeeper checks, but notarizing the DMG
-# itself too is cheap and covers users who run straight from the image.
+# /Applications symlink, so double-click → drag to Applications. For release,
+# package the signed and notarized app, then sign, notarize, and staple the DMG
+# as described in Docs/RELEASE.md.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -154,7 +153,4 @@ hdiutil verify "$DMG" >/dev/null
 echo
 echo "Built $DMG"
 echo
-echo "Next (release path):"
-echo "  xcrun notarytool submit \"$DMG\" --keychain-profile \"AC_PASSWORD\" --wait"
-echo "  xcrun stapler staple \"$DMG\""
-echo "  (or run Scripts/sign-and-notarize.sh with MAKE_DMG=1, which does both)"
+echo "For a signed, notarized release image, run Scripts/sign-and-notarize.sh with MAKE_DMG=1."

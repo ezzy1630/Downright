@@ -63,12 +63,16 @@ public enum MathRenderer {
             let size = NSSize(
                 width: image.size.width + padding * 2,
                 height: image.size.height + padding * 2)
-            let padded = NSImage(size: size)
-            padded.lockFocus()
-            image.draw(in: NSRect(x: padding, y: padding, width: image.size.width,
-                                  height: image.size.height))
-            padded.unlockFocus()
-            return padded
+            // A drawing handler, like SwiftMath's own image, so the padded
+            // formula rasterizes at each destination's scale. `lockFocus`
+            // baked one bitmap at creation, and the cache served it blurred
+            // to a Retina line.
+            let formula = NSRect(x: padding, y: padding, width: image.size.width,
+                                 height: image.size.height)
+            return NSImage(size: size, flipped: false) { _ in
+                image.draw(in: formula)
+                return true
+            }
         }
     }
 
