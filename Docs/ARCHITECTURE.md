@@ -478,3 +478,43 @@ while receiving, requests carry no cookies or credentials, and SVG rasterization
 uses native AppKit. Animated pictures begin as stills with native Play/Pause
 controls and decode only the next frame at the displayed size. Hidden or
 inactive views pause; Quick Look remains still.
+
+## Localization
+
+Localization lives strictly at the app (`DownrightApp`, via `L10n`) and Quick Look
+(`DownrightQL`, via `QLL10n`) UI boundaries. `MarkdownCore`, `MarkdownRender`,
+the `down` CLI, Spotlight importers, and exporters never localize.
+
+- **Adding strings:** Wrap user-visible UI, menu, alert, tooltip, and
+  accessibility copy in `L10n.tr(...)` (or `QLL10n.tr(...)`), using `context:`
+  when the same English word has distinct meanings. English source text is both
+  the key and fallback — keep `en.lproj/InfoPlist.strings`, never add a
+  duplicate `en.lproj/Localizable.strings`. Add matching entries to
+  `zh-Hans.lproj/Localizable.strings`. `Scripts/check-localization.py` (missing,
+  unused, duplicate, or format-mismatched keys, allowing positional reordering
+  such as `%1$@`) and `Scripts/lint-localization.py` (unwrapped UI literals with
+  `Scripts/l10n-lint-allowlist.json`) enforce sync in `Scripts/check-fast.sh`
+  and `Scripts/check.sh`. `DOWNRIGHT_LANGUAGE` is read once at launch and
+  accepts `en`, `zh-Hans`, `system`, or `pseudo` (bracketed ~40% expansion for
+  truncation audits).
+- **Canonical values:** Document source, review sidecar defaults, generated and
+  exported filenames (`Untitled.md`, `.html`, `.pdf`), HTML/PDF exports,
+  clipboard content (including copied update diagnostics), CLI output,
+  Spotlight metadata, and saved preference/theme/profile identifiers remain
+  locale-neutral. All user-visible date, relative-time, number, byte-count, and
+  list formatters, plus Command Palette and keybinding display sorting (Pinyin
+  under `zh-Hans`), follow `L10n.locale` / `QLL10n.locale` rather than the
+  system locale alone.
+- **Language resolution:** `zh-Hans*`, `zh-CN`, and `zh-SG` resolve to
+  `zh-Hans`; `zh-Hant`, `zh-TW`, `zh-HK`, and `zh-MO` resolve to `en` unless
+  `zh-Hans` appears ahead of English in preferred languages. When the in-app
+  setting is `System Default`, launch does not overwrite `AppleLanguages`, so
+  macOS per-app language overrides stay intact. Quick Look reads
+  `PreviewAppearanceStore.language` and falls back to `Locale.preferredLanguages`
+  before the host app has ever launched.
+- **Switching while running:** Menus, context menus, Settings, the Start
+  window, and newly opened panels, alerts, or Quick Look previews update
+  immediately. Already-open document windows and an already-open Quick Look
+  preview update when reopened. macOS system panels (`NSOpenPanel`,
+  `NSSavePanel`, Print, Share) and Sparkle dialogs follow `AppleLanguages` and
+  update on the next launch.

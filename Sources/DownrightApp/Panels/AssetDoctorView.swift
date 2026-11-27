@@ -73,7 +73,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Asset diagnostics")
+        table.setAccessibilityLabel(L10n.tr("Asset diagnostics"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
 
@@ -90,7 +90,7 @@ final class AssetDoctorView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Asset Doctor")
+        setAccessibilityLabel(L10n.tr("Asset Doctor"))
         applyStyle()
         reload()
     }
@@ -114,8 +114,8 @@ final class AssetDoctorView: NSView, PanelSurface {
         }
         emptyState.configure(
             symbol: "photo.on.rectangle",
-            title: "Every image resolves",
-            subtitle: "No missing files, unsafe destinations,\nor absolute paths in this document.",
+            title: L10n.tr("Every image resolves"),
+            subtitle: L10n.tr("No missing files, unsafe destinations,\nor absolute paths in this document."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false
@@ -148,15 +148,15 @@ final class AssetDoctorView: NSView, PanelSurface {
 
     private func updateStatus() {
         if diagnostics.isEmpty {
-            statusLabel.stringValue = "No issues"
+            statusLabel.stringValue = L10n.tr("No issues")
         } else {
             let errors = diagnostics.filter { $0.severity == .error }.count
             let warnings = diagnostics.filter { $0.severity == .warning }.count
             let parts = [
-                errors > 0 ? "\(errors) error\(errors == 1 ? "" : "s")" : nil,
-                warnings > 0 ? "\(warnings) warning\(warnings == 1 ? "" : "s")" : nil,
+                errors > 0 ? (errors == 1 ? L10n.tr("1 error") : L10n.tr("%lld errors", errors)) : nil,
+                warnings > 0 ? (warnings == 1 ? L10n.tr("1 warning") : L10n.tr("%lld warnings", warnings)) : nil,
             ].compactMap { $0 }
-            statusLabel.stringValue = parts.isEmpty ? "\(diagnostics.count) info" : parts.joined(separator: " · ")
+            statusLabel.stringValue = parts.isEmpty ? L10n.tr("%lld info", diagnostics.count) : parts.joined(separator: " · ")
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
     }
@@ -263,15 +263,15 @@ extension AssetDoctorView: NSTableViewDataSource, NSTableViewDelegate {
 
     private func label(for code: AssetDiagnosticCode) -> String {
         switch code {
-        case .missing: "Missing assets"
-        case .outsideWorkspace: "Outside workspace"
-        case .absolutePath: "Absolute paths"
-        case .duplicate: "Duplicate assets"
-        case .unsupportedFormat: "Unsupported formats"
-        case .largeFile: "Large files"
-        case .missingAlt: "Missing alt text"
-        case .unsafe: "Unsafe destinations"
-        case .malformed: "Malformed destinations"
+        case .missing: L10n.tr("Missing assets")
+        case .outsideWorkspace: L10n.tr("Outside workspace")
+        case .absolutePath: L10n.tr("Absolute paths")
+        case .duplicate: L10n.tr("Duplicate assets")
+        case .unsupportedFormat: L10n.tr("Unsupported formats")
+        case .largeFile: L10n.tr("Large files")
+        case .missingAlt: L10n.tr("Missing alt text")
+        case .unsafe: L10n.tr("Unsafe destinations")
+        case .malformed: L10n.tr("Malformed destinations")
         }
     }
 
@@ -309,7 +309,7 @@ private final class AssetDiagnosticRowView: NSView {
     }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
-        actionsButton = PanelButton.symbol("ellipsis.circle", label: "Asset actions", action: ButtonAction {})
+        actionsButton = PanelButton.symbol("ellipsis.circle", label: L10n.tr("Asset actions"), action: ButtonAction {})
         super.init(frame: .zero)
         self.identifier = identifier
 
@@ -373,7 +373,7 @@ private final class AssetDiagnosticRowView: NSView {
         }
         messageLabel.stringValue = diagnostic.message
         messageLabel.textColor = styleSheet.textSecondary
-        lineLabel.stringValue = "Line \(diagnostic.reference.line)"
+        lineLabel.stringValue = L10n.tr("Line %lld", diagnostic.reference.line)
         lineLabel.textColor = styleSheet.textFaint
         actionsButton.contentTintColor = styleSheet.textFaint
 
@@ -381,15 +381,15 @@ private final class AssetDiagnosticRowView: NSView {
         menu = makeActionsMenu()
 
         let destination = diagnostic.reference.source
-        let severity = diagnostic.severity.rawValue.capitalized
-        setAccessibilityLabel("\(severity), line \(diagnostic.reference.line): \(diagnostic.message). Asset \(destination)")
+        let severity = diagnostic.severity == .error ? L10n.tr("Error") : L10n.tr("Warning")
+        setAccessibilityLabel(L10n.tr("%@, line %lld: %@. Asset %@", severity, diagnostic.reference.line, diagnostic.message, destination))
         toolTip = destination
     }
 
     private func makeActionsMenu() -> NSMenu {
         let menu = NSMenu()
-        for (title, key) in [("Select in Document", "select"), ("Reveal in Finder", "reveal"),
-                             ("Relink…", "relink"), ("Rename…", "rename")] {
+        for (title, key) in [(L10n.tr("Select in Document"), "select"), (L10n.tr("Reveal in Finder"), "reveal"),
+                             (L10n.tr("Relink…"), "relink"), (L10n.tr("Rename…"), "rename")] {
             let item = NSMenuItem(title: title, action: #selector(performAction(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = key

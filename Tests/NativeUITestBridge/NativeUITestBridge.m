@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 
-// Preferences mirrors four settings into the user's global defaults on load
+// Preferences mirrors Quick Look settings into the user's global defaults on load
 // and update, even with DOWNRIGHT_SUPPORT_DIRECTORY set. Suppress only that
 // cross-process mirror in the test executable. The app still reads, writes
 // and broadcasts the actual document and preferences under the support root.
@@ -16,6 +16,7 @@ void CFPreferencesSetValue(CFStringRef key, CFPropertyListRef value, CFStringRef
         (CFEqual(key, CFSTR("com.ezzy.downright.quickLook.appearance")) ||
          CFEqual(key, CFSTR("com.ezzy.downright.quickLook.lightTheme")) ||
          CFEqual(key, CFSTR("com.ezzy.downright.quickLook.darkTheme")) ||
+         CFEqual(key, CFSTR("com.ezzy.downright.quickLook.language")) ||
          CFEqual(key, CFSTR("com.ezzy.downright.quickLook.measureCharacters")))) {
         return;
     }

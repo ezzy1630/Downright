@@ -44,7 +44,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
         taskPopup.addItems(withTitles: LocalAITask.allCases.map(\.title))
         taskPopup.target = self
         taskPopup.action = #selector(runRequested(_:))
-        taskPopup.setAccessibilityLabel("Local AI task")
+        taskPopup.setAccessibilityLabel(L10n.tr("Local AI task"))
 
         statusLabel.font = PanelFont.secondary
         statusLabel.lineBreakMode = .byWordWrapping
@@ -52,7 +52,7 @@ final class LocalAIPanelView: NSView, PanelSurface {
         previewLabel.font = PanelFont.row
         previewLabel.lineBreakMode = .byWordWrapping
         previewLabel.maximumNumberOfLines = 12
-        previewLabel.setAccessibilityLabel("Local AI preview")
+        previewLabel.setAccessibilityLabel(L10n.tr("Local AI preview"))
 
         let applyAction = ButtonAction { [weak self] in self?.applyRequested() }
         let cancelAction = ButtonAction { [weak self] in
@@ -60,32 +60,41 @@ final class LocalAIPanelView: NSView, PanelSurface {
             self.delegate?.localAIPanelDidCancel(self)
         }
         actions = [applyAction, cancelAction]
-        let apply = PanelButton.text("Apply Preview", action: applyAction)
-        let cancel = PanelButton.text("Close", action: cancelAction)
+        let apply = PanelButton.text(L10n.tr("Apply Preview"), action: applyAction)
+        let cancel = PanelButton.text(L10n.tr("Close"), action: cancelAction)
 
-        for view in [titleLabel, taskPopup, statusLabel, previewLabel, apply, cancel] {
+        let buttonRow = NSStackView(views: [cancel, apply])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 6
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        for button in [cancel, apply] {
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+
+        for view in [titleLabel, taskPopup, statusLabel, previewLabel, buttonRow] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PanelMetrics.inset),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: PanelMetrics.headerTopPadding),
+            taskPopup.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             taskPopup.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            taskPopup.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            taskPopup.widthAnchor.constraint(equalToConstant: 150),
+            taskPopup.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
             statusLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
-            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            statusLabel.topAnchor.constraint(equalTo: taskPopup.bottomAnchor, constant: 10),
             previewLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PanelMetrics.inset),
             previewLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 10),
-            cancel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            apply.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 12),
-            apply.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
-            cancel.centerYAnchor.constraint(equalTo: apply.centerYAnchor),
+            buttonRow.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            buttonRow.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -PanelMetrics.inset),
+            buttonRow.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 12),
         ])
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Local on-device AI")
+        setAccessibilityLabel(L10n.tr("Local on-device AI"))
     }
 
     private func applyStyle() {
@@ -96,21 +105,21 @@ final class LocalAIPanelView: NSView, PanelSurface {
 
     private func updateStatus() {
         if isRunning {
-            statusLabel.stringValue = "Working on this Mac…"
+            statusLabel.stringValue = L10n.tr("Working on this Mac…")
         } else {
             switch availability {
-            case .available: statusLabel.stringValue = "On-device only. Nothing is sent to a server."
-            case .frameworkUnavailable: statusLabel.stringValue = "Apple on-device AI is not installed."
-            case .systemUnavailable: statusLabel.stringValue = "This Mac does not provide Apple on-device AI."
+            case .available: statusLabel.stringValue = L10n.tr("On-device only. Nothing is sent to a server.")
+            case .frameworkUnavailable: statusLabel.stringValue = L10n.tr("Apple on-device AI is not installed.")
+            case .systemUnavailable: statusLabel.stringValue = L10n.tr("This Mac does not provide Apple on-device AI.")
             }
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
     }
 
     private func updateResult() {
-        guard let result else { previewLabel.stringValue = "Select a task to preview a result."; return }
+        guard let result else { previewLabel.stringValue = L10n.tr("Select a task to preview a result."); return }
         if let preview = result.preview {
-            previewLabel.stringValue = "Original:\n\(preview.originalSource)\n\nProposed:\n\(preview.proposedSource)"
+            previewLabel.stringValue = L10n.tr("Original:\n%@\n\nProposed:\n%@", preview.originalSource, preview.proposedSource)
         } else {
             previewLabel.stringValue = result.text
         }

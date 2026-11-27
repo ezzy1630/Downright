@@ -93,7 +93,7 @@ extension DocumentWindowController {
                 created.append(target)
             } catch {
                 created.forEach { try? FileManager.default.removeItem(at: $0) }
-                presentOperationError("Couldn’t add the dropped file", error: error)
+                presentOperationError(L10n.tr("Couldn’t add the dropped file"), error: error)
                 return false
             }
         }

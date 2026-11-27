@@ -38,6 +38,7 @@ public enum PreviewAppearanceStore {
     public static let appearanceKey = "com.ezzy.downright.quickLook.appearance"
     public static let lightThemeKey = "com.ezzy.downright.quickLook.lightTheme"
     public static let darkThemeKey = "com.ezzy.downright.quickLook.darkTheme"
+    public static let languageKey = "com.ezzy.downright.quickLook.language"
 
     public static let measureKey = "com.ezzy.downright.quickLook.measureCharacters"
 
@@ -69,6 +70,10 @@ public enum PreviewAppearanceStore {
         return value
     }
 
+    public static var language: String? {
+        value(forKey: languageKey)
+    }
+
     public static func themeName(for appearance: NSAppearance) -> String? {
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return value(forKey: isDark ? darkThemeKey : lightThemeKey)
@@ -78,13 +83,17 @@ public enum PreviewAppearanceStore {
         appearance: PreviewAppearance,
         lightThemeName: String,
         darkThemeName: String,
-        measureCharacters: CGFloat = 70
+        measureCharacters: CGFloat = 70,
+        language: String? = nil
     ) {
-        let values = [
+        var values = [
             appearanceKey: appearance.rawValue,
             lightThemeKey: lightThemeName,
             darkThemeKey: darkThemeName,
         ]
+        if let language {
+            values[languageKey] = language
+        }
         for (key, value) in values {
             CFPreferencesSetValue(
                 key as CFString,

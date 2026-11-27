@@ -169,7 +169,7 @@ public enum Metrics {
         // Sentence tokenizers are reusable. Keep one per traversal and drain
         // bridged strings per section rather than retaining thousands of
         // tokenizer/string temporaries through the first display transaction.
-        let tokenizer = NLTokenizer(unit: .sentence)
+        let tokenizer = makeSentenceTokenizer()
         return PlainText.prosePerSection(in: doc.root, spans: spans, text: text).map { prose in
             autoreleasepool {
                 let words = wordCount(prose)
@@ -199,7 +199,7 @@ public enum Metrics {
         firstSentenceRange(
             in: doc, within: range,
             text: doc.text as NSString,
-            tokenizer: NLTokenizer(unit: .sentence)
+            tokenizer: makeSentenceTokenizer()
         )
     }
 
@@ -288,9 +288,21 @@ public enum Metrics {
         return count
     }
 
+    /// Builds a reusable sentence tokenizer pinned to English ICU break rules.
+    ///
+    /// Without an explicit language, `NLTokenizer` inherits the host macOS
+    /// locale; under `zh-Hans`, ICU splits abbreviations such as `"Dr."` into
+    /// separate sentences. English rules preserve abbreviation suppression
+    /// while still segmenting CJK sentence punctuation (`。`, `！`, `？`).
+    static func makeSentenceTokenizer() -> NLTokenizer {
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.setLanguage(.english)
+        return tokenizer
+    }
+
     static func sentenceCount(_ prose: String) -> Int {
         guard !prose.isEmpty else { return 0 }
-        return sentenceCount(prose, tokenizer: NLTokenizer(unit: .sentence))
+        return sentenceCount(prose, tokenizer: makeSentenceTokenizer())
     }
 
     private static func sentenceCount(_ prose: String, tokenizer: NLTokenizer) -> Int {

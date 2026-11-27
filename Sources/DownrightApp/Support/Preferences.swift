@@ -9,9 +9,9 @@ enum LastDocumentCloseBehavior: String, Codable, CaseIterable {
 
     var title: String {
         switch self {
-        case .showStartWindow: return "Show start window"
-        case .quit: return "Quit Downright"
-        case .doNothing: return "Do nothing"
+        case .showStartWindow: return L10n.tr("Show start window")
+        case .quit: return L10n.tr("Quit Downright")
+        case .doNothing: return L10n.tr("Do nothing")
         }
     }
 }
@@ -51,6 +51,7 @@ final class Preferences {
         var defaultMode: RenderMode = .live
         var restoreSession: Bool = true
         var lastDocumentCloseBehavior: LastDocumentCloseBehavior = .showStartWindow
+        var language: AppLanguage = .system
 
         var externalEditor: ExternalEditor = .systemDefault
         var resolvePathTokens: Bool = true
@@ -121,6 +122,7 @@ final class Preferences {
             defaultMode = get(.defaultMode, RenderMode.live).normalizedForEditing
             restoreSession = get(.restoreSession, true)
             lastDocumentCloseBehavior = get(.lastDocumentCloseBehavior, .showStartWindow)
+            language = get(.language, .system)
             externalEditor = get(.externalEditor, ExternalEditor.systemDefault)
             resolvePathTokens = get(.resolvePathTokens, true)
             siblingScanDirectories = get(.siblingScanDirectories, ["docs", "plans", ".claude", "notes", "specs"])
@@ -155,6 +157,9 @@ final class Preferences {
     private(set) var values: Values {
         didSet {
             guard values != oldValue else { return }
+            if values.language != oldValue.language {
+                L10n.setPreferredLanguage(values.language, syncAppleLanguages: true)
+            }
             persist()
             // Local engagement bookkeeping must not redecorate every document.
             var previousSettings = oldValue
@@ -205,11 +210,13 @@ final class Preferences {
             // (§8.4).
             values.externalEditor = ExternalEditor.bestAvailable
         }
+        L10n.setPreferredLanguage(values.language)
         PreviewAppearanceStore.write(
             appearance: values.previewAppearance,
             lightThemeName: values.themeName,
             darkThemeName: values.darkThemeName,
-            measureCharacters: values.typography.measureCharacters
+            measureCharacters: values.typography.measureCharacters,
+            language: values.language.rawValue
         )
         SnapshotStore.shared.maximumAge = TimeInterval(values.historyMaximumDays) * 86_400
         SnapshotStore.shared.maximumBytes = values.historyMaximumMegabytes * 1024 * 1024
@@ -263,7 +270,8 @@ final class Preferences {
                 appearance: values.previewAppearance,
                 lightThemeName: values.themeName,
                 darkThemeName: values.darkThemeName,
-                measureCharacters: values.typography.measureCharacters
+                measureCharacters: values.typography.measureCharacters,
+                language: values.language.rawValue
             )
             lastPersistenceError = nil
         } catch {

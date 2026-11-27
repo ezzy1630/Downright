@@ -82,7 +82,7 @@ extension DocumentWindowController: WorkspaceSidebarViewDelegate {
         let root = markdownDocument.url?.deletingLastPathComponent() ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         guard FileManager.default.isReadableFile(atPath: root.path) else {
             panel.isScanning = false
-            panel.errorMessage = "Downright cannot read this folder. Check its permissions and try again."
+            panel.errorMessage = L10n.tr("Downright cannot read this folder. Check its permissions and try again.")
             return
         }
         // The first scan can take a moment on a large folder; the panel says so

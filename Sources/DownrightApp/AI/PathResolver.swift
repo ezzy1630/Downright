@@ -165,8 +165,8 @@ enum ExternalEditor: String, CaseIterable, Codable {
         case .sublime: return "Sublime Text"
         case .bbedit: return "BBEdit"
         case .nova: return "Nova"
-        case .systemDefault: return "System Default"
-        case .envEditor: return "$EDITOR (Terminal)"
+        case .systemDefault: return L10n.tr("System Default", context: "externalEditor")
+        case .envEditor: return L10n.tr("$EDITOR (Terminal)")
         }
     }
 

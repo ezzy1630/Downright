@@ -147,7 +147,7 @@ extension DocumentWindowController: TrustPromptViewDelegate {
     func revokeTrust(scope: TrustScope, path: URL) {
         guard trustStore.revoke(scope: scope, path: path) else {
             presentOperationError(
-                "Couldn’t save the trust revocation",
+                L10n.tr("Couldn’t save the trust revocation"),
                 error: CocoaError(.fileWriteUnknown)
             )
             return
@@ -199,7 +199,7 @@ extension DocumentWindowController: TrustPromptViewDelegate {
             externalURL: request.target.externalURL
         ) else {
             presentOperationError(
-                "Couldn’t save this trust decision",
+                L10n.tr("Couldn’t save this trust decision"),
                 error: CocoaError(.fileWriteUnknown)
             )
             return

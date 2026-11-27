@@ -92,8 +92,8 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         backdrop = PanelBackdrop(styleSheet: styleSheet)
-        addButton = PanelButton.text("Add field", action: ButtonAction { })
-        sourceButton = PanelButton.text("Open Source Focus", action: ButtonAction { })
+        addButton = PanelButton.text(L10n.tr("Add field"), action: ButtonAction { })
+        sourceButton = PanelButton.text(L10n.tr("Open Source Focus"), action: ButtonAction { })
         super.init(frame: .zero)
 
         installBackdrop(backdrop)
@@ -105,7 +105,7 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
         reload()
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Front matter editor")
+        setAccessibilityLabel(L10n.tr("Front matter editor"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -177,27 +177,27 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
     }
 
     private func buildAddForm() {
-        addKeyField.placeholderString = "Field name"
+        addKeyField.placeholderString = L10n.tr("Field name")
         addKeyField.font = PanelFont.row
-        addKeyField.setAccessibilityLabel("New field name")
+        addKeyField.setAccessibilityLabel(L10n.tr("New field name"))
         addKeyField.translatesAutoresizingMaskIntoConstraints = false
 
-        addValueField.placeholderString = "Value"
+        addValueField.placeholderString = L10n.tr("Value")
         addValueField.font = PanelFont.row
-        addValueField.setAccessibilityLabel("New field value")
+        addValueField.setAccessibilityLabel(L10n.tr("New field value"))
         addValueField.translatesAutoresizingMaskIntoConstraints = false
 
         addTypePopup.addItems(withTitles: FrontMatterFieldRow.kindTitles)
         addTypePopup.selectItem(at: 0)
         addTypePopup.font = PanelFont.secondary
-        addTypePopup.setAccessibilityLabel("New field type")
+        addTypePopup.setAccessibilityLabel(L10n.tr("New field type"))
         addTypePopup.translatesAutoresizingMaskIntoConstraints = false
 
         let action = ButtonAction { [weak self] in self?.addField() }
         addAction = action
         addButton.target = action
         addButton.action = #selector(ButtonAction.fire(_:))
-        addButton.setAccessibilityLabel("Add front matter field")
+        addButton.setAccessibilityLabel(L10n.tr("Add front matter field"))
 
         let source = ButtonAction { [weak self] in
             guard let self else { return }
@@ -206,7 +206,7 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
         sourceAction = source
         sourceButton.target = source
         sourceButton.action = #selector(ButtonAction.fire(_:))
-        sourceButton.setAccessibilityLabel("Open Source Focus to edit front matter")
+        sourceButton.setAccessibilityLabel(L10n.tr("Open Source Focus to edit front matter"))
 
         // Two short lines rather than one long one: a single row of name,
         // value, type, and button needs about 313pt and the inspector can be
@@ -247,7 +247,7 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
             valueRow.widthAnchor.constraint(equalTo: form.widthAnchor),
             addKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
             addValueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
-            addTypePopup.widthAnchor.constraint(equalToConstant: 78),
+            addTypePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),
             sourceButton.leadingAnchor.constraint(equalTo: form.leadingAnchor),
             sourceButton.topAnchor.constraint(equalTo: form.bottomAnchor, constant: 8),
             sourceButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
@@ -262,21 +262,21 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
         rows.removeAll(keepingCapacity: true)
 
         guard let front = document.frontMatter else {
-            detailLabel.stringValue = "No front matter block"
+            detailLabel.stringValue = L10n.tr("No front matter block")
             statusLabel.stringValue = ""
             sourceButton.isHidden = false
             addButton.isEnabled = false
             showEmptyState(
                 symbol: "text.alignleft",
-                title: "No front matter",
-                subtitle: "Add a `---` YAML block at the top of\nthe document in Source Focus."
+                title: L10n.tr("No front matter"),
+                subtitle: L10n.tr("Add a `---` YAML block at the top of\nthe document in Source Focus.")
             )
             return
         }
 
         detailLabel.stringValue = front.fields.isEmpty
-            ? "Empty YAML block"
-            : "Flat fields · changes keep source formatting"
+            ? L10n.tr("Empty YAML block")
+            : L10n.tr("Flat fields · changes keep source formatting")
         let fallback = editabilityFallback(front: front)
         let canEdit = fallback == nil
         statusIsWarning = true
@@ -304,8 +304,8 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
         if front.fields.isEmpty {
             showEmptyState(
                 symbol: "text.alignleft",
-                title: "Empty front matter",
-                subtitle: "The YAML block has no fields yet.\nAdd one below."
+                title: L10n.tr("Empty front matter"),
+                subtitle: L10n.tr("The YAML block has no fields yet.\nAdd one below.")
             )
         } else {
             emptyState.isHidden = true
@@ -360,12 +360,12 @@ final class FrontMatterEditorView: NSView, PanelSurface, FloatingContentMeasurin
 
     private func message(for fallback: FrontMatterSourceFallback) -> String {
         switch fallback {
-        case .nestedYAML: return "Nested YAML needs Source Focus."
-        case .commentsNotSupported: return "Comments need Source Focus."
-        case .anchorsOrAliasesNotSupported: return "YAML anchors need Source Focus."
-        case .blockScalarNotSupported: return "Block text needs Source Focus."
-        case .ambiguousField: return "Duplicate fields need Source Focus."
-        default: return "This block needs Source Focus."
+        case .nestedYAML: return L10n.tr("Nested YAML needs Source Focus.")
+        case .commentsNotSupported: return L10n.tr("Comments need Source Focus.")
+        case .anchorsOrAliasesNotSupported: return L10n.tr("YAML anchors need Source Focus.")
+        case .blockScalarNotSupported: return L10n.tr("Block text needs Source Focus.")
+        case .ambiguousField: return L10n.tr("Duplicate fields need Source Focus.")
+        default: return L10n.tr("This block needs Source Focus.")
         }
     }
 
@@ -400,7 +400,9 @@ private final class FrontMatterFieldHost: NSView {
 
 @MainActor
 private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
-    static let kindTitles = ["Text", "Boolean", "Number", "List"]
+    static var kindTitles: [String] {
+        [L10n.tr("Text"), L10n.tr("Boolean"), L10n.tr("Number"), L10n.tr("List")]
+    }
 
     var styleSheet: StyleSheet { didSet { applyStyle() } }
     var isEnabled: Bool = true { didSet { setControlsEnabled() } }
@@ -427,7 +429,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
         self.committedValue = field.value
         keyField = NSTextField(string: field.key)
         valueField = NSTextField(string: field.value)
-        removeButton = PanelButton.symbol("trash", label: "Remove field", action: ButtonAction { })
+        removeButton = PanelButton.symbol("trash", label: L10n.tr("Remove field"), action: ButtonAction { })
         super.init(frame: .zero)
 
         keyField.isEditable = false
@@ -435,14 +437,14 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
         keyField.drawsBackground = false
         keyField.font = PanelFont.rowEmphasised
         keyField.lineBreakMode = .byTruncatingTail
-        keyField.setAccessibilityLabel("Field name: \(field.key)")
+        keyField.setAccessibilityLabel(L10n.tr("Field name: %@", field.key))
         valueField.font = PanelFont.row
         valueField.delegate = self
-        valueField.setAccessibilityLabel("Value for \(field.key)")
+        valueField.setAccessibilityLabel(L10n.tr("Value for %@", field.key))
         kindPopup.addItems(withTitles: Self.kindTitles)
         kindPopup.selectItem(at: Self.kindIndex(for: field.value))
         kindPopup.font = PanelFont.secondary
-        kindPopup.setAccessibilityLabel("Type for \(field.key)")
+        kindPopup.setAccessibilityLabel(L10n.tr("Type for %@", field.key))
 
         let kind = ButtonAction { [weak self] in self?.commit() }
         kindAction = kind
@@ -486,7 +488,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
             controls.topAnchor.constraint(equalTo: topAnchor),
             keyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
             valueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
-            kindPopup.widthAnchor.constraint(equalToConstant: 74),
+            kindPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),
             dirtyDot.widthAnchor.constraint(equalToConstant: 8),
             removeButton.widthAnchor.constraint(equalToConstant: 28),
             errorLabel.leadingAnchor.constraint(equalTo: controls.leadingAnchor),
@@ -495,7 +497,7 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
             errorLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Front matter field \(field.key)")
+        setAccessibilityLabel(L10n.tr("Front matter field %@", field.key))
         applyStyle()
     }
 
@@ -517,12 +519,12 @@ private final class FrontMatterFieldRow: NSView, NSTextFieldDelegate {
     private func commit() {
         let value = Self.value(from: valueField.stringValue, kindIndex: kindPopup.indexOfSelectedItem)
         if case .number = value, Double(valueField.stringValue) == nil {
-            errorLabel.stringValue = "Enter a number."
+            errorLabel.stringValue = L10n.tr("Enter a number.")
             dirtyDot.isDirty = true
             return
         }
         if case .boolean = value, !["true", "false"].contains(valueField.stringValue.lowercased()) {
-            errorLabel.stringValue = "Enter true or false."
+            errorLabel.stringValue = L10n.tr("Enter true or false.")
             dirtyDot.isDirty = true
             return
         }

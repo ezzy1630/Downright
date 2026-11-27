@@ -22,7 +22,7 @@ extension DocumentWindowController: TableEditorDelegate {
             backing: .buffered,
             defer: false
         )
-        sheetWindow.title = "Edit Table"
+        sheetWindow.title = L10n.tr("Edit Table")
         sheetWindow.minSize = NSSize(width: 520, height: 320)
         sheetWindow.contentView = editor
         tableEditorWindow = sheetWindow

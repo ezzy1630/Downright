@@ -144,9 +144,9 @@ final class UpdateStatusPill: NSButton {
         target = self
         action = #selector(clicked(_:))
         setAccessibilityRole(.button)
-        setAccessibilityHelp("Downright update status")
+        setAccessibilityHelp(L10n.tr("Downright update status"))
         // Pointer users get the same sentence VoiceOver does.
-        toolTip = "Install the update and relaunch Downright"
+        toolTip = L10n.tr("Install the update and relaunch Downright")
 
         NSLayoutConstraint.activate([
             shell.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -381,20 +381,20 @@ final class UpdateStatusPill: NSButton {
         let contrast = sheet.increaseContrast
         switch model {
         case .updateNow(let version, let isReady):
-            iconView.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: "Update available")
+            iconView.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: L10n.tr("Update available"))
             iconView.contentTintColor = sheet.accent
             // The button says what pressing it does; the version it installs
             // is one hover away, and in the tooltip for pointer users who
             // never rest long enough to see the notes.
             label.textColor = sheet.text
-            label.stringValue = "Update Now"
+            label.stringValue = L10n.tr("Update Now")
             label.isHidden = false
             toolTip = if version.isEmpty {
-                "Install the update and relaunch Downright"
+                L10n.tr("Install the update and relaunch Downright")
             } else if isReady {
-                "Install Downright \(version) and relaunch"
+                L10n.tr("Install Downright %@ and relaunch", version)
             } else {
-                "Download and install Downright \(version), then relaunch"
+                L10n.tr("Download and install Downright %@, then relaunch", version)
             }
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
@@ -405,12 +405,12 @@ final class UpdateStatusPill: NSButton {
             shell.layer?.borderWidth = 0
 
         case .restartToUpdate:
-            iconView.image = NSImage(systemSymbolName: "arrow.clockwise.circle.fill", accessibilityDescription: "Restart to update")
+            iconView.image = NSImage(systemSymbolName: "arrow.clockwise.circle.fill", accessibilityDescription: L10n.tr("Restart to update"))
             iconView.contentTintColor = sheet.accent
             label.textColor = sheet.text
-            label.stringValue = "Restart to Update"
+            label.stringValue = L10n.tr("Restart to Update")
             label.isHidden = false
-            toolTip = "Quit and reopen Downright to finish installing"
+            toolTip = L10n.tr("Quit and reopen Downright to finish installing")
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
@@ -423,7 +423,7 @@ final class UpdateStatusPill: NSButton {
             label.textColor = sheet.textSecondary
             label.stringValue = title
             label.isHidden = false
-            toolTip = "Show update progress"
+            toolTip = L10n.tr("Show update progress")
             iconView.isHidden = true
             progressIndicator.isHidden = false
             if let fraction {
@@ -438,17 +438,17 @@ final class UpdateStatusPill: NSButton {
             shell.layer?.borderColor = sheet.rule.cgColor
 
         case .warning:
-            iconView.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Update failed")
+            iconView.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: L10n.tr("Update failed"))
             // The theme owns the warning colour; a raw system orange ignores
             // the warm light and dark palettes entirely (§11.3).
             let warning = sheet.calloutColor(.warning)
             iconView.contentTintColor = warning
             label.textColor = warning
-            label.stringValue = "Update Failed"
+            label.stringValue = L10n.tr("Update Failed")
             label.isHidden = presentation == .compactWarning
             toolTip = presentation == .compactWarning
-                ? "Update failed — click for details"
-                : "Open the update panel"
+                ? L10n.tr("Update failed — click for details")
+                : L10n.tr("Open the update panel")
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
             iconView.isHidden = false
@@ -466,11 +466,11 @@ final class UpdateStatusPill: NSButton {
             }
 
         case .informational(let version):
-            iconView.image = NSImage(systemSymbolName: "info.circle.fill", accessibilityDescription: "Update information")
-            toolTip = "Read about Downright \(version)"
+            iconView.image = NSImage(systemSymbolName: "info.circle.fill", accessibilityDescription: L10n.tr("Update information"))
+            toolTip = L10n.tr("Read about Downright %@", version)
             iconView.contentTintColor = sheet.accent
             label.textColor = sheet.textSecondary
-            label.stringValue = "Update \(version)"
+            label.stringValue = L10n.tr("Update %@", version)
             label.isHidden = false
             progressIndicator.stopAnimation(nil)
             progressIndicator.isHidden = true
@@ -486,15 +486,15 @@ final class UpdateStatusPill: NSButton {
     private func accessibilityLabel(for model: UpdatePillModel?) -> String {
         switch model {
         case .updateNow(let version, let isReady):
-            if version.isEmpty { return "Update Now" }
+            if version.isEmpty { return L10n.tr("Update Now") }
             return isReady
-                ? "Update Now. Downright \(version) is ready to install"
-                : "Update Now. Downright \(version) is available"
-        case .restartToUpdate: return "Update ready. Restart Downright to update"
+                ? L10n.tr("Update Now. Downright %@ is ready to install", version)
+                : L10n.tr("Update Now. Downright %@ is available", version)
+        case .restartToUpdate: return L10n.tr("Update ready. Restart Downright to update")
         case .progress(let title, _): return title
-        case .warning: return "Update failed. Open the update panel for details"
-        case .informational(let version): return "Update \(version) information"
-        case .hidden, nil: return "No update status"
+        case .warning: return L10n.tr("Update failed. Open the update panel for details")
+        case .informational(let version): return L10n.tr("Update %@ information", version)
+        case .hidden, nil: return L10n.tr("No update status")
         }
     }
 

@@ -31,7 +31,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
     private let titleLabel = NSTextField(labelWithString: Command.visualDebugger.panelTitle)
     private let locationLabel = NSTextField(labelWithString: "")
     private let summaryView = NSTextView()
-    private let copyButton = NSButton(title: "Copy Summary", target: nil, action: nil)
+    private let copyButton = NSButton(title: L10n.tr("Copy Summary"), target: nil, action: nil)
     private let scrollView = NSScrollView()
 
     convenience init() { self.init(styleSheet: .current) }
@@ -60,7 +60,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
         summaryView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         summaryView.delegate = self
         summaryView.setAccessibilityRole(.textArea)
-        summaryView.setAccessibilityLabel("Visual debugger details")
+        summaryView.setAccessibilityLabel(L10n.tr("Visual debugger details"))
         summaryView.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.drawsBackground = false
@@ -75,7 +75,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
         copyButton.action = #selector(copySummary(_:))
         copyButton.bezelStyle = .rounded
         copyButton.controlSize = .small
-        copyButton.setAccessibilityLabel("Copy visual debugger summary")
+        copyButton.setAccessibilityLabel(L10n.tr("Copy visual debugger summary"))
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
 
@@ -96,7 +96,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Visual Debugger")
+        setAccessibilityLabel(L10n.tr("Visual Debugger"))
         applyStyle()
         reload()
     }
@@ -104,7 +104,7 @@ final class VisualDebuggerView: NSView, PanelSurface {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func reload() {
-        locationLabel.stringValue = "Line \(model.line), column \(model.column)"
+        locationLabel.stringValue = L10n.tr("Line %lld, column %lld", model.line, model.column)
         locationLabel.setAccessibilityLabel(locationLabel.stringValue)
         summaryView.string = model.summary
         summaryView.sizeToFit()

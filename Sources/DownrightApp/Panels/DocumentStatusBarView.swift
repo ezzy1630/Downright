@@ -114,7 +114,7 @@ final class DocumentStatusBarView: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Document status")
+        setAccessibilityLabel(L10n.tr("Document status"))
         applyStyle()
     }
 
@@ -128,8 +128,8 @@ final class DocumentStatusBarView: NSView {
             setAccessibilityValue("")
             return
         }
-        let prefix = hasFileURL ? "" : "Unsaved · "
-        cursorLabel.stringValue = "\(prefix)Ln \(line), Col \(column)"
+        let prefix = hasFileURL ? "" : L10n.tr("Unsaved · ")
+        cursorLabel.stringValue = "\(prefix)\(L10n.tr("Ln %lld, Col %lld", line, column))"
         cursorLabel.setAccessibilityLabel(cursorLabel.stringValue)
         applyStyle()
     }

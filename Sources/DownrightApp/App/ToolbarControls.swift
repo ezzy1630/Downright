@@ -163,7 +163,7 @@ final class ToolbarDocumentIdentityView: NSView {
         proxyButton.feedbackCornerRadius = 3
         proxyButton.image = NSImage(
             systemSymbolName: "doc.text",
-            accessibilityDescription: "Document path"
+            accessibilityDescription: L10n.tr("Document path")
         )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
         proxyButton.imagePosition = .imageOnly
         proxyButton.imageScaling = .scaleProportionallyDown
@@ -171,8 +171,8 @@ final class ToolbarDocumentIdentityView: NSView {
         proxyButton.bezelStyle = .inline
         proxyButton.focusRingType = .default
         proxyButton.setAccessibilityRole(.button)
-        proxyButton.setAccessibilityLabel("Document path")
-        proxyButton.toolTip = "Show document path"
+        proxyButton.setAccessibilityLabel(L10n.tr("Document path"))
+        proxyButton.toolTip = L10n.tr("Show document path")
         proxyButton.target = self
         proxyButton.action = #selector(showPathMenu(_:))
 
@@ -287,7 +287,7 @@ final class ToolbarDocumentIdentityView: NSView {
     private func updateProxyIcon(for url: URL?) {
         guard let url, FileManager.default.fileExists(atPath: url.path) else {
             proxyButton.image = NSImage(
-                systemSymbolName: "doc.text", accessibilityDescription: "Document path"
+                systemSymbolName: "doc.text", accessibilityDescription: L10n.tr("Document path")
             )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
             proxyButton.contentTintColor = hostWindow?.isKeyWindow == true
                 ? .secondaryLabelColor
@@ -328,7 +328,7 @@ final class ToolbarDocumentIdentityView: NSView {
             NSSound.beep()
             return
         }
-        let menu = NSMenu(title: "Document Path")
+        let menu = NSMenu(title: L10n.tr("Document Path"))
         var current = url.absoluteURL
         var urls: [URL] = []
         while current.path != "/" {
@@ -351,7 +351,7 @@ final class ToolbarDocumentIdentityView: NSView {
         }
         menu.addItem(.separator())
         let reveal = NSMenuItem(
-            title: "Reveal in Finder",
+            title: L10n.tr("Reveal in Finder"),
             action: #selector(revealInFinder(_:)),
             keyEquivalent: ""
         )
@@ -409,9 +409,11 @@ final class ToolbarDocumentIdentityView: NSView {
         case .neutral, .edited, .saving, .saved:
             return nil
         case .changedOnDisk:
-            return documentState.detail == "File missing" ? "File missing" : "Changed externally"
-        case .conflict: return "Conflict"
-        case .saveFailed: return "Save failed"
+            return documentState.detail == "File missing" || documentState.detail == L10n.tr("File missing")
+                ? L10n.tr("File missing")
+                : L10n.tr("Changed externally")
+        case .conflict: return L10n.tr("Conflict")
+        case .saveFailed: return L10n.tr("Save failed")
         }
     }
 
@@ -524,14 +526,14 @@ final class ToolbarPresentationControl: Motion.SpringSurfaceView {
             tint: .control
         )
         documentButton = ToolbarModeButton(
-            title: "Document",
+            title: L10n.tr("Document", context: "renderMode"),
             typography: .document,
-            accessibilityLabel: "Document"
+            accessibilityLabel: L10n.tr("Document", context: "renderMode")
         )
         sourceButton = ToolbarModeButton(
-            title: "Source",
+            title: L10n.tr("Source", context: "renderMode"),
             typography: .source,
-            accessibilityLabel: "Source"
+            accessibilityLabel: L10n.tr("Source", context: "renderMode")
         )
         self.onChange = onChange
         self.performHapticFeedback = performHapticFeedback
@@ -577,10 +579,10 @@ final class ToolbarPresentationControl: Motion.SpringSurfaceView {
 
         setSelectedSegment(0)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Source Focus")
-        setAccessibilityHelp("Switch between rendered Document and Source Focus")
-        documentButton.toolTip = "Rendered document"
-        sourceButton.toolTip = "Source Focus — show raw Markdown"
+        setAccessibilityLabel(L10n.tr("Source Focus"))
+        setAccessibilityHelp(L10n.tr("Switch between rendered Document and Source Focus"))
+        documentButton.toolTip = L10n.tr("Rendered document")
+        sourceButton.toolTip = L10n.tr("Source Focus — show raw Markdown")
         accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil,
@@ -1012,7 +1014,7 @@ private final class ToolbarModeButton: ToolbarInteractiveButton {
         didSet {
             guard isSelected != oldValue else { return }
             updateTitle()
-            setAccessibilityValue(isSelected ? "Selected" : "Not selected")
+            setAccessibilityValue(isSelected ? L10n.tr("Selected") : L10n.tr("Not selected"))
             refreshInteractionFeedback(animated: true)
         }
     }
@@ -1104,7 +1106,7 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
         feedbackCornerRadius = Metrics.cornerRadius
         image = NSImage(
             systemSymbolName: "ellipsis",
-            accessibilityDescription: "More actions"
+            accessibilityDescription: L10n.tr("More actions")
         )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
@@ -1118,9 +1120,9 @@ final class ToolbarMenuButton: ToolbarInteractiveButton {
         target = self
         action = #selector(showMenu(_:))
         setAccessibilityRole(.popUpButton)
-        setAccessibilityLabel("More actions")
-        setAccessibilityHelp("Open document actions")
-        toolTip = "More document actions"
+        setAccessibilityLabel(L10n.tr("More actions"))
+        setAccessibilityHelp(L10n.tr("Open document actions"))
+        toolTip = L10n.tr("More document actions")
     }
 
     required init?(coder: NSCoder) { nil }

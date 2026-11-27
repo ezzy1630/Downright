@@ -516,8 +516,8 @@ final class DocumentWindowController: NSWindowController {
             // Still say the file moved on, even when the bytes to diff against
             // are gone — silence would read as "nothing happened".
             showChangeSummary(reason == .corrupt
-                ? "Changed since you last read it — the previous version is damaged"
-                : "Changed since you last read it — the previous version is no longer available")
+                ? L10n.tr("Changed since you last read it — the previous version is damaged")
+                : L10n.tr("Changed since you last read it — the previous version is no longer available"))
         }
         dumpLayoutIfRequested()
 
@@ -1170,11 +1170,11 @@ final class DocumentWindowController: NSWindowController {
 
     private func zoomAnnouncement(_ level: ZoomLevel) -> String {
         switch level {
-        case .h1: return "Top level — top-level headings"
-        case .h2: return "Two levels — headings through level two"
-        case .headings: return "Headings — all headings"
-        case .skeleton: return "Skeleton — headings, first sentences, artifacts"
-        case .everything: return "Everything — all content visible"
+        case .h1: return L10n.tr("Top level — top-level headings")
+        case .h2: return L10n.tr("Two levels — headings through level two")
+        case .headings: return L10n.tr("Headings — all headings")
+        case .skeleton: return L10n.tr("Skeleton — headings, first sentences, artifacts")
+        case .everything: return L10n.tr("Everything — all content visible")
         }
     }
 
@@ -1320,7 +1320,7 @@ final class DocumentWindowController: NSWindowController {
         // The gutter's hover summary is the *only* place these two live: the
         // status bar used to repeat them permanently, which is what a calm
         // document surface is meant not to do.
-        densityGutterView.metricsSummary = "\(wordCount) words · \(readMinutes) min read"
+        densityGutterView.metricsSummary = L10n.tr("%lld words · %lld min read", wordCount, readMinutes)
         statusBarView.hasFileURL = markdownDocument.url != nil
         densityGutterView.bands = DensityGutterView.bands(
             for: parsed, changes: [], searchHits: findSession.matches
@@ -1407,7 +1407,9 @@ final class DocumentWindowController: NSWindowController {
         dismissChangeSummary()
         toolbarDocumentIdentityView?.hasExternalChanges = false
         announceTransientStatus(
-            "Marked \(count) change\(count == 1 ? "" : "s") as reviewed"
+            count == 1
+                ? L10n.tr("Marked 1 change as reviewed")
+                : L10n.tr("Marked %lld changes as reviewed", count)
         )
     }
 
@@ -1428,13 +1430,17 @@ final class DocumentWindowController: NSWindowController {
         case .conflict(let conflict):
             toolbarDocumentIdentityView?.hasExternalChanges = true
             pendingConflict = conflict
-            showConflictBar("Changed on disk — \(conflict.changedBlockCount) block\(conflict.changedBlockCount == 1 ? "" : "s")")
+            showConflictBar(
+                conflict.changedBlockCount == 1
+                    ? L10n.tr("Changed on disk — 1 block")
+                    : L10n.tr("Changed on disk — %lld blocks", conflict.changedBlockCount)
+            )
 
         case .fileRemoved:
             toolbarDocumentIdentityView?.documentState = .init(
-                phase: .changedOnDisk, provenance: nil, detail: "File missing"
+                phase: .changedOnDisk, provenance: nil, detail: L10n.tr("File missing")
             )
-            showConflictBar("File was moved or deleted")
+            showConflictBar(L10n.tr("File was moved or deleted"))
 
         case .fileRestored:
             dismissConflictBar()
@@ -2784,11 +2790,11 @@ final class DocumentWindowController: NSWindowController {
         guard markdownDocument.isDirty, markdownDocument.url != nil else { return true }
 
         let alert = NSAlert()
-        alert.messageText = "Save changes to \(markdownDocument.displayName)?"
-        alert.informativeText = "Your changes will be lost if you don't save them."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L10n.tr("Save changes to %@?", markdownDocument.displayName)
+        alert.informativeText = L10n.tr("Your changes will be lost if you don't save them.")
+        alert.addButton(withTitle: L10n.tr("Save"))
+        alert.addButton(withTitle: L10n.tr("Discard"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             return saveDocument()

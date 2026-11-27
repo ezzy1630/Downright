@@ -59,7 +59,7 @@ final class VersionTimelineView: NSView {
     init(styleSheet: StyleSheet) {
         self.styleSheet = styleSheet
         let action = ButtonAction {}
-        self.restoreButton = PanelButton.text("Restore", action: action)
+        self.restoreButton = PanelButton.text(L10n.tr("Restore"), action: action)
         super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 84))
 
         let restore = ButtonAction { [weak self] in
@@ -75,12 +75,12 @@ final class VersionTimelineView: NSView {
         NSLayoutConstraint.activate([
             restoreButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
             restoreButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            restoreButton.widthAnchor.constraint(equalToConstant: restoreWidth),
+            restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: restoreWidth),
         ])
 
         setAccessibilityElement(true)
         setAccessibilityRole(.slider)
-        setAccessibilityLabel("Version timeline")
+        setAccessibilityLabel(L10n.tr("Version timeline"))
         updateAccessibility()
     }
 
@@ -123,7 +123,7 @@ final class VersionTimelineView: NSView {
         NSRect(
             x: horizontalInset,
             y: 26,
-            width: max(40, bounds.width - horizontalInset * 2 - restoreWidth - 12),
+            width: max(40, bounds.width - horizontalInset * 2 - max(restoreWidth, restoreButton.fittingSize.width) - 12),
             height: trackHeight
         )
     }
@@ -167,9 +167,9 @@ final class VersionTimelineView: NSView {
 
     private func kindLabel(_ kind: SnapshotStore.SnapshotKind) -> String {
         switch kind {
-        case .external: "External change"
-        case .local: "Local save"
-        case .baseline: "Baseline"
+        case .external: L10n.tr("External change")
+        case .local: L10n.tr("Local save")
+        case .baseline: L10n.tr("Baseline")
         }
     }
 
@@ -183,7 +183,7 @@ final class VersionTimelineView: NSView {
         NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
 
         guard !versions.isEmpty else {
-            drawCaption("No saved versions yet", at: track.midX, color: styleSheet.textFaint)
+            drawCaption(L10n.tr("No saved versions yet"), at: track.midX, color: styleSheet.textFaint)
             return
         }
 
@@ -304,7 +304,7 @@ final class VersionTimelineView: NSView {
             let kind = kindLabel(record.kind)
             if let selected = selectedRecord {
                 let diff = Int(record.date.timeIntervalSince(selected.date))
-                let deltaStr = diff == 0 ? "selected" : (diff > 0 ? "+\(diff)s" : "\(diff)s")
+                let deltaStr = diff == 0 ? L10n.tr("selected") : (diff > 0 ? L10n.tr("+%llds", diff) : L10n.tr("%llds", diff))
                 return "\(kind) (\(deltaStr)) · \(RelativeTime.stamp(record.date)) · \(RelativeTime.long(record.date))"
             }
             return "\(kind) · \(RelativeTime.stamp(record.date)) · \(RelativeTime.long(record.date))"

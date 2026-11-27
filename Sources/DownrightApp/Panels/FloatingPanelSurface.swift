@@ -32,7 +32,7 @@ final class FloatingPanelWindow: NSPanel {
         ignoresMouseEvents = false
         isReleasedWhenClosed = false
         setAccessibilityRole(.window)
-        setAccessibilityLabel("Floating panel")
+        setAccessibilityLabel(L10n.tr("Floating panel"))
 
         // A nonactivating child panel does not receive every first click in
         // `sendEvent`; route the close target explicitly in both windows.
@@ -198,7 +198,7 @@ final class FloatingPanelSurface: Motion.SpringSurfaceView {
         }
         mountContentOnSelf()
         setAccessibilityRole(.group)
-        setAccessibilityLabel(content.accessibilityLabel() ?? "Floating panel")
+        setAccessibilityLabel(content.accessibilityLabel() ?? L10n.tr("Floating panel"))
         updateMaterial()
         applySurfaceStyle()
     }

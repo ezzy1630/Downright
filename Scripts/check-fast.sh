@@ -22,5 +22,7 @@ for root in (Path("Scripts"), Path("Tests/ScriptTests")):
         ast.parse(path.read_text(), filename=str(path))
 PY
 python3 -B Scripts/lint-tests.py
+python3 -B Scripts/check-localization.py
+python3 -B Scripts/lint-localization.py
 "$ACTIONLINT" -shellcheck=''
-echo "Fast checks passed (versions, contrast, shell/Python syntax, test honesty, workflows)"
+echo "Fast checks passed (versions, contrast, shell/Python syntax, test honesty, localization, workflows)"

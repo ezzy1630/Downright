@@ -86,7 +86,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Search results")
+        table.setAccessibilityLabel(L10n.tr("Search results"))
         addSubview(scroll)
         // Lifted past the geometric centre: with the header row (and, in the
         // inspector, the find bar) pinning the eye to the top, exact centre
@@ -109,7 +109,7 @@ final class SearchResultsPanelView: NSView, PanelSurface {
 
         applyStyle()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Search results")
+        setAccessibilityLabel(L10n.tr("Search results"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -141,13 +141,13 @@ final class SearchResultsPanelView: NSView, PanelSurface {
     private func updateStatus() {
         if isSearching {
             spinner.begin()
-            statusLabel.stringValue = "Searching…"
+            statusLabel.stringValue = L10n.tr("Searching…")
         } else {
             spinner.end()
             let files = Set(hits.map(\.url.path)).count
             statusLabel.stringValue = hits.isEmpty
-                ? "No matches"
-                : "\(hits.count) in \(files) file\(files == 1 ? "" : "s")"
+                ? L10n.tr("No matches")
+                : (files == 1 ? L10n.tr("%lld in 1 file", hits.count) : L10n.tr("%lld in %lld files", hits.count, files))
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
         let hasResults = !rows.isEmpty
@@ -169,23 +169,27 @@ final class SearchResultsPanelView: NSView, PanelSurface {
     /// start).  A bare "No matches" under a query-less panel read as a bug,
     /// not as guidance.
     private var emptyStateTitle: String {
-        if isSearching { return "Searching" }
-        guard !query.isEmpty else { return "Type to search" }
-        return "No matches for “\(Self.truncated(query))”"
+        if isSearching { return L10n.tr("Searching") }
+        guard !query.isEmpty else { return L10n.tr("Type to search") }
+        return L10n.tr("No matches for “%@”", Self.truncated(query))
     }
 
     private var emptyStateSubtitle: String {
         if isSearching {
             return searchedFileCount > 0
-                ? "Searching \(searchedFileCount) nearby \(searchedFileCount == 1 ? "file" : "files")…"
-                : "Searching nearby Markdown files…"
+                ? (searchedFileCount == 1
+                    ? L10n.tr("Searching 1 nearby file…")
+                    : L10n.tr("Searching %lld nearby files…", searchedFileCount))
+                : L10n.tr("Searching nearby Markdown files…")
         }
         guard !query.isEmpty else {
-            return "Matches in this document’s sibling files appear here as you type."
+            return L10n.tr("Matches in this document’s sibling files appear here as you type.")
         }
         return searchedFileCount > 0
-            ? "Nothing in \(searchedFileCount) nearby \(searchedFileCount == 1 ? "file" : "files") contains it."
-            : "No matching files or lines."
+            ? (searchedFileCount == 1
+                ? L10n.tr("Nothing in 1 nearby file contains it.")
+                : L10n.tr("Nothing in %lld nearby files contains it.", searchedFileCount))
+            : L10n.tr("No matching files or lines.")
     }
 
     /// A query of any length lands in one centred line.

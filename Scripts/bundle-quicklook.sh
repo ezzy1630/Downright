@@ -50,7 +50,7 @@ let package = Package(
                 .product(name: "MarkdownCore", package: "Downright"),
                 .product(name: "MarkdownRender", package: "Downright"),
             ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v5), .define("DOWNRIGHT_QL_BUNDLE_MAIN_ONLY")]
         ),
         .executableTarget(
             name: "DownrightThumb",
@@ -132,6 +132,10 @@ bundle_extension() {
     for bundle in "$HELPER_BIN"/*.bundle; do
         [ -e "$bundle" ] || continue
         cp -R "$bundle" "$appex/"
+    done
+    for lproj in "$ROOT/Sources/$name/Resources"/*.lproj; do
+        [ -d "$lproj" ] || continue
+        cp -R "$lproj" "$appex/"
     done
     cp "$ROOT/Resources/PrivacyInfo.xcprivacy" "$appex/" 2>/dev/null || true
 

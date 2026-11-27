@@ -36,10 +36,10 @@ final class SetupWindowController: NSWindowController {
 
         var title: String {
             switch self {
-            case .moveToApplications: return "Move Downright to your Applications folder"
-            case .defaultApplication: return "Open Markdown files with Downright"
-            case .commandLineTool: return "Install the down command line tool"
-            case .agentIntegration: return "Open agent edits in Downright"
+            case .moveToApplications: return L10n.tr("Move Downright to your Applications folder")
+            case .defaultApplication: return L10n.tr("Open Markdown files with Downright")
+            case .commandLineTool: return L10n.tr("Install the down command line tool")
+            case .agentIntegration: return L10n.tr("Open agent edits in Downright")
             }
         }
 
@@ -55,13 +55,13 @@ final class SetupWindowController: NSWindowController {
         var detail: String {
             switch self {
             case .moveToApplications:
-                return "Downright is running from a temporary copy. Nothing below can stick until it lives in Applications."
+                return L10n.tr("Downright is running from a temporary copy. Nothing below can stick until it lives in Applications.")
             case .defaultApplication:
-                return "Double-clicking a .md file opens it here. Other Markdown flavours are left to the apps that own them."
+                return L10n.tr("Double-clicking a .md file opens it here. Other Markdown flavours are left to the apps that own them.")
             case .commandLineTool:
-                return "Opens files from the terminal: down PLAN.md"
+                return L10n.tr("Opens files from the terminal: down PLAN.md")
             case .agentIntegration:
-                return "Coding agents like Claude Code show Markdown here as they write it. Adds a hook to ~/.claude/settings.json."
+                return L10n.tr("Coding agents like Claude Code show Markdown here as they write it. Adds a hook to ~/.claude/settings.json.")
             }
         }
 
@@ -114,7 +114,7 @@ final class SetupWindowController: NSWindowController {
         return SetupWindowController(steps: applicable)
     }
 
-    private init(steps: [Step]) {
+    init(steps: [Step]) {
         self.steps = steps
         self.sheet = StyleSheet(theme: ThemeStore.shared.current, appearance: NSApp.effectiveAppearance)
 
@@ -124,7 +124,7 @@ final class SetupWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Welcome to Downright"
+        window.title = L10n.tr("Welcome to Downright")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
@@ -170,7 +170,7 @@ final class SetupWindowController: NSWindowController {
         brand.imageScaling = .scaleProportionallyUpOrDown
         brand.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: "Welcome to Downright")
+        let title = NSTextField(labelWithString: L10n.tr("Welcome to Downright"))
         title.font = .systemFont(ofSize: 21, weight: .semibold)
         title.textColor = sheet.text
 
@@ -207,8 +207,8 @@ final class SetupWindowController: NSWindowController {
             stack.addArrangedSubview(makeQuickLookRow())
         }
 
-        configure(secondaryButton, title: "Not now", isDefault: false, action: #selector(declineSetup))
-        configure(primaryButton, title: "Continue", isDefault: true, action: #selector(runSetup))
+        configure(secondaryButton, title: L10n.tr("Not now"), isDefault: false, action: #selector(declineSetup))
+        configure(primaryButton, title: L10n.tr("Continue"), isDefault: true, action: #selector(runSetup))
 
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -246,8 +246,8 @@ final class SetupWindowController: NSWindowController {
 
     private func subtitleText() -> String {
         steps.contains(.moveToApplications)
-            ? "One thing first — Downright isn’t installed yet."
-            : "Two quick things and you’re set up."
+            ? L10n.tr("One thing first — Downright isn’t installed yet.")
+            : L10n.tr("Two quick things and you’re set up.")
     }
 
     private func makeDivider() -> NSView {
@@ -306,7 +306,7 @@ final class SetupWindowController: NSWindowController {
         quickLookIcon.setAccessibilityHidden(true)
 
         quickLookStatus.stringValue =
-            "Quick Look previews and Finder icons for Markdown — set up for you."
+            L10n.tr("Quick Look previews and Finder icons for Markdown — set up for you.")
         quickLookStatus.font = .systemFont(ofSize: 11)
         quickLookStatus.textColor = sheet.textFaint
         quickLookStatus.translatesAutoresizingMaskIntoConstraints = false
@@ -352,7 +352,7 @@ final class SetupWindowController: NSWindowController {
         isWorking = true
         setControlsEnabled(false)
         spinner.startAnimation(nil)
-        primaryButton.title = "Setting up…"
+        primaryButton.title = L10n.tr("Setting up…")
 
         Task { @MainActor in
             defer {
@@ -367,9 +367,9 @@ final class SetupWindowController: NSWindowController {
                 report(
                     .defaultApplication,
                     success: failure == nil && SystemIntegration.isDefaultMarkdownHandler,
-                    successText: "Markdown files now open in Downright.",
-                    failureText: failure.map { "Couldn’t set the default: \($0.localizedDescription)" }
-                        ?? "macOS declined the change. Finder’s Get Info → Open With can set it."
+                    successText: L10n.tr("Markdown files now open in Downright."),
+                    failureText: failure.map { L10n.tr("Couldn’t set the default: %@", $0.localizedDescription) }
+                        ?? L10n.tr("macOS declined the change. Finder’s Get Info → Open With can set it.")
                 )
             }
 
@@ -385,7 +385,7 @@ final class SetupWindowController: NSWindowController {
 
             await registerQuickLook()
 
-            primaryButton.title = "Done"
+            primaryButton.title = L10n.tr("Done")
             primaryButton.action = #selector(finishFromButton)
             secondaryButton.isHidden = true
             window?.makeFirstResponder(primaryButton)
@@ -395,18 +395,18 @@ final class SetupWindowController: NSWindowController {
     private func performMove() {
         setControlsEnabled(false)
         spinner.startAnimation(nil)
-        primaryButton.title = "Moving…"
+        primaryButton.title = L10n.tr("Moving…")
         do {
             // Terminates this process once the copy is running; nothing after
             // that point executes.
             try SystemIntegration.moveToApplications { [weak self] error in
                 self?.reportMoveFailure(
-                    "Copied to Applications, but the new copy wouldn’t start: \(error.localizedDescription). Open it from Applications yourself."
+                    L10n.tr("Copied to Applications, but the new copy wouldn’t start: %@. Open it from Applications yourself.", error.localizedDescription)
                 )
             }
         } catch {
             reportMoveFailure(
-                "Couldn’t move the app: \(error.localizedDescription). Drag it to Applications yourself, then reopen it."
+                L10n.tr("Couldn’t move the app: %@. Drag it to Applications yourself, then reopen it.", error.localizedDescription)
             )
         }
     }
@@ -414,7 +414,7 @@ final class SetupWindowController: NSWindowController {
     private func reportMoveFailure(_ text: String) {
         spinner.stopAnimation(nil)
         setControlsEnabled(true)
-        primaryButton.title = "Continue"
+        primaryButton.title = L10n.tr("Continue")
         report(.moveToApplications, success: false, successText: "", failureText: text)
         // Unticked so a second Continue proceeds with the steps that can still
         // work from where the app is, rather than retrying the move forever.
@@ -427,21 +427,25 @@ final class SetupWindowController: NSWindowController {
             guard !result.linked.isEmpty else {
                 report(
                     .commandLineTool, success: false, successText: "",
-                    failureText: "Something else already owns \(result.skipped.joined(separator: " and ")) in \(result.directory.path)."
+                    failureText: L10n.tr(
+                        "Something else already owns %@ in %@.",
+                        result.skipped.joined(separator: L10n.tr(" and ")),
+                        result.directory.path
+                    )
                 )
                 return
             }
-            let names = result.linked.joined(separator: " and ")
+            let names = result.linked.joined(separator: L10n.tr(" and "))
             // Reporting a success the terminal will contradict is worse than
             // reporting the caveat, so an off-PATH directory says so.
             let text = result.isOnPath
-                ? "Installed \(names) in \(result.directory.path)."
-                : "Installed in \(result.directory.path) — add it to your PATH to use \(names)."
+                ? L10n.tr("Installed %@ in %@.", names, result.directory.path)
+                : L10n.tr("Installed in %@ — add it to your PATH to use %@.", result.directory.path, names)
             report(.commandLineTool, success: result.isOnPath, successText: text, failureText: text)
         } catch {
             report(
                 .commandLineTool, success: false, successText: "",
-                failureText: "Couldn’t install it: \(error.localizedDescription)"
+                failureText: L10n.tr("Couldn’t install it: %@", error.localizedDescription)
             )
         }
     }
@@ -451,7 +455,7 @@ final class SetupWindowController: NSWindowController {
             try AgentIntegration.install()
             report(
                 .agentIntegration, success: true,
-                successText: "Agent edits now open in Downright.",
+                successText: L10n.tr("Agent edits now open in Downright."),
                 failureText: ""
             )
         } catch {
@@ -467,7 +471,7 @@ final class SetupWindowController: NSWindowController {
 
     private func registerQuickLook() async {
         guard SystemIntegration.quickLookExtensionsAreBundled else { return }
-        quickLookStatus.stringValue = "Registering Quick Look previews and Finder icons…"
+        quickLookStatus.stringValue = L10n.tr("Registering Quick Look previews and Finder icons…")
 
         let enabled: Bool = await withCheckedContinuation { continuation in
             SystemIntegration.registerWithSystem(resetThumbnailCache: true) { enabled in
@@ -479,21 +483,21 @@ final class SetupWindowController: NSWindowController {
             quickLookIcon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
             quickLookIcon.contentTintColor = sheet.accent
             quickLookStatus.stringValue =
-                "Quick Look previews and Finder icons are on. Press space on a .md file to try it."
+                L10n.tr("Quick Look previews and Finder icons are on. Press space on a .md file to try it.")
         } else {
             // The extension is installed but the system has not switched it on,
             // which only the user can do — so say where, precisely.
             quickLookIcon.image = NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: nil)
             quickLookIcon.contentTintColor = sheet.textSecondary
             quickLookStatus.stringValue =
-                "Quick Look needs one switch from you: System Settings → General → Login Items & Extensions → Quick Look."
+                L10n.tr("Quick Look needs one switch from you: System Settings → General → Login Items & Extensions → Quick Look.")
             showQuickLookSettingsShortcut()
         }
     }
 
     private func showQuickLookSettingsShortcut() {
         secondaryButton.isHidden = false
-        secondaryButton.title = "Open Settings"
+        secondaryButton.title = L10n.tr("Open Settings")
         secondaryButton.action = #selector(openQuickLookSettings)
     }
 

@@ -37,7 +37,7 @@ final class ActivityIndicatorView: NSView {
         isHidden = true
         setAccessibilityElement(true)
         setAccessibilityRole(.progressIndicator)
-        setAccessibilityLabel("Working")
+        setAccessibilityLabel(L10n.tr("Working"))
     }
 
     required init?(coder: NSCoder) { nil }

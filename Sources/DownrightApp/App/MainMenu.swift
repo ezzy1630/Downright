@@ -96,7 +96,7 @@ enum MainMenu {
         case .application:
             return [
                 .standard([StandardItem(
-                    title: "About Downright",
+                    title: L10n.tr("About Downright"),
                     selector: #selector(NSApplication.orderFrontStandardAboutPanel(_:))
                 )]),
                 // Follows About per the updater spec.  Validation now comes
@@ -105,16 +105,16 @@ enum MainMenu {
                 .commands([.preferences, .showKeybindings, .toggleLightDark]),
                 .services,
                 .standard([
-                    StandardItem(title: "Hide Downright", selector: #selector(NSApplication.hide(_:)), keyEquivalent: "h"),
+                    StandardItem(title: L10n.tr("Hide Downright"), selector: #selector(NSApplication.hide(_:)), keyEquivalent: "h"),
                     StandardItem(
-                        title: "Hide Others",
+                        title: L10n.tr("Hide Others"),
                         selector: #selector(NSApplication.hideOtherApplications(_:)),
                         keyEquivalent: "h", modifiers: [.command, .option]
                     ),
-                    StandardItem(title: "Show All", selector: #selector(NSApplication.unhideAllApplications(_:))),
+                    StandardItem(title: L10n.tr("Show All"), selector: #selector(NSApplication.unhideAllApplications(_:))),
                 ]),
                 .standard([StandardItem(
-                    title: "Quit Downright",
+                    title: L10n.tr("Quit Downright"),
                     selector: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
                 )]),
             ]
@@ -122,7 +122,7 @@ enum MainMenu {
         case .file:
             return [
                 .commands([.newDocument, .open]),
-                .dynamicSubmenu(title: "Open Recent", delegate: RecentsMenuDelegate.shared),
+                .dynamicSubmenu(title: L10n.tr("Open Recent"), delegate: RecentsMenuDelegate.shared),
                 .commands([.save, .saveAs, .close]),
                 // The app's own version history.  macOS's Revert To / Browse
                 // All Versions are NSDocument features Downright does not use.
@@ -132,7 +132,7 @@ enum MainMenu {
                 // above them, the way Finder's File menu orders it.
                 .commands([.quickLook, .revealInFinder, .openInEditor, .compareFiles]),
                 .standard([StandardItem(
-                    title: "Page Setup…",
+                    title: L10n.tr("Page Setup…"),
                     selector: #selector(NSApplication.runPageLayout(_:)),
                     keyEquivalent: "p", modifiers: [.command, .shift]
                 )]),
@@ -142,91 +142,91 @@ enum MainMenu {
         case .edit:
             return [
                 .standard([
-                    StandardItem(title: "Undo", selector: Selector(("undo:")), keyEquivalent: "z"),
+                    StandardItem(title: L10n.tr("Undo"), selector: Selector(("undo:")), keyEquivalent: "z"),
                     StandardItem(
-                        title: "Redo", selector: Selector(("redo:")),
+                        title: L10n.tr("Redo"), selector: Selector(("redo:")),
                         keyEquivalent: "z", modifiers: [.command, .shift]
                     ),
                 ]),
                 .standard([
-                    StandardItem(title: "Cut", selector: #selector(NSText.cut(_:)), keyEquivalent: "x"),
-                    StandardItem(title: "Copy", selector: #selector(NSText.copy(_:)), keyEquivalent: "c"),
-                    StandardItem(title: "Paste", selector: #selector(NSText.paste(_:)), keyEquivalent: "v"),
+                    StandardItem(title: L10n.tr("Cut"), selector: #selector(NSText.cut(_:)), keyEquivalent: "x"),
+                    StandardItem(title: L10n.tr("Copy"), selector: #selector(NSText.copy(_:)), keyEquivalent: "c"),
+                    StandardItem(title: L10n.tr("Paste"), selector: #selector(NSText.paste(_:)), keyEquivalent: "v"),
                     StandardItem(
-                        title: "Paste as Markdown",
+                        title: L10n.tr("Paste as Markdown"),
                         selector: #selector(MarkdownTextView.pasteAsMarkdown(_:)),
                         keyEquivalent: ""
                     ),
                     StandardItem(
-                        title: "Paste and Match Style",
+                        title: L10n.tr("Paste and Match Style"),
                         selector: #selector(MarkdownTextView.pasteAndMatchStyle(_:)),
                         keyEquivalent: "v", modifiers: [.command, .shift]
                     ),
-                    StandardItem(title: "Delete", selector: #selector(NSText.delete(_:))),
-                    StandardItem(title: "Select All", selector: #selector(NSText.selectAll(_:)), keyEquivalent: "a"),
+                    StandardItem(title: L10n.tr("Delete"), selector: #selector(NSText.delete(_:))),
+                    StandardItem(title: L10n.tr("Select All"), selector: #selector(NSText.selectAll(_:)), keyEquivalent: "a"),
                 ]),
                 .commands([.copyAsMarkdown, .copyAsRichText, .copyAsPlainText, .copySection, .copySectionLink]),
                 .submenu(
-                    title: "Find",
+                    title: L10n.tr("Find", context: "menu"),
                     commands: [.find, .findNext, .findPrevious, .useSelectionForFind, .findReplace, .findInSiblings]
                 ),
-                .standardSubmenu(title: "Spelling and Grammar", items: [
+                .standardSubmenu(title: L10n.tr("Spelling and Grammar"), items: [
                     StandardItem(
-                        title: "Show Spelling and Grammar",
+                        title: L10n.tr("Show Spelling and Grammar"),
                         selector: #selector(NSText.showGuessPanel(_:)), keyEquivalent: ":"
                     ),
                     StandardItem(
-                        title: "Check Document Now",
+                        title: L10n.tr("Check Document Now"),
                         selector: #selector(NSText.checkSpelling(_:)), keyEquivalent: ";"
                     ),
                     .separator,
                     StandardItem(
-                        title: "Check Spelling While Typing",
+                        title: L10n.tr("Check Spelling While Typing"),
                         selector: #selector(NSTextView.toggleContinuousSpellChecking(_:))
                     ),
                     StandardItem(
-                        title: "Check Grammar With Spelling",
+                        title: L10n.tr("Check Grammar With Spelling"),
                         selector: #selector(NSTextView.toggleGrammarChecking(_:))
                     ),
                     StandardItem(
-                        title: "Correct Spelling Automatically",
+                        title: L10n.tr("Correct Spelling Automatically"),
                         selector: #selector(NSTextView.toggleAutomaticSpellingCorrection(_:))
                     ),
                 ]),
                 // Off by default so source bytes survive typing (§6.4); this is
                 // where the user turns them on if they want them.
-                .standardSubmenu(title: "Substitutions", items: [
+                .standardSubmenu(title: L10n.tr("Substitutions"), items: [
                     StandardItem(
-                        title: "Show Substitutions",
+                        title: L10n.tr("Show Substitutions"),
                         selector: #selector(NSTextView.orderFrontSubstitutionsPanel(_:))
                     ),
                     .separator,
-                    StandardItem(title: "Smart Copy/Paste", selector: #selector(NSTextView.toggleSmartInsertDelete(_:))),
+                    StandardItem(title: L10n.tr("Smart Copy/Paste"), selector: #selector(NSTextView.toggleSmartInsertDelete(_:))),
                     StandardItem(
-                        title: "Smart Quotes",
+                        title: L10n.tr("Smart Quotes"),
                         selector: #selector(NSTextView.toggleAutomaticQuoteSubstitution(_:))
                     ),
                     StandardItem(
-                        title: "Smart Dashes",
+                        title: L10n.tr("Smart Dashes"),
                         selector: #selector(NSTextView.toggleAutomaticDashSubstitution(_:))
                     ),
-                    StandardItem(title: "Smart Links", selector: #selector(NSTextView.toggleAutomaticLinkDetection(_:))),
+                    StandardItem(title: L10n.tr("Smart Links"), selector: #selector(NSTextView.toggleAutomaticLinkDetection(_:))),
                     StandardItem(
-                        title: "Data Detectors",
+                        title: L10n.tr("Data Detectors"),
                         selector: #selector(NSTextView.toggleAutomaticDataDetection(_:))
                     ),
                     StandardItem(
-                        title: "Text Replacement",
+                        title: L10n.tr("Text Replacement"),
                         selector: #selector(NSTextView.toggleAutomaticTextReplacement(_:))
                     ),
                 ]),
-                .standardSubmenu(title: "Transformations", items: [
-                    StandardItem(title: "Make Upper Case", selector: #selector(NSResponder.uppercaseWord(_:))),
-                    StandardItem(title: "Make Lower Case", selector: #selector(NSResponder.lowercaseWord(_:))),
-                    StandardItem(title: "Capitalize", selector: #selector(NSResponder.capitalizeWord(_:))),
+                .standardSubmenu(title: L10n.tr("Transformations"), items: [
+                    StandardItem(title: L10n.tr("Make Upper Case"), selector: #selector(NSResponder.uppercaseWord(_:))),
+                    StandardItem(title: L10n.tr("Make Lower Case"), selector: #selector(NSResponder.lowercaseWord(_:))),
+                    StandardItem(title: L10n.tr("Capitalize"), selector: #selector(NSResponder.capitalizeWord(_:))),
                 ]),
                 .importFromDevice,
-                .submenu(title: "Speech", commands: [.speakDocument, .stopSpeaking]),
+                .submenu(title: L10n.tr("Speech"), commands: [.speakDocument, .stopSpeaking]),
             ]
 
         case .format:
@@ -247,10 +247,10 @@ enum MainMenu {
         case .view:
             return [
                 .standard([
-                    StandardItem(title: "Show/Hide Toolbar", selector: #selector(NSWindow.toggleToolbarShown(_:))),
-                    StandardItem(title: "Customize Toolbar…", selector: #selector(NSWindow.runToolbarCustomizationPalette(_:))),
+                    StandardItem(title: L10n.tr("Show/Hide Toolbar"), selector: #selector(NSWindow.toggleToolbarShown(_:))),
+                    StandardItem(title: L10n.tr("Customize Toolbar…"), selector: #selector(NSWindow.runToolbarCustomizationPalette(_:))),
                     StandardItem(
-                        title: "Enter Full Screen",
+                        title: L10n.tr("Enter Full Screen"),
                         selector: #selector(NSWindow.toggleFullScreen(_:)),
                         keyEquivalent: "f", modifiers: [.control, .command]
                     ),
@@ -264,7 +264,7 @@ enum MainMenu {
                 .commands([.documentHealth, .renderTargets, .visualDebugger, .reviewPanel]),
                 .commands([.workspace, .localAI]),
                 .commands([.focusMode, .typewriterScrolling, .statusBar]),
-                .dynamicSubmenu(title: "Theme", delegate: ThemeMenuDelegate.shared),
+                .dynamicSubmenu(title: L10n.tr("Theme"), delegate: ThemeMenuDelegate.shared),
                 .commands([.reloadTheme]),
             ]
 
@@ -291,25 +291,25 @@ enum MainMenu {
         case .window:
             return [
                 .standard([
-                    StandardItem(title: "Minimize", selector: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"),
-                    StandardItem(title: "Zoom", selector: #selector(NSWindow.performZoom(_:))),
+                    StandardItem(title: L10n.tr("Minimize"), selector: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"),
+                    StandardItem(title: L10n.tr("Zoom"), selector: #selector(NSWindow.performZoom(_:))),
                 ]),
                 .commands([.splitView, .pinWindow]),
                 .standard([
                     StandardItem(
-                        title: "Show Previous Tab", selector: #selector(NSWindow.selectPreviousTab(_:)),
+                        title: L10n.tr("Show Previous Tab"), selector: #selector(NSWindow.selectPreviousTab(_:)),
                         keyEquivalent: "\t", modifiers: [.control, .shift]
                     ),
                     StandardItem(
-                        title: "Show Next Tab", selector: #selector(NSWindow.selectNextTab(_:)),
+                        title: L10n.tr("Show Next Tab"), selector: #selector(NSWindow.selectNextTab(_:)),
                         keyEquivalent: "\t", modifiers: [.control]
                     ),
-                    StandardItem(title: "Move Tab to New Window", selector: #selector(NSWindow.moveTabToNewWindow(_:))),
-                    StandardItem(title: "Merge All Windows", selector: #selector(NSWindow.mergeAllWindows(_:))),
-                    StandardItem(title: "Show Tab Bar", selector: #selector(NSWindow.toggleTabBar(_:))),
+                    StandardItem(title: L10n.tr("Move Tab to New Window"), selector: #selector(NSWindow.moveTabToNewWindow(_:))),
+                    StandardItem(title: L10n.tr("Merge All Windows"), selector: #selector(NSWindow.mergeAllWindows(_:))),
+                    StandardItem(title: L10n.tr("Show Tab Bar"), selector: #selector(NSWindow.toggleTabBar(_:))),
                 ]),
                 .standard([StandardItem(
-                    title: "Bring All to Front", selector: #selector(NSApplication.arrangeInFront(_:))
+                    title: L10n.tr("Bring All to Front"), selector: #selector(NSApplication.arrangeInFront(_:))
                 )]),
             ]
 
@@ -321,25 +321,25 @@ enum MainMenu {
                     // The start window retires its tour button after a few
                     // launches; this is where it goes to stay reachable.
                     StandardItem(
-                        title: "Take the Tour",
+                        title: L10n.tr("Take the Tour"),
                         selector: #selector(AppDelegate.takeTour(_:))
                     ),
                     StandardItem(
-                        title: "Downright Help",
+                        title: L10n.tr("Downright Help"),
                         selector: #selector(HelpLinkTarget.openLink(_:)),
                         keyEquivalent: "?",
                         target: HelpLinkTarget.shared,
                         representedObject: "https://github.com/ezzy1630/Downright#readme"
                     ),
-                    .link("Markdown Reference", "https://commonmark.org/help/"),
+                    .link(L10n.tr("Markdown Reference"), "https://commonmark.org/help/"),
                 ]),
                 .standard([
-                    .link("Report an Issue", "https://github.com/ezzy1630/Downright/issues/new"),
+                    .link(L10n.tr("Report an Issue"), "https://github.com/ezzy1630/Downright/issues/new"),
                     StandardItem(
-                        title: "Star Downright on GitHub",
+                        title: L10n.tr("Star Downright on GitHub"),
                         selector: #selector(AppDelegate.openProjectPage(_:))
                     ),
-                    .link("Support Downright", "https://github.com/sponsors/ezzy1630"),
+                    .link(L10n.tr("Support Downright"), "https://github.com/sponsors/ezzy1630"),
                 ]),
             ]
         }
@@ -396,8 +396,9 @@ enum MainMenu {
     }
 
     private static func servicesItem() -> NSMenuItem {
-        let services = NSMenu(title: "Services")
-        let item = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        let title = L10n.tr("Services")
+        let services = NSMenu(title: title)
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = services
         NSApp.servicesMenu = services
         return item
@@ -415,10 +416,11 @@ enum MainMenu {
     /// only be a second, wrong answer for the state where no device is in
     /// range.  The visible title is what the user sees until one is.
     private static func importFromDeviceItem() -> NSMenuItem {
-        let host = NSMenuItem(title: "Insert", action: nil, keyEquivalent: "")
-        let child = NSMenu(title: "Insert")
+        let insertTitle = L10n.tr("Insert")
+        let host = NSMenuItem(title: insertTitle, action: nil, keyEquivalent: "")
+        let child = NSMenu(title: insertTitle)
         child.autoenablesItems = true
-        let placeholder = NSMenuItem(title: "Import from iPhone or iPad", action: nil, keyEquivalent: "")
+        let placeholder = NSMenuItem(title: L10n.tr("Import from iPhone or iPad"), action: nil, keyEquivalent: "")
         placeholder.identifier = NSMenuItem.importFromDeviceIdentifier
         child.addItem(placeholder)
         host.submenu = child
@@ -539,7 +541,7 @@ final class RecentsMenuDelegate: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let recents = DocumentStateStore.shared.recents(limit: 15)
         guard !recents.isEmpty else {
-            let empty = NSMenuItem(title: "No Recent Documents", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(title: L10n.tr("No Recent Documents"), action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
             return
@@ -559,7 +561,7 @@ final class RecentsMenuDelegate: NSObject, NSMenuDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Clear Menu", action: #selector(AppDelegate.clearRecentDocuments(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Clear Menu"), action: #selector(AppDelegate.clearRecentDocuments(_:)), keyEquivalent: ""))
     }
 }
 
@@ -570,7 +572,7 @@ final class ThemeMenuDelegate: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         let follow = NSMenuItem(
-            title: "Follow macOS Appearance",
+            title: L10n.tr("Follow macOS Appearance"),
             action: #selector(AppDelegate.toggleFollowSystemAppearance(_:)),
             keyEquivalent: ""
         )
@@ -579,20 +581,20 @@ final class ThemeMenuDelegate: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(themePicker(
-            title: "Light Theme",
+            title: L10n.tr("Light Theme"),
             themes: ThemeStore.shared.themes.filter { $0.appearance != .dark },
             selectedName: Preferences.shared.values.themeName,
             action: #selector(AppDelegate.selectLightTheme(_:))
         ))
         menu.addItem(themePicker(
-            title: "Dark Theme",
+            title: L10n.tr("Dark Theme"),
             themes: ThemeStore.shared.themes.filter { $0.appearance != .light },
             selectedName: Preferences.shared.values.darkThemeName,
             action: #selector(AppDelegate.selectDarkTheme(_:))
         ))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Import VS Code Theme…", action: #selector(AppDelegate.importTheme(_:)), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Reveal Themes Folder", action: #selector(AppDelegate.revealThemesFolder(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Import VS Code Theme…"), action: #selector(AppDelegate.importTheme(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Reveal Themes Folder"), action: #selector(AppDelegate.revealThemesFolder(_:)), keyEquivalent: ""))
     }
 
     private func themePicker(
@@ -604,7 +606,7 @@ final class ThemeMenuDelegate: NSObject, NSMenuDelegate {
         let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: title)
         for theme in themes {
-            let item = NSMenuItem(title: theme.name, action: action, keyEquivalent: "")
+            let item = NSMenuItem(title: L10n.themeDisplayName(theme.name), action: action, keyEquivalent: "")
             item.representedObject = theme.name
             item.state = theme.name == selectedName ? .on : .off
             submenu.addItem(item)

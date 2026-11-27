@@ -87,6 +87,11 @@ translation table, a generated file, a mirrored list), include the check that
 fails when it drifts. Keeping it in sync must not depend on anyone
 remembering.
 
+New user-visible UI text goes through `L10n.tr` (or `QLL10n.tr` in Quick Look)
+with a matching `zh-Hans` entry, enforced by `Scripts/check-localization.py`
+and `Scripts/lint-localization.py` in `Scripts/check-fast.sh` and
+`Scripts/check.sh`.
+
 Do not add a sync service, vault database, plugin runtime, remote model
 dependency, or chat panel without first changing the product contract and
 architecture documentation.

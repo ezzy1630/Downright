@@ -62,7 +62,7 @@ extension DocumentWindowController: LocalAIPanelViewDelegate {
 
     func localAIPanel(_ panel: LocalAIPanelView, didApply preview: LocalAIPreview) {
         guard let edit = LocalAIEditValidator.edit(for: preview, in: markdownDocument.text) else {
-            panel.result = LocalAIResult(task: .improveClarity, text: "The source changed. Run the task again.", preview: nil)
+            panel.result = LocalAIResult(task: .improveClarity, text: L10n.tr("The source changed. Run the task again."), preview: nil)
             return
         }
         markdownDocument.apply([edit], actionName: edit.summary)
@@ -79,11 +79,11 @@ extension DocumentWindowController: LocalAIPanelViewDelegate {
     private static func message(for error: Error) -> String {
         if let error = error as? LocalAIError {
             switch error {
-            case .emptyInput: return "Select or open text first."
-            case .cancelled: return "Cancelled."
-            case .unavailable: return "On-device AI is not available on this Mac."
+            case .emptyInput: return L10n.tr("Select or open text first.")
+            case .cancelled: return L10n.tr("Cancelled.")
+            case .unavailable: return L10n.tr("On-device AI is not available on this Mac.")
             }
         }
-        return "Local AI could not complete this task."
+        return L10n.tr("Local AI could not complete this task.")
     }
 }

@@ -35,7 +35,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
     var styleSheet: StyleSheet { didSet { backdrop.styleSheet = styleSheet; applyStyle() } }
 
     private let backdrop: PanelBackdrop
-    private let titleLabel = NSTextField(labelWithString: "Table")
+    private let titleLabel = NSTextField(labelWithString: L10n.tr("Table"))
     private let statusLabel = NSTextField(labelWithString: "")
     private let tableView: PanelTableView = {
         let table = PanelList.makeTableView(identifier: "tableEditorSeed")
@@ -44,9 +44,9 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
     }()
     private lazy var scrollView = PanelList.makeScrollView(documentView: tableView)
     private let alignmentPopup = NSPopUpButton()
-    private let sourceButton = NSButton(title: "Edit Source", target: nil, action: nil)
-    private let doneButton = NSButton(title: "Done", target: nil, action: nil)
-    private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+    private let sourceButton = NSButton(title: L10n.tr("Edit Source"), target: nil, action: nil)
+    private let doneButton = NSButton(title: L10n.tr("Done"), target: nil, action: nil)
+    private let cancelButton = NSButton(title: L10n.tr("Cancel"), target: nil, action: nil)
     /// Structural buttons, kept so selection can drive `isEnabled` rather than
     /// letting an invalid press write an explanation into the status label.
     private var columnButtons: [TableColumnOperation: NSButton] = [:]
@@ -128,7 +128,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         tableView.allowsEmptySelection = true
         tableView.target = self
         tableView.action = #selector(cellClicked(_:))
-        tableView.setAccessibilityLabel("Editable markdown table")
+        tableView.setAccessibilityLabel(L10n.tr("Editable markdown table"))
         scrollView.hasHorizontalScroller = true
         addSubview(scrollView)
 
@@ -138,7 +138,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
 
         sourceButton.bezelStyle = .rounded
         sourceButton.controlSize = .small
-        sourceButton.setAccessibilityLabel("Edit table source")
+        sourceButton.setAccessibilityLabel(L10n.tr("Edit table source"))
         sourceButton.target = self
         sourceButton.action = #selector(requestSource(_:))
         sourceButton.isHidden = true
@@ -175,7 +175,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Table editor")
+        setAccessibilityLabel(L10n.tr("Table editor"))
         applyStyle()
         updateOperationAvailability()
     }
@@ -185,14 +185,14 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         cancelButton.target = self
         cancelButton.action = #selector(cancel(_:))
         cancelButton.keyEquivalent = "\u{1b}"
-        cancelButton.setAccessibilityLabel("Close the table editor")
+        cancelButton.setAccessibilityLabel(L10n.tr("Close the table editor"))
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
 
         doneButton.bezelStyle = .rounded
         doneButton.target = self
         doneButton.action = #selector(finish(_:))
         doneButton.keyEquivalent = "\r"
-        doneButton.setAccessibilityLabel("Finish editing the table")
+        doneButton.setAccessibilityLabel(L10n.tr("Finish editing the table"))
         doneButton.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [cancelButton, doneButton])
@@ -205,10 +205,12 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
 
     private func configureAlignmentPopup() {
         alignmentPopup.removeAllItems()
-        alignmentPopup.addItems(withTitles: ["Automatic", "Left", "Center", "Right"])
+        alignmentPopup.addItems(withTitles: [
+            L10n.tr("Automatic"), L10n.tr("Left"), L10n.tr("Center"), L10n.tr("Right"),
+        ])
         alignmentPopup.target = self
         alignmentPopup.action = #selector(alignmentChanged(_:))
-        alignmentPopup.setAccessibilityLabel("Column alignment")
+        alignmentPopup.setAccessibilityLabel(L10n.tr("Column alignment"))
         alignmentPopup.translatesAutoresizingMaskIntoConstraints = false
     }
 
@@ -222,14 +224,14 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         // Row and column glyphs differ by badge, not by tooltip: a plus-badged
         // rectangle and a minus-badged rectangle cannot be confused the way
         // `split.3x1` and `split.2x1` can.
-        rowButtons[.add] = addButton("Add Row", symbol: "plus", selector: #selector(addRow(_:)), to: stack)
-        rowButtons[.delete] = addButton("Delete Row", symbol: "minus", selector: #selector(deleteRow(_:)), to: stack)
-        columnButtons[.add] = addButton("Add Column", symbol: "rectangle.badge.plus", selector: #selector(addColumn(_:)), to: stack)
-        columnButtons[.delete] = addButton("Delete Column", symbol: "rectangle.badge.minus", selector: #selector(deleteColumn(_:)), to: stack)
-        rowButtons[.moveUp] = addButton("Move Row Up", symbol: "arrow.up", selector: #selector(moveRowUp(_:)), to: stack)
-        rowButtons[.moveDown] = addButton("Move Row Down", symbol: "arrow.down", selector: #selector(moveRowDown(_:)), to: stack)
-        columnButtons[.moveLeft] = addButton("Move Column Left", symbol: "arrow.left", selector: #selector(moveColumnLeft(_:)), to: stack)
-        columnButtons[.moveRight] = addButton("Move Column Right", symbol: "arrow.right", selector: #selector(moveColumnRight(_:)), to: stack)
+        rowButtons[.add] = addButton(L10n.tr("Add Row"), symbol: "plus", selector: #selector(addRow(_:)), to: stack)
+        rowButtons[.delete] = addButton(L10n.tr("Delete Row"), symbol: "minus", selector: #selector(deleteRow(_:)), to: stack)
+        columnButtons[.add] = addButton(L10n.tr("Add Column"), symbol: "rectangle.badge.plus", selector: #selector(addColumn(_:)), to: stack)
+        columnButtons[.delete] = addButton(L10n.tr("Delete Column"), symbol: "rectangle.badge.minus", selector: #selector(deleteColumn(_:)), to: stack)
+        rowButtons[.moveUp] = addButton(L10n.tr("Move Row Up"), symbol: "arrow.up", selector: #selector(moveRowUp(_:)), to: stack)
+        rowButtons[.moveDown] = addButton(L10n.tr("Move Row Down"), symbol: "arrow.down", selector: #selector(moveRowDown(_:)), to: stack)
+        columnButtons[.moveLeft] = addButton(L10n.tr("Move Column Left"), symbol: "arrow.left", selector: #selector(moveColumnLeft(_:)), to: stack)
+        columnButtons[.moveRight] = addButton(L10n.tr("Move Column Right"), symbol: "arrow.right", selector: #selector(moveColumnRight(_:)), to: stack)
         stack.addArrangedSubview(alignmentPopup)
         return stack
     }
@@ -277,8 +279,8 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
             alignments = []
             selectedColumnValue = -1
             tableRange = NSRange(location: 0, length: 0)
-            titleLabel.stringValue = "Table"
-            statusLabel.stringValue = "No table under the caret"
+            titleLabel.stringValue = L10n.tr("Table")
+            statusLabel.stringValue = L10n.tr("No table under the caret")
             sourceButton.isHidden = true
             tableView.tableColumns.forEach { tableView.removeTableColumn($0) }
             tableView.reloadData()
@@ -292,8 +294,8 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
             row.cells.map { document.substring($0.contentRange).trimmingCharacters(in: .whitespacesAndNewlines) }
         }
         if selectedColumnValue >= table.columnCount { selectedColumnValue = table.columnCount - 1 }
-        titleLabel.stringValue = "Table \(tableIndex + 1)"
-        statusLabel.stringValue = "\(table.columnCount) columns · \(max(0, table.rows.count - 1)) rows"
+        titleLabel.stringValue = L10n.tr("Table %lld", tableIndex + 1)
+        statusLabel.stringValue = L10n.tr("%lld columns · %lld rows", table.columnCount, max(0, table.rows.count - 1))
         sourceButton.isHidden = false
         rebuildColumns(count: table.columnCount)
         tableView.reloadData()
@@ -310,7 +312,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
         for index in 0..<count {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("column-\(index)"))
             let header = headers.element(at: index)?.trimmingCharacters(in: .whitespaces) ?? ""
-            column.title = header.isEmpty ? "Column \(index + 1)" : header
+            column.title = header.isEmpty ? L10n.tr("Column %lld", index + 1) : header
             column.minWidth = 90
             column.width = 130
             column.headerCell.alignment = .center
@@ -345,7 +347,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
     private func propose(_ operation: TableEditOperation) {
         let result = TableEditing.propose(document, tableIndex: tableIndex, operation: operation)
         guard let proposal = result.proposal else {
-            statusLabel.stringValue = "Source edit is not available"
+            statusLabel.stringValue = L10n.tr("Source edit is not available")
             return
         }
         appliedEditCount += 1
@@ -517,7 +519,7 @@ final class TableEditorView: NSView, PanelSurface, NSTableViewDataSource, NSTabl
             guard let self, let field else { return }
             self.advanceDown(from: field)
         }
-        field.setAccessibilityLabel("Table row \(row + 1), column \(column + 1)")
+        field.setAccessibilityLabel(L10n.tr("Table row %lld, column %lld", row + 1, column + 1))
         field.setAccessibilityRole(.textField)
         return field
     }

@@ -63,7 +63,7 @@ final class ReviewPanelView: NSView, PanelSurface {
         applyStyle()
         reload()
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Reviews")
+        setAccessibilityLabel(L10n.tr("Reviews"))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -81,9 +81,9 @@ final class ReviewPanelView: NSView, PanelSurface {
         let applyAction = ButtonAction { [weak self] in self?.applySelected() }
         let resolveAction = ButtonAction { [weak self] in self?.resolveSelected() }
         let rejectAction = ButtonAction { [weak self] in self?.rejectSelected() }
-        let apply = PanelButton.text("Apply", action: applyAction)
-        let reject = PanelButton.text("Reject", action: rejectAction)
-        let resolve = PanelButton.text("Resolve", action: resolveAction)
+        let apply = PanelButton.text(L10n.tr("Apply"), action: applyAction)
+        let reject = PanelButton.text(L10n.tr("Reject"), action: rejectAction)
+        let resolve = PanelButton.text(L10n.tr("Resolve"), action: resolveAction)
         actions = [applyAction, rejectAction, resolveAction]
         for button in [apply, reject, resolve] {
             button.translatesAutoresizingMaskIntoConstraints = false
@@ -120,7 +120,7 @@ final class ReviewPanelView: NSView, PanelSurface {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.onActivate = { [weak self] in self?.activateSelection() }
-        table.setAccessibilityLabel("Review items")
+        table.setAccessibilityLabel(L10n.tr("Review items"))
         addSubview(scroll)
         emptyState.install(in: self, over: scroll)
         // Anchored under the buttons rather than 70pt below the title: a magic
@@ -140,7 +140,7 @@ final class ReviewPanelView: NSView, PanelSurface {
         if let actionStatus {
             statusLabel.stringValue = actionStatus
         } else {
-            statusLabel.stringValue = open == 0 ? "No open reviews" : "\(open) open"
+            statusLabel.stringValue = open == 0 ? L10n.tr("No open reviews") : L10n.tr("%lld open", open)
         }
         statusLabel.setAccessibilityLabel(statusLabel.stringValue)
         updateEmptyState()
@@ -155,8 +155,8 @@ final class ReviewPanelView: NSView, PanelSurface {
         }
         emptyState.configure(
             symbol: "bubble.left.and.bubble.right",
-            title: "No reviews",
-            subtitle: "Comments and suggestions left beside\nthis document will appear here.",
+            title: L10n.tr("No reviews"),
+            subtitle: L10n.tr("Comments and suggestions left beside\nthis document will appear here."),
             styleSheet: styleSheet
         )
         emptyState.isHidden = false
@@ -183,17 +183,17 @@ final class ReviewPanelView: NSView, PanelSurface {
 
     private func applySelected() {
         guard let review = selectedReview(), review.kind == .suggestion else { return }
-        act("Applied “\(review.title)”.") { self.delegate?.reviewPanel(self, didApply: review) }
+        act(L10n.tr("Applied “%@”.", review.title)) { self.delegate?.reviewPanel(self, didApply: review) }
     }
 
     private func resolveSelected() {
         guard let review = selectedReview() else { return }
-        act("Resolved “\(review.title)”.") { self.delegate?.reviewPanel(self, didResolve: review) }
+        act(L10n.tr("Resolved “%@”.", review.title)) { self.delegate?.reviewPanel(self, didResolve: review) }
     }
 
     private func rejectSelected() {
         guard let review = selectedReview(), review.kind == .suggestion else { return }
-        act("Rejected “\(review.title)”.") { self.delegate?.reviewPanel(self, didReject: review) }
+        act(L10n.tr("Rejected “%@”.", review.title)) { self.delegate?.reviewPanel(self, didReject: review) }
     }
 
     /// Reports the outcome in the status label and keeps it there through the
@@ -284,17 +284,20 @@ private final class ReviewRowView: NSTableCellView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func configure(_ review: ReviewItem, status: ReviewAnchorStatus, styleSheet: StyleSheet) {
+        let displayBody = review.body == "Suggested replacement"
+            ? L10n.tr("Suggested replacement")
+            : review.body
         titleLabel.stringValue = review.title
         titleLabel.textColor = styleSheet.text
         bodyLabel.stringValue = review.kind == .suggestion
-            ? "Replace \(quoted(review.anchor.selectedText)) with \(quoted(review.replacement ?? ""))"
-            : review.body
+            ? L10n.tr("Replace %@ with %@", quoted(review.anchor.selectedText), quoted(review.replacement ?? ""))
+            : displayBody
         bodyLabel.textColor = styleSheet.textSecondary
         let state = review.state == .open ? status.rawValue.capitalized : review.state.rawValue.capitalized
         statusLabel.stringValue = state
         statusLabel.textColor = styleSheet.textFaint
-        toolTip = review.body
-        setAccessibilityLabel("\(review.title): \(review.body)")
+        toolTip = displayBody
+        setAccessibilityLabel("\(review.title): \(displayBody)")
         setAccessibilityValue(state)
     }
 

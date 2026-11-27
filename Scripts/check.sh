@@ -26,6 +26,10 @@ if [ "${1:-}" != "--bench-only" ]; then
         echo "==> Test honesty"
         python3 -B Scripts/lint-tests.py || exit 1
 
+        echo "==> Localization integrity and UI literal lint"
+        python3 -B Scripts/check-localization.py || exit 1
+        python3 -B Scripts/lint-localization.py || exit 1
+
         echo "==> Python script regression tests"
         if ! python3 -B - <<'PY'
 import sys

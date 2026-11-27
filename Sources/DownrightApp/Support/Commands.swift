@@ -72,6 +72,10 @@ enum Command: String, CaseIterable, Codable {
     case goToLine
 
     var title: String {
+        L10n.tr(englishTitle)
+    }
+
+    var englishTitle: String {
         switch self {
         case .sourceMode: return "Source Focus"
         case .splitView: return "Split View"
@@ -200,7 +204,17 @@ enum Command: String, CaseIterable, Codable {
         var title: String {
             // The app menu is named after the app, not after the enum case;
             // "Application" would be a lie in both the menu bar and Settings.
-            self == .application ? "Downright" : rawValue.capitalized
+            switch self {
+            case .application: return "Downright"
+            case .file: return L10n.tr("File", context: "menu")
+            case .edit: return L10n.tr("Edit", context: "menu")
+            case .format: return L10n.tr("Format", context: "menu")
+            case .view: return L10n.tr("View", context: "menu")
+            case .navigate: return L10n.tr("Navigate", context: "menu")
+            case .document: return L10n.tr("Document", context: "menu")
+            case .window: return L10n.tr("Window", context: "menu")
+            case .help: return L10n.tr("Help", context: "menu")
+            }
         }
     }
 

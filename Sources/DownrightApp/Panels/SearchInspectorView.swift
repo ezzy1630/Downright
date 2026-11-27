@@ -47,7 +47,7 @@ final class SearchInspectorView: NSView {
 
     private let backdrop: PanelBackdrop
     private let guidance = NSTextField(wrappingLabelWithString:
-        "Matches are highlighted in the document. Press Return for the next match and Shift-Return for the previous match."
+        L10n.tr("Matches are highlighted in the document. Press Return for the next match and Shift-Return for the previous match.")
     )
     private let resultHost = NSView()
     private var findHeight: NSLayoutConstraint!
@@ -89,7 +89,7 @@ final class SearchInspectorView: NSView {
         ])
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Search")
+        setAccessibilityLabel(L10n.tr("Search"))
     }
 
     required init?(coder: NSCoder) { nil }
